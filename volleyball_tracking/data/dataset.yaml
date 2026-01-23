@@ -1,0 +1,33 @@
+# 数据集配置文件
+# YOLO-Pose 格式
+
+# ==================== 数据集路径 ====================
+path: /home/rick/desktop/yolo/yoloProject/volleyball_tracking/data  # 数据集根目录
+train: images/train  # 训练集图像目录 (相对于 path)
+val: images/val      # 验证集图像目录
+test: images/test    # 测试集图像目录
+
+# ==================== 类别定义 ====================
+names:
+  0: volleyball  # 类别 ID: 类别名称
+
+# ==================== 关键点配置 ====================
+# 5 个关键点，每个关键点 3 维 (x, y, visibility)
+kpt_shape: [5, 3]
+
+# 关键点名称 (用于可视化)
+kpt_names:
+  - Center   # 0: 球心
+  - Top      # 1: 顶部极值点
+  - Bottom   # 2: 底部极值点
+  - Left     # 3: 左侧极值点
+  - Right    # 4: 右侧极值点
+
+# 水平翻转时的关键点索引映射
+# 翻转后: Left <-> Right, 其他不变
+flip_idx: [0, 1, 2, 4, 3]
+
+# ==================== 数据集统计 (可选) ====================
+# 用于归一化和数据分析
+# nc: 1  # 类别数量
+# nkpt: 5  # 关键点数量

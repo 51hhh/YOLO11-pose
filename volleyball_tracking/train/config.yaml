@@ -1,0 +1,79 @@
+# 排球检测模型训练配置
+# 基于 YOLOv11n-Pose
+
+# ==================== 模型配置 ====================
+model: yolov11n-pose.pt  # 预训练模型路径
+task: pose               # 任务类型
+
+# ==================== 数据配置 ====================
+data: ../data/dataset.yaml  # 数据集配置文件
+imgsz: 640                  # 输入图像尺寸
+
+# ==================== 训练超参数 ====================
+epochs: 100      # 训练轮数
+batch: 32        # batch size (根据 GPU 内存调整: RTX 3060=16, RTX 4090=64)
+workers: 8       # 数据加载线程数
+device: 0        # GPU 设备 ID (0 或 cpu)
+name: volleyball # 实验名称
+
+# ==================== 优化器配置 ====================
+optimizer: AdamW      # 优化器类型 (AdamW, SGD, Adam)
+lr0: 0.001            # 初始学习率
+lrf: 0.01             # 最终学习率 (lr0 * lrf)
+momentum: 0.937       # SGD momentum
+weight_decay: 0.0005  # 权重衰减 (L2 正则化)
+
+# ==================== 学习率调度 ====================
+cos_lr: true             # 使用余弦退火
+warmup_epochs: 3         # warmup 轮数
+warmup_momentum: 0.8     # warmup momentum
+warmup_bias_lr: 0.1      # warmup bias 学习率
+
+# ==================== 损失函数权重 ====================
+box: 7.5     # Bbox 回归损失权重
+cls: 0.5     # 分类损失权重
+pose: 12.0   # 关键点损失权重 (重要!)
+kobj: 1.0    # 关键点目标损失权重
+
+# ==================== 数据增强 ====================
+augment: true
+
+# 几何变换
+degrees: 10.0        # 旋转角度 (±10°)
+translate: 0.1       # 平移比例 (±10%)
+scale: 0.5           # 缩放范围 (0.5-1.5x)
+shear: 0.0           # 剪切 (不使用，会扭曲圆形)
+perspective: 0.0     # 透视变换 (不使用，会扭曲圆形)
+flipud: 0.0          # 上下翻转 (不使用)
+fliplr: 0.5          # 左右翻转概率 (50%)
+
+# 高级增强
+mosaic: 1.0          # Mosaic 增强概率 (100%)
+mixup: 0.1           # MixUp 增强概率 (10%)
+copy_paste: 0.0      # Copy-Paste (不使用，单目标场景)
+
+# 颜色增强
+hsv_h: 0.015         # 色调变化 (±1.5%)
+hsv_s: 0.7           # 饱和度变化 (±70%)
+hsv_v: 0.4           # 亮度变化 (±40%)
+
+# ==================== 验证和保存 ====================
+val: true            # 每轮进行验证
+save: true           # 保存检查点
+save_period: 10      # 每 N 轮保存一次
+plots: true          # 生成可视化图表
+
+# ==================== 其他配置 ====================
+patience: 50         # 早停轮数 (50 轮无改善则停止)
+verbose: true        # 详细输出
+seed: 42             # 随机种子 (确保可复现)
+deterministic: true  # 确定性训练
+exist_ok: false      # 是否覆盖已存在的实验
+
+# ==================== 高级配置 (可选) ====================
+# freeze: 10         # 冻结前 N 层 (迁移学习)
+# multi_scale: true  # 多尺度训练
+# rect: false        # 矩形训练
+# amp: true          # 自动混合精度 (默认启用)
+# overlap_mask: true # 重叠 mask (分割任务)
+# mask_ratio: 4      # Mask 下采样比例

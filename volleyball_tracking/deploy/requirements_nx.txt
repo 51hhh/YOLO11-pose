@@ -1,0 +1,23 @@
+# Orin NX 部署环境依赖
+# Python 3.8+
+# JetPack 5.1.2+
+
+# 基础库
+numpy==1.24.3
+opencv-python==4.8.1.78
+scipy==1.11.3
+
+# 追踪和滤波
+filterpy==1.4.5
+
+# CUDA 支持
+pycuda==2022.2.2
+
+# 工具
+pyyaml==6.0.1
+tqdm==4.66.1
+
+# 注意:
+# - TensorRT 已随 JetPack 安装，无需 pip 安装
+# - OpenCV 建议使用系统预装版本 (带 CUDA 支持)
+# - 如需从源码编译 OpenCV: sudo apt install libopencv-dev

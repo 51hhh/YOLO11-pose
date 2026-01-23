@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 训练产物
+runs/
+weights/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+*.plan
+
+# 数据集
+data/images/
+data/labels/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+
+# 日志
+*.log
+logs/
+tensorboard/
+wandb/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 保留的文件
+!data/dataset.yaml
+!models/.gitkeep
