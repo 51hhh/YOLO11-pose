@@ -1,0 +1,49 @@
+# ============================================================
+# 排球追踪节点配置 (volleyball_tracker_node)
+# ============================================================
+
+volleyball_tracker:
+  ros__parameters:
+    # ========== PWM 触发参数 ==========
+    pwm:
+      gpio_chip: "gpiochip2"
+      gpio_line: 7
+      frequency: 100.0        # Hz
+      duty_cycle: 50.0        # %
+    
+    # ========== 相机参数 ==========
+    camera:
+      left_index: 0
+      right_index: 1
+      exposure_time: 6000.0   # us (降低曝光以减少采集延迟，原值 9867)
+      gain: 15.0              # dB (提高增益补偿亮度)
+    
+    # ========== YOLO 检测参数 ==========
+    detector:
+      # 模型路径: 支持 batch=1 或 batch=2
+      # - yolo11n.engine: batch=1, 双流并行模式
+      # - yolo11n_batch2.engine: batch=2, 批量推理模式 (推荐)
+      model_path: "model/yolo11n_batch2.engine"
+      confidence_threshold: 0.5
+      nms_threshold: 0.4
+      roi_size: 320
+      global_size: 640
+      max_lost_frames: 10
+    
+    # ========== 立体视觉参数 ==========
+    stereo:
+      calibration_file: "calibration/stereo_calib.yaml"
+      min_disparity: 10.0
+      max_depth: 15.0
+    
+    # ========== 追踪参数 ==========
+    tracker:
+      process_noise: 0.01
+      measurement_noise: 0.01
+    
+    # ========== 调试参数 ==========
+    debug:
+      enable_logging: true
+      log_interval: 100       # 每 N 帧打印一次统计
+      publish_images: false   # 关闭原始图像发布以减少负载
+      publish_detection_image: true  # 保留检测可视化图像

@@ -1,1 +1,12 @@
+# 排除路径
+
+# yolo11仓库
 YOLOv11-RGBT/
+# 海康SDK
+Samples_MSV_SDK/
+# RM装甲板自瞄
+rm_auto_aim/
+# 排球视觉推理框架
+toe_aimbot/
+# 排球视觉推理框架
+RC_Volleyball_vision/
