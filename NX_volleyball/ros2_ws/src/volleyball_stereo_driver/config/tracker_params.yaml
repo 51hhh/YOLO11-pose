@@ -15,8 +15,9 @@ volleyball_tracker:
     camera:
       left_index: 0
       right_index: 1
-      exposure_time: 6000.0   # us (降低曝光以减少采集延迟，原值 9867)
-      gain: 15.0              # dB (提高增益补偿亮度)
+      exposure_time: 9867.0   # us (恢复原值，使用Bayer RG8格式)
+      gain: 10.9854           # dB (恢复原值)
+    # 现在提升pwm，130.0000hz，曝光7559.0000增益15.0062
     
     # ========== YOLO 检测参数 ==========
     detector:

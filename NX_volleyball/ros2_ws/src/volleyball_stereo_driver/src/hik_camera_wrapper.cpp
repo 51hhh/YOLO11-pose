@@ -155,27 +155,27 @@ bool HikCamera::open() {
     // MV-CA016-10UC 支持: BayerRG8, BayerRG10, BayerRG12, RGB8, BGR8
     bool format_set = false;
     
-    // 优先: BGR8 (OpenCV原生格式，零转换)
-    ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BGR8_Packed);
+    // 优先: BayerRG8 (传输带宽低，100fps@9867us曝光)
+    ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BayerRG8);
     if (ret == MV_OK) {
-        std::cout << "✅ 相机像素格式: BGR8 (零转换)" << std::endl;
+        std::cout << "✅ 相机像素格式: BayerRG8 (100fps支持)" << std::endl;
         format_set = true;
     }
     
-    // 次选: RGB8 (只需通道交换)
+    // 次选: BGR8 (OpenCV原生格式，但传输带宽高，限76fps)
     if (!format_set) {
-        ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_RGB8_Packed);
+        ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BGR8_Packed);
         if (ret == MV_OK) {
-            std::cout << "✅ 相机像素格式: RGB8 (通道交换)" << std::endl;
+            std::cout << "⚠️  相机像素格式: BGR8 (零转换，但限76fps)" << std::endl;
             format_set = true;
         }
     }
     
-    // 再次选: BayerRG8 (需要去马赛克，但带宽低)
+    // 再次选: RGB8 (只需通道交换，但传输带宽高)
     if (!format_set) {
-        ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BayerRG8);
+        ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_RGB8_Packed);
         if (ret == MV_OK) {
-            std::cout << "⚠️  相机像素格式: BayerRG8 (需去马赛克)" << std::endl;
+            std::cout << "⚠️  相机像素格式: RGB8 (通道交换，限76fps)" << std::endl;
             format_set = true;
         }
     }
@@ -408,6 +408,14 @@ bool HikCamera::convertPixelToBGR(const unsigned char* src_data, int width, int 
     if (pixel_type == PixelType_Gvsp_RGB8_Packed) {
         cv::Mat src(height, width, CV_8UC3, const_cast<unsigned char*>(src_data));
         cv::cvtColor(src, dst, cv::COLOR_RGB2BGR);
+        return true;
+    }
+    
+    // BayerRG8: ⚡ 直接拷贝Bayer原始数据，交给GPU处理
+    // 优势: 1) 零CPU开销 2) GPU去马赛克比CPU快10倍+ 3) 与resize融合节省带宽
+    if (pixel_type == PixelType_Gvsp_BayerRG8) {
+        // 直接拷贝Bayer数据（单通道，不去马赛克）
+        memcpy(dst.data, src_data, data_len);
         return true;
     }
     

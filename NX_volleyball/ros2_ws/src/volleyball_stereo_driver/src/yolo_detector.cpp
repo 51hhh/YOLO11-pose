@@ -27,6 +27,9 @@
 extern "C" void launchPreprocessKernel(const unsigned char* src, float* dst,
                                         int src_w, int src_h, int dst_w, int dst_h,
                                         cudaStream_t stream);
+extern "C" void launchPreprocessBayerRGKernel(const unsigned char* bayer, float* dst,
+                                               int src_w, int src_h, int dst_w, int dst_h,
+                                               cudaStream_t stream);
 
 // TensorRT Logger
 class Logger : public nvinfer1::ILogger {
@@ -593,11 +596,15 @@ void YOLODetector::preprocessGPUStream(const cv::Mat &image, int target_size,
 
 // ==================== Batch=2 预处理 (Y字形流水线) ====================
 // ✅ 优化: DMA与Compute重叠执行，利用Copy Engine和CUDA Core并行性
+// ✅ 支持: BGR (3通道) 和 Bayer RG8 (1通道) 自动检测
 // 时间线: [Copy L][Copy R]  <- DMA不停歇
 //                [Kern L][Kern R]  <- Compute紧跟Copy
 void YOLODetector::preprocessBatch2(const cv::Mat &image1, const cv::Mat &image2, int target_size) {
   size_t single_input_size = 3 * target_size * target_size * sizeof(float);
-  size_t src_bytes = image1.rows * image1.cols * 3 * sizeof(unsigned char);
+  
+  // ⚡ 自动检测图像格式 (Bayer单通道 vs BGR三通道)
+  bool is_bayer = (image1.channels() == 1);  // 1通道=Bayer, 3通道=BGR
+  size_t src_bytes = image1.rows * image1.cols * image1.channels() * sizeof(unsigned char);
   
   // ========== 阶段1: 同时发射两个H2D (Copy Engine自动排队) ==========
   cudaMemcpyAsync(gpu_src_buffer_, image1.data, src_bytes,
@@ -609,12 +616,23 @@ void YOLODetector::preprocessBatch2(const cv::Mat &image1, const cv::Mat &image2
   float* dst1 = (float*)input_buffer_device_;
   float* dst2 = (float*)((char*)input_buffer_device_ + single_input_size);
   
-  launchPreprocessKernel((unsigned char*)gpu_src_buffer_, dst1,
-                         image1.cols, image1.rows, target_size, target_size,
-                         cuda_stream_);
-  launchPreprocessKernel((unsigned char*)gpu_src_buffer2_, dst2,
-                         image2.cols, image2.rows, target_size, target_size,
-                         cuda_stream2_);
+  if (is_bayer) {
+    // ⚡ Bayer RG8 路径: 去马赛克 + Resize + 归一化 一体化
+    launchPreprocessBayerRGKernel((unsigned char*)gpu_src_buffer_, dst1,
+                                   image1.cols, image1.rows, target_size, target_size,
+                                   cuda_stream_);
+    launchPreprocessBayerRGKernel((unsigned char*)gpu_src_buffer2_, dst2,
+                                   image2.cols, image2.rows, target_size, target_size,
+                                   cuda_stream2_);
+  } else {
+    // 标准BGR路径
+    launchPreprocessKernel((unsigned char*)gpu_src_buffer_, dst1,
+                           image1.cols, image1.rows, target_size, target_size,
+                           cuda_stream_);
+    launchPreprocessKernel((unsigned char*)gpu_src_buffer2_, dst2,
+                           image2.cols, image2.rows, target_size, target_size,
+                           cuda_stream2_);
+  }
   
   // ========== 阶段3: Event同步 (精确等待，避免CPU阻塞) ==========
   // ✅ 记录两个流的完成事件
