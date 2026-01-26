@@ -113,11 +113,23 @@ private:
     // 同步参数
     static constexpr int SYNC_MAX_FRAME_DIFF = 3;           // 帧号差容忍度
     static constexpr int64_t SYNC_MAX_TIME_DIFF_US = 25000; // 25ms时间差容忍度
-    static constexpr int FRAME_WAIT_TIMEOUT_MS = 1;          // 帧等待超时(ms) - 优化为1ms
-    static constexpr int SYNC_RETRY_SLEEP_US = 10;           // 同步重试休眠(us) - 优化为10us
+    static constexpr int FRAME_WAIT_TIMEOUT_MS = 0;          // ⚡ 优化: 0ms = 非阻塞轮询
+    static constexpr int SYNC_RETRY_SLEEP_US = 1;            // ⚡ 优化: 降到1us（最小CPU yield）
     
     // 日志节流
     static constexpr int LOG_THROTTLE_MS = 1000;             // 日志节流周期(ms)
+    
+    // ⚡ 性能分析统计
+    struct PerformanceStats {
+        double total_loop_time = 0;
+        double total_wait_left_time = 0;
+        double total_wait_right_time = 0;
+        double total_sync_check_time = 0;
+        double total_sync_retry_time = 0;
+        int sync_retry_count = 0;
+        std::chrono::high_resolution_clock::time_point last_frame_time;
+    };
+    PerformanceStats perf_stats_;
     
     // 图像发布频率控制
     static constexpr int RAW_IMAGE_PUBLISH_INTERVAL = 10;    // 原始图像每10帧发布一次

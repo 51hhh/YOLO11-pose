@@ -449,24 +449,48 @@ bool VolleyballTrackerNode::waitForSyncedPair(
 
 // ==================== 推理线程 (轮询标志位同步，参考RC项目) ====================
 void VolleyballTrackerNode::inferenceLoop() {
-    RCLCPP_INFO(this->get_logger(), "🧠 推理线程已启动 (PWM时间戳同步模式)");
+    RCLCPP_INFO(this->get_logger(), "🧠 推理线程已启动 (PWM时间戳同步模式 + 性能分析)");
     
     last_stat_time_ = std::chrono::high_resolution_clock::now();
+    perf_stats_.last_frame_time = std::chrono::high_resolution_clock::now();
     
     while (running_ && rclcpp::ok()) {
-        // ========== 1. 更新相机帧 (轮询回调) ==========
-        updateLeftFrame();
-        updateRightFrame();
+        auto loop_start = std::chrono::high_resolution_clock::now();
         
-        // ========== 2. 等待同步帧对 (帧号匹配) ==========
+        // ========== 1. 更新相机帧 (轮询回调) + 时间统计 ==========
+        auto wait_left_start = std::chrono::high_resolution_clock::now();
+        updateLeftFrame();
+        auto wait_left_end = std::chrono::high_resolution_clock::now();
+        perf_stats_.total_wait_left_time += std::chrono::duration<double, std::milli>(wait_left_end - wait_left_start).count();
+        
+        auto wait_right_start = std::chrono::high_resolution_clock::now();
+        updateRightFrame();
+        auto wait_right_end = std::chrono::high_resolution_clock::now();
+        perf_stats_.total_wait_right_time += std::chrono::duration<double, std::milli>(wait_right_end - wait_right_start).count();
+        
+        // ========== 2. 等待同步帧对 (帧号匹配) + 时间统计 ==========
         cv::Mat left, right;
         FrameMetadata left_meta, right_meta;
         
-        if (!waitForSyncedPair(left, right, left_meta, right_meta)) {
-            // 无同步帧，短暂休眠后重试
+        auto sync_check_start = std::chrono::high_resolution_clock::now();
+        bool synced = waitForSyncedPair(left, right, left_meta, right_meta);
+        auto sync_check_end = std::chrono::high_resolution_clock::now();
+        perf_stats_.total_sync_check_time += std::chrono::duration<double, std::milli>(sync_check_end - sync_check_start).count();
+        
+        if (!synced) {
+            // ⚡ 优化: 最小延迟重试 (1us CPU yield)
+            auto retry_start = std::chrono::high_resolution_clock::now();
             std::this_thread::sleep_for(std::chrono::microseconds(SYNC_RETRY_SLEEP_US));
+            auto retry_end = std::chrono::high_resolution_clock::now();
+            perf_stats_.total_sync_retry_time += std::chrono::duration<double, std::milli>(retry_end - retry_start).count();
+            perf_stats_.sync_retry_count++;
             continue;
         }
+        
+        // ⚡ 统计帧间隔时间
+        auto now = std::chrono::high_resolution_clock::now();
+        auto frame_interval = std::chrono::duration<double, std::milli>(now - perf_stats_.last_frame_time).count();
+        perf_stats_.last_frame_time = now;
         
         // 更新当前帧数据
         img_left_ = left;
@@ -710,6 +734,16 @@ void VolleyballTrackerNode::printStatistics() {
     double avg_tracking = total_tracking_time_ / frame_count_;
     double avg_total = avg_detection + avg_stereo + avg_tracking;
     
+    // ⚡ 性能瓶颈分析统计
+    double avg_wait_left = perf_stats_.total_wait_left_time / frame_count_;
+    double avg_wait_right = perf_stats_.total_wait_right_time / frame_count_;
+    double avg_sync_check = perf_stats_.total_sync_check_time / frame_count_;
+    double avg_sync_retry = 0.0;
+    if (perf_stats_.sync_retry_count > 0) {
+        avg_sync_retry = perf_stats_.total_sync_retry_time / perf_stats_.sync_retry_count;
+    }
+    double total_wait = avg_wait_left + avg_wait_right + avg_sync_check;
+    
     // ✅ 新增：同步统计
     uint64_t sync_success = sync_success_count_.load();
     uint64_t sync_mismatch = sync_mismatch_count_.load();
@@ -723,6 +757,15 @@ void VolleyballTrackerNode::printStatistics() {
     RCLCPP_INFO(this->get_logger(),
                 "🧠 [推理线程 %ld帧] FPS: %.1f | 检测: %.2fms | 立体: %.2fms | 追踪: %.2fms | 总计: %.2fms",
                 frame_count_, fps, avg_detection, avg_stereo, avg_tracking, avg_total);
+    
+    // ⚡ 性能瓶颈分析
+    RCLCPP_INFO(this->get_logger(),
+                "   ⚡ [性能分析] 等待开销: %.3fms (Left: %.3fms + Right: %.3fms + Sync: %.3fms)",
+                total_wait, avg_wait_left, avg_wait_right, avg_sync_check);
+    
+    RCLCPP_INFO(this->get_logger(),
+                "   ⚡ [重试开销] 重试次数: %d | 平均重试延迟: %.3fms | 总重试损耗: %.2fms",
+                perf_stats_.sync_retry_count, avg_sync_retry, perf_stats_.total_sync_retry_time);
     
     RCLCPP_INFO(this->get_logger(),
                 "   🔄 同步成功: %lu | 失配: %lu | 丢帧: L=%lu R=%lu | 同步率: %.1f%%",
@@ -754,6 +797,13 @@ void VolleyballTrackerNode::printStatistics() {
     total_detection_time_ = 0.0;
     total_stereo_time_ = 0.0;
     total_tracking_time_ = 0.0;
+    
+    // ⚡ 重置性能分析统计
+    perf_stats_.total_wait_left_time = 0;
+    perf_stats_.total_wait_right_time = 0;
+    perf_stats_.total_sync_check_time = 0;
+    perf_stats_.total_sync_retry_time = 0;
+    perf_stats_.sync_retry_count = 0;
     last_stat_time_ = now;
 }
 
