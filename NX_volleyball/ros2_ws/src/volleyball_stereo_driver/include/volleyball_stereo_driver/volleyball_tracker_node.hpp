@@ -68,7 +68,7 @@ enum TrackingState {
  */
 class VolleyballTrackerNode : public rclcpp::Node {
 public:
-    VolleyballTrackerNode();
+    explicit VolleyballTrackerNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
     ~VolleyballTrackerNode();
 
 private:
@@ -113,8 +113,8 @@ private:
     // 同步参数
     static constexpr int SYNC_MAX_FRAME_DIFF = 3;           // 帧号差容忍度
     static constexpr int64_t SYNC_MAX_TIME_DIFF_US = 25000; // 25ms时间差容忍度
-    static constexpr int FRAME_WAIT_TIMEOUT_MS = 5;          // 帧等待超时(ms)
-    static constexpr int SYNC_RETRY_SLEEP_US = 100;          // 同步重试休眠(us)
+    static constexpr int FRAME_WAIT_TIMEOUT_MS = 1;          // 帧等待超时(ms) - 优化为1ms
+    static constexpr int SYNC_RETRY_SLEEP_US = 10;           // 同步重试休眠(us) - 优化为10us
     
     // 日志节流
     static constexpr int LOG_THROTTLE_MS = 1000;             // 日志节流周期(ms)
@@ -141,6 +141,7 @@ private:
     // ==================== 检测组件 ====================
     std::unique_ptr<YOLODetector> detector_;
     std::string model_path_;
+    int input_size_;  // 模型输入分辨率 (0=自动检测, 320/640=手动指定)
     float conf_threshold_;
     float nms_threshold_;
     int roi_size_;

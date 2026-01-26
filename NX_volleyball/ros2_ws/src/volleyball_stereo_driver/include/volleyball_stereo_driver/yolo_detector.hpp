@@ -28,7 +28,7 @@ struct Detection {
 class YOLODetector {
 public:
   YOLODetector(const std::string &engine_path, float conf_threshold = 0.5f,
-               float nms_threshold = 0.4f);
+               float nms_threshold = 0.4f, int input_size = 0);
   ~YOLODetector();
 
   Detection detectGlobal(const cv::Mat &image, int target_size = 640);

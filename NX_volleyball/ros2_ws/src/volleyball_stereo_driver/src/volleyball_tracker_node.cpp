@@ -22,8 +22,8 @@
 namespace volleyball {
 
 // ==================== 构造函数 ====================
-VolleyballTrackerNode::VolleyballTrackerNode()
-    : Node("volleyball_tracker"),
+VolleyballTrackerNode::VolleyballTrackerNode(const rclcpp::NodeOptions & options)
+    : Node("volleyball_tracker", options),
       state_(GLOBAL_SEARCH),
       lost_frames_(0),
       max_lost_frames_(10),
@@ -42,7 +42,7 @@ VolleyballTrackerNode::VolleyballTrackerNode()
     RCLCPP_INFO(this->get_logger(), "========================================");
     RCLCPP_INFO(this->get_logger(), "🏐 排球追踪节点 (All-in-One)");
     RCLCPP_INFO(this->get_logger(), "========================================");
-
+    
     // 1. 声明和加载参数
     declareParameters();
     loadParameters();
@@ -132,6 +132,7 @@ void VolleyballTrackerNode::declareParameters() {
     
     // 检测参数
     this->declare_parameter("detector.model_path", "model/yolo11n_batch2.engine");
+    this->declare_parameter("detector.input_size", 0);  // 0=自动检测
     this->declare_parameter("detector.confidence_threshold", 0.5);
     this->declare_parameter("detector.nms_threshold", 0.4);
     this->declare_parameter("detector.roi_size", 320);
@@ -170,6 +171,7 @@ void VolleyballTrackerNode::loadParameters() {
     
     // 检测参数
     model_path_ = this->get_parameter("detector.model_path").as_string();
+    input_size_ = this->get_parameter("detector.input_size").as_int();
     conf_threshold_ = this->get_parameter("detector.confidence_threshold").as_double();
     nms_threshold_ = this->get_parameter("detector.nms_threshold").as_double();
     roi_size_ = this->get_parameter("detector.roi_size").as_int();
@@ -253,25 +255,23 @@ bool VolleyballTrackerNode::initializeCameras() {
 // ==================== 初始化检测器 ====================
 bool VolleyballTrackerNode::initializeDetector() {
     RCLCPP_INFO(this->get_logger(), "🎯 初始化 YOLO 检测器...");
+    RCLCPP_INFO(this->get_logger(), "   配置的模型路径: %s", model_path_.c_str());
     
     std::string resolved_path = findFilePath(model_path_);
     
-    // 如果 batch2 模型不存在，尝试回退到 batch1
-    if (resolved_path.empty() && model_path_.find("batch2") != std::string::npos) {
-        std::string fallback_path = "model/yolo11n.engine";
-        RCLCPP_WARN(this->get_logger(), "⚠️  未找到 batch2 模型，尝试回退到: %s", fallback_path.c_str());
-        resolved_path = findFilePath(fallback_path);
-    }
-    
     if (resolved_path.empty()) {
-        RCLCPP_WARN(this->get_logger(), "⚠️  未找到模型文件: %s", model_path_.c_str());
+        RCLCPP_ERROR(this->get_logger(), "❌ 未找到模型文件: %s", model_path_.c_str());
+        RCLCPP_ERROR(this->get_logger(), "   请确认文件存在于 install/share/volleyball_stereo_driver/%s", model_path_.c_str());
         return false;
     }
     
     RCLCPP_INFO(this->get_logger(), "   模型路径: %s", resolved_path.c_str());
+    if (input_size_ > 0) {
+        RCLCPP_INFO(this->get_logger(), "   指定输入尺寸: %dx%d", input_size_, input_size_);
+    }
     
     detector_ = std::make_unique<YOLODetector>(
-        resolved_path, conf_threshold_, nms_threshold_);
+        resolved_path, conf_threshold_, nms_threshold_, input_size_);
     
     // 打印实际使用的模式
     if (detector_->isBatch2Model()) {
@@ -537,9 +537,7 @@ void VolleyballTrackerNode::inferenceLoop() {
 
 // ==================== YOLO 检测 ====================
 bool VolleyballTrackerNode::detectVolleyball(const cv::Mat& left, const cv::Mat& right) {
-    // 保存到成员变量
-    img_left_ = left;
-    img_right_ = right;
+    // img_left_ 和 img_right_ 已在调用前赋值，无需重复操作
     
     if (!detector_) {
         // 占位符模式：返回假检测结果
@@ -850,7 +848,17 @@ std::string VolleyballTrackerNode::findFilePath(const std::string& relative_path
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     
-    auto node = std::make_shared<volleyball::VolleyballTrackerNode>();
+    // ✅ 自动加载YAML配置文件
+    rclcpp::NodeOptions options;
+    try {
+        std::string share_dir = ament_index_cpp::get_package_share_directory("volleyball_stereo_driver");
+        std::string config_file = share_dir + "/config/tracker_params.yaml";
+        options.arguments({"--ros-args", "--params-file", config_file});
+    } catch (const std::exception& e) {
+        std::cerr << "⚠️  未找到配置文件，使用默认值: " << e.what() << std::endl;
+    }
+    
+    auto node = std::make_shared<volleyball::VolleyballTrackerNode>(options);
     
     RCLCPP_INFO(node->get_logger(), "🏐 排球追踪节点正在运行...");
     RCLCPP_INFO(node->get_logger(), "   按 Ctrl+C 停止");

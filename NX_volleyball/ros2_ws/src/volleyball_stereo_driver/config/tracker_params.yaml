@@ -23,7 +23,16 @@ volleyball_tracker:
       # 模型路径: 支持 batch=1 或 batch=2
       # - yolo11n.engine: batch=1, 双流并行模式
       # - yolo11n_batch2.engine: batch=2, 批量推理模式 (推荐)
-      model_path: "model/yolo11n_batch2.engine"
+      # - yolo_320.engine: batch=2, 320x320输入 (更快)
+      # model_path: "model/yolo11n_batch2.engine"yolo_320.engine
+      model_path: "model/yolo_320.engine"
+      
+      # 模型输入分辨率: 自动从Engine推断，也可手动指定
+      # - 0 (默认): 自动从TensorRT Engine读取
+      # - 320: 适用于yolo_320.engine (更快，精度略降)
+      # - 640: 适用于yolo11n_batch2.engine (精度更高)
+      input_size: 0  # 0=自动检测
+      
       confidence_threshold: 0.5
       nms_threshold: 0.4
       roi_size: 320

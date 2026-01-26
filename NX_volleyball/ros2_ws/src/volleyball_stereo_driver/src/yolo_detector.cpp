@@ -43,7 +43,7 @@ static Logger gLogger;
 namespace volleyball {
 
 YOLODetector::YOLODetector(const std::string &engine_path, float conf_threshold,
-                           float nms_threshold)
+                           float nms_threshold, int input_size)
     : runtime_(nullptr), engine_(nullptr), context_(nullptr), context2_(nullptr),
       input_buffer_device_(nullptr), output_buffer_device_(nullptr),
       input_buffer_host_(nullptr), output_buffer_host_(nullptr),
@@ -52,7 +52,7 @@ YOLODetector::YOLODetector(const std::string &engine_path, float conf_threshold,
       cuda_stream_(nullptr), cuda_stream2_(nullptr),
       gpu_resize_buffer_(nullptr), gpu_rgb_buffer_(nullptr),
       gpu_src_buffer_(nullptr), gpu_src_buffer2_(nullptr), gpu_src_buffer_size_(0),
-      input_size_(640), output_size_(0), batch_size_(1),
+      input_size_(input_size > 0 ? input_size : 640), output_size_(0), batch_size_(1),
       conf_threshold_(conf_threshold), nms_threshold_(nms_threshold) {
   std::cout << "🎯 初始化 YOLO 检测器..." << std::endl;
   std::cout << "   模型: " << engine_path << std::endl;
@@ -177,12 +177,30 @@ bool YOLODetector::loadEngine(const std::string &engine_path) {
       if (d < dims.nbDims - 1) std::cout << ", ";
     }
     std::cout << "]" << std::endl;
+    
+    // ✅ 自动推断input_size（如果构造时传入0）
+    if (mode == nvinfer1::TensorIOMode::kINPUT && input_size_ == 0) {
+      if (dims.nbDims == 4 && dims.d[2] == dims.d[3]) {
+        input_size_ = dims.d[2];  // [batch, 3, H, W] → H
+        std::cout << "     ✅ 自动检测输入尺寸: " << input_size_ << "x" << input_size_ << std::endl;
+      }
+    }
   }
 
   // 获取输入输出维度
   // YOLOv11n: 输入 [batch, 3, 640, 640], 输出 [batch, 5, 8400]
-  input_size_ = 640;
-  output_size_ = 5 * 8400; // 单batch: [cx, cy, w, h, conf] × 8400
+  // YOLOv11n-320: 输入 [batch, 3, 320, 320], 输出 [batch, 5, 2100]
+  if (input_size_ == 0) {
+    input_size_ = 640;  // 回退默认值
+    std::cout << "⚠️  未能自动检测输入尺寸，使用默认: 640x640" << std::endl;
+  }
+  
+  // ✅ 根据输入尺寸动态计算输出大小
+  // 640x640 → 8400 anchors, 320x320 → 2100 anchors
+  int num_anchors = (input_size_ / 8) * (input_size_ / 8) + 
+                    (input_size_ / 16) * (input_size_ / 16) + 
+                    (input_size_ / 32) * (input_size_ / 32);
+  output_size_ = 5 * num_anchors; // [cx, cy, w, h, conf] × anchors
 
   // 分配缓冲区
   if (!allocateBuffers()) {
