@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <array>
+#include <functional>
 #include <opencv2/opencv.hpp>
 #include "MvCameraControl.h"
 
@@ -33,6 +34,9 @@ struct FrameMetadata {
     
     FrameMetadata() : receive_time(std::chrono::steady_clock::now()) {}
 };
+
+// 外部回调函数类型定义
+using FrameCallback = std::function<void(const cv::Mat&, const FrameMetadata&)>;
 
 /**
  * @class HikCamera
@@ -134,6 +138,12 @@ public:
      * @return FrameMetadata 帧元数据
      */
     FrameMetadata getFrameMetadata() const;
+    
+    /**
+     * @brief 设置外部回调函数 (用于双缓冲架构)
+     * @param callback 外部回调函数
+     */
+    void setFrameCallback(FrameCallback callback);
 
     /**
      * @brief 获取相机信息
@@ -192,6 +202,9 @@ private:
     std::atomic<bool> new_frame_ready_{false};
     std::mutex frame_mutex_;
     std::condition_variable frame_cv_;
+    
+    // 外部回调函数
+    FrameCallback external_callback_;
     
     // 预分配转换缓冲区
     std::vector<unsigned char> convert_buffer_;

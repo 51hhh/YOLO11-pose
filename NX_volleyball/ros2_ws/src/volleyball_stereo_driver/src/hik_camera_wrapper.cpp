@@ -452,10 +452,12 @@ void HikCamera::onImageCallback(MV_FRAME_OUT* pFrame) {
     if (!pFrame || !pFrame->pBufAddr) return;
     
     // 提取帧元数据（帧号 + 时间戳）
-    uint32_t frame_num = pFrame->stFrameInfo.nFrameNum;
-    uint64_t dev_timestamp = ((uint64_t)pFrame->stFrameInfo.nDevTimeStampHigh << 32) 
-                           | pFrame->stFrameInfo.nDevTimeStampLow;
-    uint32_t host_timestamp = pFrame->stFrameInfo.nHostTimeStamp;
+    FrameMetadata metadata;
+    metadata.frame_number = pFrame->stFrameInfo.nFrameNum;
+    metadata.device_timestamp = ((uint64_t)pFrame->stFrameInfo.nDevTimeStampHigh << 32) 
+                              | pFrame->stFrameInfo.nDevTimeStampLow;
+    metadata.host_timestamp = pFrame->stFrameInfo.nHostTimeStamp;
+    metadata.receive_time = std::chrono::steady_clock::now();
     
     // 获取写入缓冲区索引（交替写入）
     int idx = write_index_.load();
@@ -470,10 +472,13 @@ void HikCamera::onImageCallback(MV_FRAME_OUT* pFrame) {
                      dst);
     
     // 保存帧元数据
-    frame_metadata_[idx].frame_number = frame_num;
-    frame_metadata_[idx].device_timestamp = dev_timestamp;
-    frame_metadata_[idx].host_timestamp = host_timestamp;
-    frame_metadata_[idx].receive_time = std::chrono::steady_clock::now();
+    frame_metadata_[idx] = metadata;
+    
+    // 🚀 调用外部回调函数（如果已设置）
+    if (external_callback_) {
+        external_callback_(dst, metadata);
+    }
+    
     // 切换写入索引
     write_index_.store(1 - idx);
     
@@ -580,6 +585,10 @@ std::string HikCamera::getCameraInfo() const {
 FrameMetadata HikCamera::getFrameMetadata() const {
     int idx = read_index_.load();
     return frame_metadata_[idx];
+}
+
+void HikCamera::setFrameCallback(FrameCallback callback) {
+    external_callback_ = callback;
 }
 
 }  // namespace volleyball

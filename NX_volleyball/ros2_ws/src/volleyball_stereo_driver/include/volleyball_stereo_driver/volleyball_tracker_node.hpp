@@ -40,18 +40,24 @@ namespace volleyball {
 
 /**
  * @struct CameraFrame
- * @brief 相机帧数据结构 (包含图像 + 元数据 + 标志位)
- * 参考: RC_Volleyball_vision 的全局帧缓冲设计
+ * @brief 相机帧数据结构 (双缓冲设计)
+ * 相机回调线程写入 → 推理线程读取，避免轮询等待
  */
 struct CameraFrame {
-    cv::Mat image;                    // 图像数据
-    FrameMetadata metadata;           // 帧元数据 (帧号、时间戳)
-    std::atomic<bool> ready{false};   // 就绪标志位
+    cv::Mat image;          // 图像数据
+    FrameMetadata metadata; // 帧元数据 (帧号、时间戳)
+    bool valid{false};      // 数据有效性标志
+    
+    void set(const cv::Mat& img, const FrameMetadata& meta) {
+        image = img.clone();  // 深拷贝避免数据竞争
+        metadata = meta;
+        valid = true;
+    }
     
     void reset() {
         image.release();
         metadata = FrameMetadata();
-        ready.store(false);
+        valid = false;
     }
 };
 
@@ -86,12 +92,12 @@ private:
     // ==================== 线程方法 ====================
     void inferenceLoop();    // 推理线程: 轮询标志位同步
     
-    // ==================== 帧同步方法 (PWM时间戳同步) ====================
+    // ==================== 帧同步方法 (双缓冲+条件变量) ====================
     bool waitForSyncedPair(cv::Mat& left, cv::Mat& right,
                           FrameMetadata& left_meta,
                           FrameMetadata& right_meta);
-    void updateLeftFrame();   // 左相机回调处理
-    void updateRightFrame();  // 右相机回调处理
+    void onLeftFrameCallback(const cv::Mat& image, const FrameMetadata& metadata);   // 左相机回调
+    void onRightFrameCallback(const cv::Mat& image, const FrameMetadata& metadata);  // 右相机回调
     
     // ==================== 处理流程 (在推理线程中) ====================
     bool detectVolleyball(const cv::Mat& left, const cv::Mat& right);
@@ -113,20 +119,14 @@ private:
     // 同步参数
     static constexpr int SYNC_MAX_FRAME_DIFF = 3;           // 帧号差容忍度
     static constexpr int64_t SYNC_MAX_TIME_DIFF_US = 25000; // 25ms时间差容忍度
-    static constexpr int FRAME_WAIT_TIMEOUT_MS = 0;          // ⚡ 优化: 0ms = 非阻塞轮询
-    static constexpr int SYNC_RETRY_SLEEP_US = 1;            // ⚡ 优化: 降到1us（最小CPU yield）
+    static constexpr int CONDITION_WAIT_TIMEOUT_MS = 20;     // 条件变量等待超时 (20ms > 10ms采集周期)
     
     // 日志节流
     static constexpr int LOG_THROTTLE_MS = 1000;             // 日志节流周期(ms)
     
-    // ⚡ 性能分析统计
+    // ⚡ 性能分析统计（双缓冲模式）
     struct PerformanceStats {
-        double total_loop_time = 0;
-        double total_wait_left_time = 0;
-        double total_wait_right_time = 0;
-        double total_sync_check_time = 0;
-        double total_sync_retry_time = 0;
-        int sync_retry_count = 0;
+        double total_sync_check_time = 0;  // 条件变量等待总时间
         std::chrono::high_resolution_clock::time_point last_frame_time;
     };
     PerformanceStats perf_stats_;
@@ -188,16 +188,25 @@ private:
     std::atomic<bool> running_;
     std::thread inference_thread_;   // 推理线程 (轮询标志位)
     
-    // ==================== 全局帧缓冲 + 标志位同步 (参考RC项目) ====================
-    CameraFrame left_frame_;         // 左相机帧缓冲
-    CameraFrame right_frame_;        // 右相机帧缓冲
-    std::mutex frame_sync_mutex_;    // 同步锁
+    // ==================== 双缓冲架构 + 条件变量同步 ====================
+    // 双缓冲设计: 相机回调写入 → 推理线程读取
+    std::array<CameraFrame, 2> left_buffers_;   // 左相机双缓冲 [0=写入, 1=读取]
+    std::array<CameraFrame, 2> right_buffers_;  // 右相机双缓冲
+    std::atomic<int> left_write_idx_{0};        // 左缓冲写索引
+    std::atomic<int> right_write_idx_{0};       // 右缓冲写索引
+    
+    std::mutex frame_mutex_;                    // 帧数据互斥锁
+    std::condition_variable frame_cv_;          // 条件变量 (取代轮询)
+    std::atomic<bool> new_frame_available_{false}; // 新帧可用标志
     
     // ==================== 同步统计 ====================
     std::atomic<uint64_t> sync_success_count_{0};   // 帧号匹配成功次数
     std::atomic<uint64_t> sync_mismatch_count_{0};  // 帧号失配次数
     std::atomic<uint64_t> left_dropped_{0};         // 左帧丢弃次数
     std::atomic<uint64_t> right_dropped_{0};        // 右帧丢弃次数
+    std::atomic<uint64_t> left_buffer_swaps_{0};    // 左缓冲区切换次数
+    std::atomic<uint64_t> right_buffer_swaps_{0};   // 右缓冲区切换次数
+    std::atomic<uint64_t> cv_wakeups_{0};           // 条件变量唤醒次数
     
     // ==================== 当前帧数据 ====================
     cv::Mat img_left_, img_right_;

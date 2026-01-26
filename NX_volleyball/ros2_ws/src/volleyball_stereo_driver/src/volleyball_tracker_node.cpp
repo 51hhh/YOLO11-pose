@@ -79,20 +79,24 @@ VolleyballTrackerNode::VolleyballTrackerNode(const rclcpp::NodeOptions & options
         return;
     }
 
-    // 4. 启动推理线程 (轮询模式，参考RC_Volleyball_vision)
+    // 4. 启动推理线程 (双缓冲+条件变量模式)
     running_ = true;
     inference_thread_ = std::thread(&VolleyballTrackerNode::inferenceLoop, this);
 
     RCLCPP_INFO(this->get_logger(), "========================================");
-    RCLCPP_INFO(this->get_logger(), "✅ 排球追踪节点已启动 (PWM时间戳同步)");
+    RCLCPP_INFO(this->get_logger(), "✅ 排球追踪节点已启动 (双缓冲+条件变量)");
     RCLCPP_INFO(this->get_logger(), "   PWM: %.1f Hz", pwm_frequency_);
     RCLCPP_INFO(this->get_logger(), "   同步策略: 帧号差≤3 且 时间差<25ms");
+    RCLCPP_INFO(this->get_logger(), "   架构: 零轮询、零等待、快速响应");
     RCLCPP_INFO(this->get_logger(), "========================================");
 }
 
 // ==================== 析构函数 ====================
 VolleyballTrackerNode::~VolleyballTrackerNode() {
     running_ = false;
+    
+    // 通知条件变量唤醒线程
+    frame_cv_.notify_all();
     
     // 等待推理线程结束
     if (inference_thread_.joinable()) {
@@ -244,11 +248,26 @@ bool VolleyballTrackerNode::initializeCameras() {
     cam_right_->setExposureTime(exposure_time_);
     cam_right_->setGain(gain_);
     
+    // 🚀 注册外部回调函数（绑定到双缓冲架构）
+    cam_left_->setFrameCallback(
+        std::bind(&VolleyballTrackerNode::onLeftFrameCallback, this,
+                  std::placeholders::_1, std::placeholders::_2));
+    
+    cam_right_->setFrameCallback(
+        std::bind(&VolleyballTrackerNode::onRightFrameCallback, this,
+                  std::placeholders::_1, std::placeholders::_2));
+    
     if (!cam_left_->startGrabbing() || !cam_right_->startGrabbing()) {
         return false;
     }
     
-    RCLCPP_INFO(this->get_logger(), "✅ 相机已启动");
+    // 初始化双缓冲区
+    for (int i = 0; i < 2; i++) {
+        left_buffers_[i].reset();
+        right_buffers_[i].reset();
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "✅ 相机已启动 (双缓冲+条件变量模式)");
     return true;
 }
 
@@ -342,66 +361,99 @@ void VolleyballTrackerNode::createPublishers() {
     RCLCPP_INFO(this->get_logger(), "📡 发布器已创建 (SensorDataQoS: 低延迟模式)");
 }
 
-// ==================== 帧更新方法 (轮询相机回调，参考RC项目) ====================
-void VolleyballTrackerNode::updateLeftFrame() {
-    // 轮询左相机回调是否有新帧 (非阻塞)
-    if (!cam_left_->waitForNewFrame(FRAME_WAIT_TIMEOUT_MS)) {
-        return;  // 无新帧，直接返回
-    }
+// ==================== 相机回调函数 (双缓冲写入) ====================
+void VolleyballTrackerNode::onLeftFrameCallback(const cv::Mat& image, const FrameMetadata& metadata) {
+    // 🚀 相机回调直接写入双缓冲，零拷贝设计
+    int write_idx = left_write_idx_.load();
+    int read_idx = 1 - write_idx;
     
-    std::lock_guard<std::mutex> lock(frame_sync_mutex_);
-    
-    // 如果上一帧还未被处理，丢弃 (推理太慢)
-    if (left_frame_.ready.load()) {
+    // 检查读缓冲区是否还在被使用（推理太慢）
+    if (left_buffers_[read_idx].valid) {
         left_dropped_++;
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), LOG_THROTTLE_MS,
-                            "⚠️  Left frame dropped (inference too slow)");
+        // 不打印日志，避免回调中IO延迟
+        return;
     }
     
-    // 获取新帧 + 元数据
-    left_frame_.image = cam_left_->getLatestImage().clone();
-    left_frame_.metadata = cam_left_->getFrameMetadata();
-    left_frame_.ready.store(true);
+    // 写入当前缓冲区
+    left_buffers_[write_idx].set(image, metadata);
+    left_buffer_swaps_++;
+    
+    // 切换缓冲区
+    left_write_idx_.store(read_idx);
+    
+    // 通知推理线程
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        new_frame_available_.store(true);
+    }
+    frame_cv_.notify_one();
+    cv_wakeups_++;
 }
 
-void VolleyballTrackerNode::updateRightFrame() {
-    // 轮询右相机回调是否有新帧 (非阻塞)
-    if (!cam_right_->waitForNewFrame(FRAME_WAIT_TIMEOUT_MS)) {
-        return;  // 无新帧，直接返回
-    }
+void VolleyballTrackerNode::onRightFrameCallback(const cv::Mat& image, const FrameMetadata& metadata) {
+    // 🚀 相机回调直接写入双缓冲
+    int write_idx = right_write_idx_.load();
+    int read_idx = 1 - write_idx;
     
-    std::lock_guard<std::mutex> lock(frame_sync_mutex_);
-    
-    // 如果上一帧还未被处理，丢弃
-    if (right_frame_.ready.load()) {
+    // 检查读缓冲区是否还在被使用
+    if (right_buffers_[read_idx].valid) {
         right_dropped_++;
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), LOG_THROTTLE_MS,
-                            "⚠️  Right frame dropped (inference too slow)");
+        return;
     }
     
-    // 获取新帧 + 元数据
-    right_frame_.image = cam_right_->getLatestImage().clone();
-    right_frame_.metadata = cam_right_->getFrameMetadata();
-    right_frame_.ready.store(true);
+    // 写入当前缓冲区
+    right_buffers_[write_idx].set(image, metadata);
+    right_buffer_swaps_++;
+    
+    // 切换缓冲区
+    right_write_idx_.store(read_idx);
+    
+    // 通知推理线程
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        new_frame_available_.store(true);
+    }
+    frame_cv_.notify_one();
+    cv_wakeups_++;
 }
 
-// ==================== PWM时间戳同步核心逻辑 ====================
+// ==================== PWM时间戳同步核心逻辑 (双缓冲+条件变量) ====================
 bool VolleyballTrackerNode::waitForSyncedPair(
     cv::Mat& left, cv::Mat& right,
     FrameMetadata& left_meta, FrameMetadata& right_meta)
 {
-    std::lock_guard<std::mutex> lock(frame_sync_mutex_);
+    // 🚀 条件变量等待新帧，替代轮询
+    std::unique_lock<std::mutex> lock(frame_mutex_);
     
-    // 检查两帧是否都ready
-    if (!left_frame_.ready.load() || !right_frame_.ready.load()) {
+    // 等待新帧到达或超时
+    bool notified = frame_cv_.wait_for(lock, 
+        std::chrono::milliseconds(CONDITION_WAIT_TIMEOUT_MS),
+        [this]() { return new_frame_available_.load() || !running_; });
+    
+    if (!running_) {
+        return false;  // 节点正在关闭
+    }
+    
+    // 重置标志位
+    new_frame_available_.store(false);
+    
+    // 获取读缓冲区索引
+    int left_read = 1 - left_write_idx_.load();
+    int right_read = 1 - right_write_idx_.load();
+    
+    // 检查两帧是否都有效
+    if (!left_buffers_[left_read].valid || !right_buffers_[right_read].valid) {
         return false;
     }
     
     // ========== PWM时间戳同步：帧号差异 + 接收时间双重检验 ==========
-    auto left_recv = left_frame_.metadata.receive_time;
-    auto right_recv = right_frame_.metadata.receive_time;
-    uint32_t left_num = left_frame_.metadata.frame_number;
-    uint32_t right_num = right_frame_.metadata.frame_number;
+    const FrameMetadata& left_data = left_buffers_[left_read].metadata;
+    const FrameMetadata& right_data = right_buffers_[right_read].metadata;
+    
+    auto left_recv = left_data.receive_time;
+    auto right_recv = right_data.receive_time;
+    uint32_t left_num = left_data.frame_number;
+    uint32_t right_num = right_data.frame_number;
     
     // 1. 检查帧号差异（PWM同步触发，帧号应该相同或相差1）
     int frame_diff = std::abs(static_cast<int>(left_num) - static_cast<int>(right_num));
@@ -424,9 +476,9 @@ bool VolleyballTrackerNode::waitForSyncedPair(
         
         // 丢弃旧帧（帧号小的，或帧号相同时接收时间早的）
         if (left_num < right_num || (left_num == right_num && left_recv < right_recv)) {
-            left_frame_.reset();
+            left_buffers_[left_read].reset();
         } else {
-            right_frame_.reset();
+            right_buffers_[right_read].reset();
         }
         return false;
     }
@@ -434,41 +486,28 @@ bool VolleyballTrackerNode::waitForSyncedPair(
     // 同步成功
     sync_success_count_++;
     
-    // 拷贝数据
-    left = left_frame_.image.clone();
-    right = right_frame_.image.clone();
-    left_meta = left_frame_.metadata;
-    right_meta = right_frame_.metadata;
+    // 拷贝数据（浅拷贝，避免额外开销）
+    left = left_buffers_[left_read].image;
+    right = right_buffers_[right_read].image;
+    left_meta = left_data;
+    right_meta = right_data;
     
-    // 重置标志位
-    left_frame_.reset();
-    right_frame_.reset();
+    // 标记已读取（允许相机回调覆盖）
+    left_buffers_[left_read].reset();
+    right_buffers_[right_read].reset();
     
     return true;
 }
 
-// ==================== 推理线程 (轮询标志位同步，参考RC项目) ====================
+// ==================== 推理线程 (双缓冲+条件变量，零轮询开销) ====================
 void VolleyballTrackerNode::inferenceLoop() {
-    RCLCPP_INFO(this->get_logger(), "🧠 推理线程已启动 (PWM时间戳同步模式 + 性能分析)");
+    RCLCPP_INFO(this->get_logger(), "🧠 推理线程已启动 (双缓冲+条件变量模式，零轮询)");
     
     last_stat_time_ = std::chrono::high_resolution_clock::now();
     perf_stats_.last_frame_time = std::chrono::high_resolution_clock::now();
     
     while (running_ && rclcpp::ok()) {
-        auto loop_start = std::chrono::high_resolution_clock::now();
-        
-        // ========== 1. 更新相机帧 (轮询回调) + 时间统计 ==========
-        auto wait_left_start = std::chrono::high_resolution_clock::now();
-        updateLeftFrame();
-        auto wait_left_end = std::chrono::high_resolution_clock::now();
-        perf_stats_.total_wait_left_time += std::chrono::duration<double, std::milli>(wait_left_end - wait_left_start).count();
-        
-        auto wait_right_start = std::chrono::high_resolution_clock::now();
-        updateRightFrame();
-        auto wait_right_end = std::chrono::high_resolution_clock::now();
-        perf_stats_.total_wait_right_time += std::chrono::duration<double, std::milli>(wait_right_end - wait_right_start).count();
-        
-        // ========== 2. 等待同步帧对 (帧号匹配) + 时间统计 ==========
+        // ========== 1. 等待同步帧对 (条件变量，零轮询) ==========
         cv::Mat left, right;
         FrameMetadata left_meta, right_meta;
         
@@ -478,12 +517,7 @@ void VolleyballTrackerNode::inferenceLoop() {
         perf_stats_.total_sync_check_time += std::chrono::duration<double, std::milli>(sync_check_end - sync_check_start).count();
         
         if (!synced) {
-            // ⚡ 优化: 最小延迟重试 (1us CPU yield)
-            auto retry_start = std::chrono::high_resolution_clock::now();
-            std::this_thread::sleep_for(std::chrono::microseconds(SYNC_RETRY_SLEEP_US));
-            auto retry_end = std::chrono::high_resolution_clock::now();
-            perf_stats_.total_sync_retry_time += std::chrono::duration<double, std::milli>(retry_end - retry_start).count();
-            perf_stats_.sync_retry_count++;
+            // 同步失败，继续等待下一对
             continue;
         }
         
@@ -734,15 +768,11 @@ void VolleyballTrackerNode::printStatistics() {
     double avg_tracking = total_tracking_time_ / frame_count_;
     double avg_total = avg_detection + avg_stereo + avg_tracking;
     
-    // ⚡ 性能瓶颈分析统计
-    double avg_wait_left = perf_stats_.total_wait_left_time / frame_count_;
-    double avg_wait_right = perf_stats_.total_wait_right_time / frame_count_;
+    // ⚡ 性能瓶颈分析统计（双缓冲模式）
     double avg_sync_check = perf_stats_.total_sync_check_time / frame_count_;
-    double avg_sync_retry = 0.0;
-    if (perf_stats_.sync_retry_count > 0) {
-        avg_sync_retry = perf_stats_.total_sync_retry_time / perf_stats_.sync_retry_count;
-    }
-    double total_wait = avg_wait_left + avg_wait_right + avg_sync_check;
+    uint64_t left_swaps = left_buffer_swaps_.load();
+    uint64_t right_swaps = right_buffer_swaps_.load();
+    uint64_t cv_wakes = cv_wakeups_.load();
     
     // ✅ 新增：同步统计
     uint64_t sync_success = sync_success_count_.load();
@@ -758,14 +788,10 @@ void VolleyballTrackerNode::printStatistics() {
                 "🧠 [推理线程 %ld帧] FPS: %.1f | 检测: %.2fms | 立体: %.2fms | 追踪: %.2fms | 总计: %.2fms",
                 frame_count_, fps, avg_detection, avg_stereo, avg_tracking, avg_total);
     
-    // ⚡ 性能瓶颈分析
+    // ⚡ 双缓冲+条件变量性能分析
     RCLCPP_INFO(this->get_logger(),
-                "   ⚡ [性能分析] 等待开销: %.3fms (Left: %.3fms + Right: %.3fms + Sync: %.3fms)",
-                total_wait, avg_wait_left, avg_wait_right, avg_sync_check);
-    
-    RCLCPP_INFO(this->get_logger(),
-                "   ⚡ [重试开销] 重试次数: %d | 平均重试延迟: %.3fms | 总重试损耗: %.2fms",
-                perf_stats_.sync_retry_count, avg_sync_retry, perf_stats_.total_sync_retry_time);
+                "   🚀 [双缓冲] 同步延迟: %.3fms | L缓冲切换: %lu | R缓冲切换: %lu | 条件变量唤醒: %lu",
+                avg_sync_check, left_swaps, right_swaps, cv_wakes);
     
     RCLCPP_INFO(this->get_logger(),
                 "   🔄 同步成功: %lu | 失配: %lu | 丢帧: L=%lu R=%lu | 同步率: %.1f%%",
@@ -798,12 +824,8 @@ void VolleyballTrackerNode::printStatistics() {
     total_stereo_time_ = 0.0;
     total_tracking_time_ = 0.0;
     
-    // ⚡ 重置性能分析统计
-    perf_stats_.total_wait_left_time = 0;
-    perf_stats_.total_wait_right_time = 0;
+    // ⚡ 重置性能分析统计（双缓冲模式）
     perf_stats_.total_sync_check_time = 0;
-    perf_stats_.total_sync_retry_time = 0;
-    perf_stats_.sync_retry_count = 0;
     last_stat_time_ = now;
 }
 
