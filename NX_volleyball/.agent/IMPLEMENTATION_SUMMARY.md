@@ -131,6 +131,13 @@ ros2 run volleyball_stereo_driver volleyball_tracker_node \
 - ✅ 动态噪声调整
 - ✅ 稀疏去畸变
 
+### 采集同步流水线重构
+- ✅ 回调模式采集：SDK内部线程推送帧，零等待；双缓冲避免数据竞争
+- ✅ 帧元数据：`frame_number`、设备/主机时间戳、接收时间用于同步
+- ✅ PWM时间戳同步：帧号差≤3、接收时间差<25ms，自动丢弃旧帧重试
+- ✅ 参考 RC_Volleyball_vision：将原阻塞式 `GetOneFrameTimeout` 改为高效回调与非阻塞轮询
+- 🛠️ Bug修复：在分配图像缓冲区前获取分辨率，避免创建 0×0 Mat（已修复于 `hik_camera_wrapper.cpp`）
+
 ---
 
 ## ⚠️ 待完成项

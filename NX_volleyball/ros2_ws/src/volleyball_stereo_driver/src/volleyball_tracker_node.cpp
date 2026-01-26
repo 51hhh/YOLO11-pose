@@ -344,8 +344,8 @@ void VolleyballTrackerNode::createPublishers() {
 
 // ==================== 帧更新方法 (轮询相机回调，参考RC项目) ====================
 void VolleyballTrackerNode::updateLeftFrame() {
-    // 轮询左相机回调是否有新帧 (非阻塞，5ms超时)
-    if (!cam_left_->waitForNewFrame(5)) {
+    // 轮询左相机回调是否有新帧 (非阻塞)
+    if (!cam_left_->waitForNewFrame(FRAME_WAIT_TIMEOUT_MS)) {
         return;  // 无新帧，直接返回
     }
     
@@ -354,7 +354,7 @@ void VolleyballTrackerNode::updateLeftFrame() {
     // 如果上一帧还未被处理，丢弃 (推理太慢)
     if (left_frame_.ready.load()) {
         left_dropped_++;
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), LOG_THROTTLE_MS,
                             "⚠️  Left frame dropped (inference too slow)");
     }
     
@@ -365,8 +365,8 @@ void VolleyballTrackerNode::updateLeftFrame() {
 }
 
 void VolleyballTrackerNode::updateRightFrame() {
-    // 轮询右相机回调是否有新帧 (非阻塞，5ms超时)
-    if (!cam_right_->waitForNewFrame(5)) {
+    // 轮询右相机回调是否有新帧 (非阻塞)
+    if (!cam_right_->waitForNewFrame(FRAME_WAIT_TIMEOUT_MS)) {
         return;  // 无新帧，直接返回
     }
     
@@ -375,7 +375,7 @@ void VolleyballTrackerNode::updateRightFrame() {
     // 如果上一帧还未被处理，丢弃
     if (right_frame_.ready.load()) {
         right_dropped_++;
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), LOG_THROTTLE_MS,
                             "⚠️  Right frame dropped (inference too slow)");
     }
     
@@ -412,15 +412,13 @@ bool VolleyballTrackerNode::waitForSyncedPair(
     ).count();
     
     // 同步条件：
-    // - 帧号差异 <= 3（容忍USB传输顺序固定导致的系统性延迟）
-    // - 接收时间差异 < 25ms（容忍USB传输延迟，PWM周期10ms × 2.5倍）
-    const int MAX_FRAME_DIFF = 3;
-    const int64_t MAX_TIME_DIFF_US = 25000;  // 25ms
+    // - 帧号差异 <= SYNC_MAX_FRAME_DIFF（容忍USB传输顺序固定导致的系统性延迟）
+    // - 接收时间差异 < SYNC_MAX_TIME_DIFF_US（容忍USB传输延迟，PWM周期10ms × 2.5倍）
     
-    if (frame_diff > MAX_FRAME_DIFF || time_diff > MAX_TIME_DIFF_US) {
+    if (frame_diff > SYNC_MAX_FRAME_DIFF || time_diff > SYNC_MAX_TIME_DIFF_US) {
         sync_mismatch_count_++;
         
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), LOG_THROTTLE_MS,
             "⚠️  同步失败: L#%u vs R#%u | ΔFrame=%d Δ=%ldμs",
             left_num, right_num, frame_diff, time_diff);
         
@@ -466,7 +464,7 @@ void VolleyballTrackerNode::inferenceLoop() {
         
         if (!waitForSyncedPair(left, right, left_meta, right_meta)) {
             // 无同步帧，短暂休眠后重试
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            std::this_thread::sleep_for(std::chrono::microseconds(SYNC_RETRY_SLEEP_US));
             continue;
         }
         
@@ -482,7 +480,7 @@ void VolleyballTrackerNode::inferenceLoop() {
         pub_trigger_->publish(trigger_msg);
         
         // ========== 4. 发布原始图像 (降低频率) ==========
-        if (publish_images_ && frame_count_ % 10 == 0) {
+        if (publish_images_ && frame_count_ % RAW_IMAGE_PUBLISH_INTERVAL == 0) {
             publishImages();
         }
         
@@ -641,7 +639,7 @@ void VolleyballTrackerNode::publishResults() {
     // 发布检测可视化图像（降低频率减少负载）
     if (publish_detection_image_ && !img_left_.empty() && 
         pub_detection_image_->get_subscription_count() > 0 &&
-        frame_count_ % 5 == 0) {
+        frame_count_ % DETECTION_IMAGE_PUBLISH_INTERVAL == 0) {
         cv::Mat vis_img = drawDetections(img_left_, det_left_, true);
         auto img_msg = cvMatToRosImage(vis_img, "bgr8", current_stamp_);
         pub_detection_image_->publish(*img_msg);

@@ -11,6 +11,18 @@
 #include <fstream>
 #include <iostream>
 
+// CUDA错误检查宏
+#define CHECK_CUDA(call)                                                      \
+  do {                                                                        \
+    cudaError_t err = call;                                                   \
+    if (err != cudaSuccess) {                                                 \
+      std::cerr << "❌ CUDA错误: " << cudaGetErrorString(err)               \
+                << " (文件: " << __FILE__ << ", 行: " << __LINE__ << ")"    \
+                << std::endl;                                                 \
+      return false;                                                           \
+    }                                                                         \
+  } while (0)
+
 // 外部CUDA函数声明
 extern "C" void launchPreprocessKernel(const unsigned char* src, float* dst,
                                         int src_w, int src_h, int dst_w, int dst_h,
@@ -164,7 +176,10 @@ bool YOLODetector::loadEngine(const std::string &engine_path) {
   output_size_ = 5 * 8400; // 单batch: [cx, cy, w, h, conf] × 8400
 
   // 分配缓冲区
-  allocateBuffers();
+  if (!allocateBuffers()) {
+    std::cerr << "❌ 缓冲区分配失败" << std::endl;
+    return false;
+  }
 
   std::cout << "✅ Engine 加载成功" << std::endl;
   std::cout << "   Batch 大小: " << batch_size_ << std::endl;
@@ -180,7 +195,7 @@ bool YOLODetector::loadEngine(const std::string &engine_path) {
   return true;
 }
 
-void YOLODetector::allocateBuffers() {
+bool YOLODetector::allocateBuffers() {
   // ✅ 确保 batch_size 至少为 1
   if (batch_size_ <= 0) {
     std::cout << "⚠️  检测到动态 batch (size=" << batch_size_ << ")，强制设为 1" << std::endl;
@@ -195,41 +210,43 @@ void YOLODetector::allocateBuffers() {
   size_t input_size_bytes = batch_size_ * single_input_bytes;
   size_t output_size_bytes = batch_size_ * single_output_bytes;
   
-  cudaMalloc(&input_buffer_device_, input_size_bytes);
-  cudaMallocHost(&input_buffer_host_, input_size_bytes);  // pinned memory
+  CHECK_CUDA(cudaMalloc(&input_buffer_device_, input_size_bytes));
+  CHECK_CUDA(cudaMallocHost(&input_buffer_host_, input_size_bytes));  // pinned memory
 
-  cudaMalloc(&output_buffer_device_, output_size_bytes);
-  cudaMallocHost(&output_buffer_host_, output_size_bytes);  // pinned memory
+  CHECK_CUDA(cudaMalloc(&output_buffer_device_, output_size_bytes));
+  CHECK_CUDA(cudaMallocHost(&output_buffer_host_, output_size_bytes));  // pinned memory
   
   // ========== 双流并行推理备用：第二套缓冲区 (仅 batch=1 时使用) ==========
   if (batch_size_ == 1) {
-    cudaMalloc(&input_buffer_device2_, single_input_bytes);
-    cudaMalloc(&output_buffer_device2_, single_output_bytes);
-    cudaMallocHost(&output_buffer_host2_, single_output_bytes);
+    CHECK_CUDA(cudaMalloc(&input_buffer_device2_, single_input_bytes));
+    CHECK_CUDA(cudaMalloc(&output_buffer_device2_, single_output_bytes));
+    CHECK_CUDA(cudaMallocHost(&output_buffer_host2_, single_output_bytes));
     
     // 创建第二个执行上下文
     context2_ = engine_->createExecutionContext();
     if (!context2_) {
       std::cerr << "❌ 创建第二执行上下文失败" << std::endl;
-    } else {
-      std::cout << "✅ 双执行上下文已创建 (双流并行模式)" << std::endl;
+      return false;
     }
+    std::cout << "✅ 双执行上下文已创建 (双流并行模式)" << std::endl;
   }
   
   // GPU预处理缓冲 (resize + RGB)
   size_t resize_bytes = input_size_ * input_size_ * 3 * sizeof(unsigned char);
-  cudaMalloc(&gpu_resize_buffer_, resize_bytes);
-  cudaMalloc(&gpu_rgb_buffer_, resize_bytes);
+  CHECK_CUDA(cudaMalloc(&gpu_resize_buffer_, resize_bytes));
+  CHECK_CUDA(cudaMalloc(&gpu_rgb_buffer_, resize_bytes));
   
   // ✅ 预分配GPU源图像缓冲区 (1440x1080x3 = 4.67MB, 预留6MB)
   gpu_src_buffer_size_ = 6 * 1024 * 1024;  // 6MB足够大多数分辨率
-  cudaMalloc(&gpu_src_buffer_, gpu_src_buffer_size_);
-  cudaMalloc(&gpu_src_buffer2_, gpu_src_buffer_size_);  // 第二路源图像缓冲
+  CHECK_CUDA(cudaMalloc(&gpu_src_buffer_, gpu_src_buffer_size_));
+  CHECK_CUDA(cudaMalloc(&gpu_src_buffer2_, gpu_src_buffer_size_));  // 第二路源图像缓冲
 
   std::cout << "📊 缓冲区分配 (batch=" << batch_size_ << "):" << std::endl;
   std::cout << "   输入: " << input_size_bytes / (1024.0 * 1024.0) << " MB (pinned)" << std::endl;
   std::cout << "   输出: " << output_size_bytes / (1024.0 * 1024.0) << " MB (pinned)" << std::endl;
   std::cout << "   GPU源图像缓冲x2: " << gpu_src_buffer_size_ * 2 / (1024.0 * 1024.0) << " MB" << std::endl;
+  
+  return true;
 }
 
 void YOLODetector::freeBuffers() {

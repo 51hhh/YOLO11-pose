@@ -109,6 +109,20 @@ private:
     std::string findFilePath(const std::string& relative_path);
     cv::Mat drawDetections(const cv::Mat& image, const Detection& det, bool is_left);
     
+    // ==================== 常量定义 ====================
+    // 同步参数
+    static constexpr int SYNC_MAX_FRAME_DIFF = 3;           // 帧号差容忍度
+    static constexpr int64_t SYNC_MAX_TIME_DIFF_US = 25000; // 25ms时间差容忍度
+    static constexpr int FRAME_WAIT_TIMEOUT_MS = 5;          // 帧等待超时(ms)
+    static constexpr int SYNC_RETRY_SLEEP_US = 100;          // 同步重试休眠(us)
+    
+    // 日志节流
+    static constexpr int LOG_THROTTLE_MS = 1000;             // 日志节流周期(ms)
+    
+    // 图像发布频率控制
+    static constexpr int RAW_IMAGE_PUBLISH_INTERVAL = 10;    // 原始图像每10帧发布一次
+    static constexpr int DETECTION_IMAGE_PUBLISH_INTERVAL = 5; // 检测图像每5帧发布一次
+    
     // ==================== PWM 组件 ====================
     std::unique_ptr<HighPrecisionPWM> pwm_;
     std::string gpio_chip_;

@@ -157,6 +157,20 @@ public:
     void onImageCallback(MV_FRAME_OUT* pFrame);
 
 private:
+    /**
+     * @brief 转换像素格式到BGR8
+     * @param src_data 源数据指针
+     * @param width 图像宽度
+     * @param height 图像高度
+     * @param pixel_type 像素格式
+     * @param data_len 数据长度
+     * @param dst 目标Mat（必须已分配）
+     * @return true 成功, false 失败
+     */
+    bool convertPixelToBGR(const unsigned char* src_data, int width, int height,
+                          MvGvspPixelType pixel_type, unsigned int data_len, cv::Mat& dst);
+
+private:
     int camera_index_;
     std::string serial_number_;
     void* camera_handle_;

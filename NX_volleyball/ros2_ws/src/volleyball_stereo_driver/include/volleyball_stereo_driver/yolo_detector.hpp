@@ -88,7 +88,7 @@ private:
   float nms_threshold_;
 
   bool loadEngine(const std::string &engine_path);
-  void allocateBuffers();
+  bool allocateBuffers();
   void freeBuffers();
   void preprocess(const cv::Mat &image, int target_size);
   void preprocessGPU(const cv::Mat &image, int target_size);

@@ -19,12 +19,11 @@ static std::mutex g_sdk_mutex;
 // ==================== 回调函数 (SDK调用) ====================
 // MV_CC_RegisterImageCallBackEx2 的回调签名: void (*)(MV_FRAME_OUT*, void*, bool)
 static void __stdcall ImageCallBackEx2(MV_FRAME_OUT* pFrame, void* pUser, bool bAutoFree) {
+    (void)bAutoFree;  // 抑制未使用参数警告 (我们总是使用自动释放模式)
+    
     if (pUser && pFrame && pFrame->pBufAddr) {
         HikCamera* camera = static_cast<HikCamera*>(pUser);
         camera->onImageCallback(pFrame);
-        
-        // 如果不是自动释放模式，需要手动释放
-        // 但我们使用 bAutoFree=true，所以不需要
     }
 }
 
@@ -145,7 +144,8 @@ bool HikCamera::open() {
     }
 
     // 2. 查询相机支持的像素格式
-    MVCC_ENUMVALUE stEnumPixelFormat = {0};
+    MVCC_ENUMVALUE stEnumPixelFormat;
+    memset(&stEnumPixelFormat, 0, sizeof(MVCC_ENUMVALUE));
     ret = MV_CC_GetEnumValue(camera_handle_, "PixelFormat", &stEnumPixelFormat);
     if (ret == MV_OK) {
         std::cout << "📷 当前像素格式: 0x" << std::hex << stEnumPixelFormat.nCurValue << std::dec << std::endl;
@@ -189,16 +189,8 @@ bool HikCamera::open() {
     if (ret == MV_OK) {
         std::cout << "✅ 图像缓冲区: 5帧" << std::endl;
     }
-    
-    // 4. 预分配双缓冲区
-    convert_buffer_.resize(width_ * height_ * 3);
-    frame_buffer_[0] = cv::Mat(height_, width_, CV_8UC3);
-    frame_buffer_[1] = cv::Mat(height_, width_, CV_8UC3);
-    write_index_ = 0;
-    read_index_ = 0;
-    new_frame_ready_ = false;
 
-    // 获取图像参数
+    // 获取图像参数 (必须在分配缓冲区之前)
     MVCC_INTVALUE stParam;
     memset(&stParam, 0, sizeof(MVCC_INTVALUE));
     
@@ -216,6 +208,24 @@ bool HikCamera::open() {
     if (ret == MV_OK) {
         pixel_format_ = stParam.nCurValue;
     }
+
+    // 4. 预分配双缓冲区 (确保使用正确的分辨率)
+    if (width_ > 0 && height_ > 0) {
+        convert_buffer_.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3);
+        frame_buffer_[0] = cv::Mat(height_, width_, CV_8UC3);
+        frame_buffer_[1] = cv::Mat(height_, width_, CV_8UC3);
+    } else {
+        std::cerr << "⚠️ 获取分辨率失败，使用默认缓冲区大小" << std::endl;
+        // 兜底：避免未初始化导致崩溃，分配最小1x1
+        width_ = std::max(width_, 1);
+        height_ = std::max(height_, 1);
+        convert_buffer_.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3);
+        frame_buffer_[0] = cv::Mat(height_, width_, CV_8UC3);
+        frame_buffer_[1] = cv::Mat(height_, width_, CV_8UC3);
+    }
+    write_index_ = 0;
+    read_index_ = 0;
+    new_frame_ready_ = false;
 
     std::cout << "✅ 相机已打开: " << width_ << "x" << height_ << std::endl;
     return true;
@@ -381,62 +391,81 @@ void HikCamera::stopGrabbing() {
     }
 }
 
+// ==================== 像素格式转换（私有辅助函数）====================
+bool HikCamera::convertPixelToBGR(const unsigned char* src_data, int width, int height,
+                                  MvGvspPixelType pixel_type, unsigned int data_len, cv::Mat& dst) {
+    if (!src_data || dst.empty()) {
+        return false;
+    }
+    
+    // BGR8: 直接拷贝
+    if (pixel_type == PixelType_Gvsp_BGR8_Packed) {
+        memcpy(dst.data, src_data, data_len);
+        return true;
+    }
+    
+    // RGB8: 通道转换
+    if (pixel_type == PixelType_Gvsp_RGB8_Packed) {
+        cv::Mat src(height, width, CV_8UC3, const_cast<unsigned char*>(src_data));
+        cv::cvtColor(src, dst, cv::COLOR_RGB2BGR);
+        return true;
+    }
+    
+    // Mono8: 灰度转BGR
+    if (pixel_type == PixelType_Gvsp_Mono8) {
+        cv::Mat src(height, width, CV_8UC1, const_cast<unsigned char*>(src_data));
+        cv::cvtColor(src, dst, cv::COLOR_GRAY2BGR);
+        return true;
+    }
+    
+    // 其他格式: SDK转换
+    MV_CC_PIXEL_CONVERT_PARAM convert_param;
+    memset(&convert_param, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
+    
+    convert_param.nWidth = width;
+    convert_param.nHeight = height;
+    convert_param.pSrcData = const_cast<unsigned char*>(src_data);
+    convert_param.nSrcDataLen = data_len;
+    convert_param.enSrcPixelType = pixel_type;
+    convert_param.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
+    convert_param.pDstBuffer = convert_buffer_.data();
+    convert_param.nDstBufferSize = convert_buffer_.size();
+    
+    if (MV_CC_ConvertPixelType(camera_handle_, &convert_param) == MV_OK) {
+        memcpy(dst.data, convert_buffer_.data(), width * height * 3);
+        return true;
+    }
+    
+    return false;
+}
+
 // ==================== 回调模式处理函数 ====================
 void HikCamera::onImageCallback(MV_FRAME_OUT* pFrame) {
     if (!pFrame || !pFrame->pBufAddr) return;
     
-    // ========== 提取帧元数据 (帧号 + 时间戳) ==========
+    // 提取帧元数据（帧号 + 时间戳）
     uint32_t frame_num = pFrame->stFrameInfo.nFrameNum;
     uint64_t dev_timestamp = ((uint64_t)pFrame->stFrameInfo.nDevTimeStampHigh << 32) 
                            | pFrame->stFrameInfo.nDevTimeStampLow;
     uint32_t host_timestamp = pFrame->stFrameInfo.nHostTimeStamp;
     
-    // 获取写入缓冲区索引 (交替写入)
+    // 获取写入缓冲区索引（交替写入）
     int idx = write_index_.load();
     cv::Mat& dst = frame_buffer_[idx];
     
-    MvGvspPixelType pixelType = pFrame->stFrameInfo.enPixelType;
+    // 像素格式转换
+    convertPixelToBGR(pFrame->pBufAddr, 
+                     pFrame->stFrameInfo.nWidth, 
+                     pFrame->stFrameInfo.nHeight,
+                     pFrame->stFrameInfo.enPixelType, 
+                     pFrame->stFrameInfo.nFrameLen, 
+                     dst);
     
-    // 根据像素格式转换
-    if (pixelType == PixelType_Gvsp_BGR8_Packed) {
-        // BGR8: 直接拷贝
-        memcpy(dst.data, pFrame->pBufAddr, pFrame->stFrameInfo.nFrameLen);
-    }
-    else if (pixelType == PixelType_Gvsp_RGB8_Packed) {
-        // RGB8: 包装后转换
-        cv::Mat src(pFrame->stFrameInfo.nHeight, pFrame->stFrameInfo.nWidth, CV_8UC3, pFrame->pBufAddr);
-        cv::cvtColor(src, dst, cv::COLOR_RGB2BGR);
-    }
-    else if (pixelType == PixelType_Gvsp_Mono8) {
-        // 灰度: 转BGR
-        cv::Mat src(pFrame->stFrameInfo.nHeight, pFrame->stFrameInfo.nWidth, CV_8UC1, pFrame->pBufAddr);
-        cv::cvtColor(src, dst, cv::COLOR_GRAY2BGR);
-    }
-    else {
-        // 其他格式: SDK转换
-        MV_CC_PIXEL_CONVERT_PARAM convert_param;
-        memset(&convert_param, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
-        
-        convert_param.nWidth = pFrame->stFrameInfo.nWidth;
-        convert_param.nHeight = pFrame->stFrameInfo.nHeight;
-        convert_param.pSrcData = pFrame->pBufAddr;
-        convert_param.nSrcDataLen = pFrame->stFrameInfo.nFrameLen;
-        convert_param.enSrcPixelType = pFrame->stFrameInfo.enPixelType;
-        convert_param.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
-        convert_param.pDstBuffer = convert_buffer_.data();
-        convert_param.nDstBufferSize = convert_buffer_.size();
-        
-        if (MV_CC_ConvertPixelType(camera_handle_, &convert_param) == MV_OK) {
-            memcpy(dst.data, convert_buffer_.data(), width_ * height_ * 3);
-        }
-    }
-    
-    // ========== 保存帧元数据 ==========
+    // 保存帧元数据
     frame_metadata_[idx].frame_number = frame_num;
     frame_metadata_[idx].device_timestamp = dev_timestamp;
     frame_metadata_[idx].host_timestamp = host_timestamp;
     frame_metadata_[idx].receive_time = std::chrono::steady_clock::now();
-    
     // 切换写入索引
     write_index_.store(1 - idx);
     
@@ -490,78 +519,28 @@ cv::Mat HikCamera::grabImage(unsigned int timeout_ms) {
         return cv::Mat();
     }
 
-    // 零拷贝优化: 根据像素格式选择最优处理路径
-    cv::Mat image;
+    // 创建临时Mat用于转换
+    cv::Mat image(stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3);
     
-    MvGvspPixelType pixelType = stImageInfo.stFrameInfo.enPixelType;
-    
-    // BGR8: 直接包装，最快路径
-    if (pixelType == PixelType_Gvsp_BGR8_Packed) {
-        cv::Mat temp(
-            stImageInfo.stFrameInfo.nHeight, 
-            stImageInfo.stFrameInfo.nWidth, 
-            CV_8UC3, 
-            stImageInfo.pBufAddr
-        );
-        image = temp.clone();  // 必须clone，因为SDK缓冲区会被释放
-    }
-    // RGB8: 直接包装，然后BGR转换
-    else if (pixelType == PixelType_Gvsp_RGB8_Packed) {
-        cv::Mat temp(
-            stImageInfo.stFrameInfo.nHeight, 
-            stImageInfo.stFrameInfo.nWidth, 
-            CV_8UC3, 
-            stImageInfo.pBufAddr
-        );
-        cv::cvtColor(temp, image, cv::COLOR_RGB2BGR);
-    }
-    // Mono8: 灰度图
-    else if (pixelType == PixelType_Gvsp_Mono8) {
-        cv::Mat temp(
-            stImageInfo.stFrameInfo.nHeight, 
-            stImageInfo.stFrameInfo.nWidth, 
-            CV_8UC1, 
-            stImageInfo.pBufAddr
-        );
-        cv::cvtColor(temp, image, cv::COLOR_GRAY2BGR);
-    }
-    // 其他格式: 使用SDK转换
-    else {
-        // 需要转换: 使用预分配缓冲区减少分配开销
-        static thread_local std::vector<unsigned char> convert_buffer;
-        unsigned int convert_size = stImageInfo.stFrameInfo.nWidth * stImageInfo.stFrameInfo.nHeight * 3;
+    // 使用公共转换函数
+    if (convertPixelToBGR(stImageInfo.pBufAddr, 
+                         stImageInfo.stFrameInfo.nWidth, 
+                         stImageInfo.stFrameInfo.nHeight,
+                         stImageInfo.stFrameInfo.enPixelType, 
+                         stImageInfo.stFrameInfo.nFrameLen, 
+                         image)) {
+        // 转换成功，克隆一份（因为SDK缓冲区会被释放）
+        cv::Mat result = image.clone();
         
-        if (convert_buffer.size() < convert_size) {
-            convert_buffer.resize(convert_size);
-        }
+        // 释放图像缓冲区（重要！）
+        MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
         
-        MV_CC_PIXEL_CONVERT_PARAM convert_param;
-        memset(&convert_param, 0, sizeof(MV_CC_PIXEL_CONVERT_PARAM));
-        
-        convert_param.nWidth = stImageInfo.stFrameInfo.nWidth;
-        convert_param.nHeight = stImageInfo.stFrameInfo.nHeight;
-        convert_param.pSrcData = stImageInfo.pBufAddr;
-        convert_param.nSrcDataLen = stImageInfo.stFrameInfo.nFrameLen;
-        convert_param.enSrcPixelType = stImageInfo.stFrameInfo.enPixelType;
-        convert_param.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
-        convert_param.pDstBuffer = convert_buffer.data();
-        convert_param.nDstBufferSize = convert_size;
-        
-        ret = MV_CC_ConvertPixelType(camera_handle_, &convert_param);
-        if (ret == MV_OK) {
-            image = cv::Mat(
-                stImageInfo.stFrameInfo.nHeight, 
-                stImageInfo.stFrameInfo.nWidth, 
-                CV_8UC3, 
-                convert_buffer.data()
-            ).clone();
-        }
+        return result;
     }
     
-    // 释放图像缓冲区 (重要!)
+    // 转换失败，释放缓冲区并返回空Mat
     MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
-    
-    return image;
+    return cv::Mat();
 }
 
 std::string HikCamera::getCameraInfo() const {

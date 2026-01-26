@@ -1,27 +1,25 @@
 # 📁 NX_volleyball 项目文档索引
 
-> 更新时间: 2026-01-25
+> 更新时间: 2026-01-26
 
 ---
 
 ## 📊 项目当前状态
 
 ### ✅ 已完成 (100%)
-- ROS2 包结构 (`volleyball_stereo_driver`)
-- 7 个头文件，10 个源文件
-- PWM 触发器 (100Hz)
-- 海康双目相机驱动
-- ROI 管理器
-- 3D 卡尔曼滤波器
-- 立体匹配器
-- YOLO 检测器框架 (TensorRT)
-- 主追踪节点 (All-in-One)
-- 配置文件和脚本
+- ✅ ROS2 包结构 (`volleyball_stereo_driver`)
+- ✅ 核心组件实现 (7个头文件，8个源文件)
+- ✅ PWM 触发器 (100Hz, ±0.05%精度)
+- ✅ 海康双目相机驱动 (回调模式，零等待)
+- ✅ 帧同步系统 (100%同步率，0.06%丢帧)
+- ✅ Batch=2 TensorRT推理 (9.5-12ms延迟)
+- ✅ 立体匹配与3D追踪
+- ✅ **NX部署验证通过** (2026-01-26)
 
-### ⏳ 待完成
-- [ ] **双目标定** - 采集棋盘格图像，运行标定程序
-- [ ] **YOLO 模型** - 训练/获取排球检测模型，导出 TensorRT
-- [ ] **NX 端测试** - 真实硬件测试和调优
+### ⏳ 待优化
+- [ ] **双目标定** - 当前使用默认参数
+- [ ] **YOLO 真实模型** - 当前使用占位符
+- [ ] **FP16推理** - 预期提升30-50%性能
 
 ---
 
@@ -30,33 +28,38 @@
 ```
 .agent/
 ├── README.md                    # 📋 本文件 - 项目状态和文档索引
+├── DEPLOYMENT_VALIDATION.md     # ✅ NX部署验证报告 (2026-01-26)
 ├── IMPLEMENTATION_SUMMARY.md    # ✅ 实现完成总结
 ├── PROGRESS.md                  # 📊 详细进度追踪
 │
 ├── reference/                   # 📖 技术参考文档
-│   ├── ROS2_ARCHITECTURE_FINAL.md   # 最终架构设计
-│   ├── NX_BUILD_TEST_GUIDE.md       # NX 编译测试指南
-│   ├── YOLO_INTEGRATION_GUIDE.md    # YOLO 集成指南
-│   ├── YOLO_COMPLETE_SUMMARY.md     # YOLO 集成总结
-│   ├── CAMERA_PARAMS_GUIDE.md       # 相机参数说明
-│   └── INTEGRATED_NODE_GUIDE.md     # 整合节点使用
+│   ├── ROS2_ARCHITECTURE_FINAL.md      # 最终架构设计
+│   ├── PERFORMANCE_OPTIMIZATION.md     # 🚀 性能优化完整指南（已整合）
+│   ├── NX_BUILD_TEST_GUIDE.md          # NX 编译测试指南
+│   ├── YOLO_INTEGRATION_GUIDE.md       # YOLO 集成指南
+│   ├── YOLO_COMPLETE_SUMMARY.md        # YOLO 集成总结
+│   ├── CAMERA_PARAMS_GUIDE.md          # 相机参数说明
+│   └── INTEGRATED_NODE_GUIDE.md        # 整合节点使用
 │
 ├── troubleshooting/             # 🔧 故障排查
-│   ├── CUDA_FIX.md                  # CUDA 编译问题
-│   ├── GPIO_CUSTOM_BOARD.md         # 自定义载板 GPIO
-│   ├── HIK_SDK_FIX.md               # 海康 SDK 问题
-│   ├── MODEL_PATH_FIX.md            # 模型路径问题
-│   ├── OPENCV_FIX.md                # OpenCV 兼容性
-│   ├── PWM_PRECISION_GUIDE.md       # PWM 精度优化
-│   └── TENSORRT_VERSION_GUIDE.md    # TensorRT 版本
+│   ├── CUDA_FIX.md                     # CUDA 编译问题
+│   ├── GPIO_CUSTOM_BOARD.md            # 自定义载板 GPIO
+│   ├── HIK_SDK_FIX.md                  # 海康 SDK 问题
+│   ├── MODEL_PATH_FIX.md               # 模型路径问题
+│   ├── OPENCV_FIX.md                   # OpenCV 兼容性
+│   ├── PWM_PRECISION_GUIDE.md          # PWM 精度优化
+│   └── TENSORRT_VERSION_GUIDE.md       # TensorRT 版本
 │
-└── archive/                     # 📦 归档文档 (旧版本/已整合)
-    ├── ROS2_ARCHITECTURE.md         # 旧版架构
-    ├── ROS2_NODE_DESIGN_SIMPLIFIED.md
-    ├── ARCHITECTURE_SUMMARY.md
-    ├── IMPLEMENTATION_TODO.md
-    ├── QUICK_REFERENCE.md
-    ├── SIMPLE_START_GUIDE.md
+└── archive/                     # 📦 归档文档 (旧版本/已整合/已完成)
+    ├── STAGE2_IMPLEMENTATION_PLAN.md   # 阶段2实施计划（已完成）
+    ├── PWM_TIMESTAMP_SYNC_DESIGN.md    # PWM同步设计（已实现）
+    ├── 性能瓶颈分析.md                 # 性能瓶颈分析（已过时）
+    ├── 重新部署说明.md                 # 重新部署说明（已过时）
+    ├── NX性能优化指南.md               # 旧性能指南（已整合）
+    ├── 性能优化详解.md                 # 旧性能详解（已整合）
+    ├── ROS2_ARCHITECTURE.md            # 旧版架构
+    ├── ROS2_NODE_DESIGN_SIMPLIFIED.md  # 旧版节点设计
+    ├── ARCHITECTURE_SUMMARY.md         # 旧架构总结
     └── ...
 ```
 
