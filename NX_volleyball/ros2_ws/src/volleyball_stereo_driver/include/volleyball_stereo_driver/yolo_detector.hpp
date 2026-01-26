@@ -72,6 +72,10 @@ private:
   void *gpu_resize_buffer_;
   void *gpu_rgb_buffer_;
   
+  // ✅ Y字形流水线同步事件
+  cudaEvent_t event_preprocess_left_;
+  cudaEvent_t event_preprocess_right_;
+  
   // 预分配的GPU源图像缓冲区
   void *gpu_src_buffer_;
   void *gpu_src_buffer2_;

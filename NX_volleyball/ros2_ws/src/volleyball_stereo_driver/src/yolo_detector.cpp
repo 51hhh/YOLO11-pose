@@ -63,6 +63,11 @@ YOLODetector::YOLODetector(const std::string &engine_path, float conf_threshold,
   cudaStreamCreate(&cuda_stream_);
   cudaStreamCreate(&cuda_stream2_);
   std::cout << "✅ 双CUDA流已创建 (并行推理)" << std::endl;
+  
+  // ✅ 创建Y字形流水线同步事件
+  cudaEventCreate(&event_preprocess_left_);
+  cudaEventCreate(&event_preprocess_right_);
+  std::cout << "✅ CUDA事件已创建 (Y字形流水线同步)" << std::endl;
 
   if (loadEngine(engine_path)) {
     std::cout << "✅ YOLO 检测器初始化成功" << std::endl;
@@ -82,6 +87,10 @@ YOLODetector::~YOLODetector() {
     cudaStreamSynchronize(cuda_stream2_);
     cudaStreamDestroy(cuda_stream2_);
   }
+  
+  // ✅ 销毁CUDA事件
+  cudaEventDestroy(event_preprocess_left_);
+  cudaEventDestroy(event_preprocess_right_);
 
   if (context_) {
     delete context_;
@@ -564,22 +573,39 @@ void YOLODetector::preprocessGPUStream(const cv::Mat &image, int target_size,
   );
 }
 
-// ==================== Batch=2 预处理 (双流并行) ====================
-// 两张图并行上传+处理，写入连续GPU内存: [img1, img2] → input_buffer_device_
+// ==================== Batch=2 预处理 (Y字形流水线) ====================
+// ✅ 优化: DMA与Compute重叠执行，利用Copy Engine和CUDA Core并行性
+// 时间线: [Copy L][Copy R]  <- DMA不停歇
+//                [Kern L][Kern R]  <- Compute紧跟Copy
 void YOLODetector::preprocessBatch2(const cv::Mat &image1, const cv::Mat &image2, int target_size) {
   size_t single_input_size = 3 * target_size * target_size * sizeof(float);
+  size_t src_bytes = image1.rows * image1.cols * 3 * sizeof(unsigned char);
   
-  // 图1 → 流1, 偏移0
+  // ========== 阶段1: 同时发射两个H2D (Copy Engine自动排队) ==========
+  cudaMemcpyAsync(gpu_src_buffer_, image1.data, src_bytes,
+                  cudaMemcpyHostToDevice, cuda_stream_);
+  cudaMemcpyAsync(gpu_src_buffer2_, image2.data, src_bytes,
+                  cudaMemcpyHostToDevice, cuda_stream2_);
+  
+  // ========== 阶段2: 同时发射两个Kernel (CUDA Core调度，与Copy重叠) ==========
   float* dst1 = (float*)input_buffer_device_;
-  preprocessGPUStream(image1, target_size, gpu_src_buffer_, dst1, cuda_stream_);
-  
-  // 图2 → 流2, 偏移 single_input_size (并行执行!)
   float* dst2 = (float*)((char*)input_buffer_device_ + single_input_size);
-  preprocessGPUStream(image2, target_size, gpu_src_buffer2_, dst2, cuda_stream2_);
   
-  // ✅ 等待两个流都完成预处理
-  cudaStreamSynchronize(cuda_stream_);
-  cudaStreamSynchronize(cuda_stream2_);
+  launchPreprocessKernel((unsigned char*)gpu_src_buffer_, dst1,
+                         image1.cols, image1.rows, target_size, target_size,
+                         cuda_stream_);
+  launchPreprocessKernel((unsigned char*)gpu_src_buffer2_, dst2,
+                         image2.cols, image2.rows, target_size, target_size,
+                         cuda_stream2_);
+  
+  // ========== 阶段3: Event同步 (精确等待，避免CPU阻塞) ==========
+  // ✅ 记录两个流的完成事件
+  cudaEventRecord(event_preprocess_left_, cuda_stream_);
+  cudaEventRecord(event_preprocess_right_, cuda_stream2_);
+  
+  // ✅ 推理前在主流上等待两个预处理完成
+  cudaStreamWaitEvent(cuda_stream_, event_preprocess_left_, 0);
+  cudaStreamWaitEvent(cuda_stream_, event_preprocess_right_, 0);
 }
 
 // 从指定缓冲区后处理
