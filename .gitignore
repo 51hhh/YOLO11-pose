@@ -10,3 +10,6 @@ rm_auto_aim/
 toe_aimbot/
 # 排球视觉推理框架
 RC_Volleyball_vision/
+
+# 校准图片
+NX_volleyball/calibration/calibration_images/
