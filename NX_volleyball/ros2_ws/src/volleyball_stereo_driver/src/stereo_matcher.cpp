@@ -56,13 +56,13 @@ bool StereoMatcher::loadCalibration(const std::string& calib_file) {
         return false;
     }
     
-    // 读取标定参数
-    fs["K1"] >> K1_;
-    fs["D1"] >> D1_;
-    fs["K2"] >> K2_;
-    fs["D2"] >> D2_;
-    fs["P1"] >> P1_;
-    fs["P2"] >> P2_;
+    // 读取标定参数 (键名与 stereo_calibration.py 输出的 YAML 一致)
+    fs["camera_matrix_left"] >> K1_;
+    fs["distortion_coefficients_left"] >> D1_;
+    fs["camera_matrix_right"] >> K2_;
+    fs["distortion_coefficients_right"] >> D2_;
+    fs["projection_left"] >> P1_;
+    fs["projection_right"] >> P2_;
     
     // 验证读取的矩阵
     bool valid = true;
@@ -96,21 +96,22 @@ bool StereoMatcher::loadCalibration(const std::string& calib_file) {
         return false;
     }
     
-    // 读取基线 (如果有)
+    // 读取基线 (标定脚本输出为 mm，需转换为 m)
     if (!fs["baseline"].empty()) {
         fs["baseline"] >> baseline_;
+        baseline_ /= 1000.0f;  // mm → m
     } else {
-        // 从投影矩阵计算基线
-        // P2 = [K2 | -K2*T], T = [baseline, 0, 0]^T
+        // 从投影矩阵计算基线 (P2[0][3] = -fx * baseline_mm)
         if (!P2_.empty() && P2_.cols == 4) {
-            baseline_ = static_cast<float>(-P2_.at<double>(0, 3) / P2_.at<double>(0, 0));
+            baseline_ = static_cast<float>(
+                -P2_.at<double>(0, 3) / P2_.at<double>(0, 0) / 1000.0);
         }
     }
     
     fs.release();
     
     std::cout << "✅ 标定参数加载成功" << std::endl;
-    std::cout << "   基线: " << baseline_ << " m" << std::endl;
+    std::cout << "   基线: " << baseline_ << " m (" << baseline_ * 1000.0f << " mm)" << std::endl;
     
     return true;
 }

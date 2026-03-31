@@ -29,8 +29,8 @@ echo ""
 # 3. 设置实时调度策略
 echo "📊 步骤 3/5: 配置实时调度..."
 # 允许非 root 用户使用实时优先级
-echo "* soft rtprio 99" >> /etc/security/limits.conf
-echo "* hard rtprio 99" >> /etc/security/limits.conf
+grep -q "soft rtprio 99" /etc/security/limits.conf || echo "* soft rtprio 99" >> /etc/security/limits.conf
+grep -q "hard rtprio 99" /etc/security/limits.conf || echo "* hard rtprio 99" >> /etc/security/limits.conf
 echo "✅ 实时调度已配置"
 echo ""
 

@@ -1,0 +1,65 @@
+# ============================================================
+# stereo_3d_pipeline 运行时配置
+# ============================================================
+
+# ========== 相机参数 ==========
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""            # 序列号 (留空则按 index 选择)
+  serial_right: ""
+  exposure_us: 3000.0        # 曝光时间 (微秒)
+  gain_db: 0.0               # 增益 (dB)
+  use_trigger: true           # 外触发模式
+  trigger_source: "Line0"     # Line0 / Line1 / Software
+  trigger_activation: "RisingEdge"
+  width: 1440
+  height: 1080
+
+# ========== 标定文件 ==========
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+# ========== Pipeline 参数 (仅供参考, 硬编码为 3缓冲 + 相机分辨率) ==========
+pipeline:
+  num_slots: 3               # 三缓冲 (硬编码)
+  input_width: 1440          # 同 camera.width
+  input_height: 1080         # 同 camera.height
+
+# ========== 校正 (VPI Remap) ==========
+rectify:
+  backend: "PVA"             # PVA / CUDA (硬编码 PVA, 仅供参考)
+  output_width: 1280         # 校正后分辨率
+  output_height: 720
+
+# ========== 检测 (TensorRT) ==========
+detector:
+  engine_path: "models/yolov8n_int8.engine"
+  input_size: 320            # 模型输入尺寸 (320 / 640)
+  use_dla: true              # 使用 DLA Core
+  dla_core: 0                # DLA Core 编号 (0 / 1)
+  allow_gpu_fallback: true   # DLA 不支持的层回退到 GPU (构建 engine 时设置, 运行时无效)
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  max_detections: 10
+
+# ========== 立体匹配 (VPI Stereo) ==========
+stereo:
+  backend: "CUDA"            # CUDA / PVA (硬编码 CUDA, 仅供参考)
+  max_disparity: 128         # 最大视差 (像素)
+  window_size: 5             # 匹配窗口
+  quality: 6                 # VPI 质量参数 (1-8)
+  use_half_resolution: false # 降分辨率策略
+
+# ========== 3D 融合 ==========
+fusion:
+  min_depth: 0.3             # 最小有效深度 (米)
+  max_depth: 15.0            # 最大有效深度 (米)
+  baseline_mm: 326.8         # 基线长度 (仅供参考, 运行时从标定文件加载)
+
+# ========== 性能 ==========
+performance:
+  pwm_frequency: 100.0       # PWM 触发频率 (Hz)
+  target_fps: 60             # 目标帧率 (仅供参考)
+  log_interval: 100          # 每 N 帧打印统计
+  enable_profiling: false    # nsys 计时标记 (预留)

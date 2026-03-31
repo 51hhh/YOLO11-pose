@@ -25,7 +25,7 @@ volleyball_tracker:
       # - yolo11n.engine: batch=1, 双流并行模式
       # - yolo11n_batch2.engine: batch=2, 批量推理模式 (推荐)
       # - yolo_320.engine: batch=2, 320x320输入 (更快)
-      # model_path: "model/yolo11n_batch2.engine"yolo_320.engine
+      # model_path: "model/yolo11n_batch2.engine"
       model_path: "model/yolo_320.engine"
       
       # 模型输入分辨率: 自动从Engine推断，也可手动指定

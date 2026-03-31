@@ -210,18 +210,21 @@ bool HikCamera::open() {
     }
 
     // 4. 预分配双缓冲区 (确保使用正确的分辨率)
+    // BayerRG8 为单通道，其余格式为 BGR 三通道
+    bool is_bayer = (pixel_format_ == PixelType_Gvsp_BayerRG8);
+    int mat_type = is_bayer ? CV_8UC1 : CV_8UC3;
     if (width_ > 0 && height_ > 0) {
         convert_buffer_.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3);
-        frame_buffer_[0] = cv::Mat(height_, width_, CV_8UC3);
-        frame_buffer_[1] = cv::Mat(height_, width_, CV_8UC3);
+        frame_buffer_[0] = cv::Mat(height_, width_, mat_type);
+        frame_buffer_[1] = cv::Mat(height_, width_, mat_type);
     } else {
         std::cerr << "⚠️ 获取分辨率失败，使用默认缓冲区大小" << std::endl;
         // 兜底：避免未初始化导致崩溃，分配最小1x1
         width_ = std::max(width_, 1);
         height_ = std::max(height_, 1);
         convert_buffer_.resize(static_cast<size_t>(width_) * static_cast<size_t>(height_) * 3);
-        frame_buffer_[0] = cv::Mat(height_, width_, CV_8UC3);
-        frame_buffer_[1] = cv::Mat(height_, width_, CV_8UC3);
+        frame_buffer_[0] = cv::Mat(height_, width_, mat_type);
+        frame_buffer_[1] = cv::Mat(height_, width_, mat_type);
     }
     write_index_ = 0;
     read_index_ = 0;

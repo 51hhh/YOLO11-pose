@@ -7,13 +7,23 @@
 """
 
 import sys
+import os
 import numpy as np
 import cv2
 from ctypes import *
 
 # 导入 MVS SDK
 try:
-    sys.path.append("/opt/MVS/lib/python")
+    # 强制修正 MVCAM_COMMON_RUNENV (系统 profile 可能设置了错误路径)
+    # SDK 内部通过此变量拼接 .so 路径: $MVCAM_COMMON_RUNENV/aarch64/libMvCameraControl.so
+    _mvs_lib = "/opt/MVS/lib"
+    _cur_env = os.getenv("MVCAM_COMMON_RUNENV", "")
+    if not os.path.isfile(os.path.join(_cur_env, "aarch64", "libMvCameraControl.so")):
+        os.environ["MVCAM_COMMON_RUNENV"] = _mvs_lib
+    # aarch64 (Jetson NX 等 ARM 平台)
+    sys.path.append("/opt/MVS/Samples/aarch64/Python/MvImport")
+    # x86_64 备选路径
+    sys.path.append("/opt/MVS/Samples/64/Python/MvImport")
     from MvCameraControl_class import *
 except ImportError:
     print("❌ 错误: 无法导入 MVS SDK")
@@ -64,29 +74,34 @@ class HikCamera:
             
             if device_info.nTLayerType == MV_GIGE_DEVICE:
                 # GigE 相机
-                gige_info = cast(device_info.SpecialInfo.stGigEInfo, MV_GIGE_DEVICE_INFO)
+                gige_info = device_info.SpecialInfo.stGigEInfo
                 ip = f"{gige_info.nCurrentIp >> 24 & 0xFF}." \
                      f"{gige_info.nCurrentIp >> 16 & 0xFF}." \
                      f"{gige_info.nCurrentIp >> 8 & 0xFF}." \
                      f"{gige_info.nCurrentIp & 0xFF}"
-                
+
+                model = bytes(gige_info.chModelName).split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+                serial = bytes(gige_info.chSerialNumber).split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+
                 devices.append({
                     'index': i,
                     'type': 'GigE',
-                    'model': gige_info.chModelName.decode('utf-8'),
-                    'serial': gige_info.chSerialNumber.decode('utf-8'),
+                    'model': model,
+                    'serial': serial,
                     'ip': ip
                 })
             
             elif device_info.nTLayerType == MV_USB_DEVICE:
                 # USB 相机
-                usb_info = cast(device_info.SpecialInfo.stUsb3VInfo, MV_USB3_DEVICE_INFO)
-                
+                usb_info = device_info.SpecialInfo.stUsb3VInfo
+                model = bytes(usb_info.chModelName).split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+                serial = bytes(usb_info.chSerialNumber).split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+
                 devices.append({
                     'index': i,
                     'type': 'USB',
-                    'model': usb_info.chModelName.decode('utf-8'),
-                    'serial': usb_info.chSerialNumber.decode('utf-8'),
+                    'model': model,
+                    'serial': serial,
                 })
         
         return devices

@@ -49,4 +49,4 @@ echo -e "${GREEN}🚀 启动双目排球追踪系统...${NC}"
 echo -e "${YELLOW}提示: 节点会自动查找配置文件${NC}"
 echo ""
 
-ros2 run volleyball_stereo_driver stereo_system_node
+ros2 run volleyball_stereo_driver volleyball_tracker_node

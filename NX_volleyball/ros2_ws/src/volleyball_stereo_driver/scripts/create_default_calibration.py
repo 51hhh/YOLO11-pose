@@ -42,14 +42,21 @@ def create_default_calibration(output_file="stereo_calib.yaml"):
     # 创建 FileStorage
     fs = cv2.FileStorage(output_file, cv2.FILE_STORAGE_WRITE)
     
-    # 写入参数
-    fs.write("K1", K)
-    fs.write("D1", D)
-    fs.write("K2", K)
-    fs.write("D2", D)
-    fs.write("P1", P1)
-    fs.write("P2", P2)
-    fs.write("baseline", baseline)
+    # 写入参数 (键名与 stereo_calibration.py 输出保持一致)
+    fs.write("image_width", 1280)
+    fs.write("image_height", 720)
+    fs.write("baseline", baseline * 1000.0)  # 以 mm 存储 (与真实标定一致)
+    fs.write("rms_error", 0.0)
+
+    fs.write("camera_matrix_left", K)
+    fs.write("distortion_coefficients_left", D)
+    fs.write("rectification_left", np.eye(3, dtype=np.float64))
+    fs.write("projection_left", P1)
+
+    fs.write("camera_matrix_right", K)
+    fs.write("distortion_coefficients_right", D)
+    fs.write("rectification_right", np.eye(3, dtype=np.float64))
+    fs.write("projection_right", P2)
     
     fs.release()
     

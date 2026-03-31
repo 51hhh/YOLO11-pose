@@ -14,16 +14,23 @@ import sys
 import os
 import time
 import threading
+import collections
 import numpy as np
 import cv2
-import Jetson.GPIO as GPIO
+
+try:
+    import gpiod
+    HAS_GPIOD = True
+except ImportError:
+    HAS_GPIOD = False
 
 # 导入海康相机类
 sys.path.append(os.path.dirname(__file__))
 from hik_camera import HikCamera
 
 # ==================== 配置 ====================
-PWM_PIN = 32
+GPIOCHIP = "gpiochip2"  # GPIO芯片(与主进程一致)
+LINE_OFFSET = 7         # GPIO line偏移(gpiochip2 line 7)
 PWM_FREQ = 100  # 100 Hz
 PWM_DUTY = 50
 
@@ -38,33 +45,76 @@ SAVE_IMAGES = True
 OUTPUT_DIR = "../calibration/data/test"
 
 # ==================== 全局变量 ====================
-pwm = None
+gpio_chip = None
+gpio_line = None
+pwm_running = False
+pwm_thread = None
 running = False
 frame_count_left = 0
 frame_count_right = 0
 sync_errors = []
 
-# ==================== PWM 控制 ====================
+# ==================== 软件 PWM 控制 (libgpiod) ====================
+def _pwm_loop():
+    """软件PWM循环"""
+    global pwm_running
+    period = 1.0 / PWM_FREQ
+    high_t = period * (PWM_DUTY / 100.0)
+    low_t = period - high_t
+    BUSY_THRESHOLD = 0.0005
+    next_edge = time.perf_counter()
+    while pwm_running:
+        gpio_line.set_value(1)
+        next_edge += high_t
+        _accurate_sleep(next_edge - time.perf_counter(), BUSY_THRESHOLD)
+        gpio_line.set_value(0)
+        next_edge += low_t
+        _accurate_sleep(next_edge - time.perf_counter(), BUSY_THRESHOLD)
+
+def _accurate_sleep(duration, busy_threshold):
+    if duration <= 0:
+        return
+    if duration > busy_threshold:
+        time.sleep(duration - busy_threshold)
+    target = time.perf_counter() + min(duration, busy_threshold)
+    while time.perf_counter() < target:
+        pass
+
 def start_pwm():
-    """启动 PWM 触发"""
-    global pwm
-    
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(PWM_PIN, GPIO.OUT, initial=GPIO.LOW)
-    
-    pwm = GPIO.PWM(PWM_PIN, PWM_FREQ)
-    pwm.start(PWM_DUTY)
-    
-    print(f"✅ PWM 已启动: {PWM_FREQ} Hz, {PWM_DUTY}%")
+    """启动 PWM 触发 (libgpiod)"""
+    global gpio_chip, gpio_line, pwm_running, pwm_thread
+    if not HAS_GPIOD:
+        print("❌ libgpiod 不可用, 请安装: sudo apt install python3-libgpiod")
+        return
+    gpio_chip = gpiod.Chip(GPIOCHIP)
+    gpio_line = gpio_chip.get_line(LINE_OFFSET)
+    gpio_line.request(consumer="test_pwm", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[0])
+    pwm_running = True
+    pwm_thread = threading.Thread(target=_pwm_loop, daemon=True)
+    pwm_thread.start()
+    print(f"✅ PWM 已启动: {PWM_FREQ} Hz, {PWM_DUTY}% (gpiod {GPIOCHIP} line {LINE_OFFSET})")
 
 def stop_pwm():
     """停止 PWM"""
-    global pwm
-    
-    if pwm:
-        pwm.stop()
-        GPIO.cleanup()
-        print("✅ PWM 已停止")
+    global pwm_running, pwm_thread, gpio_line, gpio_chip
+    pwm_running = False
+    if pwm_thread:
+        pwm_thread.join(timeout=1.0)
+        pwm_thread = None
+    if gpio_line:
+        try:
+            gpio_line.set_value(0)
+            gpio_line.release()
+        except Exception:
+            pass
+        gpio_line = None
+    if gpio_chip:
+        try:
+            gpio_chip.close()
+        except Exception:
+            pass
+        gpio_chip = None
+    print("✅ PWM 已停止")
 
 # ==================== 相机采集线程 ====================
 def camera_thread(camera_index, camera_name, images_queue):
@@ -148,8 +198,8 @@ def main():
     start_pwm()
     time.sleep(0.5)
     
-    # 创建图像队列
-    images_queue = []
+    # 创建图像队列 (线程安全)
+    images_queue = collections.deque(maxlen=200)
     
     # 启动相机线程
     print("📷 启动相机...")
