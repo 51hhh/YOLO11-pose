@@ -72,7 +72,7 @@ public:
         if (chip_) { gpiod_chip_close(chip_); chip_ = nullptr; }
 #endif
         if (sysfs_fd_ >= 0) {
-            write(sysfs_fd_, "0", 1);
+            (void)write(sysfs_fd_, "0", 1);
             close(sysfs_fd_);
             sysfs_fd_ = -1;
             // Unexport
@@ -80,7 +80,7 @@ public:
             if (fd >= 0) {
                 char buf[16];
                 int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-                ::write(fd, buf, len);
+                (void)::write(fd, buf, len);
                 ::close(fd);
             }
         }
@@ -126,7 +126,7 @@ private:
         }
         char buf[16];
         int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-        ::write(fd, buf, len);  // May fail if already exported — ok
+        (void)::write(fd, buf, len);  // May fail if already exported — ok
         ::close(fd);
 
         // Wait a moment for sysfs node to appear
@@ -140,7 +140,7 @@ private:
             fprintf(stderr, "[PWM] Cannot set GPIO %d direction: %s\n", sysfs_gpio_num_, strerror(errno));
             return false;
         }
-        ::write(fd, "out", 3);
+        (void)::write(fd, "out", 3);
         ::close(fd);
 
         // Open value file for fast toggling
@@ -170,12 +170,12 @@ private:
 
         auto next = clock::now();
         while (running_.load()) {
-            ::write(sysfs_fd_, "1", 1);
+            (void)::write(sysfs_fd_, "1", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
             next += std::chrono::duration_cast<clock::duration>(dsec(high_t));
             accurateSleep(dsec(next - clock::now()).count());
 
-            ::write(sysfs_fd_, "0", 1);
+            (void)::write(sysfs_fd_, "0", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
             next += std::chrono::duration_cast<clock::duration>(dsec(low_t));
             accurateSleep(dsec(next - clock::now()).count());

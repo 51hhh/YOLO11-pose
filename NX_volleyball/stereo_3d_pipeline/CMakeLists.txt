@@ -155,6 +155,13 @@ if(HIK_FOUND)
   target_link_libraries(stereo_pipeline MvCameraControl)
 endif()
 
+# PWM trigger: libgpiod 或 sysfs fallback
+if(GPIOD_FOUND)
+  target_link_libraries(stereo_pipeline ${GPIOD_LIB})
+else()
+  target_compile_definitions(stereo_pipeline PRIVATE NO_GPIOD)
+endif()
+
 # ==================== 标定工具 ====================
 
 # stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
