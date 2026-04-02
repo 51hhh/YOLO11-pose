@@ -1,28 +1,27 @@
 /**
  * @file capture_chessboard.cpp
- * @brief Chessboard image pair capture tool for stereo calibration
+ * @brief Stereo image pair capture tool for calibration
  *
- * Uses the same HikvisionCamera API and libgpiod PWM trigger as the main
- * pipeline. Outputs numbered PNG pairs to calibration_images/left/ and right/.
+ * Pure image acquisition — no chessboard detection during capture.
+ * Chessboard detection is done separately by stereo_calibrate.
  *
  * Usage:
- *   ./capture_chessboard                          # default: PWM trigger
- *   ./capture_chessboard --free-run               # no trigger
- *   ./capture_chessboard -o /path/to/output -e 2000
+ *   ./capture_chessboard -o calibration_images      # HW trigger (default)
+ *   ./capture_chessboard --free-run -o images        # free-run mode
  *
  * Keys:
- *   SPACE - capture current pair (both must detect chessboard)
- *   q/ESC - quit
- *   c     - clear captured images
+ *   SPACE  - save current frame pair
+ *   q/ESC  - quit
+ *   c      - clear all saved images
  */
 
 #include "../capture/hikvision_camera.h"
 #include "pwm_trigger.h"
 
 #include <opencv2/opencv.hpp>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
-#include <csignal>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -31,70 +30,53 @@
 
 namespace fs = std::filesystem;
 
-// ======================== Defaults ========================
-static constexpr int    BOARD_W       = 9;
-static constexpr int    BOARD_H       = 6;
-static constexpr float  SQUARE_SIZE   = 30.0f;   // mm
-static constexpr int    EXPOSURE_US   = 9867;
-static constexpr float  GAIN_DB       = 11.9906f;
-static constexpr double PWM_FREQ      = 10.0;
-static constexpr double PWM_DUTY      = 50.0;
-static const char*      DEFAULT_CHIP  = "gpiochip2";
-static constexpr unsigned LINE_OFFSET = 7;
+static constexpr int    EXPOSURE_US  = 9867;
+static constexpr float  GAIN_DB      = 11.9906f;
+static constexpr double PWM_FREQ     = 100.0;
+static constexpr double PWM_DUTY     = 50.0;
+static const char*      GPIO_CHIP    = "gpiochip2";
+static constexpr unsigned GPIO_LINE  = 7;
 
 static std::atomic<bool> g_quit{false};
 static void sigHandler(int) { g_quit.store(true); }
 
-// ======================== Argument parser ========================
 struct Args {
-    std::string output_dir   = "calibration_images";
-    int         exposure_us  = EXPOSURE_US;
-    float       gain_db      = GAIN_DB;
-    bool        free_run     = false;
-    bool        no_pwm       = false;
-    bool        headless     = false;
-    int         auto_count   = 0;       // 0 = interactive, >0 = auto-capture N pairs then exit
-    int         cam_left_idx = 0;
-    int         cam_right_idx= 1;
-    int         board_w      = BOARD_W;
-    int         board_h      = BOARD_H;
-    int         cam_width    = 1440;
-    int         cam_height   = 1080;
+    std::string output_dir  = "calibration_images";
+    int         exposure_us = EXPOSURE_US;
+    float       gain_db     = GAIN_DB;
+    bool        free_run    = false;
+    bool        no_pwm      = false;
+    bool        headless    = false;
+    int         auto_count  = 0;
+    int         cam_width   = 1440;
+    int         cam_height  = 1080;
 };
 
 static Args parseArgs(int argc, char* argv[]) {
     Args a;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--free-run")          { a.free_run = true; }
-        else if (arg == "--no-pwm")       { a.no_pwm = true; }
-        else if (arg == "--headless")     { a.headless = true; }
-        else if (arg == "-n" && i+1<argc) { a.auto_count = std::atoi(argv[++i]); a.headless = true; }
-        else if (arg == "-o" && i+1<argc) { a.output_dir = argv[++i]; }
-        else if (arg == "-e" && i+1<argc) { a.exposure_us = std::atoi(argv[++i]); }
-        else if (arg == "-g" && i+1<argc) { a.gain_db = std::atof(argv[++i]); }
-        else if (arg == "--left" && i+1<argc)  { a.cam_left_idx = std::atoi(argv[++i]); }
-        else if (arg == "--right" && i+1<argc) { a.cam_right_idx = std::atoi(argv[++i]); }
-        else if (arg == "--board-w" && i+1<argc) { a.board_w = std::atoi(argv[++i]); }
-        else if (arg == "--board-h" && i+1<argc) { a.board_h = std::atoi(argv[++i]); }
-        else if (arg == "--width" && i+1<argc)   { a.cam_width = std::atoi(argv[++i]); }
-        else if (arg == "--height" && i+1<argc)  { a.cam_height = std::atoi(argv[++i]); }
+        if      (arg == "--free-run")              a.free_run = true;
+        else if (arg == "--no-pwm")                a.no_pwm   = true;
+        else if (arg == "--headless")              a.headless = true;
+        else if (arg == "-n" && i+1 < argc)      { a.auto_count = std::atoi(argv[++i]); a.headless = true; }
+        else if (arg == "-o" && i+1 < argc)        a.output_dir = argv[++i];
+        else if (arg == "-e" && i+1 < argc)        a.exposure_us = std::atoi(argv[++i]);
+        else if (arg == "-g" && i+1 < argc)        a.gain_db = static_cast<float>(std::atof(argv[++i]));
+        else if (arg == "--width"  && i+1 < argc)  a.cam_width  = std::atoi(argv[++i]);
+        else if (arg == "--height" && i+1 < argc)  a.cam_height = std::atoi(argv[++i]);
         else if (arg == "-h" || arg == "--help") {
             printf("Usage: %s [options]\n"
-                   "  --free-run          Free-run mode (no trigger)\n"
-                   "  --no-pwm            Disable PWM output\n"
-                   "  -o DIR              Output directory (default: calibration_images)\n"
-                   "  -e US               Exposure time in us (default: 9867)\n"
-                   "  -g DB               Gain in dB (default: 11.9906)\n"
-                   "  --left IDX          Left camera index (default: 0)\n"
-                   "  --right IDX         Right camera index (default: 1)\n"
-                   "  --board-w N         Chessboard inner corners width (default: 9)\n"
-                   "  --board-h N         Chessboard inner corners height (default: 6)\n"
-                   "  --width W           Camera image width (default: 1440)\n"
-                   "  --height H          Camera image height (default: 1080)\n"
-                   "  --headless          No GUI display (for SSH sessions)\n"
-                   "  -n COUNT            Auto-capture COUNT pairs then exit (implies --headless)\n"
-                   "  -h, --help          Show this help\n",
+                   "  -o DIR          Output directory [calibration_images]\n"
+                   "  -e US           Exposure time in us [9867]\n"
+                   "  -g DB           Gain in dB [11.9906]\n"
+                   "  --free-run      Free-run mode (no HW trigger)\n"
+                   "  --no-pwm        Disable PWM output\n"
+                   "  --headless      No GUI (for SSH sessions)\n"
+                   "  -n COUNT        Auto-capture COUNT pairs then exit (implies --headless)\n"
+                   "  --width W       Camera width [1440]\n"
+                   "  --height H      Camera height [1080]\n"
+                   "  -h, --help      Show this help\n",
                    argv[0]);
             std::exit(0);
         }
@@ -102,48 +84,43 @@ static Args parseArgs(int argc, char* argv[]) {
     return a;
 }
 
-// ======================== Main ========================
 int main(int argc, char* argv[]) {
     signal(SIGINT,  sigHandler);
     signal(SIGTERM, sigHandler);
 
     Args args = parseArgs(argc, argv);
-    const cv::Size boardSize(args.board_w, args.board_h);
 
-    // Create output directories
     fs::create_directories(fs::path(args.output_dir) / "left");
     fs::create_directories(fs::path(args.output_dir) / "right");
 
-    // ---- PWM ----
+    // PWM trigger
     std::unique_ptr<stereo3d::PWMTrigger> pwm;
     if (!args.free_run && !args.no_pwm) {
         pwm = std::make_unique<stereo3d::PWMTrigger>(
-            DEFAULT_CHIP, LINE_OFFSET, PWM_FREQ, PWM_DUTY);
+            GPIO_CHIP, GPIO_LINE, PWM_FREQ, PWM_DUTY);
         if (!pwm->start()) {
-            fprintf(stderr, "[WARN] PWM start failed, continuing without PWM\n");
+            fprintf(stderr, "[WARN] PWM start failed, continuing without trigger\n");
             pwm.reset();
         }
     }
 
-    // ---- Camera ----
+    // Camera
     stereo3d::HikvisionCamera camera;
-    stereo3d::CameraConfig camCfg;
-    camCfg.camera_index_left  = args.cam_left_idx;
-    camCfg.camera_index_right = args.cam_right_idx;
-    camCfg.exposure_us  = static_cast<float>(args.exposure_us);
-    camCfg.gain_db      = args.gain_db;
-    camCfg.width        = args.cam_width;
-    camCfg.height       = args.cam_height;
+    stereo3d::CameraConfig cfg;
+    cfg.exposure_us = static_cast<float>(args.exposure_us);
+    cfg.gain_db     = args.gain_db;
+    cfg.width       = args.cam_width;
+    cfg.height      = args.cam_height;
 
     if (args.free_run) {
-        camCfg.use_trigger = false;
+        cfg.use_trigger = false;
     } else {
-        camCfg.use_trigger = true;
-        camCfg.trigger_source = "Line0";
-        camCfg.trigger_activation = "RisingEdge";
+        cfg.use_trigger        = true;
+        cfg.trigger_source     = "Line0";
+        cfg.trigger_activation = "RisingEdge";
     }
 
-    if (!camera.open(camCfg)) {
+    if (!camera.open(cfg)) {
         fprintf(stderr, "[ERROR] Failed to open cameras\n");
         return 1;
     }
@@ -155,31 +132,22 @@ int main(int argc, char* argv[]) {
 
     const int W = camera.width();
     const int H = camera.height();
-    fprintf(stderr, "[INFO] Camera ready: %dx%d\n", W, H);
 
-    // Allocate grab buffers
     std::vector<uint8_t> bufL(W * H);
     std::vector<uint8_t> bufR(W * H);
-
-    // Chessboard detection flags
-    const int cbFlags = cv::CALIB_CB_ADAPTIVE_THRESH
-                      | cv::CALIB_CB_NORMALIZE_IMAGE
-                      | cv::CALIB_CB_FILTER_QUADS;
-    const cv::TermCriteria subpixCrit(
-        cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER, 30, 0.001);
 
     int captureCount = 0;
     auto lastCapture = std::chrono::steady_clock::now() - std::chrono::seconds(2);
 
     printf("==================================================\n");
-    printf("Stereo Chessboard Capture\n");
+    printf("Stereo Image Capture\n");
     printf("==================================================\n");
-    printf("Board:  %dx%d inner corners\n", args.board_w, args.board_h);
     printf("Output: %s/\n", args.output_dir.c_str());
-    printf("Camera: %dx%d, exp=%.0fus, gain=%.4fdB, BayerRG8\n",
-           W, H, camCfg.exposure_us, camCfg.gain_db);
+    printf("Camera: %dx%d  exp=%dus  gain=%.2fdB  BayerRG8\n",
+           W, H, args.exposure_us, args.gain_db);
     printf("Mode:   %s\n", args.free_run ? "Free-run" : "HW trigger (Line0, RisingEdge)");
-    printf("Keys:   SPACE=capture  q/ESC=quit  c=clear\n");
+    if (!args.headless)
+        printf("Keys:   SPACE=save  q/ESC=quit  c=clear\n");
     printf("==================================================\n");
 
     while (!g_quit.load()) {
@@ -188,48 +156,28 @@ int main(int argc, char* argv[]) {
             bufL.data(), bufR.data(), 0, 0, 1000, resL, resR);
 
         if (!ok) {
-            printf("\rWaiting for trigger...");
-            fflush(stdout);
+            if (!args.headless) {
+                printf("\rWaiting for trigger...");
+                fflush(stdout);
+            }
             continue;
         }
 
-        // BayerRG8 -> BGR for display, Gray for detection
-        cv::Mat bayerL(H, W, CV_8UC1, bufL.data());
-        cv::Mat bayerR(H, W, CV_8UC1, bufR.data());
-        cv::Mat bgrL, bgrR, grayL, grayR;
-        cv::cvtColor(bayerL, bgrL, cv::COLOR_BayerRG2BGR);
-        cv::cvtColor(bayerR, bgrR, cv::COLOR_BayerRG2BGR);
-        cv::cvtColor(bgrL, grayL, cv::COLOR_BGR2GRAY);
-        cv::cvtColor(bgrR, grayR, cv::COLOR_BGR2GRAY);
-
-        // Detect chessboard corners
-        std::vector<cv::Point2f> cornersL, cornersR;
-        bool foundL = cv::findChessboardCorners(grayL, boardSize, cornersL, cbFlags);
-        bool foundR = cv::findChessboardCorners(grayR, boardSize, cornersR, cbFlags);
-
-        if (foundL) {
-            cv::cornerSubPix(grayL, cornersL, cv::Size(11,11), cv::Size(-1,-1), subpixCrit);
-        }
-        if (foundR) {
-            cv::cornerSubPix(grayR, cornersR, cv::Size(11,11), cv::Size(-1,-1), subpixCrit);
-        }
-
-        // Draw preview
-        cv::Mat drawL = bgrL.clone(), drawR = bgrR.clone();
-        if (foundL) cv::drawChessboardCorners(drawL, boardSize, cornersL, true);
-        if (foundR) cv::drawChessboardCorners(drawR, boardSize, cornersR, true);
-
-        char label[64];
-        snprintf(label, sizeof(label), "L:%s R:%s | %d",
-                 foundL ? "OK" : "--", foundR ? "OK" : "--", captureCount);
-        cv::Scalar color = (foundL && foundR)
-            ? cv::Scalar(0,255,0) : cv::Scalar(0,0,255);
-        cv::putText(drawL, label, cv::Point(10,30),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.8, color, 2);
-
+        // Display (BayerRG8 -> BGR)
         if (!args.headless) {
+            cv::Mat bayerL(H, W, CV_8UC1, bufL.data());
+            cv::Mat bayerR(H, W, CV_8UC1, bufR.data());
+            cv::Mat bgrL, bgrR;
+            cv::cvtColor(bayerL, bgrL, cv::COLOR_BayerRG2BGR);
+            cv::cvtColor(bayerR, bgrR, cv::COLOR_BayerRG2BGR);
+
+            char label[64];
+            snprintf(label, sizeof(label), "Captured: %d", captureCount);
+            cv::putText(bgrL, label, cv::Point(10, 30),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+
             cv::Mat display;
-            cv::hconcat(drawL, drawR, display);
+            cv::hconcat(bgrL, bgrR, display);
             if (display.cols > 1920) {
                 double s = 1920.0 / display.cols;
                 cv::resize(display, display, cv::Size(), s, s);
@@ -240,52 +188,49 @@ int main(int argc, char* argv[]) {
         int key = args.headless ? -1 : (cv::waitKey(1) & 0xFF);
 
         // Auto-capture in headless mode
-        bool autoCapture = false;
+        bool doSave = false;
         if (args.headless && args.auto_count > 0) {
             auto now = std::chrono::steady_clock::now();
-            double elapsed = std::chrono::duration<double>(now - lastCapture).count();
-            if (elapsed >= 1.0) autoCapture = true;
+            if (std::chrono::duration<double>(now - lastCapture).count() >= 1.0)
+                doSave = true;
         }
 
-        if (key == ' ' || autoCapture) {
-            if (!(foundL && foundR)) {
-                printf("\nChessboard not detected in both images\n");
-            } else {
-                auto now = std::chrono::steady_clock::now();
-                double elapsed = std::chrono::duration<double>(now - lastCapture).count();
-                if (elapsed < 1.0) {
-                    printf("\nToo fast, wait 1 second\n");
-                } else {
-                    char name[32];
-                    snprintf(name, sizeof(name), "%04d.png", captureCount);
-                    std::string lpPath = (fs::path(args.output_dir) / "left"  / name).string();
-                    std::string rpPath = (fs::path(args.output_dir) / "right" / name).string();
+        if (key == ' ' || doSave) {
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration<double>(now - lastCapture).count() < 0.5) {
+                printf("\rToo fast, wait...");
+                fflush(stdout);
+                continue;
+            }
 
-                    // Save raw BayerRG8 as grayscale PNG (lossless)
-                    cv::imwrite(lpPath, bayerL);
-                    cv::imwrite(rpPath, bayerR);
+            char name[32];
+            snprintf(name, sizeof(name), "%04d.png", captureCount);
+            std::string pathL = (fs::path(args.output_dir) / "left"  / name).string();
+            std::string pathR = (fs::path(args.output_dir) / "right" / name).string();
 
-                    captureCount++;
-                    lastCapture = now;
-                    printf("\n[Captured] Pair #%d\n", captureCount);
-                    if (args.auto_count > 0 && captureCount >= args.auto_count) {
-                        printf("[Auto] Reached target %d pairs\n", args.auto_count);
-                        break;
-                    }
-                }
+            cv::Mat rawL(H, W, CV_8UC1, bufL.data());
+            cv::Mat rawR(H, W, CV_8UC1, bufR.data());
+            cv::imwrite(pathL, rawL);
+            cv::imwrite(pathR, rawR);
+
+            captureCount++;
+            lastCapture = now;
+            printf("\r[Saved] Pair #%d  %s\n", captureCount, name);
+
+            if (args.auto_count > 0 && captureCount >= args.auto_count) {
+                printf("[Auto] Reached %d pairs\n", args.auto_count);
+                break;
             }
         } else if (key == 'q' || key == 27) {
             break;
         } else if (key == 'c') {
-            // Clear all captured images
             for (const auto& sub : {"left", "right"}) {
                 auto dir = fs::path(args.output_dir) / sub;
-                for (auto& entry : fs::directory_iterator(dir)) {
+                for (auto& entry : fs::directory_iterator(dir))
                     if (entry.is_regular_file()) fs::remove(entry.path());
-                }
             }
             captureCount = 0;
-            printf("[Cleared] All images\n");
+            printf("\r[Cleared] All images\n");
         }
     }
 
@@ -294,10 +239,10 @@ int main(int argc, char* argv[]) {
     camera.close();
     if (pwm) pwm->stop();
 
-    printf("\nTotal captured: %d pairs\n", captureCount);
-    if (captureCount >= 10) {
-        printf("\nReady for calibration:\n");
-        printf("  ./stereo_calibrate -s %.1f -d %s\n", SQUARE_SIZE, args.output_dir.c_str());
+    printf("\nTotal: %d pairs in %s/\n", captureCount, args.output_dir.c_str());
+    if (captureCount > 0) {
+        printf("Next step: ./stereo_calibrate -s <square_mm> -d %s\n",
+               args.output_dir.c_str());
     }
 
     return 0;
