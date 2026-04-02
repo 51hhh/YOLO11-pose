@@ -52,6 +52,8 @@ struct Args {
     float       gain_db      = GAIN_DB;
     bool        free_run     = false;
     bool        no_pwm       = false;
+    bool        headless     = false;
+    int         auto_count   = 0;       // 0 = interactive, >0 = auto-capture N pairs then exit
     int         cam_left_idx = 0;
     int         cam_right_idx= 1;
     int         board_w      = BOARD_W;
@@ -66,6 +68,8 @@ static Args parseArgs(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--free-run")          { a.free_run = true; }
         else if (arg == "--no-pwm")       { a.no_pwm = true; }
+        else if (arg == "--headless")     { a.headless = true; }
+        else if (arg == "-n" && i+1<argc) { a.auto_count = std::atoi(argv[++i]); a.headless = true; }
         else if (arg == "-o" && i+1<argc) { a.output_dir = argv[++i]; }
         else if (arg == "-e" && i+1<argc) { a.exposure_us = std::atoi(argv[++i]); }
         else if (arg == "-g" && i+1<argc) { a.gain_db = std::atof(argv[++i]); }
@@ -88,6 +92,8 @@ static Args parseArgs(int argc, char* argv[]) {
                    "  --board-h N         Chessboard inner corners height (default: 6)\n"
                    "  --width W           Camera image width (default: 1440)\n"
                    "  --height H          Camera image height (default: 1080)\n"
+                   "  --headless          No GUI display (for SSH sessions)\n"
+                   "  -n COUNT            Auto-capture COUNT pairs then exit (implies --headless)\n"
                    "  -h, --help          Show this help\n",
                    argv[0]);
             std::exit(0);
@@ -221,16 +227,27 @@ int main(int argc, char* argv[]) {
         cv::putText(drawL, label, cv::Point(10,30),
                     cv::FONT_HERSHEY_SIMPLEX, 0.8, color, 2);
 
-        cv::Mat display;
-        cv::hconcat(drawL, drawR, display);
-        if (display.cols > 1920) {
-            double s = 1920.0 / display.cols;
-            cv::resize(display, display, cv::Size(), s, s);
+        if (!args.headless) {
+            cv::Mat display;
+            cv::hconcat(drawL, drawR, display);
+            if (display.cols > 1920) {
+                double s = 1920.0 / display.cols;
+                cv::resize(display, display, cv::Size(), s, s);
+            }
+            cv::imshow("Stereo Capture", display);
         }
-        cv::imshow("Stereo Capture", display);
 
-        int key = cv::waitKey(1) & 0xFF;
-        if (key == ' ') {
+        int key = args.headless ? -1 : (cv::waitKey(1) & 0xFF);
+
+        // Auto-capture in headless mode
+        bool autoCapture = false;
+        if (args.headless && args.auto_count > 0) {
+            auto now = std::chrono::steady_clock::now();
+            double elapsed = std::chrono::duration<double>(now - lastCapture).count();
+            if (elapsed >= 1.0) autoCapture = true;
+        }
+
+        if (key == ' ' || autoCapture) {
             if (!(foundL && foundR)) {
                 printf("\nChessboard not detected in both images\n");
             } else {
@@ -251,6 +268,10 @@ int main(int argc, char* argv[]) {
                     captureCount++;
                     lastCapture = now;
                     printf("\n[Captured] Pair #%d\n", captureCount);
+                    if (args.auto_count > 0 && captureCount >= args.auto_count) {
+                        printf("[Auto] Reached target %d pairs\n", args.auto_count);
+                        break;
+                    }
                 }
             }
         } else if (key == 'q' || key == 27) {
@@ -268,7 +289,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    cv::destroyAllWindows();
+    if (!args.headless) cv::destroyAllWindows();
     camera.stopGrabbing();
     camera.close();
     if (pwm) pwm->stop();

@@ -1,0 +1,37 @@
+/*
+ * Device Tree Overlay: Release GPIO hog on j16-30 (gpiochip2 line 7)
+ *
+ * Orin NX Super (p3768-0000+p3767-0000) 的 PCA9555 GPIO 扩展器
+ * 默认将 J16 排针引脚全部 hog (内核独占)。
+ * 此 overlay 将 j16-30 (line 7) 的 status 设为 disabled，
+ * 使其可被用户空间 libgpiod 访问，用于相机 PWM 触发。
+ *
+ * 设备树路径: /bus@0/i2c@c250000/gpio@24/j16-30
+ *
+ * 编译:
+ *   dtc -I dts -O dtb -o release-j16-30-gpio.dtbo release-j16-30-gpio.dts
+ *
+ * 应用 (需重启):
+ *   sudo cp release-j16-30-gpio.dtbo /boot/
+ *   # 编辑 /boot/extlinux/extlinux.conf, 在 FDT 行后添加:
+ *   #   OVERLAYS /boot/release-j16-30-gpio.dtbo
+ *
+ * 运行时应用 (无需重启, 需要 configfs overlay 支持):
+ *   sudo mkdir -p /sys/kernel/config/device-tree/overlays/release-j16-30
+ *   sudo cp release-j16-30-gpio.dtbo /sys/kernel/config/device-tree/overlays/release-j16-30/dtbo
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	overlay-name = "Release j16-30 GPIO hog for PWM trigger";
+	compatible = "nvidia,p3768-0000+p3767-0000-super", "nvidia,p3767-0000";
+
+	fragment@0 {
+		target-path = "/bus@0/i2c@c250000/gpio@24/j16-30";
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+};
