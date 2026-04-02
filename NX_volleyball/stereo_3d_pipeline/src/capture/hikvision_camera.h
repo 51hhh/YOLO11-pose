@@ -29,8 +29,8 @@ struct CameraConfig {
     std::string serial_left;               // 可选: 用序列号识别
     std::string serial_right;
 
-    float exposure_us = 3000.0f;           // 曝光时间 (微秒)
-    float gain_db = 0.0f;                  // 增益 (dB)
+    float exposure_us = 9867.0f;           // 曝光时间 (微秒)
+    float gain_db = 11.9906f;              // 增益 (dB)
 
     bool use_trigger = true;               // 外触发模式
     std::string trigger_source = "Line0";  // 触发源

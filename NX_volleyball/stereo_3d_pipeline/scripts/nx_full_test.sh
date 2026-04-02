@@ -348,8 +348,8 @@ rectify:
 
 detector:
   engine_path: "$ENGINE_FILE"
-    input_size: 640
-    use_dla: $USE_DLA_FLAG
+  input_size: 640
+  use_dla: $USE_DLA_FLAG
   dla_core: 0
   confidence_threshold: 0.5
   nms_threshold: 0.4

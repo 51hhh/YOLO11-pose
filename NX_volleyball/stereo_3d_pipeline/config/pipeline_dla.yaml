@@ -7,11 +7,13 @@ camera:
   right_index: 1
   serial_left: ""
   serial_right: ""
-  exposure_us: 3000.0
-  gain_db: 0.0
-  use_trigger: false
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  use_trigger: true
   trigger_source: "Line0"
   trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
   width: 1440
   height: 1080
 

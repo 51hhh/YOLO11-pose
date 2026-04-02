@@ -35,7 +35,8 @@ namespace fs = std::filesystem;
 static constexpr int    BOARD_W       = 9;
 static constexpr int    BOARD_H       = 6;
 static constexpr float  SQUARE_SIZE   = 30.0f;   // mm
-static constexpr int    EXPOSURE_US   = 2000;
+static constexpr int    EXPOSURE_US   = 9867;
+static constexpr float  GAIN_DB       = 11.9906f;
 static constexpr double PWM_FREQ      = 10.0;
 static constexpr double PWM_DUTY      = 50.0;
 static const char*      DEFAULT_CHIP  = "gpiochip2";
@@ -48,6 +49,7 @@ static void sigHandler(int) { g_quit.store(true); }
 struct Args {
     std::string output_dir   = "calibration_images";
     int         exposure_us  = EXPOSURE_US;
+    float       gain_db      = GAIN_DB;
     bool        free_run     = false;
     bool        no_pwm       = false;
     int         cam_left_idx = 0;
@@ -66,6 +68,7 @@ static Args parseArgs(int argc, char* argv[]) {
         else if (arg == "--no-pwm")       { a.no_pwm = true; }
         else if (arg == "-o" && i+1<argc) { a.output_dir = argv[++i]; }
         else if (arg == "-e" && i+1<argc) { a.exposure_us = std::atoi(argv[++i]); }
+        else if (arg == "-g" && i+1<argc) { a.gain_db = std::atof(argv[++i]); }
         else if (arg == "--left" && i+1<argc)  { a.cam_left_idx = std::atoi(argv[++i]); }
         else if (arg == "--right" && i+1<argc) { a.cam_right_idx = std::atoi(argv[++i]); }
         else if (arg == "--board-w" && i+1<argc) { a.board_w = std::atoi(argv[++i]); }
@@ -77,7 +80,8 @@ static Args parseArgs(int argc, char* argv[]) {
                    "  --free-run          Free-run mode (no trigger)\n"
                    "  --no-pwm            Disable PWM output\n"
                    "  -o DIR              Output directory (default: calibration_images)\n"
-                   "  -e US               Exposure time in us (default: 2000)\n"
+                   "  -e US               Exposure time in us (default: 9867)\n"
+                   "  -g DB               Gain in dB (default: 11.9906)\n"
                    "  --left IDX          Left camera index (default: 0)\n"
                    "  --right IDX         Right camera index (default: 1)\n"
                    "  --board-w N         Chessboard inner corners width (default: 9)\n"
@@ -121,7 +125,7 @@ int main(int argc, char* argv[]) {
     camCfg.camera_index_left  = args.cam_left_idx;
     camCfg.camera_index_right = args.cam_right_idx;
     camCfg.exposure_us  = static_cast<float>(args.exposure_us);
-    camCfg.gain_db      = 0.0f;
+    camCfg.gain_db      = args.gain_db;
     camCfg.width        = args.cam_width;
     camCfg.height       = args.cam_height;
 
@@ -166,7 +170,9 @@ int main(int argc, char* argv[]) {
     printf("==================================================\n");
     printf("Board:  %dx%d inner corners\n", args.board_w, args.board_h);
     printf("Output: %s/\n", args.output_dir.c_str());
-    printf("Mode:   %s\n", args.free_run ? "Free-run" : "PWM trigger");
+    printf("Camera: %dx%d, exp=%.0fus, gain=%.4fdB, BayerRG8\n",
+           W, H, camCfg.exposure_us, camCfg.gain_db);
+    printf("Mode:   %s\n", args.free_run ? "Free-run" : "HW trigger (Line0, RisingEdge)");
     printf("Keys:   SPACE=capture  q/ESC=quit  c=clear\n");
     printf("==================================================\n");
 

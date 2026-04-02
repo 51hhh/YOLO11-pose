@@ -26,6 +26,7 @@
 #else
 namespace stereo3d { class HikvisionCamera; struct CameraConfig; }
 #endif
+#include "../calibration/pwm_trigger.h"
 #include "../calibration/stereo_calibration.h"
 #include "../rectify/vpi_rectifier.h"
 #include "../detect/trt_detector.h"
@@ -65,10 +66,12 @@ struct PipelineConfig {
     std::string cam_left_serial  = "";
     std::string cam_right_serial = "";
     float exposure_us  = 9867.0f;
-    float gain_db      = 10.0f;
+    float gain_db      = 11.9906f;
     bool  use_trigger  = true;
     std::string trigger_source     = "Line0";
     std::string trigger_activation = "RisingEdge";
+    std::string trigger_chip = "gpiochip2";  ///< GPIO 芯片名 (Orin NX: gpiochip2)
+    int trigger_line = 7;                     ///< GPIO 线路号 (Orin NX: line 7)
     int trigger_freq_hz = 100;
 
     // 标定
@@ -161,6 +164,7 @@ private:
 
 #ifdef HIK_CAMERA_ENABLED
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
+    std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
 #endif
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;

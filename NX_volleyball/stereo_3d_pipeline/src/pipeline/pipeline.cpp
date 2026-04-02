@@ -129,6 +129,14 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_WARN("Failed to open cameras - running in dry-run mode (synthetic frames)");
         camera_.reset();  // 释放相机, 标记为 dry-run
     }
+
+    // 初始化 PWM 触发器 (硬件触发模式时)
+    if (camera_ && config_.use_trigger) {
+        pwm_trigger_ = std::make_unique<PWMTrigger>(
+            config_.trigger_chip, config_.trigger_line, config_.trigger_freq_hz);
+        LOG_INFO("PWM trigger configured: chip=%s line=%d freq=%dHz",
+                 config_.trigger_chip.c_str(), config_.trigger_line, config_.trigger_freq_hz);
+    }
 #else
     LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
 #endif
@@ -178,10 +186,15 @@ void Pipeline::start() {
     if (running_.exchange(true)) return;
 
 #ifdef HIK_CAMERA_ENABLED
+    // 先启动相机采集, 再启动 PWM 触发
     if (camera_ && !camera_->startGrabbing()) {
         LOG_ERROR("Failed to start camera grabbing");
         running_ = false;
         return;
+    }
+    if (pwm_trigger_ && !pwm_trigger_->start()) {
+        LOG_ERROR("Failed to start PWM trigger - camera may not receive triggers");
+        // 非致命: 外部 PWM 可能已运行
     }
 #endif
 
@@ -202,6 +215,7 @@ void Pipeline::stop() {
     streams_.syncAll();
 
 #ifdef HIK_CAMERA_ENABLED
+    if (pwm_trigger_) pwm_trigger_->stop();
     if (camera_) camera_->stopGrabbing();
 #endif
 

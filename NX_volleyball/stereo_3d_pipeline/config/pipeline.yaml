@@ -8,11 +8,13 @@ camera:
   right_index: 1
   serial_left: ""            # 序列号 (留空则按 index 选择)
   serial_right: ""
-  exposure_us: 3000.0        # 曝光时间 (微秒)
-  gain_db: 0.0               # 增益 (dB)
+  exposure_us: 9867.0        # 曝光时间 (微秒)
+  gain_db: 11.9906            # 增益 (dB)
   use_trigger: true           # 外触发模式
   trigger_source: "Line0"     # Line0 / Line1 / Software
   trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"    # GPIO 芯片 (Orin NX: gpiochip2)
+  trigger_line: 7              # GPIO 线路号 (Orin NX: line 7)
   width: 1440
   height: 1080
 

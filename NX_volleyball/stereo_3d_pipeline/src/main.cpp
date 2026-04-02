@@ -41,6 +41,8 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (cam["use_trigger"])       cfg.use_trigger = cam["use_trigger"].as<bool>();
         if (cam["trigger_source"])    cfg.trigger_source = cam["trigger_source"].as<std::string>();
         if (cam["trigger_activation"]) cfg.trigger_activation = cam["trigger_activation"].as<std::string>();
+        if (cam["trigger_chip"])       cfg.trigger_chip = cam["trigger_chip"].as<std::string>();
+        if (cam["trigger_line"])       cfg.trigger_line = cam["trigger_line"].as<int>();
         if (cam["width"])             cfg.raw_width  = cam["width"].as<int>();
         if (cam["height"])            cfg.raw_height = cam["height"].as<int>();
     }
