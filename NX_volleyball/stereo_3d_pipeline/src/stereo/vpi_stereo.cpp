@@ -39,9 +39,9 @@ bool VPIStereo::init(int maxDisparity, int windowSize, int width, int height) {
     VPIStereoDisparityEstimatorCreationParams params;
     vpiInitStereoDisparityEstimatorCreationParams(&params);
     params.maxDisparity = maxDisparity;
-    params.windowSize   = windowSize;
 
-    err = vpiCreateStereoDisparityEstimator(VPI_BACKEND_CUDA, &params, &stereoPayload_);
+    err = vpiCreateStereoDisparityEstimator(VPI_BACKEND_CUDA, width, height,
+                                             VPI_IMAGE_FORMAT_U8, &params, &stereoPayload_);
     if (err != VPI_SUCCESS) {
         LOG_ERROR("Failed to create full-res stereo estimator: %d", err);
         return false;
@@ -54,9 +54,9 @@ bool VPIStereo::init(int maxDisparity, int windowSize, int width, int height) {
     VPIStereoDisparityEstimatorCreationParams halfParams;
     vpiInitStereoDisparityEstimatorCreationParams(&halfParams);
     halfParams.maxDisparity = maxDisparity / 2;  // 半分辨率视差范围减半
-    halfParams.windowSize   = windowSize;
 
-    err = vpiCreateStereoDisparityEstimator(VPI_BACKEND_CUDA, &halfParams, &stereoPayloadHalf_);
+    err = vpiCreateStereoDisparityEstimator(VPI_BACKEND_CUDA, halfW, halfH,
+                                             VPI_IMAGE_FORMAT_U8, &halfParams, &stereoPayloadHalf_);
     if (err != VPI_SUCCESS) {
         LOG_ERROR("Failed to create half-res stereo estimator: %d", err);
         return false;

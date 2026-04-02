@@ -71,8 +71,8 @@ bool VPIRectifier::init(const StereoCalibration& calib, int width, int height) {
             }
         }
 
-        // 创建 Remap Payload (指定 PVA backend 优先, 回退 CUDA)
-        err = vpiCreateRemap(VPI_BACKEND_PVA | VPI_BACKEND_CUDA, &wm, &payload);
+        // 创建 Remap Payload (VPI Remap 仅支持 CPU/CUDA/VIC, 不支持 PVA)
+        err = vpiCreateRemap(VPI_BACKEND_CUDA, &wm, &payload);
         if (err != VPI_SUCCESS) {
             LOG_ERROR("vpiCreateRemap failed for %s", name);
             return false;
@@ -92,12 +92,12 @@ void VPIRectifier::submit(VPIStream stream,
                           VPIImage rawL, VPIImage rawR,
                           VPIImage rectL, VPIImage rectR)
 {
-    // PVA backend 异步提交 Remap
+    // CUDA backend 异步提交 Remap (VPI Remap 不支持 PVA)
     // VPI_INTERP_LINEAR = 双线性插值
     // VPI_BORDER_ZERO   = 边界填零
-    vpiSubmitRemap(stream, VPI_BACKEND_PVA, remapL_, rawL, rectL,
+    vpiSubmitRemap(stream, VPI_BACKEND_CUDA, remapL_, rawL, rectL,
                    VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
-    vpiSubmitRemap(stream, VPI_BACKEND_PVA, remapR_, rawR, rectR,
+    vpiSubmitRemap(stream, VPI_BACKEND_CUDA, remapR_, rawR, rectR,
                    VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
 }
 

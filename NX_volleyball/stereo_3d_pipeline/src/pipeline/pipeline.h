@@ -150,16 +150,18 @@ private:
 
     // ===== Stage 函数 =====
     void stage0_grab_and_rectify(FrameSlot& slot);
-    void stage1_detect(FrameSlot& slot);
+    void stage1_detect(FrameSlot& slot, int slot_index);
     void stage2_stereo(FrameSlot& slot);
-    void stage3_fuse(FrameSlot& slot);
+    void stage3_fuse(FrameSlot& slot, int slot_index);
 
     // ===== 组件 =====
     PipelineConfig config_;
     PipelineStreams streams_;
     FrameSlot slots_[RING_BUFFER_SIZE];
 
+#ifdef HIK_CAMERA_ENABLED
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
+#endif
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
     std::unique_ptr<TRTDetector> detector_;

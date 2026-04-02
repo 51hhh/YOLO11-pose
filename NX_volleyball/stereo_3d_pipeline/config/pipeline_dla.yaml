@@ -1,0 +1,57 @@
+# ============================================================
+# stereo_3d_pipeline DLA 运行配置 (Jetson NX)
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""
+  serial_right: ""
+  exposure_us: 3000.0
+  gain_db: 0.0
+  use_trigger: false
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+pipeline:
+  num_slots: 3
+  input_width: 1440
+  input_height: 1080
+
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_dla_fp16.engine"
+  input_size: 640
+  use_dla: true
+  dla_core: 0
+  allow_gpu_fallback: true
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  max_detections: 10
+
+stereo:
+  backend: "CUDA"
+  max_disparity: 128
+  window_size: 5
+  quality: 6
+  use_half_resolution: false
+
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+
+performance:
+  pwm_frequency: 100.0
+  target_fps: 60
+  log_interval: 100
+  enable_profiling: true

@@ -28,15 +28,15 @@ pipeline:
 
 # ========== 校正 (VPI Remap) ==========
 rectify:
-  backend: "PVA"             # PVA / CUDA (硬编码 PVA, 仅供参考)
+  backend: "CUDA"            # CUDA / VIC (PVA不支持Remap)
   output_width: 1280         # 校正后分辨率
   output_height: 720
 
 # ========== 检测 (TensorRT) ==========
 detector:
-  engine_path: "models/yolov8n_int8.engine"
-  input_size: 320            # 模型输入尺寸 (320 / 640)
-  use_dla: true              # 使用 DLA Core
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_fp16.engine"
+  input_size: 640            # 模型输入尺寸 (320 / 640), 运行时从 engine 自动读取
+  use_dla: false             # 使用 DLA Core (FP16 engine 未含 DLA 层)
   dla_core: 0                # DLA Core 编号 (0 / 1)
   allow_gpu_fallback: true   # DLA 不支持的层回退到 GPU (构建 engine 时设置, 运行时无效)
   confidence_threshold: 0.5

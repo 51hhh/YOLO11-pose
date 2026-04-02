@@ -13,3 +13,16 @@ RC_Volleyball_vision/
 
 # 校准图片
 NX_volleyball/calibration/calibration_images/
+
+# Jetson 本地生成模型/引擎产物
+NX_volleyball/model/*.onnx
+NX_volleyball/model/*.pt
+NX_volleyball/model/*.engine
+
+# NX 本地测试输出
+NX_volleyball/stereo_3d_pipeline/benchmark_results/
+
+# 本地临时脚本与检查文件
+NX_volleyball/scripts/nx_trt_build*.sh
+NX_volleyball/scripts/sync_to_nx.ps1
+nx_check.txt

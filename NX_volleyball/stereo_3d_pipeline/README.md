@@ -8,15 +8,15 @@ Jetson Xavier NX / Orin NX 高帧率双目 3D 排球追踪流水线。
 
 | Stage | 硬件    | 功能                          | 耗时估算 |
 |-------|---------|-------------------------------|----------|
-| 0     | CPU+PVA | 海康相机抓帧 + VPI Remap 校正 | ~3 ms    |
+| 0     | CPU+CUDA | 海康相机抓帧 + VPI Remap 校正 | ~3 ms    |
 | 1     | NVDLA   | TensorRT INT8 YOLOv8/v11 检测 | ~12-15 ms|
 | 2     | GPU     | VPI Stereo Disparity 视差计算 | ~10-12 ms|
 | 3     | GPU/CPU | 3D 坐标融合 + 输出            | ~1 ms    |
 
-Stage 1 与 Stage 2 在同一帧上依次提交到 DLA/GPU，通过帧级流水线实现整体吞吐量最大化。三帧交错调度：
-- 帧 N+2 → Stage 0（抓帧+校正）
-- 帧 N+1 → Stage 1+2（检测+视差，依次提交）
+Stage 1 与 Stage 2 对同一帧异步提交，Stage 3 在下一次迭代等待并融合上一帧，形成真实帧间重叠。三帧交错调度：
 - 帧 N   → Stage 3（融合输出）
+- 帧 N+1 → Stage 1+2（检测+视差，异步提交）
+- 帧 N+2 → Stage 0（抓帧+校正）
 
 ## 目录结构
 
@@ -26,7 +26,9 @@ stereo_3d_pipeline/
 ├── config/
 │   └── pipeline.yaml           # 运行时配置
 ├── scripts/
-│   └── build_engine.sh         # TensorRT INT8 引擎构建脚本
+│   ├── build_engine.sh         # TensorRT FP16 引擎构建脚本 (GPU/DLA)
+│   ├── build_dla_engine.sh     # DLA 引擎一键构建脚本
+│   └── pipeline_perf_compare.sh # GPU vs DLA 流水线对比脚本
 └── src/
     ├── main.cpp                # 入口: 加载配置 → 运行 Pipeline
     ├── calibration/
@@ -47,7 +49,7 @@ stereo_3d_pipeline/
     │   ├── frame_slot.h              # 三缓冲帧槽
     │   └── sync.h                    # CUDA/VPI Stream 同步管理
     ├── rectify/
-    │   └── vpi_rectifier.h/cpp       # VPI PVA 校正
+    │   └── vpi_rectifier.h/cpp       # VPI CUDA Remap 校正
     ├── stereo/
     │   └── vpi_stereo.h/cpp          # VPI CUDA 视差计算
     └── utils/
@@ -62,7 +64,7 @@ stereo_3d_pipeline/
 |---------------|-------------------------|-----------------------------|
 | JetPack       | 5.x+                   | CUDA, TensorRT, VPI, cuDNN  |
 | CUDA Toolkit  | 11.4+                  | Xavier NX / Orin NX          |
-| VPI           | 2.x+                   | PVA + CUDA backend           |
+| VPI           | 3.x+                   | Remap(CUDA/VIC) + Stereo(CUDA) |
 | TensorRT      | 8.5+ / 10.x            | INT8 + DLA 推理              |
 | OpenCV        | 4.x                    | 标定、图像处理               |
 | yaml-cpp      | 0.6+                   | 配置文件解析                 |
@@ -90,6 +92,8 @@ cmake .. -DCUDA_ARCH="87"   # 仅 Orin NX
 ```
 
 ## 标定流程
+
+实操版检查清单与交接模板见：`docs/相机标定实施手册.md`。
 
 ### 1. 采集棋盘格图像
 
@@ -150,9 +154,24 @@ calibration:
 ## TensorRT 引擎构建
 
 ```bash
-# 使用 DLA Core 0, INT8 量化
-./scripts/build_engine.sh models/yolov8n.onnx models/yolov8n_int8.engine
+# GPU FP16
+./scripts/build_engine.sh /home/nvidia/NX_volleyball/model/yolo26.onnx /home/nvidia/NX_volleyball/model/yolo26_fp16.engine gpu
+
+# DLA FP16 (Core 0 + GPU Fallback)
+./scripts/build_dla_engine.sh /home/nvidia/NX_volleyball/model/yolo26.onnx /home/nvidia/NX_volleyball/model/yolo26_dla_fp16.engine
 ```
+
+## 并行化性能对比
+
+```bash
+./scripts/pipeline_perf_compare.sh
+```
+
+脚本会输出 `benchmark_results/pipeline_compare_*.md`，包含：
+- GPU / DLA 场景 FPS 对比
+- Stage0 / Stage1 提交耗时
+- Stage3 等待 Detect/Stereo 耗时
+- tegrastats 的 GPU 平均利用率
 
 ## 运行
 

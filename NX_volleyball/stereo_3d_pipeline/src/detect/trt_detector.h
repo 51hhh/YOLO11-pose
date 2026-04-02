@@ -16,6 +16,7 @@
 
 #include <NvInfer.h>
 #include <cuda_runtime.h>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -56,19 +57,39 @@ public:
                                   int width, int height,
                                   cudaStream_t stream);
 
+    /**
+     * @brief 异步提交一次推理 (不阻塞)
+     * @param slotId RingBuffer 槽位 ID [0, RING_BUFFER_SIZE)
+     */
+    void enqueue(int slotId,
+                 const void* gpuImageU8, int pitch,
+                 int width, int height,
+                 cudaStream_t stream);
+
+    /**
+     * @brief 从指定槽位回收推理结果并做后处理
+     *
+     * 调用方需保证对应 stream 的推理和 D2H 已完成 (例如通过 cudaEvent 等待)。
+     */
+    std::vector<Detection> collect(int slotId, int width, int height);
+
     int getInputSize() const { return inputSize_; }
     bool isDLA() const { return useDLA_; }
 
 private:
+    struct BufferSet {
+        void* inputDevice = nullptr;
+        void* outputDevice = nullptr;
+        float* outputHost = nullptr;
+    };
+
     // TensorRT 组件
     nvinfer1::IRuntime* runtime_   = nullptr;
     nvinfer1::ICudaEngine* engine_ = nullptr;
     nvinfer1::IExecutionContext* context_ = nullptr;
 
-    // GPU 缓冲区
-    void* inputBufferDevice_  = nullptr;  ///< 预处理后的输入 (CHW float32)
-    void* outputBufferDevice_ = nullptr;  ///< 推理输出 (raw)
-    float* outputBufferHost_  = nullptr;  ///< 拷回 CPU 用于后处理
+    // 每个 RingSlot 一套 I/O 缓冲, 避免异步覆盖
+    std::array<BufferSet, RING_BUFFER_SIZE> buffers_;
 
     // 参数
     int inputSize_   = 640;     ///< 模型输入正方形尺寸
@@ -93,12 +114,15 @@ private:
      *   R = G = B = pixel / 255.0
      */
     void preprocessGPU(const void* gpuImageU8, int pitch,
-                       int srcWidth, int srcHeight, cudaStream_t stream);
+                       int srcWidth, int srcHeight,
+                       void* inputBufferDevice,
+                       cudaStream_t stream);
 
     /**
      * @brief 后处理: 从 TRT 输出提取检测框
      */
-    std::vector<Detection> postprocess(float scaleX, float scaleY);
+    std::vector<Detection> postprocess(const float* outputBufferHost,
+                                       float scaleX, float scaleY);
 
     /**
      * @brief NMS

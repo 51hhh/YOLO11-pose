@@ -1,10 +1,9 @@
 /**
  * @file vpi_rectifier.h
- * @brief VPI Remap 硬件加速校正 (PVA backend)
+ * @brief VPI Remap 硬件加速校正 (CUDA backend)
  *
  * 使用 VPI 的 vpiSubmitRemap 替代 OpenCV cv2.remap,
- * 利用 Xavier NX 的 PVA (Programmable Vision Accelerator) 硬件单元,
- * 释放 GPU 给视差和检测使用。
+ * VPI Remap 在 VPI 3.x 上使用 CUDA/VIC backend（不支持 PVA）。
  */
 
 #ifndef STEREO_3D_PIPELINE_VPI_RECTIFIER_H_
@@ -38,7 +37,7 @@ public:
     bool init(const StereoCalibration& calib, int width, int height);
 
     /**
-     * @brief 异步提交校正任务 (PVA backend)
+     * @brief 异步提交校正任务 (CUDA backend)
      * @param stream VPI Stream
      * @param rawL 左原始图
      * @param rawR 右原始图

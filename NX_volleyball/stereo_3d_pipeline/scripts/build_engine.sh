@@ -3,32 +3,37 @@
 # build_engine.sh - 编译 TensorRT Engine (在 NX 上运行)
 #
 # 用法:
-#   ./build_engine.sh <onnx_path> [output_engine]
+#   ./build_engine.sh <onnx_path> [output_engine] [mode]
 #
 # 说明:
-#   - DLA Core 0, INT8 量化, GPU Fallback
-#   - 需要先用 trtexec 或 calibration 数据集生成 INT8 校准表
+#   mode=gpu: GPU FP16 engine
+#   mode=dla: DLA FP16 engine (allowGPUFallback)
+#
+# 注意:
+#   TensorRT 10.x 在部分 JetPack 版本上对 --memPoolSize 的 MiB 后缀解析异常,
+#   这里统一使用“字节数”避免 workspace 被错误设置。
 # ============================================================
 
-set -e
+set -euo pipefail
 
-ONNX_PATH="${1:?Usage: $0 <onnx_path> [output_engine]}"
-ENGINE_PATH="${2:-models/yolov8n_int8.engine}"
-CALIB_CACHE="models/int8_calib.cache"
+ONNX_PATH="${1:?Usage: $0 <onnx_path> [output_engine] [mode=gpu|dla]}"
+ENGINE_PATH="${2:-models/yolo_fp16.engine}"
+MODE="${3:-gpu}"
 
-INPUT_SIZE=320
-BATCH_SIZE=1
+WORKSPACE_BYTES=4294967296   # 4 GiB
 DLA_CORE=0
-WORKSPACE_MB=1024
 
 echo "============================================"
 echo "  TensorRT Engine Builder"
 echo "============================================"
 echo "  ONNX:       ${ONNX_PATH}"
 echo "  Engine:     ${ENGINE_PATH}"
-echo "  Input size: ${INPUT_SIZE}x${INPUT_SIZE}"
-echo "  DLA Core:   ${DLA_CORE}"
-echo "  Precision:  INT8"
+echo "  Mode:       ${MODE}"
+echo "  Workspace:  ${WORKSPACE_BYTES} bytes"
+if [ "${MODE}" = "dla" ]; then
+    echo "  DLA Core:   ${DLA_CORE}"
+fi
+echo "  Precision:  FP16"
 echo "============================================"
 
 # 检查 trtexec
@@ -44,20 +49,16 @@ fi
 
 mkdir -p "$(dirname "${ENGINE_PATH}")"
 
-# 构建命令
-CMD="${TRTEXEC} \
+BASE_CMD="${TRTEXEC} \
     --onnx=${ONNX_PATH} \
     --saveEngine=${ENGINE_PATH} \
-    --int8 \
-    --useDLACore=${DLA_CORE} \
-    --allowGPUFallback \
-    --workspace=${WORKSPACE_MB} \
-    --shapes=images:${BATCH_SIZE}x3x${INPUT_SIZE}x${INPUT_SIZE}"
+    --fp16 \
+    --memPoolSize=workspace:${WORKSPACE_BYTES}"
 
-# 如果有校准缓存, 加载
-if [ -f "${CALIB_CACHE}" ]; then
-    CMD="${CMD} --calib=${CALIB_CACHE}"
-    echo "  Using calibration cache: ${CALIB_CACHE}"
+if [ "${MODE}" = "dla" ]; then
+    CMD="${BASE_CMD} --useDLACore=${DLA_CORE} --allowGPUFallback"
+else
+    CMD="${BASE_CMD}"
 fi
 
 echo ""
@@ -65,6 +66,11 @@ echo "Running: ${CMD}"
 echo ""
 
 eval "${CMD}"
+
+if [ ! -f "${ENGINE_PATH}" ]; then
+    echo "ERROR: Engine build finished but file not found: ${ENGINE_PATH}"
+    exit 2
+fi
 
 echo ""
 echo "Engine saved to: ${ENGINE_PATH}"

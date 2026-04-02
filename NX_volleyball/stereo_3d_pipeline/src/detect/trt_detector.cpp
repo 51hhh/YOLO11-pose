@@ -133,81 +133,132 @@ bool TRTDetector::allocateBuffers() {
     size_t outputBytes = outputSize_ * sizeof(float);
 
     cudaError_t err;
-    err = cudaMalloc(&inputBufferDevice_, inputBytes);
-    if (err != cudaSuccess) return false;
+    for (auto& b : buffers_) {
+        err = cudaMalloc(&b.inputDevice, inputBytes);
+        if (err != cudaSuccess) return false;
 
-    err = cudaMalloc(&outputBufferDevice_, outputBytes);
-    if (err != cudaSuccess) return false;
+        err = cudaMalloc(&b.outputDevice, outputBytes);
+        if (err != cudaSuccess) return false;
 
-    // Host 输出缓冲 (pinned memory)
-    err = cudaHostAlloc(reinterpret_cast<void**>(&outputBufferHost_),
-                        outputBytes, cudaHostAllocDefault);
-    if (err != cudaSuccess) return false;
-
-    // 绑定 tensor 地址
-    context_->setTensorAddress(inputTensorName_.c_str(), inputBufferDevice_);
-    context_->setTensorAddress(outputTensorName_.c_str(), outputBufferDevice_);
+        // Host 输出缓冲 (pinned memory)
+        err = cudaHostAlloc(reinterpret_cast<void**>(&b.outputHost),
+                            outputBytes, cudaHostAllocDefault);
+        if (err != cudaSuccess) return false;
+    }
 
     return true;
 }
 
 void TRTDetector::freeBuffers() {
-    if (inputBufferDevice_)  { cudaFree(inputBufferDevice_);  inputBufferDevice_ = nullptr; }
-    if (outputBufferDevice_) { cudaFree(outputBufferDevice_); outputBufferDevice_ = nullptr; }
-    if (outputBufferHost_)   { cudaFreeHost(outputBufferHost_); outputBufferHost_ = nullptr; }
+    for (auto& b : buffers_) {
+        if (b.inputDevice)  { cudaFree(b.inputDevice);   b.inputDevice = nullptr; }
+        if (b.outputDevice) { cudaFree(b.outputDevice);  b.outputDevice = nullptr; }
+        if (b.outputHost)   { cudaFreeHost(b.outputHost); b.outputHost = nullptr; }
+    }
 }
 
 std::vector<Detection> TRTDetector::detect(const void* gpuImageU8, int pitch,
                                            int width, int height,
                                            cudaStream_t stream)
 {
-    // 1. GPU 预处理: U8 灰度 → float32 RGB CHW
-    preprocessGPU(gpuImageU8, pitch, width, height, stream);
+    // 兼容接口: 使用 slot 0 同步执行
+    enqueue(0, gpuImageU8, pitch, width, height, stream);
+    cudaStreamSynchronize(stream);
+    return collect(0, width, height);
+}
 
-    // 2. TRT 异步推理 (DLA/GPU)
+void TRTDetector::enqueue(int slotId,
+                          const void* gpuImageU8, int pitch,
+                          int width, int height,
+                          cudaStream_t stream)
+{
+    int sid = slotId % RING_BUFFER_SIZE;
+    auto& b = buffers_[sid];
+
+    // 1. GPU 预处理: U8 灰度 → float32 RGB CHW
+    preprocessGPU(gpuImageU8, pitch, width, height, b.inputDevice, stream);
+
+    // 2. 绑定本次推理缓冲并异步推理
+    context_->setTensorAddress(inputTensorName_.c_str(), b.inputDevice);
+    context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice);
     context_->enqueueV3(stream);
 
-    // 3. D2H 拷贝输出 + 同步 (后处理需要 CPU 数据)
+    // 3. 异步拷回 host (由调用方在后续通过事件/同步保证完成)
     size_t outputBytes = outputSize_ * sizeof(float);
-    cudaMemcpyAsync(outputBufferHost_, outputBufferDevice_, outputBytes,
+    cudaMemcpyAsync(b.outputHost, b.outputDevice, outputBytes,
                     cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);  // 仅此一次同步 (后处理在 CPU)
+}
 
-    // 4. 后处理
+std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {
+    int sid = slotId % RING_BUFFER_SIZE;
+    auto& b = buffers_[sid];
+
     float scaleX = static_cast<float>(width) / inputSize_;
     float scaleY = static_cast<float>(height) / inputSize_;
-    return postprocess(scaleX, scaleY);
+    return postprocess(b.outputHost, scaleX, scaleY);
 }
 
 void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
                                 int srcWidth, int srcHeight,
+                                void* inputBufferDevice,
                                 cudaStream_t stream)
 {
     launchGrayToRGBKernel(
         static_cast<const unsigned char*>(gpuImageU8),
-        static_cast<float*>(inputBufferDevice_),
+        static_cast<float*>(inputBufferDevice),
         srcWidth, srcHeight, pitch,
         inputSize_, inputSize_,
         stream);
 }
 
-std::vector<Detection> TRTDetector::postprocess(float scaleX, float scaleY) {
+std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
+                                                float scaleX, float scaleY) {
     // YOLOv8/v11 输出格式自动检测:
-    //   行优先 (row-major): [1, N, 4+nc]  → stride = 4+nc, N 条检测, 每行是一个检测
-    //   列优先 (col-major): [1, 4+nc, N]  → nc 类, N 列, 每列是一个检测 (YOLOv8 默认导出)
     //
-    // 区分方法:
-    //   获取 output tensor shape, 若 dims[1] < dims[2] → 列优先 (转置)
-    //   例如 [1, 5, 8400] → 列优先;  [1, 8400, 5] → 行优先
+    // 格式A - Pre-NMS 列优先 (YOLOv8 默认):
+    //   [1, 4+nc, N]  如 [1, 5, 8400] → nc=1, 有 8400 个候选框
+    //
+    // 格式B - Pre-NMS 行优先:
+    //   [1, N, 4+nc]  如 [1, 8400, 5] → cx,cy,w,h + per-class scores
+    //
+    // 格式C - Post-NMS (ultralytics v11 带内置 NMS 的导出):
+    //   [1, N, 6]  如 [1, 300, 6] → x1,y1,x2,y2,conf,class_id
+    //   特征: dim2==6, 已经做完 NMS, 坐标是 xyxy 绝对值
 
     auto outDims = engine_->getTensorShape(outputTensorName_.c_str());
     int dim1 = (outDims.nbDims >= 2) ? outDims.d[1] : 0;
     int dim2 = (outDims.nbDims >= 3) ? outDims.d[2] : 0;
 
     std::vector<Detection> raw_dets;
-    const float* out = outputBufferHost_;
+    const float* out = outputBufferHost;
 
-    // 单类别排球检测: nc=1, 所以 4+nc=5
+    // 格式C: Post-NMS [1, N, 6] — ultralytics v11 导出 (x1,y1,x2,y2,conf,class_id)
+    if (dim2 == 6 && dim1 > 0 && dim1 <= 1000) {
+        int numDets = dim1;
+        for (int i = 0; i < numDets; ++i) {
+            const float* row = out + i * 6;
+            float x1   = row[0];
+            float y1   = row[1];
+            float x2   = row[2];
+            float y2   = row[3];
+            float conf = row[4];
+            int   cls  = static_cast<int>(row[5]);
+
+            if (conf < confThreshold_) continue;
+
+            Detection det;
+            det.cx         = (x1 + x2) / 2.0f * scaleX;
+            det.cy         = (y1 + y2) / 2.0f * scaleY;
+            det.width      = (x2 - x1) * scaleX;
+            det.height     = (y2 - y1) * scaleY;
+            det.confidence = conf;
+            det.class_id   = cls;
+            raw_dets.push_back(det);
+        }
+        return raw_dets;  // 已经是 NMS 后的结果, 直接返回
+    }
+
+    // 格式A vs B 判断
     bool transposed = (dim1 > 0 && dim2 > 0 && dim1 < dim2);
 
     if (transposed) {

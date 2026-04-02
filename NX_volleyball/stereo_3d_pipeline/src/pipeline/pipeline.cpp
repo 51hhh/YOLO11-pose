@@ -4,20 +4,17 @@
  *
  * 核心调度逻辑 (帧间流水线重叠):
  *   每次迭代中，3 个不同的帧同时处于不同 Stage:
- *     Stage 0 处理帧 N+2  [CPU + PVA]
- *     Stage 1 处理帧 N+1  [DLA]          ┐ 并行
- *     Stage 2 处理帧 N+1  [GPU CUDA]     ┘
- *     Stage 3 处理帧 N    [GPU + CPU]
+ *     Stage 3 处理帧 N    [GPU + CPU]      (等待上一帧 detect/stereo)
+ *     Stage 1 处理帧 N+1  [DLA/GPU]        ┐ 异步提交
+ *     Stage 2 处理帧 N+1  [GPU CUDA/VPI]   ┘
+ *     Stage 0 处理帧 N+2  [CPU + VPI Remap]
  *
  *   吞吐量 = 1 / max(Stage_i latency) → 60-100 FPS
  *
- * CUDA Events 跨 Stream 同步:
- *   evtRectDone   → Stage 0 完成后记录在 PVA stream 的 CUDA 事件
- *   evtDetectDone → Stage 1 完成后记录在 DLA stream
- *   evtStereoDone → Stage 2 完成后记录在 GPU stream
- *
- *   Stage 1/2 通过 cudaStreamWaitEvent 等待 evtRectDone
- *   Stage 3   通过 cudaStreamWaitEvent 等待 evtDetectDone + evtStereoDone
+ * CUDA/VPI 同步:
+ *   evtRectDone   → Stage 0 完成后记录, Stage 1/2 作为 gate
+ *   evtDetectDone → Stage 1 D2H 完成后记录, Stage 3 等待
+ *   Stage 2       → VPI stream 异步提交, Stage 3 使用 vpiStreamSync 等待
  */
 
 #include "pipeline.h"
@@ -81,7 +78,8 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_INFO("Allocating VPI images for %d slots...", RING_BUFFER_SIZE);
     for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
         VPIStatus err;
-        uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA;
+        // CPU flag needed for host-side camera memcpy into rawL/rawR
+        uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA | VPI_BACKEND_CPU;
 
         // 原始图像 → 使用 raw_width x raw_height (相机原始分辨率)
         err = vpiImageCreate(config_.raw_width, config_.raw_height,
@@ -128,12 +126,11 @@ bool Pipeline::init(const PipelineConfig& config) {
     cam_cfg.width  = config_.raw_width;
     cam_cfg.height = config_.raw_height;
     if (!camera_->open(cam_cfg)) {
-        LOG_ERROR("Failed to open cameras");
-        return false;
+        LOG_WARN("Failed to open cameras - running in dry-run mode (synthetic frames)");
+        camera_.reset();  // 释放相机, 标记为 dry-run
     }
 #else
-    LOG_ERROR("Camera support disabled (HIK SDK not found)");
-    return false;
+    LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
 #endif
 
     // 7. 初始化 TensorRT 检测器 (DLA/GPU)
@@ -180,11 +177,13 @@ bool Pipeline::init(const PipelineConfig& config) {
 void Pipeline::start() {
     if (running_.exchange(true)) return;
 
-    if (!camera_->startGrabbing()) {
+#ifdef HIK_CAMERA_ENABLED
+    if (camera_ && !camera_->startGrabbing()) {
         LOG_ERROR("Failed to start camera grabbing");
         running_ = false;
         return;
     }
+#endif
 
     // 在独立线程中运行 Pipeline 循环
     pipeline_thread_ = std::thread(&Pipeline::pipelineLoop, this);
@@ -202,182 +201,164 @@ void Pipeline::stop() {
 
     streams_.syncAll();
 
+#ifdef HIK_CAMERA_ENABLED
     if (camera_) camera_->stopGrabbing();
+#endif
 
     globalPerf().printReport();
 }
 
 // ===================================================================
 // Pipeline 主循环 (帧间流水线三级重叠)
+//
+// 调度策略:
+//   1) Stage 3 处理上一帧 (等待上一帧 detect/stereo 完成)
+//   2) Stage 1+2 异步提交当前帧 (不阻塞)
+//   3) Stage 0 抓取下一帧 (与 1/2 重叠)
+//
+// 通过将 Stage 3 前置，避免 vpiStreamSync 等待“当前帧”Stereo，
+// 实现真实帧间重叠。
 // ===================================================================
 
 void Pipeline::pipelineLoop() {
     using Clock = std::chrono::high_resolution_clock;
     auto fps_start = Clock::now();
     int fps_count = 0;
-    int frame_counter = 0;      // 全局帧计数 (Stage 0 已提交的帧数)
-    int output_counter = 0;     // 已输出的帧数
 
-    // === 流水线填充阶段 (Filling) ===
-    // 第 1 帧: 仅 Stage 0
+    int next_grab_frame = 0;      // 下一次 Stage0 要抓取的 frame id
+    int next_detect_frame = 0;    // 下一次 Stage1/2 要提交的 frame id
+    int next_fuse_frame = 0;      // 下一次 Stage3 要输出的 frame id
+
+    // ===== 填充: 先抓首帧 =====
     {
-        auto& s0 = slots_[0];
-        s0.reset();
-        s0.frame_id = frame_counter;
+        int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+        slot.reset();
+        slot.frame_id = next_grab_frame;
 
         ScopedTimer t0("Stage0_GrabRect");
-        stage0_grab_and_rectify(s0);
-        globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
-    }
-    frame_counter++;
-
-    // 第 2 帧: Stage 0 (帧1) + Stage 1/2 (帧0) 并行
-    if (running_) {
-        auto& s0 = slots_[1 % RING_BUFFER_SIZE];
-        s0.reset();
-        s0.frame_id = frame_counter;
-
-        ScopedTimer t0("Stage0_GrabRect");
-        stage0_grab_and_rectify(s0);
+        stage0_grab_and_rectify(slot);
         globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
 
-        // Stage 1+2 on frame 0
-        auto& s12 = slots_[0];
-        cudaStreamWaitEvent(streams_.cudaStreamDLA, s12.evtRectDone, 0);
-        cudaStreamWaitEvent(streams_.cudaStreamGPU, s12.evtRectDone, 0);
-
-        {
-            ScopedTimer t1("Stage1_Detect");
-            stage1_detect(s12);
-            globalPerf().record("Stage1_Detect", t1.elapsedMs());
-        }
-        cudaEventRecord(s12.evtDetectDone, streams_.cudaStreamDLA);
-
-        {
-            ScopedTimer t2("Stage2_Stereo");
-            stage2_stereo(s12);
-            globalPerf().record("Stage2_Stereo", t2.elapsedMs());
-        }
-        vpiStreamSync(streams_.vpiStreamGPU);
-        cudaEventRecord(s12.evtStereoDone, streams_.cudaStreamGPU);
-
-        frame_counter++;
+        next_grab_frame++;
     }
 
-    // === 稳态循环 (Steady State) ===
-    // 每次迭代: Stage 0(帧 N+2), Stage 1+2(帧 N+1), Stage 3(帧 N)
     while (running_) {
-        int grab_slot   = frame_counter % RING_BUFFER_SIZE;
-        int detect_slot = (frame_counter - 1) % RING_BUFFER_SIZE;
-        int fuse_slot   = (frame_counter - 2) % RING_BUFFER_SIZE;
+        // --- Stage 3: 融合上一帧 (若已提交 detect/stereo) ---
+        if (next_fuse_frame < next_detect_frame) {
+            int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
+            auto& slot = slots_[slot_idx];
 
-        // --- Stage 0: Grab + Rectify (帧 N+2) ---
-        {
-            auto& slot = slots_[grab_slot];
-            slot.reset();
-            slot.frame_id = frame_counter;
-
-            ScopedTimer t0("Stage0_GrabRect");
-            stage0_grab_and_rectify(slot);
-            globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
-        }
-
-        // --- Stage 1 + Stage 2 并行 (帧 N+1) ---
-        {
-            auto& slot = slots_[detect_slot];
-
-            // DLA/GPU 都等 evtRectDone 后开始
-            cudaStreamWaitEvent(streams_.cudaStreamDLA, slot.evtRectDone, 0);
-            cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
-
-            // Stage 1: DLA 异步检测 (不做 cudaStreamSynchronize)
+            // 等 Detect 完成
             {
-                ScopedTimer t1("Stage1_Detect");
-                stage1_detect(slot);
-                globalPerf().record("Stage1_Detect", t1.elapsedMs());
+                ScopedTimer tw("Stage3_WaitDetect");
+                cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+                cudaStreamSynchronize(streams_.cudaStreamFuse);
+                globalPerf().record("Stage3_WaitDetect", tw.elapsedMs());
             }
-            cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamDLA);
 
-            // Stage 2: GPU 异步视差 (不做 vpiStreamSync)
+            // 等 Stereo 完成（VPI stream 级同步，放在 Stage3 前，避免阻塞 Stage1/2 提交）
             {
-                ScopedTimer t2("Stage2_Stereo");
-                stage2_stereo(slot);
-                globalPerf().record("Stage2_Stereo", t2.elapsedMs());
+                ScopedTimer tws("Stage3_WaitStereo");
+                vpiStreamSync(streams_.vpiStreamGPU);
+                globalPerf().record("Stage3_WaitStereo", tws.elapsedMs());
             }
-            vpiStreamSync(streams_.vpiStreamGPU);
-            cudaEventRecord(slot.evtStereoDone, streams_.cudaStreamGPU);
-        }
-
-        // --- Stage 3: 等 Stage 1 & 2 完成后融合 (帧 N) ---
-        {
-            auto& slot = slots_[fuse_slot];
-
-            // 等待 DLA 检测 + GPU 视差都完成
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtStereoDone, 0);
-            cudaStreamSynchronize(streams_.cudaStreamFuse);
 
             {
                 ScopedTimer t3("Stage3_Fuse");
-                stage3_fuse(slot);
+                stage3_fuse(slot, slot_idx);
                 globalPerf().record("Stage3_Fuse", t3.elapsedMs());
             }
 
             if (result_callback_) {
                 result_callback_(slot.frame_id, slot.results);
             }
-            output_counter++;
-        }
 
-        frame_counter++;
+            next_fuse_frame++;
 
-        // ---- FPS 统计 ----
-        fps_count++;
-        auto now = Clock::now();
-        double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
-        if (elapsed_s >= 1.0) {
-            current_fps_ = static_cast<float>(fps_count / elapsed_s);
-            if (config_.stats_interval > 0 &&
-                output_counter % config_.stats_interval == 0) {
-                LOG_INFO("FPS: %.1f  (Output frame %d)", current_fps_.load(), output_counter);
+            // ---- FPS 统计基于输出帧 ----
+            fps_count++;
+            auto now = Clock::now();
+            double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
+            if (elapsed_s >= 1.0) {
+                current_fps_ = static_cast<float>(fps_count / elapsed_s);
+                if (config_.stats_interval > 0 &&
+                    next_fuse_frame % config_.stats_interval == 0) {
+                    LOG_INFO("FPS: %.1f  (Output frame %d)", current_fps_.load(), next_fuse_frame);
+                }
+                fps_count = 0;
+                fps_start = now;
             }
-            fps_count = 0;
-            fps_start = now;
         }
+
+        // --- Stage 1 + Stage 2: 异步提交当前帧 ---
+        if (next_detect_frame < next_grab_frame) {
+            int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
+            auto& slot = slots_[slot_idx];
+
+            // DLA/GPU 都等 rect 完成后开始
+            cudaStreamWaitEvent(streams_.cudaStreamDLA, slot.evtRectDone, 0);
+            cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
+
+            {
+                ScopedTimer t1("Stage1_DetectSubmit");
+                stage1_detect(slot, slot_idx);
+                globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
+            }
+            cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamDLA);
+
+            {
+                ScopedTimer t2("Stage2_StereoSubmit");
+                stage2_stereo(slot);
+                globalPerf().record("Stage2_StereoSubmit", t2.elapsedMs());
+            }
+
+            next_detect_frame++;
+        }
+
+        // --- Stage 0: 抓取下一帧 ---
+        int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+        slot.reset();
+        slot.frame_id = next_grab_frame;
+
+        {
+            ScopedTimer t0("Stage0_GrabRect");
+            stage0_grab_and_rectify(slot);
+            globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
+        }
+        next_grab_frame++;
     }
 
-    // === 排空阶段 (Draining): 处理流水线中剩余帧 ===
-    // 帧 frame_counter-1 还在 Stage 1+2, 帧 frame_counter-2 还在 Stage 3 等待
-    if (frame_counter >= 2) {
-        int detect_slot = (frame_counter - 1) % RING_BUFFER_SIZE;
-        auto& slot12 = slots_[detect_slot];
-        cudaStreamWaitEvent(streams_.cudaStreamDLA, slot12.evtRectDone, 0);
-        cudaStreamWaitEvent(streams_.cudaStreamGPU, slot12.evtRectDone, 0);
-        stage1_detect(slot12);
-        cudaEventRecord(slot12.evtDetectDone, streams_.cudaStreamDLA);
-        stage2_stereo(slot12);
+    // ===== 排空阶段 =====
+    // 1) 提交所有已抓取但尚未提交 detect/stereo 的帧
+    while (next_detect_frame < next_grab_frame) {
+        int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+
+        cudaStreamWaitEvent(streams_.cudaStreamDLA, slot.evtRectDone, 0);
+        cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
+
+        stage1_detect(slot, slot_idx);
+        cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamDLA);
+        stage2_stereo(slot);
+
+        next_detect_frame++;
+    }
+
+    // 2) 融合所有已提交 detect/stereo 但尚未输出的帧
+    while (next_fuse_frame < next_detect_frame) {
+        int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+
+        cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+        cudaStreamSynchronize(streams_.cudaStreamFuse);
         vpiStreamSync(streams_.vpiStreamGPU);
-        cudaEventRecord(slot12.evtStereoDone, streams_.cudaStreamGPU);
 
-        // Fuse 帧 frame_counter-2
-        {
-            int fuse_slot = (frame_counter - 2) % RING_BUFFER_SIZE;
-            auto& slot3 = slots_[fuse_slot];
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot3.evtDetectDone, 0);
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot3.evtStereoDone, 0);
-            cudaStreamSynchronize(streams_.cudaStreamFuse);
-            stage3_fuse(slot3);
-            if (result_callback_) result_callback_(slot3.frame_id, slot3.results);
-        }
+        stage3_fuse(slot, slot_idx);
+        if (result_callback_) result_callback_(slot.frame_id, slot.results);
 
-        // Fuse 帧 frame_counter-1
-        {
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot12.evtDetectDone, 0);
-            cudaStreamWaitEvent(streams_.cudaStreamFuse, slot12.evtStereoDone, 0);
-            cudaStreamSynchronize(streams_.cudaStreamFuse);
-            stage3_fuse(slot12);
-            if (result_callback_) result_callback_(slot12.frame_id, slot12.results);
-        }
+        next_fuse_frame++;
     }
 
     LOG_INFO("Pipeline loop exited");
@@ -390,29 +371,34 @@ void Pipeline::pipelineLoop() {
 void Pipeline::stage0_grab_and_rectify(FrameSlot& slot) {
     NVTX_RANGE("Stage0_GrabRect");
 
-    // 1. 抓取左右帧到 VPI Image (Zero-Copy)
-    //    海康 SDK 直接写入 VPI Image 的 Locked 指针
-    VPIImageData imgDataL, imgDataR;
-    vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-    vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+#ifdef HIK_CAMERA_ENABLED
+    if (camera_) {
+        // 1. 抓取左右帧到 VPI Image
+        //    Lock with HOST buffer → memcpy safe, VPI handles host→device transfer on unlock
+        VPIImageData imgDataL, imgDataR;
+        vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
+        vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
 
-    GrabResult resL, resR;
-    camera_->grabFramePair(
-        static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
-        static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
-        imgDataL.buffer.pitch.planes[0].pitchBytes,
-        imgDataR.buffer.pitch.planes[0].pitchBytes,
-        1000,  // timeout_ms
-        resL, resR);
+        GrabResult resL, resR;
+        camera_->grabFramePair(
+            static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
+            static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+            imgDataL.buffer.pitch.planes[0].pitchBytes,
+            imgDataR.buffer.pitch.planes[0].pitchBytes,
+            1000,  // timeout_ms
+            resL, resR);
 
-    vpiImageUnlock(slot.rawL);
-    vpiImageUnlock(slot.rawR);
+        vpiImageUnlock(slot.rawL);
+        vpiImageUnlock(slot.rawR);
+    }
+    // else: dry-run mode — rawL/rawR contain zeroes (VPI images are zero-initialized)
+#endif
 
-    // 2. PVA 加速校正 (异步提交到 PVA stream)
+    // 2. VPI Remap 校正 (异步提交)
     rectifier_->submit(streams_.vpiStreamPVA, slot.rawL, slot.rawR,
                        slot.rectL, slot.rectR);
 
-    // 同步 PVA stream 确保校正完成，然后在 PVA 关联的 CUDA stream 上记录事件
+    // 同步 rect stream 确保校正完成，然后记录 rect-done 事件
     vpiStreamSync(streams_.vpiStreamPVA);
     // 注意: evtRectDone 录在 cudaStreamGPU 上 (由 GPU 负责后续依赖);
     // VPI PVA 作业已经 sync 完成，此 event 仅作为下游 Stage 1/2 的 Gate
@@ -421,7 +407,7 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot) {
     NVTX_RANGE_POP();
 }
 
-void Pipeline::stage1_detect(FrameSlot& slot) {
+void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage1_Detect");
 
     // 从 VPI Image 获取 GPU 指针，传给 TensorRT
@@ -431,10 +417,10 @@ void Pipeline::stage1_detect(FrameSlot& slot) {
     void* gpu_ptr = imgData.buffer.pitch.planes[0].data;
     int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
 
-    // 异步推理: detect() 将工作提交到 DLA stream, 不内部同步
-    slot.detections = detector_->detect(gpu_ptr, pitch,
-                                        config_.rect_width, config_.rect_height,
-                                        streams_.cudaStreamDLA);
+    // 异步推理提交: 仅 enqueue，不在此处同步
+    detector_->enqueue(slot_index, gpu_ptr, pitch,
+                       config_.rect_width, config_.rect_height,
+                       streams_.cudaStreamDLA);
 
     vpiImageUnlock(slot.rectL);
     NVTX_RANGE_POP();
@@ -465,16 +451,20 @@ void Pipeline::stage2_stereo(FrameSlot& slot) {
             break;
     }
 
-    // 不做 vpiStreamSync ! VPI 异步提交到 GPU backend,
-    // 下游 Stage 3 通过 cudaStreamWaitEvent(evtStereoDone) 等待。
+    // 不在此处做 vpiStreamSync。
+    // 下游 Stage3 统一在融合前对 vpiStreamGPU 做同步，避免串行化 Stage1/2 提交路径。
 
     NVTX_RANGE_POP();
 }
 
-void Pipeline::stage3_fuse(FrameSlot& slot) {
+void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage3_Fuse");
 
     slot.results.clear();
+
+    // Detect 结果在 Stage1 中异步 D2H，现已通过 evtDetectDone 保证完成
+    slot.detections = detector_->collect(slot_index,
+                                         config_.rect_width, config_.rect_height);
 
     // 获取视差图 GPU 指针
     VPIImageData dispData;
