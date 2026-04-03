@@ -42,7 +42,7 @@ detector:
 
 stereo:
   backend: "CUDA"
-  max_disparity: 128
+  max_disparity: 256
   window_size: 5
   quality: 6
   use_half_resolution: false

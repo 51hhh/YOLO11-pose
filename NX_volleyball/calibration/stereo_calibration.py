@@ -43,9 +43,9 @@ def _to_gray(image_path):
         return None, None
     if img.ndim == 3:
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), img
-    # 单通道 → 尝试 Bayer 解码
+    # 单通道 → Bayer 解码 (海康BayerRG8 = OpenCV BayerBG)
     try:
-        bgr = cv2.cvtColor(img, cv2.COLOR_BayerRG2BGR)
+        bgr = cv2.cvtColor(img, cv2.COLOR_BayerBG2BGR)
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), bgr
     except cv2.error:
         return img, None
@@ -363,10 +363,15 @@ def visualize_rectification(results, images_dir, n_samples=3):
         min(len(left_files), len(right_files)), size=n, replace=False)
 
     for idx in indices:
-        img_l = cv2.imread(left_files[idx])
-        img_r = cv2.imread(right_files[idx])
+        img_l = cv2.imread(left_files[idx], cv2.IMREAD_UNCHANGED)
+        img_r = cv2.imread(right_files[idx], cv2.IMREAD_UNCHANGED)
         if img_l is None or img_r is None:
             continue
+        # 海康 BayerRG8 sensor → OpenCV BayerBG convention
+        if img_l.ndim == 2:
+            img_l = cv2.cvtColor(img_l, cv2.COLOR_BayerBG2BGR)
+        if img_r.ndim == 2:
+            img_r = cv2.cvtColor(img_r, cv2.COLOR_BayerBG2BGR)
 
         rect_l = cv2.remap(img_l, results['map_lx'], results['map_ly'],
                            cv2.INTER_LINEAR)

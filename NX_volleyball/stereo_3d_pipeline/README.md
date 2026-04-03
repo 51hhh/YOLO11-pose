@@ -1,6 +1,8 @@
-# stereo_3d_pipeline
+# stereo_3d_pipeline — 深度图预研
 
-Jetson Xavier NX / Orin NX 高帧率双目 3D 排球追踪流水线。
+Jetson Orin NX 16GB 双目深度管线预研项目。包含 4 阶段实时流水线 + 13 算法对比 Viewer。
+
+> **定位**: 深度算法选型与工程验证（预研阶段），为排球追踪系统的深度模块提供技术决策依据。
 
 ## 架构
 
@@ -51,7 +53,8 @@ stereo_3d_pipeline/
     ├── rectify/
     │   └── vpi_rectifier.h/cpp       # VPI CUDA Remap 校正
     ├── stereo/
-    │   └── vpi_stereo.h/cpp          # VPI CUDA 视差计算
+    │   ├── vpi_stereo.h/cpp          # VPI CUDA 视差计算
+    │   └── onnx_stereo.h/cpp         # ONNX Runtime DL推理 (CREStereo/HITNet)
     └── utils/
         ├── logger.h                  # printf 格式日志
         ├── profiler.h                # 性能统计 (NVTX + 均值聚合)
@@ -83,8 +86,36 @@ make -j$(nproc)
 
 编译产物：
 - `stereo_pipeline` — 主程序
+- `stereo_depth_viewer` — **13算法深度对比 Viewer**（支持 headless 基准测试）
 - `capture_chessboard` — 标定图像采集工具（需要海康 SDK）
 - `stereo_calibrate` — 双目标定计算工具（纯 OpenCV）
+
+可选依赖（自动检测）：
+- **ONNX Runtime** → CREStereo/HITNet DL推理 (`HAS_ONNXRUNTIME`)
+- **OpenCV ximgproc** → WLS视差滤波 (`HAS_XIMGPROC`)
+
+## 深度算法 Viewer
+
+`stereo_depth_viewer` 集成 13 种算法，支持实时预览和 headless 基准测试：
+
+| 模式 | 算法 | 后端 |
+|---|---|---|
+| 0 | 原始立体对 | - |
+| 1-3 | VPI CUDA SGM (Full/Half/Bilateral) | VPI |
+| 4-8 | OpenCV CUDA SGM/BM/BP/CSBP, SGBM CPU | OpenCV |
+| 9 | SGBM + WLS 后处理 | ximgproc |
+| 10 | SGBM + Census 变换 | 自研 |
+| 11-12 | CREStereo / HITNet | ONNX Runtime |
+
+### Headless 基准测试
+```bash
+./stereo_depth_viewer --headless \
+    --crestereo dl_models/crestereo_init_iter10_480x640.onnx \
+    --hitnet dl_models/hitnet_eth3d_480x640.onnx
+```
+输出：`diagnose_output/benchmark_report.json` + `comparison_grid.png`
+
+详细对比结果见 `docs/深度算法对比报告.md`。
 
 自定义 CUDA 架构：
 ```bash
@@ -204,7 +235,7 @@ detector:
   input_size: 320            # 模型输入（320 更快，640 更准）
 
 stereo:
-  max_disparity: 128
+  max_disparity: 256
   use_half_resolution: false # 开启后视差计算速度翻倍
 
 fusion:
@@ -220,6 +251,6 @@ performance:
 - **零拷贝内存**: `cudaHostAllocMapped` 在 SoC 统一内存架构上实现 CPU/GPU 共享，避免显式传输
 - **VPI PVA 校正**: 在 PVA 硬件上异步执行 Remap，不占用 GPU/CPU 时间
 - **TensorRT INT8 + NVDLA**: 在专用 DLA 加速器上推理，释放 GPU 给视差计算
-- **VPI 视差 Q8.8 定点**: S16 格式输出，直方图峰值提取避免浮点开销
+- **VPI 视差 Q10.5 定点**: S16 格式输出 (实际视差 = pixel / 32.0)，直方图峰值提取避免浮点开销
 - **半分辨率策略**: 可选 `use_half_resolution`，视差在半分辨率计算后通过 `disparityScale` 补偿
 - **帧级交错**: 3 帧同时处于不同阶段，流水线效率最大化

@@ -48,7 +48,7 @@ detector:
 # ========== 立体匹配 (VPI Stereo) ==========
 stereo:
   backend: "CUDA"            # CUDA / PVA (硬编码 CUDA, 仅供参考)
-  max_disparity: 128         # 最大视差 (像素)
+  max_disparity: 256         # 最大视差 (像素)
   window_size: 5             # 匹配窗口
   quality: 6                 # VPI 质量参数 (1-8)
   use_half_resolution: false # 降分辨率策略

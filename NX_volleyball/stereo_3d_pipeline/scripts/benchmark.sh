@@ -127,8 +127,8 @@ print("VPI Stereo Disparity Benchmark")
 print("=" * 60)
 
 configs = [
-    ("Full 1280x720 maxDisp=128", 1280, 720, 128),
-    ("Half 640x360 maxDisp=64",   640,  360, 64),
+    ("Full 1280x720 maxDisp=256", 1280, 720, 256),
+    ("Half 640x360 maxDisp=128",   640,  360, 128),
 ]
 backends = [("CUDA", vpi.Backend.CUDA)]
 # PVA stereo may not support all configs on VPI 3.x

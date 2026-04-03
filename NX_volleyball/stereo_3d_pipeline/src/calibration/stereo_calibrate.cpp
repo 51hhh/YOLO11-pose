@@ -97,11 +97,9 @@ static cv::Mat toGray(const std::string& path) {
     if (img.channels() == 3)
         cv::cvtColor(img, img, cv::COLOR_BGR2GRAY);
     else if (img.channels() == 1 && img.type() == CV_8UC1) {
-        // Try BayerRG decode
-        cv::Mat bgr;
+        // 海康 BayerRG8 sensor → OpenCV BayerBG convention → grayscale
         try {
-            cv::cvtColor(img, bgr, cv::COLOR_BayerRG2BGR);
-            cv::cvtColor(bgr, img, cv::COLOR_BGR2GRAY);
+            cv::cvtColor(img, img, cv::COLOR_BayerBG2GRAY);
         } catch (...) {
             // Already grayscale
         }
@@ -367,13 +365,13 @@ int main(int argc, char* argv[]) {
 
         int nSample = std::min(3, (int)std::min(leftFiles.size(), rightFiles.size()));
         for (int i = 0; i < nSample; ++i) {
-            cv::Mat imgL = cv::imread(leftFiles[i]);
-            cv::Mat imgR = cv::imread(rightFiles[i]);
+            cv::Mat imgL = cv::imread(leftFiles[i], cv::IMREAD_UNCHANGED);
+            cv::Mat imgR = cv::imread(rightFiles[i], cv::IMREAD_UNCHANGED);
             if (imgL.empty() || imgR.empty()) continue;
 
-            // Handle single-channel BayerRG
-            if (imgL.channels() == 1) cv::cvtColor(imgL, imgL, cv::COLOR_BayerRG2BGR);
-            if (imgR.channels() == 1) cv::cvtColor(imgR, imgR, cv::COLOR_BayerRG2BGR);
+            // 海康 BayerRG8 sensor → OpenCV BayerBG convention
+            if (imgL.channels() == 1) cv::cvtColor(imgL, imgL, cv::COLOR_BayerBG2BGR);
+            if (imgR.channels() == 1) cv::cvtColor(imgR, imgR, cv::COLOR_BayerBG2BGR);
 
             cv::Mat rectL, rectR;
             cv::remap(imgL, rectL, mapLx, mapLy, cv::INTER_LINEAR);

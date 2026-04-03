@@ -240,13 +240,13 @@ try:
     right = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint16), format=vpi.Format.U16)
     
     # Warm up
-    disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=128, backends=vpi.Backend.CUDA)
+    disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=256, backends=vpi.Backend.CUDA)
     
     # Benchmark
     N = 50
     t0 = time.monotonic()
     for _ in range(N):
-        disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=128, backends=vpi.Backend.CUDA)
+        disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=256, backends=vpi.Backend.CUDA)
     t1 = time.monotonic()
     avg_ms = (t1 - t0) / N * 1000
     print(f"  [INFO] VPI Stereo Disparity (CUDA, 1280x720, maxdisp=128): {avg_ms:.2f} ms/frame")
@@ -356,7 +356,7 @@ detector:
   max_detections: 10
 
 stereo:
-  max_disparity: 128
+  max_disparity: 256
   window_size: 5
   quality: 6
   use_half_resolution: false

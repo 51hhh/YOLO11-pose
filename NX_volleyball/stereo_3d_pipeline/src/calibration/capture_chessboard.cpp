@@ -168,8 +168,8 @@ int main(int argc, char* argv[]) {
             cv::Mat bayerL(H, W, CV_8UC1, bufL.data());
             cv::Mat bayerR(H, W, CV_8UC1, bufR.data());
             cv::Mat bgrL, bgrR;
-            cv::cvtColor(bayerL, bgrL, cv::COLOR_BayerRG2BGR);
-            cv::cvtColor(bayerR, bgrR, cv::COLOR_BayerRG2BGR);
+            cv::cvtColor(bayerL, bgrL, cv::COLOR_BayerBG2BGR);  // 海康BayerRG8 = OpenCV BayerBG
+            cv::cvtColor(bayerR, bgrR, cv::COLOR_BayerBG2BGR);
 
             char label[64];
             snprintf(label, sizeof(label), "Captured: %d", captureCount);

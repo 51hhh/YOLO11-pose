@@ -1,0 +1,42 @@
+[
+  {
+    "valid_ratio": "30.4%",
+    "valid_pixels": 473555,
+    "depth_mean_mm": "5737",
+    "depth_range": "2154-29998",
+    "time_s": "0.35",
+    "name": "SGBM_CPU"
+  },
+  {
+    "valid_ratio": "100.0%",
+    "valid_pixels": 1555200,
+    "depth_mean_mm": "5593",
+    "depth_range": "2022-10603",
+    "time_s": "12.06",
+    "name": "CREStereo"
+  },
+  {
+    "valid_ratio": "100.0%",
+    "valid_pixels": 1555200,
+    "depth_mean_mm": "6244",
+    "depth_range": "1594-16216",
+    "time_s": "1.49",
+    "name": "HITNet"
+  },
+  {
+    "valid_ratio": "100.0%",
+    "valid_pixels": 1555200,
+    "depth_mean_mm": "4837",
+    "depth_range": "1024-10737",
+    "time_s": "8.36",
+    "name": "RAFT-Stereo"
+  },
+  {
+    "valid_ratio": "100.0%",
+    "valid_pixels": 1555200,
+    "depth_mean_mm": "5745",
+    "depth_range": "1440-22547",
+    "time_s": "2.09",
+    "name": "PSMNet"
+  }
+]

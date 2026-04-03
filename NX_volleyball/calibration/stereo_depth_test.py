@@ -110,7 +110,7 @@ def _read_image(path):
     if img.ndim == 3:
         return img
     try:
-        return cv2.cvtColor(img, cv2.COLOR_BayerRG2BGR)
+        return cv2.cvtColor(img, cv2.COLOR_BayerBG2BGR)  # 海康BayerRG8 = OpenCV BayerBG
     except cv2.error:
         return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
@@ -129,8 +129,10 @@ def _glob_images(directory):
 def create_sgbm(img_width):
     """创建 StereoSGBM 匹配器，参数自动适配"""
     # numDisparities 必须为16的倍数
-    num_disp = max(16, (img_width // 8) & ~0xF)
-    num_disp = min(num_disp, 256)
+    # 大基线+高焦距需要更大的视差范围 (327mm baseline, ~1930px focal)
+    # 3m 距离: disp ≈ 210px, 需要 numDisp >= 224
+    num_disp = max(16, (img_width // 4) & ~0xF)
+    num_disp = min(num_disp, 384)
 
     block = 5
     return cv2.StereoSGBM_create(

@@ -30,8 +30,8 @@ message(STATUS "CUDA: ${CUDAToolkit_VERSION}")
 find_package(vpi REQUIRED)
 message(STATUS "VPI found")
 
-# OpenCV (标定加载 + 可视化 + 标定工具)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d highgui imgcodecs)
+# OpenCV (标定加载 + 可视化 + 标定工具 + CUDA 立体匹配)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d highgui imgcodecs cudastereo cudaimgproc cudafilters)
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
 
 # TensorRT
@@ -84,6 +84,31 @@ if(GPIOD_LIB AND GPIOD_INCLUDE)
 else()
   set(GPIOD_FOUND OFF)
   message(STATUS "libgpiod not found, capture_chessboard PWM disabled")
+endif()
+
+# ONNX Runtime (可选, DL 立体匹配模型推理)
+find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+  HINTS /usr/include/onnxruntime /usr/local/include/onnxruntime
+        /usr/include /usr/local/include)
+find_library(ONNXRUNTIME_LIB onnxruntime
+  HINTS /usr/lib/aarch64-linux-gnu /usr/lib /usr/local/lib)
+if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIB)
+  set(ONNXRUNTIME_FOUND ON)
+  message(STATUS "ONNX Runtime: ${ONNXRUNTIME_LIB}")
+else()
+  set(ONNXRUNTIME_FOUND OFF)
+  message(STATUS "ONNX Runtime not found, DL stereo disabled")
+endif()
+
+# OpenCV ximgproc (可选, WLS 视差后处理滤波)
+# JetPack OpenCV 通常包含 contrib 模块
+find_package(OpenCV QUIET COMPONENTS ximgproc)
+if(OpenCV_ximgproc_FOUND)
+  set(XIMGPROC_FOUND ON)
+  message(STATUS "OpenCV ximgproc: found (WLS filter enabled)")
+else()
+  set(XIMGPROC_FOUND OFF)
+  message(STATUS "OpenCV ximgproc not found, WLS filter disabled")
 endif()
 
 # ==================== 包含目录 ====================
@@ -198,6 +223,50 @@ endif()
 
 # ==================== 安装 ====================
 install(TARGETS stereo_pipeline DESTINATION bin)
+
+# ==================== 深度查看器 ====================
+if(HIK_FOUND)
+  set(VIEWER_SOURCES
+    src/stereo_depth_viewer.cpp
+    src/calibration/stereo_calibration.cpp
+    src/capture/hikvision_camera.cpp
+  )
+
+  # ONNX Runtime DL 立体匹配 (可选)
+  if(ONNXRUNTIME_FOUND)
+    list(APPEND VIEWER_SOURCES src/stereo/onnx_stereo.cpp)
+  endif()
+
+  add_executable(stereo_depth_viewer ${VIEWER_SOURCES})
+  set_target_properties(stereo_depth_viewer PROPERTIES CXX_STANDARD 17)
+  target_include_directories(stereo_depth_viewer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_link_libraries(stereo_depth_viewer
+    vpi
+    CUDA::cudart
+    ${OpenCV_LIBS}
+    MvCameraControl
+    pthread
+  )
+
+  # ONNX Runtime
+  if(ONNXRUNTIME_FOUND)
+    target_include_directories(stereo_depth_viewer PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(stereo_depth_viewer ${ONNXRUNTIME_LIB})
+    target_compile_definitions(stereo_depth_viewer PRIVATE HAS_ONNXRUNTIME)
+  endif()
+
+  # ximgproc WLS filter
+  if(XIMGPROC_FOUND)
+    target_compile_definitions(stereo_depth_viewer PRIVATE HAS_XIMGPROC)
+  endif()
+
+  if(GPIOD_FOUND)
+    target_link_libraries(stereo_depth_viewer ${GPIOD_LIB})
+  else()
+    target_compile_definitions(stereo_depth_viewer PRIVATE NO_GPIOD)
+  endif()
+  message(STATUS "stereo_depth_viewer: enabled")
+endif()
 install(TARGETS stereo_calibrate DESTINATION bin)
 if(HIK_FOUND)
   install(TARGETS capture_chessboard DESTINATION bin)
@@ -214,6 +283,8 @@ message(STATUS "  CUDA arch:      ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  VPI:            YES")
 message(STATUS "  TensorRT:       YES")
 message(STATUS "  OpenCV:         ${OpenCV_VERSION}")
+message(STATUS "  ONNX Runtime:   ${ONNXRUNTIME_FOUND}")
+message(STATUS "  ximgproc (WLS): ${XIMGPROC_FOUND}")
 message(STATUS "  Hikvision SDK:  ${HIK_FOUND}")
 message(STATUS "  yaml-cpp:       YES")
 message(STATUS "========================================")

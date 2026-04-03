@@ -14,6 +14,7 @@
 
 #include <cstring>
 #include <chrono>
+#include <thread>
 
 namespace stereo3d {
 
@@ -97,6 +98,12 @@ void HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg) {
     // 增益
     MV_CC_SetEnumValue(handle, "GainAuto", 0);  // Off
     MV_CC_SetFloatValue(handle, "Gain", cfg.gain_db);
+
+    // 抓帧策略: 使用"最新帧"模式, 避免缓冲区堆积导致左右帧不同步
+    // MV_GrabStrategy_OneByOne=0 (FIFO), LatestImagesOnly=1, LatestImages=2
+    MV_CC_SetGrabStrategy(handle, MV_GrabStrategy_LatestImagesOnly);
+    // 减小输出缓冲区节点数, 降低延迟
+    MV_CC_SetImageNodeNum(handle, 1);
 
     // 触发模式
     if (cfg.use_trigger) {
@@ -248,23 +255,45 @@ bool HikvisionCamera::grabFramePair(
 {
     if (!grabbing_) return false;
 
-    // 硬件触发模式下, 左右相机几乎同时收到触发脉冲
-    // 先抓左, 再抓右 (延迟 < 1ms)
-    bool okL = grabOneFrame(handle_left_,  dst_left,  left_pitch,
-                            timeout_ms, result_left);
-    bool okR = grabOneFrame(handle_right_, dst_right, right_pitch,
-                            timeout_ms, result_right);
+    // 并行抓取左右帧 — 确保两个 MV_CC_GetImageBuffer 同时发起,
+    // 返回同一触发脉冲的帧, 避免顺序抓取的时间差导致帧不同步
+    bool okL = false, okR = false;
+    std::thread grabThread([&]() {
+        okR = grabOneFrame(handle_right_, dst_right, right_pitch,
+                           timeout_ms, result_right);
+    });
+    okL = grabOneFrame(handle_left_, dst_left, left_pitch,
+                       timeout_ms, result_left);
+    grabThread.join();
 
     if (!okL || !okR) {
         LOG_WARN("[HikCam] GrabPair partial fail: L=%d R=%d", okL, okR);
         return false;
     }
 
-    // 检查时间戳差异 (应 < 1ms = 1000us)
-    int64_t dt = static_cast<int64_t>(result_left.timestamp_us) -
-                 static_cast<int64_t>(result_right.timestamp_us);
-    if (std::abs(dt) > 5000) {  // > 5ms 报警
-        LOG_WARN("[HikCam] Large stereo timestamp diff: %ldus", (long)dt);
+    // 检查时间戳差异 (时间戳实际为纳秒, 字段名 timestamp_us 具有误导性)
+    // 两台独立相机有固定时钟偏移 (可达数十秒) + 缓慢晶振漂移 (~27ppm)
+    // 只检查 *相邻帧* 偏移的突变来检测是否抓到不同触发脉冲的帧
+    if (config_.use_trigger) {
+        static int64_t prev_offset = 0;
+        static bool first_frame = true;
+        int64_t dt = static_cast<int64_t>(result_left.timestamp_us) -
+                     static_cast<int64_t>(result_right.timestamp_us);
+        if (first_frame) {
+            prev_offset = dt;
+            first_frame = false;
+            LOG_INFO("[HikCam] L/R clock offset: %ldns (%.3fs) - normal for independent clocks",
+                     (long)dt, dt / 1e9);
+        } else {
+            int64_t frame_drift = std::abs(dt - prev_offset);
+            // 正常晶振漂移 ~1780ns/帧; 触发不匹配会导致跳变 ~66ms (15Hz)
+            // 阈值 500000ns (0.5ms) 远大于正常漂移, 远小于触发周期
+            if (frame_drift > 500000) {
+                LOG_WARN("[HikCam] Frame sync jump: %ldns (offset %ld -> %ld) - L/R may be from different triggers!",
+                         (long)frame_drift, (long)prev_offset, (long)dt);
+            }
+            prev_offset = dt;
+        }
     }
 
     return true;

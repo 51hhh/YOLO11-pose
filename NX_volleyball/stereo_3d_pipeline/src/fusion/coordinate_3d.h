@@ -38,7 +38,7 @@ public:
     /**
      * @brief 对单个检测框计算 3D 坐标
      * @param det 检测结果 (2D BBox)
-     * @param disparityGPU GPU 视差图指针 (S16, Q8.8)
+     * @param disparityGPU GPU 视差图指针 (S16, Q10.5)
      * @param dispPitch 视差图行跨度 (bytes)
      * @param imgWidth 图像宽度
      * @param imgHeight 图像高度

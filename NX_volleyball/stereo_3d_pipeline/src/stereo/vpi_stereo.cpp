@@ -4,8 +4,8 @@
  *
  * CUDA backend 全帧视差 + 半分辨率降级策略。
  *
- * VPI 输出 S16 格式 (Q8.8 定点数):
- *   实际视差 = output_pixel / 256.0f
+ * VPI 输出 S16 格式 (Q10.5 定点数):
+ *   实际视差 = output_pixel / 32.0f
  */
 
 #include "vpi_stereo.h"
@@ -115,7 +115,7 @@ void VPIStereo::computeHalfRes(VPIStream stream,
 
     // 3. 上采样视差图回原始分辨率
     // 注意: 视差值需要 ×2 (因为降了一半分辨率)
-    // VPI Rescale 只做尺寸缩放，视差数值由 S16 Q8.8 格式自动继承
+    // VPI Rescale 只做尺寸缩放，视差数值由 S16 Q10.5 格式自动继承
     // 后续使用时需要手动 ×2 补偿
     vpiSubmitRescale(stream, VPI_BACKEND_CUDA, halfDisp_, disparity,
                      VPI_INTERP_NEAREST, VPI_BORDER_ZERO, 0);

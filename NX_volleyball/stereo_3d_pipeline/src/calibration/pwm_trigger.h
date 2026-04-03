@@ -2,30 +2,36 @@
  * @file pwm_trigger.h
  * @brief GPIO PWM trigger for stereo camera sync
  *
+ * Timing strategy:
+ *   clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME) for jitter-free
+ *   absolute-time wakeup. Combined with SCHED_FIFO, mlockall, and
+ *   CPU affinity to minimize scheduling interference.
+ *
  * Priority:
  *   1. libgpiod (if available at compile time)
- *   2. sysfs GPIO fallback (/sys/class/gpio) — works without any library
+ *   2. sysfs GPIO fallback (/sys/class/gpio)
  *   3. NO_GPIOD + NO_SYSFS_GPIO → disabled
  *
- * Default: gpiochip2 line 7 → sysfs GPIO 393 on Orin NX
- * (gpiochip2 base=386, line 7 → 386+7=393)
+ * Default: gpiochip2 line 7 on Orin NX
  */
 
 #pragma once
 
 #include <atomic>
 #include <thread>
-#include <chrono>
 #include <string>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <pthread.h>
 
 #ifndef NO_GPIOD
 #include <gpiod.h>
-#include <sched.h>
 #endif
 
 namespace stereo3d {
@@ -50,6 +56,10 @@ public:
     PWMTrigger& operator=(const PWMTrigger&) = delete;
 
     bool start() {
+        if (frequency_ <= 0 || duty_cycle_ < 0 || duty_cycle_ > 100) {
+            fprintf(stderr, "[PWM] Invalid params: freq=%.1f duty=%.1f\n", frequency_, duty_cycle_);
+            return false;
+        }
 #ifndef NO_GPIOD
         // Try libgpiod first
         if (startGpiod()) return true;
@@ -75,24 +85,66 @@ public:
             (void)write(sysfs_fd_, "0", 1);
             close(sysfs_fd_);
             sysfs_fd_ = -1;
-            // Unexport
-            int fd = ::open("/sys/class/gpio/unexport", O_WRONLY);
-            if (fd >= 0) {
-                char buf[16];
-                int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-                (void)::write(fd, buf, len);
-                ::close(fd);
-            }
+            unexportGpio();
         }
     }
 
     bool isRunning() const { return running_.load(); }
 
 private:
+    /// Unexport sysfs GPIO (safe to call multiple times)
+    void unexportGpio() {
+        if (sysfs_gpio_num_ < 0) return;
+        int fd = ::open("/sys/class/gpio/unexport", O_WRONLY);
+        if (fd >= 0) {
+            char buf[16];
+            int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
+            (void)::write(fd, buf, len);
+            ::close(fd);
+        }
+    }
+    // ==================== RT thread setup ====================
+
+    /// Configure real-time scheduling, memory lock, and CPU affinity
+    static void setupRealtimeThread() {
+        // SCHED_FIFO priority 80 — preempts normal threads
+        struct sched_param sp{};
+        sp.sched_priority = 80;
+        if (sched_setscheduler(0, SCHED_FIFO, &sp) < 0)
+            fprintf(stderr, "[PWM] SCHED_FIFO failed (need root): %s\n", strerror(errno));
+
+        // Lock all pages to prevent page-fault jitter
+        if (mlockall(MCL_CURRENT | MCL_FUTURE) < 0)
+            fprintf(stderr, "[PWM] mlockall failed: %s\n", strerror(errno));
+
+        // Pin to last CPU core to avoid migration jitter
+        int ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+        if (ncpus > 1) {
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(ncpus - 1, &cpuset);
+            if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0)
+                fprintf(stderr, "[PWM] CPU affinity failed: %s\n", strerror(errno));
+        }
+    }
+
+    /// Add nanoseconds to timespec (handles overflow)
+    static void timespecAdd(struct timespec& ts, long ns) {
+        ts.tv_nsec += ns;
+        while (ts.tv_nsec >= 1000000000L) {
+            ts.tv_nsec -= 1000000000L;
+            ts.tv_sec++;
+        }
+    }
+
+    /// Absolute-time sleep using kernel hrtimer (jitter < 50μs with SCHED_FIFO)
+    static void sleepUntil(const struct timespec& target) {
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &target, nullptr);
+    }
+
     // ==================== sysfs GPIO backend ====================
-    // Compute sysfs GPIO number from chip + line offset
+
     int computeSysfsGpioNum() const {
-        // Try reading chip base from /sys/bus/gpio/devices/<chip_name>/base
         char path[256];
         snprintf(path, sizeof(path), "/sys/class/gpio/%s/base", chip_name_.c_str());
         FILE* f = fopen(path, "r");
@@ -102,8 +154,8 @@ private:
             fclose(f);
         }
         if (base < 0) {
-            // Orin NX known defaults: gpiochip0=316, gpiochip1=348, gpiochip2=386
-            if (chip_name_ == "gpiochip0") base = 316;
+            // Orin NX known defaults
+            if      (chip_name_ == "gpiochip0") base = 316;
             else if (chip_name_ == "gpiochip1") base = 348;
             else if (chip_name_ == "gpiochip2") base = 386;
             else {
@@ -118,7 +170,9 @@ private:
         sysfs_gpio_num_ = computeSysfsGpioNum();
         if (sysfs_gpio_num_ < 0) return false;
 
-        // Export
+        fprintf(stderr, "[PWM] WARNING: sysfs GPIO is deprecated on JetPack 6+, "
+                        "install libgpiod for reliable operation\n");
+
         int fd = ::open("/sys/class/gpio/export", O_WRONLY);
         if (fd < 0) {
             fprintf(stderr, "[PWM] Cannot open /sys/class/gpio/export: %s\n", strerror(errno));
@@ -126,29 +180,28 @@ private:
         }
         char buf[16];
         int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-        (void)::write(fd, buf, len);  // May fail if already exported — ok
+        (void)::write(fd, buf, len);
         ::close(fd);
 
-        // Wait a moment for sysfs node to appear
         usleep(50000);
 
-        // Set direction
         char dir_path[256];
         snprintf(dir_path, sizeof(dir_path), "/sys/class/gpio/gpio%d/direction", sysfs_gpio_num_);
         fd = ::open(dir_path, O_WRONLY);
         if (fd < 0) {
             fprintf(stderr, "[PWM] Cannot set GPIO %d direction: %s\n", sysfs_gpio_num_, strerror(errno));
+            unexportGpio();
             return false;
         }
         (void)::write(fd, "out", 3);
         ::close(fd);
 
-        // Open value file for fast toggling
         char val_path[256];
         snprintf(val_path, sizeof(val_path), "/sys/class/gpio/gpio%d/value", sysfs_gpio_num_);
         sysfs_fd_ = ::open(val_path, O_WRONLY);
         if (sysfs_fd_ < 0) {
             fprintf(stderr, "[PWM] Cannot open GPIO %d value: %s\n", sysfs_gpio_num_, strerror(errno));
+            unexportGpio();
             return false;
         }
 
@@ -161,25 +214,27 @@ private:
     }
 
     void loopSysfs() {
-        using clock = std::chrono::high_resolution_clock;
-        using dsec  = std::chrono::duration<double>;
+        setupRealtimeThread();
 
-        double period  = 1.0 / frequency_;
-        double high_t  = period * (duty_cycle_ / 100.0);
-        double low_t   = period - high_t;
+        long high_ns = static_cast<long>(1e9 / frequency_ * (duty_cycle_ / 100.0));
+        long low_ns  = static_cast<long>(1e9 / frequency_) - high_ns;
 
-        auto next = clock::now();
-        while (running_.load()) {
+        struct timespec next;
+        clock_gettime(CLOCK_MONOTONIC, &next);
+
+        while (running_.load(std::memory_order_relaxed)) {
             (void)::write(sysfs_fd_, "1", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
-            next += std::chrono::duration_cast<clock::duration>(dsec(high_t));
-            accurateSleep(dsec(next - clock::now()).count());
+            timespecAdd(next, high_ns);
+            sleepUntil(next);
 
             (void)::write(sysfs_fd_, "0", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
-            next += std::chrono::duration_cast<clock::duration>(dsec(low_t));
-            accurateSleep(dsec(next - clock::now()).count());
+            timespecAdd(next, low_ns);
+            sleepUntil(next);
         }
+
+        munlockall();
     }
 
     // ==================== libgpiod backend ====================
@@ -215,42 +270,29 @@ private:
     }
 
     void loopGpiod() {
-        struct sched_param sp;
-        sp.sched_priority = 50;
-        sched_setscheduler(0, SCHED_FIFO, &sp);
+        setupRealtimeThread();
 
-        using clock = std::chrono::high_resolution_clock;
-        using dsec  = std::chrono::duration<double>;
+        long high_ns = static_cast<long>(1e9 / frequency_ * (duty_cycle_ / 100.0));
+        long low_ns  = static_cast<long>(1e9 / frequency_) - high_ns;
 
-        double period  = 1.0 / frequency_;
-        double high_t  = period * (duty_cycle_ / 100.0);
-        double low_t   = period - high_t;
+        struct timespec next;
+        clock_gettime(CLOCK_MONOTONIC, &next);
 
-        auto next = clock::now();
-        while (running_.load()) {
+        while (running_.load(std::memory_order_relaxed)) {
             gpiod_line_set_value(line_, 1);
-            next += std::chrono::duration_cast<clock::duration>(dsec(high_t));
-            accurateSleep(dsec(next - clock::now()).count());
+            timespecAdd(next, high_ns);
+            sleepUntil(next);
 
             gpiod_line_set_value(line_, 0);
-            next += std::chrono::duration_cast<clock::duration>(dsec(low_t));
-            accurateSleep(dsec(next - clock::now()).count());
+            timespecAdd(next, low_ns);
+            sleepUntil(next);
         }
+
+        munlockall();
     }
 #endif
 
-    // ==================== common ====================
-    static void accurateSleep(double dur) {
-        if (dur <= 0) return;
-        constexpr double BUSY_THRESHOLD = 0.0005;
-        using clock = std::chrono::high_resolution_clock;
-        using dsec  = std::chrono::duration<double>;
-        if (dur > BUSY_THRESHOLD)
-            std::this_thread::sleep_for(dsec(dur - BUSY_THRESHOLD));
-        auto target = clock::now() + std::chrono::duration_cast<clock::duration>(dsec(std::min(dur, BUSY_THRESHOLD)));
-        while (clock::now() < target) {}
-    }
-
+    // ==================== members ====================
     std::string chip_name_;
     unsigned int line_offset_;
     double frequency_;

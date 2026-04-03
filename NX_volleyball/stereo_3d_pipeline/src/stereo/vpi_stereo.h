@@ -6,7 +6,7 @@
  *   - GPU (CUDA) backend: 全帧高质量视差
  *   - PVA backend: 更快但窗口尺寸限制
  *
- * 输出: S16 视差图 (Q8.8 定点, 实际视差 = value / 256.0)
+ * 输出: S16 视差图 (Q10.5 定点, 实际视差 = value / 32.0)
  */
 
 #ifndef STEREO_3D_PIPELINE_VPI_STEREO_H_
@@ -41,7 +41,7 @@ public:
      * @param stream VPI Stream (CUDA backend)
      * @param rectL 校正后左图
      * @param rectR 校正后右图
-     * @param disparity 视差图输出 (S16, Q8.8)
+     * @param disparity 视差图输出 (S16, Q10.5)
      * @param confidence 置信度图输出 (U16)
      */
     void compute(VPIStream stream,
@@ -70,7 +70,7 @@ private:
     VPIImage halfDisp_ = nullptr;
     VPIImage halfConf_ = nullptr;
 
-    int maxDisparity_ = 128;
+    int maxDisparity_ = 256;
     int windowSize_   = 5;
     int width_  = 0;
     int height_ = 0;

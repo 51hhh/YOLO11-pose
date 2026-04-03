@@ -21,6 +21,20 @@ NX_volleyball/model/*.engine
 
 # NX 本地测试输出
 NX_volleyball/stereo_3d_pipeline/benchmark_results/
+NX_volleyball/stereo_3d_pipeline/diagnose_output/*.png
+NX_volleyball/stereo_3d_pipeline/diagnose_output/*.npy
+NX_volleyball/calibration/depth_output/*.png
+NX_volleyball/calibration/depth_results/
+NX_volleyball/calibration/depth_results/*.png
+
+# DL 模型文件（大文件不入库）
+NX_volleyball/stereo_3d_pipeline/dl_models/*.onnx
+NX_volleyball/stereo_3d_pipeline/dl_models/*.engine
+NX_volleyball/stereo_3d_pipeline/dl_models/*.whl
+NX_volleyball/stereo_3d_pipeline/dl_models/*.tar.gz
+
+# 编译产物
+NX_volleyball/stereo_3d_pipeline/build/
 
 # 本地临时脚本与检查文件
 NX_volleyball/scripts/nx_trt_build*.sh

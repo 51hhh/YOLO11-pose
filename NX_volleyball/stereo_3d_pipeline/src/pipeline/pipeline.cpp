@@ -99,7 +99,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                              VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectR);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectR create failed"); return false; }
 
-        // 视差图 (S16 格式, Q8.8 定点数) → 校正后分辨率
+        // 视差图 (S16 格式, Q10.5 定点数) → 校正后分辨率
         err = vpiImageCreate(config_.rect_width, config_.rect_height,
                              VPI_IMAGE_FORMAT_S16, VPI_BACKEND_CUDA, &slots_[i].disparityMap);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI disparity create failed"); return false; }

@@ -129,7 +129,7 @@ std::vector<Object3D> Coordinate3D::computeBatch(
         // 半分辨率视差需要 ×2 补偿
         d_peak *= disparityScale;
 
-        // VPI S16 Q8.8 格式: 实际视差 = d_peak / 256.0
+        // VPI S16 Q10.5 格式: 实际视差 = d_peak / 32.0
         // 但 depth_extract.cu 已经做了除法，这里 d_peak 就是像素视差
         float Z = (focal_ * baseline_) / d_peak;
 

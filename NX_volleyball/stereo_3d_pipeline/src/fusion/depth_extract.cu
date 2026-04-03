@@ -7,21 +7,21 @@
  *   使用共享内存直方图统计框内视差值
  *   取直方图峰值作为代表性视差 (比中值更鲁棒)
  *
- * VPI 视差图格式: S16, Q8.8 定点 → 实际视差 = pixel / 256.0
+ * VPI 视差图格式: S16, Q10.5 定点 → 实际视差 = pixel / 32.0
  */
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-// 直方图 bin 数量 (视差范围 0~255)
-#define HIST_BINS 256
-// 每个 block 的线程数
-#define THREADS_PER_BLOCK 256
+// 直方图 bin 数量 (视差范围 0~511, 支持 maxdisp=256+)
+#define HIST_BINS 512
+// 每个 block 的线程数 (必须 >= HIST_BINS)
+#define THREADS_PER_BLOCK 512
 
 /**
  * @brief 直方图法提取 BBox 内峰值视差
  *
- * @param disparity S16 视差图 (Q8.8 格式)
+ * @param disparity S16 视差图 (Q10.5 格式)
  * @param dispPitch 视差图行跨度 (bytes)
  * @param imgWidth 图像宽度
  * @param bboxes [x1, y1, x2, y2] * numBoxes
@@ -74,10 +74,10 @@ __global__ void depthExtractKernel(
 
         int16_t raw_disp = disparity[py * pixelsPerRow + px];
 
-        // Q8.8 → 实际视差 (整数部分用于直方图 bin)
+        // Q10.5 → 实际视差 (整数部分用于直方图 bin)
         // raw_disp > 0 才有效
         if (raw_disp > 0) {
-            int disp_int = raw_disp >> 8;  // 取整数部分
+            int disp_int = raw_disp >> 5;  // 取整数部分 (Q10.5: 5位小数)
             if (disp_int >= 0 && disp_int < HIST_BINS) {
                 atomicAdd(&histogram[disp_int], 1);
             }
@@ -129,7 +129,7 @@ __global__ void depthExtractKernel(
             }
             float disp_peak = (weight > 0) ? (sum / weight) : 0.0f;
 
-            // 加上小数部分的大致估计 (Q8.8 亚像素)
+            // 加上小数部分的大致估计 (Q10.5 亚像素)
             // 精确做法可以在 host 端用更复杂的插值
             depths[boxIdx] = disp_peak + 0.5f;  // 约 0.5 pixel 亚像素补偿
         }
