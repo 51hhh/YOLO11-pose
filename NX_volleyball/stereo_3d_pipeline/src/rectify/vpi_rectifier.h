@@ -52,6 +52,13 @@ public:
                 VPIImage rawL, VPIImage rawR,
                 VPIImage rectL, VPIImage rectR);
 
+    /**
+     * @brief BGR 三通道校正 (同一 LUT, CUDA backend)
+     */
+    void submitBGR(VPIStream stream,
+                   VPIImage bgrL, VPIImage bgrR,
+                   VPIImage rectBGR_L, VPIImage rectBGR_R);
+
 private:
     VPIPayload remapL_ = nullptr;   ///< 左目 Remap payload
     VPIPayload remapR_ = nullptr;   ///< 右目 Remap payload

@@ -26,6 +26,12 @@ namespace stereo3d {
 
 class TRTDetector {
 public:
+    enum class InputFormat {
+        GRAY,   ///< 单通道灰度
+        BAYER,  ///< BayerRG8 单通道马赛克
+        BGR     ///< 三通道 BGR
+    };
+
     TRTDetector();
     ~TRTDetector();
 
@@ -39,14 +45,16 @@ public:
      * @param dlaCore DLA 核心 ID (0 或 1)
      * @param confThreshold 置信度阈值
      * @param nmsThreshold NMS 阈值
+    * @param inputFormat 输入格式: "gray" | "bayer" | "bgr"
      * @return true 初始化成功
      */
     bool init(const std::string& engineFile, bool useDLA, int dlaCore,
-              float confThreshold, float nmsThreshold);
+            float confThreshold, float nmsThreshold,
+            const std::string& inputFormat = "gray");
 
     /**
-     * @brief 从 GPU 灰度图执行检测
-     * @param gpuImageU8 GPU 上的灰度图指针 (U8 格式, 来自 VPI)
+    * @brief 从 GPU 图像执行检测
+    * @param gpuImageU8 GPU 图像指针 (格式由 inputFormat 决定)
      * @param pitch 图像行字节跨度
      * @param width 图像宽度
      * @param height 图像高度
@@ -114,6 +122,7 @@ private:
     bool useDLA_    = true;
     int  dlaCore_   = 0;
     bool useLetterbox_ = true;  ///< 使用 letterbox 预处理 (保持宽高比)
+    InputFormat inputFormat_ = InputFormat::GRAY;  ///< 输入像素格式
     bool multiScaleOutput_ = false;  ///< 6-tensor DFL output mode
     int  numClasses_ = 1;       ///< Number of classes (volleyball=1)
     int  regMax_ = 16;          ///< DFL regression max bins
@@ -128,10 +137,7 @@ private:
     void freeBuffers();
 
     /**
-     * @brief CUDA 预处理: 灰度 U8 → RGB float32 CHW (带 resize + 归一化)
-     *
-     * 由于 DLA 检测只需要左图，直接将灰度复制到 3 通道:
-     *   R = G = B = pixel / 255.0
+    * @brief CUDA 预处理: GRAY/BAYER/BGR -> RGB float32 CHW
      */
     void preprocessGPU(const void* gpuImageU8, int pitch,
                        int srcWidth, int srcHeight,

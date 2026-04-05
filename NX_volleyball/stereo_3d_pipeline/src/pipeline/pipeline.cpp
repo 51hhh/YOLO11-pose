@@ -23,6 +23,13 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
+
+// 自定义 CUDA Bayer→BGR8 kernel (bilinear 插值, 在 detect_preprocess.cu 中)
+extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
+                                   int width, int height,
+                                   int bayer_pitch, int bgr_pitch,
+                                   cudaStream_t stream);
 
 namespace stereo3d {
 
@@ -99,13 +106,18 @@ bool Pipeline::init(const PipelineConfig& config) {
         uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA | VPI_BACKEND_VIC | VPI_BACKEND_CPU;
 
         // 原始图像 → 使用 raw_width x raw_height (相机原始分辨率)
+        // BGR 模式: BayerRG8 格式 (用于 ConvertImageFormat debayer)
+        // Gray 模式: U8 格式 (直接 remap, 与旧行为一致)
+        const VPIImageFormat rawFmt = (config_.detector_input_format == "bgr")
+            ? VPI_MAKE_RAW_IMAGE_FORMAT_ABBREV(BAYER_RGGB, PL, UNSIGNED, X000, 1, X8)
+            : VPI_IMAGE_FORMAT_U8;
         err = vpiImageCreate(config_.raw_width, config_.raw_height,
-                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rawL);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawL create failed"); return false; }
+                             rawFmt, flags, &slots_[i].rawL);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawL create failed (err=%d)", (int)err); return false; }
 
         err = vpiImageCreate(config_.raw_width, config_.raw_height,
-                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rawR);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawR create failed"); return false; }
+                             rawFmt, flags, &slots_[i].rawR);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawR create failed (err=%d)", (int)err); return false; }
 
         // 校正后图像 → 使用 rect_width x rect_height
         err = vpiImageCreate(config_.rect_width, config_.rect_height,
@@ -116,6 +128,29 @@ bool Pipeline::init(const PipelineConfig& config) {
                              VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectR);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectR create failed"); return false; }
 
+        // --- Color pipeline images ---
+        // Debayer 输出: raw res BGR
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_L);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_L create failed"); return false; }
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_R);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_R create failed"); return false; }
+        // 校正后 BGR (检测用)
+        err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                             VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].rectBGR_vpiL);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectBGR_vpiL create failed"); return false; }
+        err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                             VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].rectBGR_vpiR);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectBGR_vpiR create failed"); return false; }
+        // 校正后灰度 (立体匹配用)
+        err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectGray_vpiL);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectGray_vpiL create failed"); return false; }
+        err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectGray_vpiR);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectGray_vpiR create failed"); return false; }
+
         // 视差图 (S16 格式, Q10.5 定点数) → 校正后分辨率
         err = vpiImageCreate(config_.rect_width, config_.rect_height,
                              VPI_IMAGE_FORMAT_S16, VPI_BACKEND_CUDA, &slots_[i].disparityMap);
@@ -124,6 +159,26 @@ bool Pipeline::init(const PipelineConfig& config) {
         err = vpiImageCreate(config_.rect_width, config_.rect_height,
                              VPI_IMAGE_FORMAT_U16, VPI_BACKEND_CUDA, &slots_[i].confidenceMap);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI confidence create failed"); return false; }
+    }
+
+    // 5b. 缓存 Bayer→BGR 所需的 CUDA 指针 (Tegra 统一内存: 指针固定)
+    //     避免每帧 8 次 VPI lock/unlock, 节省 ~2.4ms/frame
+    if (config_.detector_input_format == "bgr") {
+        LOG_INFO("Caching CUDA pointers for Bayer pipeline...");
+        for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
+            VPIImageData tmp;
+            auto cachePtr = [](VPIImage img, FrameSlot::CachedGPU& out) {
+                VPIImageData d;
+                vpiImageLockData(img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                out.data = d.buffer.pitch.planes[0].data;
+                out.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
+                vpiImageUnlock(img);
+            };
+            cachePtr(slots_[i].rawL, slots_[i].rawL_gpu);
+            cachePtr(slots_[i].rawR, slots_[i].rawR_gpu);
+            cachePtr(slots_[i].tempBGR_L, slots_[i].tempBGR_L_gpu);
+            cachePtr(slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu);
+        }
     }
 
     // 6. 初始化 VPI TNR (时域降噪, 在校正前降噪)
@@ -198,7 +253,8 @@ bool Pipeline::init(const PipelineConfig& config) {
              config_.use_dla, config_.dla_core, config_.dual_dla);
     detector_ = std::make_unique<TRTDetector>();
     if (!detector_->init(config_.engine_file, config_.use_dla, config_.dla_core,
-                         config_.conf_threshold, config_.nms_threshold)) {
+                         config_.conf_threshold, config_.nms_threshold,
+                         config_.detector_input_format)) {
         LOG_ERROR("Failed to initialize TRT Detector");
         return false;
     }
@@ -208,7 +264,8 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_INFO("Initializing DLA1 Detector: %s", config_.engine_file_dla1.c_str());
         detector1_ = std::make_unique<TRTDetector>();
         if (!detector1_->init(config_.engine_file_dla1, true, 1,
-                              config_.conf_threshold, config_.nms_threshold)) {
+                              config_.conf_threshold, config_.nms_threshold,
+                              config_.detector_input_format)) {
             LOG_WARN("Failed to initialize DLA1 Detector - falling back to single DLA");
             detector1_.reset();
             config_.dual_dla = false;
@@ -221,7 +278,8 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_INFO("Initializing GPU Detector: %s", config_.engine_file_gpu.c_str());
         detector2_ = std::make_unique<TRTDetector>();
         if (!detector2_->init(config_.engine_file_gpu, false, 0,
-                              config_.conf_threshold, config_.nms_threshold)) {
+                              config_.conf_threshold, config_.nms_threshold,
+                              config_.detector_input_format)) {
             LOG_WARN("Failed to initialize GPU Detector - falling back to dual DLA");
             detector2_.reset();
             config_.triple_backend = false;
@@ -307,6 +365,12 @@ void Pipeline::start() {
         LOG_ERROR("Failed to start PWM trigger - camera may not receive triggers");
         // 非致命: 外部 PWM 可能已运行
     }
+
+    // 启动异步采集线程 (解耦 USB 传输 ~5ms 阻塞)
+    if (camera_) {
+        grab_thread_ = std::thread(&Pipeline::grabLoop, this);
+        LOG_INFO("Async grab thread started");
+    }
 #endif
 
     // 在独立线程中运行 Pipeline 循环
@@ -323,10 +387,23 @@ void Pipeline::stop() {
     bool expected = true;
     if (!running_.compare_exchange_strong(expected, false)) return;
 
+#ifdef HIK_CAMERA_ENABLED
+    // 唤醒可能在等待的 pipeline 线程和采集线程
+    grab_request_cv_.notify_all();
+    grab_done_cv_.notify_all();
+#endif
+
     // 等待工作线程退出
     if (pipeline_thread_.joinable()) {
         pipeline_thread_.join();
     }
+
+#ifdef HIK_CAMERA_ENABLED
+    // 等待采集线程退出 (最多等待一个 camera grab timeout)
+    if (grab_thread_.joinable()) {
+        grab_thread_.join();
+    }
+#endif
 
     streams_.syncAll();
 
@@ -337,6 +414,77 @@ void Pipeline::stop() {
 
     globalPerf().printReport();
 }
+
+// ===================================================================
+// 异步相机采集线程 (零拷贝, 按需模式)
+//
+// 工作流:
+//   1. pipeline 调用 requestGrab(slot) → 采集线程唤醒
+//   2. 采集线程: lock VPI Image → grabFramePair → unlock
+//   3. 采集线程: signal grab_done → pipeline 端 waitGrab() 返回
+//
+// 关键优化:
+//   - 直接写入 VPI Image (零拷贝, 无 staging buffer)
+//   - grab 期间 pipeline 并行执行 stage1+stage2 (重叠 ~3ms)
+//   - 总迭代时间: grab_wait(~2ms) + process(~4ms) ≈ 6-7ms
+// ===================================================================
+
+#ifdef HIK_CAMERA_ENABLED
+void Pipeline::grabLoop() {
+    while (running_) {
+        // 等待 pipeline 的采集请求
+        int slot_idx;
+        {
+            std::unique_lock<std::mutex> lk(grab_mutex_);
+            grab_request_cv_.wait(lk, [this]{ return grab_request_slot_ >= 0 || !running_; });
+            if (!running_) break;
+            slot_idx = grab_request_slot_;
+            grab_request_slot_ = -1;
+        }
+
+        auto& slot = slots_[slot_idx];
+
+        // 直接锁定 VPI Image 并写入 (零拷贝: camera DMA → 统一内存)
+        VPIImageData imgDataL, imgDataR;
+        vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
+        vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
+
+        GrabResult resL, resR;
+        bool ok = camera_->grabFramePair(
+            static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
+            static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+            imgDataL.buffer.pitch.planes[0].pitchBytes,
+            imgDataR.buffer.pitch.planes[0].pitchBytes,
+            1000, resL, resR);
+
+        vpiImageUnlock(slot.rawL);
+        vpiImageUnlock(slot.rawR);
+
+        // 通知 pipeline 采集完成
+        {
+            std::lock_guard<std::mutex> lk(grab_mutex_);
+            grab_done_ = true;
+            grab_done_ok_ = ok;
+        }
+        grab_done_cv_.notify_one();
+    }
+}
+
+void Pipeline::requestGrab(int slot_idx) {
+    {
+        std::lock_guard<std::mutex> lk(grab_mutex_);
+        grab_request_slot_ = slot_idx;
+        grab_done_ = false;
+    }
+    grab_request_cv_.notify_one();
+}
+
+bool Pipeline::waitGrab() {
+    std::unique_lock<std::mutex> lk(grab_mutex_);
+    grab_done_cv_.wait(lk, [this]{ return grab_done_ || !running_; });
+    return grab_done_ok_;
+}
+#endif
 
 // ===================================================================
 // Pipeline 主循环 (帧间流水线三级重叠)
@@ -405,7 +553,9 @@ void Pipeline::pipelineLoop() {
             }
 
             if (frame_callback_) {
-                frame_callback_(slot.frame_id, slot.rectL,
+                VPIImage vizImg = (config_.detector_input_format == "bgr")
+                                  ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
+                frame_callback_(slot.frame_id, vizImg, slot.rawL,
                                 slot.detections, slot.results,
                                 current_fps_.load());
             }
@@ -432,6 +582,13 @@ void Pipeline::pipelineLoop() {
             int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
 
+            // 帧同步跳变: 跳过此帧
+            if (slot.grab_failed) {
+                vpiStreamSync(streams_.vpiStreamPVA);
+                next_detect_frame++;
+                next_fuse_frame = next_detect_frame;
+            } else {
+
             // 等待 VPI remap 完成 (stage0 异步提交)
             vpiStreamSync(streams_.vpiStreamPVA);
             cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
@@ -454,6 +611,7 @@ void Pipeline::pipelineLoop() {
             }
 
             next_detect_frame++;
+            } // end else (grab_failed)
         }
 
         // --- Stage 0: 抓取下一帧 ---
@@ -512,31 +670,39 @@ void Pipeline::pipelineLoop() {
 // Stage 实现
 // ===================================================================
 
-void Pipeline::stage0_grab_and_rectify(FrameSlot& slot) {
+void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     NVTX_RANGE("Stage0_GrabRect");
 
 #ifdef HIK_CAMERA_ENABLED
-    if (camera_) {
-        // 1. 抓取左右帧到 VPI Image
-        //    Lock with HOST buffer → memcpy safe, VPI handles host→device transfer on unlock
+    if (camera_ && !grab_preloaded) {
+        // 同步采集: 直接在 pipeline 线程阻塞抓取 (pipelineLoop 全帧模式使用)
         VPIImageData imgDataL, imgDataR;
         vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
         vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
 
         GrabResult resL, resR;
-        camera_->grabFramePair(
+        bool grab_ok = camera_->grabFramePair(
             static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
             static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
             imgDataL.buffer.pitch.planes[0].pitchBytes,
             imgDataR.buffer.pitch.planes[0].pitchBytes,
-            1000,  // timeout_ms
-            resL, resR);
+            1000, resL, resR);
 
         vpiImageUnlock(slot.rawL);
         vpiImageUnlock(slot.rawR);
+
+        if (!grab_ok) {
+            slot.grab_failed = true;
+            LOG_WARN("[Pipeline] Frame %d grab failed, skipping", slot.frame_id);
+        }
     }
-    // else: dry-run mode — rawL/rawR contain zeroes (VPI images are zero-initialized)
+    // grab_preloaded == true: 异步采集线程已将数据写入 rawL/rawR (零拷贝)
 #endif
+
+    // === VPI 流同步: 确保上一帧的 remap/convert 完成后再提交新任务 ===
+    // 放在 grab 之后: 相机 grab 阻塞 ~5ms 期间, VPI remap (~1ms) 已异步完成
+    // 因此此处同步几乎不阻塞 (0~0.1ms)
+    vpiStreamSync(streams_.vpiStreamPVA);
 
     // 2. VPI TNR 降噪 (可选, 在校正前对原始图降噪)
     if (config_.tnr_enabled) {
@@ -574,9 +740,51 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot) {
         globalPerf().record("TNR", tt.elapsedMs());
     }
 
-    // 3. VPI Remap 校正 (异步提交, 不阻塞等待)
-    rectifier_->submit(streams_.vpiStreamPVA, slot.rawL, slot.rawR,
-                       slot.rectL, slot.rectR);
+    // 3. 校正路径 — 根据 input_format 选择 color 或 gray
+    if (config_.detector_input_format == "bgr") {
+        // Color Pipeline: Debayer → BGR Remap → Gray Convert
+        //    a) Debayer: Bayer RG8 → BGR8 (自定义 CUDA bilinear kernel)
+        //       使用 init() 时缓存的 CUDA 指针, 跳过 VPI lock/unlock (~2.4ms 优化)
+        //       Tegra 统一内存: HOST 写入 (grab) 直接对 CUDA 可见, 无需显式同步
+        {
+            int rw = config_.raw_width;
+            int rh = config_.raw_height;
+
+            launchBayerToBGR8(
+                static_cast<const unsigned char*>(slot.rawL_gpu.data),
+                static_cast<unsigned char*>(slot.tempBGR_L_gpu.data),
+                rw, rh,
+                slot.rawL_gpu.pitchBytes,
+                slot.tempBGR_L_gpu.pitchBytes,
+                streams_.cudaStreamBGR);
+
+            launchBayerToBGR8(
+                static_cast<const unsigned char*>(slot.rawR_gpu.data),
+                static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
+                rw, rh,
+                slot.rawR_gpu.pitchBytes,
+                slot.tempBGR_R_gpu.pitchBytes,
+                streams_.cudaStreamBGR);
+
+            cudaStreamSynchronize(streams_.cudaStreamBGR);
+        }
+
+        //    b) BGR Remap: 校正 (与 init() 中 payload 相同 backend)
+        rectifier_->submitBGR(streams_.vpiStreamPVA,
+                              slot.tempBGR_L, slot.tempBGR_R,
+                              slot.rectBGR_vpiL, slot.rectBGR_vpiR);
+
+        //    c) BGR → Gray: 为立体匹配提供灰度图
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rectBGR_vpiL, slot.rectGray_vpiL, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rectBGR_vpiR, slot.rectGray_vpiR, nullptr);
+    } else {
+        // Gray Pipeline (Legacy): Bayer 原始图直接按 U8 单通道 remap
+        rectifier_->submit(streams_.vpiStreamPVA,
+                           slot.rawL, slot.rawR,
+                           slot.rectGray_vpiL, slot.rectGray_vpiR);
+    }
 
     // 不在此处同步! VPI remap (~1ms) 在下次 stage1 调用前由 caller 同步.
     // 三缓冲确保 slot 不被过早重用.
@@ -621,8 +829,11 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     auto stream = getDLAStream(slot.frame_id);
 
     // 从 VPI Image 获取 GPU 指针，传给 TensorRT
+    // BGR 模式: 使用校正后 BGR 图像; Gray 模式: 使用校正后灰度图
+    VPIImage detectImg = (config_.detector_input_format == "bgr")
+                         ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
     VPIImageData imgData;
-    vpiImageLockData(slot.rectL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
+    vpiImageLockData(detectImg, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
 
     void* gpu_ptr = imgData.buffer.pitch.planes[0].data;
     int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
@@ -632,7 +843,7 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
                  config_.rect_width, config_.rect_height,
                  stream);
 
-    vpiImageUnlock(slot.rectL);
+    vpiImageUnlock(detectImg);
     NVTX_RANGE_POP();
 }
 
@@ -642,13 +853,13 @@ void Pipeline::stage2_stereo(FrameSlot& slot) {
     switch (config_.disparity_strategy) {
         case DisparityStrategy::FULL_FRAME:
             stereo_->compute(streams_.vpiStreamGPU,
-                             slot.rectL, slot.rectR,
+                             slot.rectGray_vpiL, slot.rectGray_vpiR,
                              slot.disparityMap, slot.confidenceMap);
             break;
 
         case DisparityStrategy::HALF_RESOLUTION:
             stereo_->computeHalfRes(streams_.vpiStreamGPU,
-                                    slot.rectL, slot.rectR,
+                                    slot.rectGray_vpiL, slot.rectGray_vpiR,
                                     slot.disparityMap, slot.confidenceMap);
             break;
 
@@ -717,10 +928,10 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         return;
     }
 
-    // 2. 获取校正后左右图 GPU 指针
+    // 2. 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
     VPIImageData imgDataL, imgDataR;
-    vpiImageLockData(slot.rectL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-    vpiImageLockData(slot.rectR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+    vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+    vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
 
     const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
     int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
@@ -733,12 +944,19 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         config_.rect_width, config_.rect_height,
         slot.detections, streams_.cudaStreamFuse);
 
-    vpiImageUnlock(slot.rectL);
-    vpiImageUnlock(slot.rectR);
+    vpiImageUnlock(slot.rectGray_vpiL);
+    vpiImageUnlock(slot.rectGray_vpiR);
 
     // 4. 混合深度估计 (单目+双目融合+Kalman滤波)
     if (hybrid_depth_) {
-        slot.results = hybrid_depth_->estimate(slot.detections, roi_results);
+        auto now = std::chrono::steady_clock::now();
+        double dt = 0.01;
+        if (last_fuse_time_.time_since_epoch().count() > 0) {
+            dt = std::chrono::duration<double>(now - last_fuse_time_).count();
+            dt = std::clamp(dt, 0.002, 0.1);
+        }
+        last_fuse_time_ = now;
+        slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
     } else {
         slot.results = std::move(roi_results);
     }
@@ -749,17 +967,15 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 // ===================================================================
 // ROI 模式 Pipeline 主循环
 //
-// 三级流水线:
-//   Stage 0: Grab + Rectify  (~3ms)   CPU + VPI
-//   Stage 1: Detect           (~8ms)   DLA (async)
-//   Stage 2: ROI Match + Fuse (~1ms)   GPU (需要 Stage 1 结果)
+// 异步采集 + 三级流水线:
+//   requestGrab(N+1) → Stage1 Detect(N) → Stage2 Fuse(N-1) → waitGrab(N+1) → Stage0 Process(N+1)
 //
-// 帧间重叠:
-//   Frame N+2: Stage 0
-//   Frame N+1: Stage 1
-//   Frame N:   Stage 2
+//   grab 线程: |-----grabFramePair ~5ms------|
+//   pipeline:  |--detect 3ms--|--fuse 0.1ms--|--waitGrab ~2ms--|--process 2ms--|
+//                    ↑ 与 grab 并行执行          ↑ grab 剩余时间     ↑ bayer+remap
 //
-// 吞吐量 = 1 / max(Stage_i) → 100+ FPS
+//   每帧迭代: ~7ms (远低于 10ms/frame @ 100Hz)
+//   吞吐量 = 100 FPS (camera rate limited)
 // ===================================================================
 
 void Pipeline::pipelineLoopROI() {
@@ -771,16 +987,24 @@ void Pipeline::pipelineLoopROI() {
     int next_detect_frame = 0;
     int next_fuse_frame   = 0;
 
-    // ===== 填充: 抓取首帧 =====
+    // ===== 填充: 同步抓取 + 处理首帧 =====
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
         slot.reset();
         slot.frame_id = next_grab_frame;
 
-        ScopedTimer t0("Stage0_GrabRect");
-        stage0_grab_and_rectify(slot);
-        globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
+        bool grab_preloaded = false;
+#ifdef HIK_CAMERA_ENABLED
+        if (camera_) {
+            requestGrab(slot_idx);
+            waitGrab();
+            grab_preloaded = true;
+        }
+#endif
+        ScopedTimer t0("Stage0_Process");
+        stage0_grab_and_rectify(slot, grab_preloaded);
+        globalPerf().record("Stage0_Process", t0.elapsedMs());
         next_grab_frame++;
     }
 
@@ -789,7 +1013,6 @@ void Pipeline::pipelineLoopROI() {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
 
-        // 等待首帧 VPI remap 完成 (stage0 异步提交)
         vpiStreamSync(streams_.vpiStreamPVA);
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
 
@@ -804,16 +1027,39 @@ void Pipeline::pipelineLoopROI() {
     }
 
     while (running_) {
-        // --- Stage 1: 提交下一个已抓取帧的检测 (先提交, 让 DLA 尽早开始) ---
+        // ====================================================================
+        // Phase A: 发起异步采集 (极速, ~0.01ms)
+        //   grab 线程锁定 VPI Image → 阻塞等待相机 USB 传输
+        //   pipeline 线程继续执行 Stage1/Stage2, 与 grab 并行
+        // ====================================================================
+        int grab_slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+        {
+            auto& slot = slots_[grab_slot_idx];
+            slot.reset();
+            slot.frame_id = next_grab_frame;
+#ifdef HIK_CAMERA_ENABLED
+            if (camera_) {
+                requestGrab(grab_slot_idx);
+            }
+#endif
+        }
+
+        // ====================================================================
+        // Phase B: Stage1 — 提交检测 (与 grab 并行, ~3ms)
+        //   此帧已在上一轮 Phase D 中完成 rectify
+        // ====================================================================
         if (next_detect_frame < next_grab_frame) {
             int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
 
-            // VPI remap 完成同步 (stage0 异步提交, 此处确保数据就绪)
-            // 由于 grab 耗时 ~6-8ms 而 remap 仅 ~1ms, 此处几乎不阻塞
+            if (slot.grab_failed) {
+                vpiStreamSync(streams_.vpiStreamPVA);
+                next_detect_frame++;
+                next_fuse_frame = next_detect_frame - 1;
+            } else {
+
             {
                 ScopedTimer tw("Stage1_WaitRect");
-                vpiStreamSync(streams_.vpiStreamPVA);
                 cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
                 globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
             }
@@ -828,10 +1074,12 @@ void Pipeline::pipelineLoopROI() {
             }
             cudaEventRecord(slot.evtDetectDone, dlaStream);
             next_detect_frame++;
+            }
         }
 
-        // --- Stage 2: ROI 匹配 + 融合帧 N (等待 Detect 完成) ---
-        // 此时新帧 DLA 推理已在后台运行, 与本次 collect 真正并行
+        // ====================================================================
+        // Phase C: Stage2 — ROI 匹配 + 融合帧 N-1 (与 grab 并行, ~0.1ms)
+        // ====================================================================
         if (next_fuse_frame < next_detect_frame - 1) {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
@@ -854,14 +1102,15 @@ void Pipeline::pipelineLoopROI() {
             }
 
             if (frame_callback_) {
-                frame_callback_(slot.frame_id, slot.rectL,
+                VPIImage vizImg = (config_.detector_input_format == "bgr")
+                                  ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
+                frame_callback_(slot.frame_id, vizImg, slot.rawL,
                                 slot.detections, slot.results,
                                 current_fps_.load());
             }
 
             next_fuse_frame++;
 
-            // FPS 统计
             fps_count++;
             auto now = Clock::now();
             double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
@@ -876,22 +1125,35 @@ void Pipeline::pipelineLoopROI() {
             }
         }
 
-        // --- Stage 0: 抓取下一帧 ---
+        // ====================================================================
+        // Phase D: 等待 grab 完成 + 执行 rectify (bayer + remap)
+        //   grab 线程已在 Phase A-C 期间运行 ~3ms
+        //   剩余等待时间: max(0, grab_time - 3ms) ≈ 2ms
+        //   然后处理 bayer→BGR + remap submit (~2ms)
+        // ====================================================================
         {
-            int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
-            auto& slot = slots_[slot_idx];
-            slot.reset();
-            slot.frame_id = next_grab_frame;
-
-            ScopedTimer t0("Stage0_GrabRect");
-            stage0_grab_and_rectify(slot);
-            globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
+            auto& slot = slots_[grab_slot_idx];
+            bool grab_preloaded = false;
+#ifdef HIK_CAMERA_ENABLED
+            if (camera_) {
+                ScopedTimer tw("Stage0_WaitGrab");
+                bool ok = waitGrab();
+                globalPerf().record("Stage0_WaitGrab", tw.elapsedMs());
+                if (!ok) slot.grab_failed = true;
+                grab_preloaded = true;
+            }
+#endif
+            {
+                ScopedTimer tp("Stage0_Process");
+                stage0_grab_and_rectify(slot, grab_preloaded);
+                globalPerf().record("Stage0_Process", tp.elapsedMs());
+            }
             next_grab_frame++;
         }
+
     }
 
     // ===== 排空 =====
-    // 同步最后的 VPI remap
     vpiStreamSync(streams_.vpiStreamPVA);
 
     while (next_detect_frame < next_grab_frame) {

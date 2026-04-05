@@ -11,6 +11,7 @@
 
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
+#include <opencv2/core/cuda.hpp>
 #include <vector>
 #include <cstring>
 
@@ -51,12 +52,21 @@ struct Object3D {
 struct FrameSlot {
     // =========== 帧标识 ===========
     int frame_id = -1;                    ///< 帧序号
+    bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
 
     // =========== Stage 0: 原始图像 + 校正后图像 ===========
     VPIImage rawL      = nullptr;         ///< 左原始图 (Pinned + Mapped)
     VPIImage rawR      = nullptr;         ///< 右原始图
     VPIImage rectL     = nullptr;         ///< 校正后左图
     VPIImage rectR     = nullptr;         ///< 校正后右图
+
+    // =========== Color Pipeline (VPI) ===========
+    VPIImage tempBGR_L      = nullptr;   ///< 左 debayer 输出 BGR (raw res)
+    VPIImage tempBGR_R      = nullptr;   ///< 右 debayer 输出 BGR (raw res)
+    VPIImage rectBGR_vpiL   = nullptr;   ///< 左校正 BGR (rect res, 检测用)
+    VPIImage rectBGR_vpiR   = nullptr;   ///< 右校正 BGR (rect res)
+    VPIImage rectGray_vpiL  = nullptr;   ///< 左校正灰度 (rect res, 立体匹配用)
+    VPIImage rectGray_vpiR  = nullptr;   ///< 右校正灰度 (rect res)
 
     // =========== Stage 1: 检测结果 ===========
     std::vector<Detection> detections;    ///< YOLO 检测结果列表
@@ -65,6 +75,18 @@ struct FrameSlot {
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
     VPIImage confidenceMap = nullptr;     ///< 视差置信度图
 
+    // =========== Pure GPU Color Pipeline ===========
+    cv::Mat hostBayerL;                   ///< 左 BayerRG8 Host 缓冲 (预分配)
+    cv::Mat hostBayerR;                   ///< 右 BayerRG8 Host 缓冲 (预分配)
+    cv::cuda::GpuMat rawBayerL;           ///< 左 BayerRG8 GPU (raw res, U8)
+    cv::cuda::GpuMat rawBayerR;           ///< 右 BayerRG8 GPU (raw res, U8)
+    cv::cuda::GpuMat bgrRawL;             ///< 左 BGR 去马赛克 (raw res, 8UC3)
+    cv::cuda::GpuMat bgrRawR;             ///< 右 BGR 去马赛克 (raw res, 8UC3)
+    cv::cuda::GpuMat rectBGR_L;           ///< 左校正 BGR (rect res, 8UC3)
+    cv::cuda::GpuMat rectBGR_R;           ///< 右校正 BGR (rect res, 8UC3)
+    cv::cuda::GpuMat rectGray_L;          ///< 左校正灰度 (rect res, U8)
+    cv::cuda::GpuMat rectGray_R;          ///< 右校正灰度 (rect res, U8)
+
     // =========== Stage 3: 3D 定位结果 ===========
     std::vector<Object3D> results;        ///< 最终 3D 定位输出
 
@@ -72,6 +94,16 @@ struct FrameSlot {
     cudaEvent_t evtRectDone   = nullptr;  ///< Stage 0 校正完成
     cudaEvent_t evtDetectDone = nullptr;  ///< Stage 1 检测完成
     cudaEvent_t evtStereoDone = nullptr;  ///< Stage 2 视差完成
+
+    // =========== Cached CUDA Pointers (Tegra 统一内存优化) ===========
+    // init() 时缓存, 避免每帧 VPI lock/unlock (~0.3ms/次, 8 次 = 2.4ms)
+    // Tegra 统一内存: CPU/GPU 共享物理地址, CUDA 指针在 VPI Image 生命周期内固定
+    struct CachedGPU {
+        void* data = nullptr;
+        int pitchBytes = 0;
+    };
+    CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
+    CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
 
     // =========== 生命周期 ===========
 
@@ -100,6 +132,12 @@ struct FrameSlot {
         destroyVPI(rawR);
         destroyVPI(rectL);
         destroyVPI(rectR);
+        destroyVPI(tempBGR_L);
+        destroyVPI(tempBGR_R);
+        destroyVPI(rectBGR_vpiL);
+        destroyVPI(rectBGR_vpiR);
+        destroyVPI(rectGray_vpiL);
+        destroyVPI(rectGray_vpiR);
         destroyVPI(disparityMap);
         destroyVPI(confidenceMap);
 
@@ -122,6 +160,7 @@ struct FrameSlot {
         detections.clear();
         results.clear();
         frame_id = -1;
+        grab_failed = false;
     }
 };
 

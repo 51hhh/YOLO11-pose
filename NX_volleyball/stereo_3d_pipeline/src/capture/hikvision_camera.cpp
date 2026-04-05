@@ -268,6 +268,17 @@ bool HikvisionCamera::grabFramePair(
 
     if (!okL || !okR) {
         LOG_WARN("[HikCam] GrabPair partial fail: L=%d R=%d", okL, okR);
+        consecutive_failures_++;
+        if (consecutive_failures_ >= MAX_CONSECUTIVE_FAILURES) {
+            LOG_WARN("[HikCam] %d consecutive failures, attempting reconnect...",
+                     consecutive_failures_);
+            if (reconnect()) {
+                LOG_INFO("[HikCam] Reconnect successful");
+                consecutive_failures_ = 0;
+            } else {
+                LOG_ERROR("[HikCam] Reconnect failed after %d retries", MAX_RECONNECT_RETRIES);
+            }
+        }
         return false;
     }
 
@@ -291,11 +302,15 @@ bool HikvisionCamera::grabFramePair(
             if (frame_drift > 500000) {
                 LOG_WARN("[HikCam] Frame sync jump: %ldns (offset %ld -> %ld) - L/R may be from different triggers!",
                          (long)frame_drift, (long)prev_offset, (long)dt);
+                // 丢弃此帧对, 让 pipeline 下次重新抓取同步帧
+                prev_offset = dt;
+                return false;
             }
             prev_offset = dt;
         }
     }
 
+    consecutive_failures_ = 0;
     return true;
 }
 
@@ -306,6 +321,19 @@ bool HikvisionCamera::grabSingle(bool is_left,
     void* handle = is_left ? handle_left_ : handle_right_;
     if (!handle || !grabbing_) return false;
     return grabOneFrame(handle, dst, pitch, timeout_ms, result);
+}
+
+bool HikvisionCamera::reconnect() {
+    for (int attempt = 0; attempt < MAX_RECONNECT_RETRIES; ++attempt) {
+        LOG_INFO("[HikCam] Reconnect attempt %d/%d", attempt + 1, MAX_RECONNECT_RETRIES);
+        stopGrabbing();
+        close();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if (open(config_) && startGrabbing()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace stereo3d

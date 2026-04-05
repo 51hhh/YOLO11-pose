@@ -22,6 +22,7 @@
 #define MAX_GRID_SIZE       5
 #define MAX_DETECTIONS     32
 #define BLOCK_THREADS     128   // threads per block
+#define THREADS_PER_POINT   5   // 协作视差搜索: 每点5线程
 
 /**
  * @brief ROI 多点 SAD 立体匹配 + Median + 三角测距
@@ -101,26 +102,32 @@ __global__ void roiMultiPointMatchKernel(
 
     int numSamples = gridSize * gridSize;
 
-    // ---- 共享内存: 采样点视差收集 ----
+    // ---- 共享内存: 协作视差搜索 + 采样点视差收集 ----
+    __shared__ int   s_bestSAD [MAX_SAMPLE_POINTS][THREADS_PER_POINT];
+    __shared__ int   s_bestDisp[MAX_SAMPLE_POINTS][THREADS_PER_POINT];
+    __shared__ int   s_2ndSAD  [MAX_SAMPLE_POINTS][THREADS_PER_POINT];
     __shared__ float sampleDisp[MAX_SAMPLE_POINTS];
     __shared__ int   validCount;
 
     if (threadIdx.x == 0) validCount = 0;
     __syncthreads();
 
-    // ---- 每个线程处理一个采样点 ----
-    int sampleIdx = threadIdx.x;
-    if (sampleIdx < numSamples) {
-        int gx = sampleIdx % gridSize;
-        int gy = sampleIdx / gridSize;
+    // ---- 协作视差搜索: 每点 THREADS_PER_POINT 个线程分段搜索 ----
+    int pointIdx = threadIdx.x / THREADS_PER_POINT;
+    int subIdx   = threadIdx.x % THREADS_PER_POINT;
 
-        // 采样点在 BBox 内均匀分布 (留 patchRadius 边距)
+    // 采样点坐标 (同组线程计算相同值)
+    int px = 0, py = 0, maxSearch = 0;
+
+    if (pointIdx < numSamples) {
+        int gx = pointIdx % gridSize;
+        int gy = pointIdx / gridSize;
+
         int innerX1 = x1 + patchRadius;
         int innerY1 = y1 + patchRadius;
         int innerX2 = x2 - patchRadius;
         int innerY2 = y2 - patchRadius;
 
-        int px, py;
         if (gridSize > 1) {
             px = innerX1 + (innerX2 - innerX1) * gx / (gridSize - 1);
             py = innerY1 + (innerY2 - innerY1) * gy / (gridSize - 1);
@@ -129,19 +136,23 @@ __global__ void roiMultiPointMatchKernel(
             py = (innerY1 + innerY2) / 2;
         }
 
-        // 安全裁剪
         px = max(patchRadius, min(imgWidth - patchRadius - 1, px));
         py = max(patchRadius, min(imgHeight - patchRadius - 1, py));
 
-        // ---- SAD 块匹配 (沿极线水平搜索) ----
-        int maxSearch = min(maxDisparity, px - patchRadius);  // 不超出左边界
+        // ---- SAD 块匹配: 每线程搜索一段视差范围 ----
+        maxSearch = min(maxDisparity, px - patchRadius);
         if (maxSearch < 1) maxSearch = 1;
+
+        int rangeLen = maxSearch + 1;  // total disparities [0, maxSearch]
+        int perThread = (rangeLen + THREADS_PER_POINT - 1) / THREADS_PER_POINT;
+        int dStart = subIdx * perThread;
+        int dEnd   = min(dStart + perThread, rangeLen);
 
         int bestDisp = 0;
         int bestSAD = 0x7FFFFFFF;
         int secondBestSAD = 0x7FFFFFFF;
 
-        for (int d = 0; d <= maxSearch; d++) {
+        for (int d = dStart; d < dEnd; d++) {
             int sad = 0;
             for (int wy = -patchRadius; wy <= patchRadius; wy++) {
                 const uint8_t* leftRow  = leftImg  + (py + wy) * leftPitch;
@@ -162,38 +173,61 @@ __global__ void roiMultiPointMatchKernel(
             }
         }
 
-        // 唯一性检验: best 必须显著优于 second best
-        bool unique = (secondBestSAD - bestSAD) > (bestSAD / 4);
+        s_bestSAD [pointIdx][subIdx] = bestSAD;
+        s_bestDisp[pointIdx][subIdx] = bestDisp;
+        s_2ndSAD  [pointIdx][subIdx] = secondBestSAD;
+    }
+    __syncthreads();
+
+    // ---- Leader 线程归约 + 亚像素 + 有效性过滤 ----
+    if (pointIdx < numSamples && subIdx == 0) {
+        int gBestSAD  = s_bestSAD [pointIdx][0];
+        int gBestDisp = s_bestDisp[pointIdx][0];
+        int g2ndSAD   = s_2ndSAD  [pointIdx][0];
+
+        for (int t = 1; t < THREADS_PER_POINT; t++) {
+            int tSAD  = s_bestSAD [pointIdx][t];
+            int tDisp = s_bestDisp[pointIdx][t];
+            int t2nd  = s_2ndSAD  [pointIdx][t];
+
+            if (tSAD < gBestSAD) {
+                // 旧全局最优降级为 second-best 候选
+                g2ndSAD  = min(g2ndSAD, min(gBestSAD, t2nd));
+                gBestSAD  = tSAD;
+                gBestDisp = tDisp;
+            } else {
+                g2ndSAD = min(g2ndSAD, tSAD);
+            }
+        }
+
+        bool unique = (g2ndSAD - gBestSAD) > (gBestSAD / 4);
 
         // ---- 亚像素抛物线拟合 ----
-        float subDisp = (float)bestDisp;
-        if (bestDisp > 0 && bestDisp < maxSearch) {
-            // 重新计算 bestDisp-1 和 bestDisp+1 的 SAD
+        float subDisp = (float)gBestDisp;
+        if (gBestDisp > 0 && gBestDisp < maxSearch) {
             int sadMinus = 0, sadPlus = 0;
             for (int wy = -patchRadius; wy <= patchRadius; wy++) {
                 const uint8_t* leftRow  = leftImg  + (py + wy) * leftPitch;
                 const uint8_t* rightRow = rightImg + (py + wy) * rightPitch;
                 for (int wx = -patchRadius; wx <= patchRadius; wx++) {
                     int lv = leftRow[px + wx];
-                    int rvM = rightRow[px + wx - (bestDisp - 1)];
-                    int rvP = rightRow[px + wx - (bestDisp + 1)];
+                    int rvM = rightRow[px + wx - (gBestDisp - 1)];
+                    int rvP = rightRow[px + wx - (gBestDisp + 1)];
                     int diffM = lv - rvM;
                     int diffP = lv - rvP;
                     sadMinus += (diffM >= 0) ? diffM : -diffM;
                     sadPlus  += (diffP >= 0) ? diffP : -diffP;
                 }
             }
-            // 抛物线: d_sub = d + (S_minus - S_plus) / (2*(S_minus - 2*S_center + S_plus))
-            float denom = (float)(sadMinus - 2 * bestSAD + sadPlus);
+            float denom = (float)(sadMinus - 2 * gBestSAD + sadPlus);
             if (denom > 0.1f) {
                 float offset = (float)(sadMinus - sadPlus) / (2.0f * denom);
                 offset = fmaxf(-0.5f, fminf(0.5f, offset));
-                subDisp = (float)bestDisp + offset;
+                subDisp = (float)gBestDisp + offset;
             }
         }
 
-        // 有效性过滤
-        if (bestDisp > 0 && unique && subDisp > 0.5f) {
+        if (gBestDisp > 0 && unique && subDisp > 0.5f) {
             int idx = atomicAdd(&validCount, 1);
             sampleDisp[idx] = subDisp;
         }

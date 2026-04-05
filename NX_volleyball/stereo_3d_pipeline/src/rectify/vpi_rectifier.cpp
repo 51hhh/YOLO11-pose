@@ -104,4 +104,19 @@ void VPIRectifier::submit(VPIStream stream,
                    VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
 }
 
+void VPIRectifier::submitBGR(VPIStream stream,
+                              VPIImage bgrL, VPIImage bgrR,
+                              VPIImage rectBGR_L, VPIImage rectBGR_R)
+{
+    // BGR 三通道 remap 使用与灰度相同的 LUT (坐标映射与通道数无关)
+    // 必须 CUDA backend: payload 在 init() 中以 backend_ 创建
+    VPIStatus stL = vpiSubmitRemap(stream, backend_, remapL_, bgrL, rectBGR_L,
+                   VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
+    VPIStatus stR = vpiSubmitRemap(stream, backend_, remapR_, bgrR, rectBGR_R,
+                   VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
+    if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
+        LOG_ERROR("submitBGR remap failed: L=%d R=%d", (int)stL, (int)stR);
+    }
+}
+
 }  // namespace stereo3d

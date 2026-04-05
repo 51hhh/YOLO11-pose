@@ -20,6 +20,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <cctype>
+#include <cuda_runtime.h>
 
 // ==================== 全局信号 ====================
 
@@ -101,6 +104,7 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (det["nms_threshold"])           cfg.nms_threshold = det["nms_threshold"].as<float>();
         if (det["input_size"])             cfg.input_size = det["input_size"].as<int>();
         if (det["max_detections"])         cfg.max_detections = det["max_detections"].as<int>();
+        if (det["input_format"])           cfg.detector_input_format = det["input_format"].as<std::string>();
     }
 
     // Stereo
@@ -220,9 +224,52 @@ int main(int argc, char* argv[]) {
     cv::Mat display_frame;
     bool display_ready = false;
 
+    // 构建彩色校正映射表 (用于可视化: raw Bayer → demosaic → remap → 彩色校正图)
+    cv::Mat vis_map1, vis_map2;
+    bool has_color_remap = false;
+    if (enable_display) {
+        try {
+            cv::FileStorage fs(cfg.calibration_file, cv::FileStorage::READ);
+            if (fs.isOpened()) {
+                cv::Mat K1, D1, R1, P1;
+                fs["camera_matrix_left"]           >> K1;
+                fs["distortion_coefficients_left"] >> D1;
+                fs["rectification_left"]           >> R1;
+                fs["projection_left"]              >> P1;
+
+                // 缩放 P1 以适配 rect_width x rect_height (标定在 raw 分辨率)
+                int cal_w = 0, cal_h = 0;
+                fs["image_width"]  >> cal_w;
+                fs["image_height"] >> cal_h;
+                if (cal_w > 0 && cal_h > 0 &&
+                    (cfg.rect_width != cal_w || cfg.rect_height != cal_h)) {
+                    double sx = (double)cfg.rect_width  / cal_w;
+                    double sy = (double)cfg.rect_height / cal_h;
+                    P1 = P1.clone();
+                    P1.at<double>(0, 0) *= sx;
+                    P1.at<double>(1, 1) *= sy;
+                    P1.at<double>(0, 2) *= sx;
+                    P1.at<double>(1, 2) *= sy;
+                    P1.at<double>(0, 3) *= sx;
+                }
+
+                cv::initUndistortRectifyMap(K1, D1, R1, P1,
+                    cv::Size(cfg.rect_width, cfg.rect_height),
+                    CV_16SC2, vis_map1, vis_map2);
+                has_color_remap = true;
+                LOG_INFO("Color remap built for visualization (%dx%d -> %dx%d)",
+                         cfg.raw_width, cfg.raw_height, cfg.rect_width, cfg.rect_height);
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("Failed to build color remap: %s (visualization will be grayscale)", e.what());
+        }
+    }
+
+    const bool use_bgr = (cfg.detector_input_format == "bgr");
+
     if (enable_display) {
         pipeline.setFrameCallback(
-            [&](int frame_id, VPIImage rectL,
+            [&, use_bgr](int frame_id, VPIImage rectL, VPIImage rawL,
                 const std::vector<stereo3d::Detection>& detections,
                 const std::vector<stereo3d::Object3D>& results,
                 float fps) {
@@ -232,20 +279,57 @@ int main(int argc, char* argv[]) {
                     if (display_ready) return;
                 }
 
-                // 从 VPI Image 拷贝到 cv::Mat
-                VPIImageData imgData;
-                if (vpiImageLockData(rectL, VPI_LOCK_READ,
-                    VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData) != VPI_SUCCESS)
-                    return;
-
-                int h = imgData.buffer.pitch.planes[0].height;
-                int w = imgData.buffer.pitch.planes[0].width;
-                int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
-                cv::Mat gray(h, w, CV_8UC1,
-                             imgData.buffer.pitch.planes[0].data, pitch);
                 cv::Mat frame;
-                cv::cvtColor(gray, frame, cv::COLOR_GRAY2BGR);
-                vpiImageUnlock(rectL);
+
+                if (use_bgr) {
+                    // BGR 模式: VPI HOST_PITCH_LINEAR 对 BGR8 返回全零 (VPI 3.2 bug),
+                    // 改用 CUDA_PITCH_LINEAR 获取 GPU 指针 + cudaMemcpy2D 手动拷贝
+                    VPIImageData imgData;
+                    VPIStatus st = vpiImageLockData(rectL, VPI_LOCK_READ,
+                        VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
+                    if (st == VPI_SUCCESS) {
+                        int h = imgData.buffer.pitch.planes[0].height;
+                        int w = imgData.buffer.pitch.planes[0].width;
+                        int gpuPitch = imgData.buffer.pitch.planes[0].pitchBytes;
+                        const void* gpuPtr = imgData.buffer.pitch.planes[0].data;
+                        frame.create(h, w, CV_8UC3);
+                        cudaMemcpy2D(frame.data, frame.step[0],
+                                     gpuPtr, gpuPitch,
+                                     w * 3, h,
+                                     cudaMemcpyDeviceToHost);
+                        vpiImageUnlock(rectL);
+                    }
+                } else if (has_color_remap && rawL) {
+                    // Gray 模式 + 有标定映射: raw Bayer → demosaic → remap
+                    VPIImageData rawData;
+                    if (vpiImageLockData(rawL, VPI_LOCK_READ,
+                        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &rawData) == VPI_SUCCESS) {
+                        int rh = rawData.buffer.pitch.planes[0].height;
+                        int rw = rawData.buffer.pitch.planes[0].width;
+                        int rp = rawData.buffer.pitch.planes[0].pitchBytes;
+                        cv::Mat rawBayer(rh, rw, CV_8UC1,
+                                         rawData.buffer.pitch.planes[0].data, rp);
+                        cv::Mat bgrRaw;
+                        cv::cvtColor(rawBayer, bgrRaw, cv::COLOR_BayerBG2BGR);
+                        cv::remap(bgrRaw, frame, vis_map1, vis_map2, cv::INTER_LINEAR);
+                        vpiImageUnlock(rawL);
+                    }
+                }
+
+                // 回退: 灰度校正图
+                if (frame.empty()) {
+                    VPIImageData imgData;
+                    if (vpiImageLockData(rectL, VPI_LOCK_READ,
+                        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData) != VPI_SUCCESS)
+                        return;
+                    int h = imgData.buffer.pitch.planes[0].height;
+                    int w = imgData.buffer.pitch.planes[0].width;
+                    int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
+                    cv::Mat gray(h, w, CV_8UC1,
+                                 imgData.buffer.pitch.planes[0].data, pitch);
+                    cv::cvtColor(gray, frame, cv::COLOR_GRAY2BGR);
+                    vpiImageUnlock(rectL);
+                }
 
                 // 绘制检测框 + 距离
                 for (size_t i = 0; i < detections.size(); ++i) {

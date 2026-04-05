@@ -37,11 +37,18 @@ namespace stereo3d { class HikvisionCamera; struct CameraConfig; }
 #include "../utils/profiler.h"
 
 #include <vpi/algo/TemporalNoiseReduction.h>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/core/cuda_stream_accessor.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace stereo3d {
 
@@ -88,6 +95,7 @@ struct PipelineConfig {
     float conf_threshold = 0.5f;
     float nms_threshold  = 0.4f;
     int  max_detections  = 10;
+    std::string detector_input_format = "gray"; ///< gray|bayer|bgr
     bool use_dla = true;           ///< 使用 NVDLA (否则 GPU)
     int  dla_core = 0;             ///< DLA 核心 ID (0 或 1)
     bool dual_dla = false;         ///< 双 DLA 并行 (DLA0 + DLA1 交替)
@@ -113,6 +121,9 @@ struct PipelineConfig {
     VPITNRPreset tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
     float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
     VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
+
+    // 色彩管线 (纯 GPU)
+    bool use_color_pipeline = false;       ///< 启用彩色管线 (BayerRG8 → BGR → 校正)
 };
 
 /**
@@ -121,10 +132,12 @@ struct PipelineConfig {
 using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
 
 /**
- * @brief 帧回调 (可视化用: 校正后图 + 检测 + 3D结果)
+ * @brief 帧回调 (可视化用: 校正后左图 + 原始左图 + 检测 + 3D结果)
+ * rectL: 校正后左图 (VPIImage U8, 灰度)
+ * rawL:  原始左图 (VPIImage U8, BayerRG8 原始数据) — 用于彩色可视化
  */
 using FrameCallback = std::function<void(
-    int frame_id, VPIImage rectL,
+     int frame_id, VPIImage rectL, VPIImage rawL,
     const std::vector<Detection>& detections,
     const std::vector<Object3D>& results,
     float fps)>;
@@ -182,7 +195,7 @@ private:
     void pipelineLoopROI();   ///< ROI_ONLY 策略: 检测后多点匹配
 
     // ===== Stage 函数 =====
-    void stage0_grab_and_rectify(FrameSlot& slot);
+    void stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded = false);
     void stage1_detect(FrameSlot& slot, int slot_index);
     void stage2_stereo(FrameSlot& slot);
     void stage3_fuse(FrameSlot& slot, int slot_index);
@@ -202,6 +215,22 @@ private:
 #ifdef HIK_CAMERA_ENABLED
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
     std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
+
+    // ===== 异步采集线程 (零拷贝) =====
+    // 按需模式: pipeline 请求 → 采集线程直接写入 VPI Image → 通知完成
+    // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
+    std::thread grab_thread_;
+    void grabLoop();
+
+    std::mutex grab_mutex_;
+    std::condition_variable grab_request_cv_;  ///< pipeline→grab: 请求采集
+    std::condition_variable grab_done_cv_;     ///< grab→pipeline: 采集完成
+    int grab_request_slot_ = -1;               ///< 待采集 slot 索引 (-1=空闲)
+    bool grab_done_ = false;                   ///< 采集完成标志
+    bool grab_done_ok_ = false;                ///< 采集结果
+
+    void requestGrab(int slot_idx);   ///< 发起异步采集请求 (非阻塞)
+    bool waitGrab();                  ///< 等待异步采集完成 (阻塞至完成)
 #endif
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
@@ -221,6 +250,9 @@ private:
     VPIImage tnrOutNV12L_   = nullptr;     ///< 左目 TNR 输出
     VPIImage tnrOutNV12R_   = nullptr;     ///< 右目 TNR 输出
     bool tnrFirstFrame_ = true;            ///< 首帧标志 (prevOutput 传 NULL)
+
+    // ===== Kalman dt 实测时间间隔 =====
+    std::chrono::steady_clock::time_point last_fuse_time_{};
 
     // ===== 状态 =====
     std::atomic<bool> running_{false};

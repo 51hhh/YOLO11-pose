@@ -32,7 +32,7 @@ struct HybridDepthConfig {
 
     // Kalman 参数
     float dt              = 0.01f;     ///< 帧间隔 (s), 100Hz
-    float process_accel   = 30.0f;     ///< 过程噪声: 最大加速度 (m/s^2)
+    float process_accel   = 50.0f;     ///< 过程噪声: 最大加速度 (m/s^2)
     float R_mono          = 0.25f;     ///< 单目观测噪声方差
     float R_stereo        = 0.01f;     ///< 双目观测噪声方差
 
@@ -101,7 +101,8 @@ public:
      */
     std::vector<Object3D> estimate(
         const std::vector<Detection>& detections,
-        const std::vector<Object3D>& roi_results);
+        const std::vector<Object3D>& roi_results,
+        double actual_dt = 0.0);
 
     /**
      * @brief 处理丢帧 (无检测时调用, 纯 Kalman 预测)

@@ -16,6 +16,7 @@
 #include <cuda_runtime.h>
 #include <fstream>
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <cmath>
 #include <numeric>
@@ -33,6 +34,25 @@ extern "C" void launchGrayToRGBLetterboxKernel(const unsigned char* gray, float*
                                                 int newW, int newH,
                                                 int padX, int padY,
                                                 cudaStream_t stream);
+
+extern "C" void launchBayerToRGBKernel(const unsigned char* bayer, float* dst,
+                                        int srcW, int srcH, int srcPitch,
+                                        int dstW, int dstH,
+                                        cudaStream_t stream);
+
+extern "C" void launchBayerToRGBLetterboxKernel(const unsigned char* bayer, float* dst,
+                                                 int srcW, int srcH, int srcPitch,
+                                                 int dstW, int dstH,
+                                                 int newW, int newH,
+                                                 int padX, int padY,
+                                                 cudaStream_t stream);
+
+extern "C" void launchBGRToRGBLetterboxKernel(const unsigned char* bgr, float* dst,
+                                               int srcW, int srcH, int srcStep,
+                                               int dstW, int dstH,
+                                               int newW, int newH,
+                                               int padX, int padY,
+                                               cudaStream_t stream);
 
 // DFL 后处理 kernel (GPU 加速 sigmoid + softmax + dist2bbox)
 extern "C" void launchDFLDecodeKernel(
@@ -73,11 +93,23 @@ TRTDetector::~TRTDetector() {
 }
 
 bool TRTDetector::init(const std::string& engineFile, bool useDLA, int dlaCore,
-                       float confThreshold, float nmsThreshold) {
+                       float confThreshold, float nmsThreshold,
+                       const std::string& inputFormat) {
     useDLA_        = useDLA;
     dlaCore_       = dlaCore;
     confThreshold_ = confThreshold;
     nmsThreshold_  = nmsThreshold;
+
+    std::string fmt = inputFormat;
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (fmt == "bayer") {
+        inputFormat_ = InputFormat::BAYER;
+    } else if (fmt == "bgr") {
+        inputFormat_ = InputFormat::BGR;
+    } else {
+        inputFormat_ = InputFormat::GRAY;
+    }
 
     if (!loadEngine(engineFile)) {
         LOG_ERROR("Failed to load TRT engine: %s", engineFile.c_str());
@@ -92,6 +124,8 @@ bool TRTDetector::init(const std::string& engineFile, bool useDLA, int dlaCore,
     LOG_INFO("TRT Detector initialized: %s", engineFile.c_str());
     LOG_INFO("  Input: %dx%d, DLA=%d (core %d)", inputSize_, inputSize_, useDLA_, dlaCore_);
     LOG_INFO("  Output elements: %d", outputSize_);
+    LOG_INFO("  Input format: %s", inputFormat_ == InputFormat::BAYER ? "BAYER" :
+                                 (inputFormat_ == InputFormat::BGR ? "BGR" : "GRAY"));
 
     return true;
 }
@@ -399,21 +433,66 @@ void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
         int padX = (inputSize_ - newW) / 2;
         int padY = (inputSize_ - newH) / 2;
 
-        launchGrayToRGBLetterboxKernel(
-            static_cast<const unsigned char*>(gpuImageU8),
-            static_cast<float*>(inputBufferDevice),
-            srcWidth, srcHeight, pitch,
-            inputSize_, inputSize_,
-            newW, newH, padX, padY,
-            stream);
+        switch (inputFormat_) {
+            case InputFormat::BAYER:
+                launchBayerToRGBLetterboxKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    newW, newH, padX, padY,
+                    stream);
+                break;
+            case InputFormat::BGR:
+                launchBGRToRGBLetterboxKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    newW, newH, padX, padY,
+                    stream);
+                break;
+            case InputFormat::GRAY:
+            default:
+                launchGrayToRGBLetterboxKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    newW, newH, padX, padY,
+                    stream);
+                break;
+        }
     } else {
         // Direct resize (不保持宽高比)
-        launchGrayToRGBKernel(
-            static_cast<const unsigned char*>(gpuImageU8),
-            static_cast<float*>(inputBufferDevice),
-            srcWidth, srcHeight, pitch,
-            inputSize_, inputSize_,
-            stream);
+        switch (inputFormat_) {
+            case InputFormat::BAYER:
+                launchBayerToRGBKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    stream);
+                break;
+            case InputFormat::BGR:
+                launchBGRToRGBLetterboxKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    inputSize_, inputSize_, 0, 0,
+                    stream);
+                break;
+            case InputFormat::GRAY:
+            default:
+                launchGrayToRGBKernel(
+                    static_cast<const unsigned char*>(gpuImageU8),
+                    static_cast<float*>(inputBufferDevice),
+                    srcWidth, srcHeight, pitch,
+                    inputSize_, inputSize_,
+                    stream);
+                break;
+        }
     }
 }
 

@@ -139,6 +139,12 @@ private:
     bool grabbing_ = false;
 
     CameraConfig config_;
+
+    // --- 自动重连 ---
+    static constexpr int MAX_CONSECUTIVE_FAILURES = 10;
+    static constexpr int MAX_RECONNECT_RETRIES = 3;
+    int consecutive_failures_ = 0;
+    bool reconnect();
 };
 
 }  // namespace stereo3d

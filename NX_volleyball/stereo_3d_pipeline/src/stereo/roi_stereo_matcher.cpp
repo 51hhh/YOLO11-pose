@@ -133,9 +133,9 @@ std::vector<Object3D> ROIStereoMatcher::match(
                     numBoxes * 5 * sizeof(float), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
 
-    // 4. 组装结果
-    std::vector<Object3D> output;
-    output.reserve(numBoxes);
+    // 4. 组装结果 — 始终为每个检测输出一个结果 (无效结果 confidence=0)
+    //    保证 output[i] 与 detections[i] 一一对应, 避免索引错位
+    std::vector<Object3D> output(numBoxes);
 
     for (int i = 0; i < numBoxes; ++i) {
         float X    = results_host_[i * 5 + 0];
@@ -144,14 +144,18 @@ std::vector<Object3D> ROIStereoMatcher::match(
         float disp = results_host_[i * 5 + 3];
         float conf = results_host_[i * 5 + 4];
 
+        output[i].class_id = detections[i].class_id;
+
         if (Z > 0.0f && conf > 0.0f) {
-            Object3D obj;
-            obj.x = X;
-            obj.y = Y;
-            obj.z = Z;
-            obj.confidence = conf * detections[i].confidence;  // 联合置信度
-            obj.class_id   = detections[i].class_id;
-            output.push_back(obj);
+            output[i].x = X;
+            output[i].y = Y;
+            output[i].z = Z;
+            output[i].confidence = conf * detections[i].confidence;
+        } else {
+            output[i].x = 0;
+            output[i].y = 0;
+            output[i].z = -1.0f;
+            output[i].confidence = 0;
         }
     }
 

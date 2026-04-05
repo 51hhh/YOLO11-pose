@@ -208,18 +208,22 @@ std::vector<int> HybridDepthEstimator::greedyIoUMatch(
 
 std::vector<Object3D> HybridDepthEstimator::estimate(
     const std::vector<Detection>& detections,
-    const std::vector<Object3D>& roi_results)
+    const std::vector<Object3D>& roi_results,
+    double actual_dt)
 {
     std::vector<Object3D> output;
     output.reserve(detections.size());
 
+    const float dt = (actual_dt > 0.001) ? static_cast<float>(actual_dt) : config_.dt;
+
     // Step 0: Predict all existing tracks
     for (auto& track : tracks_) {
-        track.predict(config_.dt, config_.process_accel);
+        track.predict(dt, config_.process_accel);
     }
 
     // Step 1: IoU greedy matching
     std::vector<int> det_to_track = greedyIoUMatch(detections);
+    const size_t original_track_count = tracks_.size();  // 记录原始 track 数
 
     for (size_t i = 0; i < detections.size(); ++i) {
         const auto& det = detections[i];
@@ -287,14 +291,14 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         }
     }
 
-    // Mark unmatched tracks as lost
-    std::vector<bool> track_matched(tracks_.size(), false);
+    // Mark unmatched tracks as lost (only check original tracks, not newly created ones)
+    std::vector<bool> track_matched(original_track_count, false);
     for (int i = 0; i < (int)detections.size(); ++i) {
-        if (det_to_track[i] >= 0) {
+        if (det_to_track[i] >= 0 && det_to_track[i] < (int)original_track_count) {
             track_matched[det_to_track[i]] = true;
         }
     }
-    for (size_t i = 0; i < tracks_.size(); ++i) {
+    for (size_t i = 0; i < original_track_count; ++i) {
         if (!track_matched[i]) {
             tracks_[i].lost_count++;
         }

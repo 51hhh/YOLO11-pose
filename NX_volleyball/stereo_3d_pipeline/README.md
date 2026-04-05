@@ -231,11 +231,17 @@ calibration:
 # GPU Mixed 模式 (yolo26_mixed, 低延迟)
 ./stereo_pipeline --config config/pipeline_yolo26_mixed.yaml
 
+# 纯 GPU INT8 模式 (yolo26_gpu)
+./stereo_pipeline --config config/pipeline_yolo26_gpu.yaml
+
 # 可视化窗口 (显示检测框 + 测距 + 3D坐标)
 ./stereo_pipeline --config config/pipeline_yolo26_mixed.yaml --visualize
 ```
 
 Ctrl+C 安全退出。
+
+> 若通过 SSH 无桌面会话运行，OpenCV 可能无法初始化 GTK 窗口并自动回退 headless；
+> 管线与检测仍会继续运行，可通过日志中的 `Ball:` 行确认检测与测距。
 
 ### 推荐生产配置（GPU Mixed, 目标 100 FPS）
 
@@ -244,6 +250,8 @@ Ctrl+C 安全退出。
   - `rectify.backend: "CUDA"`（当前实机测试吞吐更高；也支持 `VIC`）
   - `stereo.strategy: "roi_only"`
   - `detector.engine_path: yolo26_mixed_attn_fp16.engine`
+  - `detector.use_dla: false`（纯 GPU 推理）
+  - `detector.input_format: "bayer"`（相机 BayerRG8 输入）
 - 可视化模式建议仅用于联调；追求极限 FPS 时关闭 `--visualize`。
 
 ## 配置说明

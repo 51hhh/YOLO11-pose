@@ -35,6 +35,7 @@ struct PipelineStreams {
     cudaStream_t cudaStreamDetGPU = nullptr; ///< GPU 检测 CUDA Stream (triple 模式)
     cudaStream_t cudaStreamGPU  = nullptr;   ///< GPU 视差 CUDA Stream
     cudaStream_t cudaStreamFuse = nullptr;   ///< 融合 Stage CUDA Stream
+    cudaStream_t cudaStreamBGR  = nullptr;   ///< Bayer→BGR CUDA kernel Stream
 
     /**
      * @brief 初始化所有 Streams
@@ -94,6 +95,13 @@ struct PipelineStreams {
             return false;
         }
 
+        err = cudaStreamCreateWithFlags(&cudaStreamBGR, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create BGR stream: %s\n", cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
         return true;
     }
 
@@ -108,6 +116,7 @@ struct PipelineStreams {
         if (cudaStreamDetGPU) cudaStreamSynchronize(cudaStreamDetGPU);
         if (cudaStreamGPU) cudaStreamSynchronize(cudaStreamGPU);
         if (cudaStreamFuse) cudaStreamSynchronize(cudaStreamFuse);
+        if (cudaStreamBGR)  cudaStreamSynchronize(cudaStreamBGR);
     }
 
     /**
@@ -121,6 +130,7 @@ struct PipelineStreams {
         if (cudaStreamDetGPU){ cudaStreamDestroy(cudaStreamDetGPU); cudaStreamDetGPU = nullptr; }
         if (cudaStreamGPU) { cudaStreamDestroy(cudaStreamGPU); cudaStreamGPU = nullptr; }
         if (cudaStreamFuse){ cudaStreamDestroy(cudaStreamFuse); cudaStreamFuse = nullptr; }
+        if (cudaStreamBGR) { cudaStreamDestroy(cudaStreamBGR);  cudaStreamBGR = nullptr; }
     }
 };
 

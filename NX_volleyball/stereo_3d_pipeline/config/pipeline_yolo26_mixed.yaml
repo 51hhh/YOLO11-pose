@@ -29,16 +29,18 @@ rectify:
   output_height: 720
 
 tnr:
-  enabled: true
-  preset: "outdoor_medium"
+  enabled: false              # ROI 模式下禁用 TNR: 省 ~8ms/帧 (6次VPI操作串行)
+  preset: "outdoor_medium"    # 100Hz 硬触发 + 适当曝光无需 TNR
   strength: 0.6
   version: "default"
 
-# yolo26 Mixed Precision - attn FP16 + INT8
-# 3.08ms GPU compute, [1,5,8400] output format
+# yolo26 Mixed Precision - backbone INT8 + head/attn FP16
+# 2.93ms GPU compute, [1,5,8400] output format
+# model.10-23 all FP16 for detection accuracy, backbone INT8 for speed
 detector:
-  engine_path: "/home/nvidia/NX_volleyball/model/mixed_precision/yolo26_mixed_attn_fp16.engine"
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_head_fp16.engine"
   input_size: 640
+  input_format: "bgr"
   use_dla: false
   confidence_threshold: 0.3
   nms_threshold: 0.4

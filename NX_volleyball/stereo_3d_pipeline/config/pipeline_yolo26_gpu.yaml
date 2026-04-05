@@ -38,6 +38,7 @@ tnr:
 detector:
   engine_path: "/home/nvidia/NX_volleyball/model/matrix_results/yolo26_gpu_int8_entropy2.engine"
   input_size: 640
+  input_format: "gray"
   use_dla: false
   confidence_threshold: 0.3
   nms_threshold: 0.4
