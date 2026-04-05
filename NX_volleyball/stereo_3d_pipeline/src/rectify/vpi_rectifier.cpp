@@ -3,7 +3,8 @@
  * @brief VPI Remap 硬件加速校正实现
  *
  * 将 OpenCV undistortRectifyMap 生成的 LUT 导入 VPI WarpMap,
- * 然后通过 PVA backend 执行异步 Remap。
+ * 通过 VIC/CUDA backend 执行异步 Remap。
+ * VIC backend 不占用 GPU SM, 推荐用于最大化推理吞吐量。
  */
 
 #include "vpi_rectifier.h"
@@ -26,9 +27,13 @@ VPIRectifier::~VPIRectifier() {
     vpiWarpMapFreeData(&warpMapR_);
 }
 
-bool VPIRectifier::init(const StereoCalibration& calib, int width, int height) {
-    width_  = width;
-    height_ = height;
+bool VPIRectifier::init(const StereoCalibration& calib, int width, int height,
+                        uint64_t backend) {
+    width_   = width;
+    height_  = height;
+    backend_ = backend;
+
+    const char* backendName = (backend & VPI_BACKEND_VIC) ? "VIC" : "CUDA";
 
     // 1. 用 OpenCV 生成 Remap LUT
     cv::Mat map1L, map2L, map1R, map2R;
@@ -71,14 +76,14 @@ bool VPIRectifier::init(const StereoCalibration& calib, int width, int height) {
             }
         }
 
-        // 创建 Remap Payload (VPI Remap 仅支持 CPU/CUDA/VIC, 不支持 PVA)
-        err = vpiCreateRemap(VPI_BACKEND_CUDA, &wm, &payload);
+        // 创建 Remap Payload (VIC 或 CUDA backend)
+        err = vpiCreateRemap(backend, &wm, &payload);
         if (err != VPI_SUCCESS) {
-            LOG_ERROR("vpiCreateRemap failed for %s", name);
+            LOG_ERROR("vpiCreateRemap (%s) failed for %s", backendName, name);
             return false;
         }
 
-        LOG_INFO("VPI Remap %s initialized (%dx%d)", name, width, height);
+        LOG_INFO("VPI Remap %s initialized (%dx%d, backend=%s)", name, width, height, backendName);
         return true;
     };
 
@@ -92,12 +97,10 @@ void VPIRectifier::submit(VPIStream stream,
                           VPIImage rawL, VPIImage rawR,
                           VPIImage rectL, VPIImage rectR)
 {
-    // CUDA backend 异步提交 Remap (VPI Remap 不支持 PVA)
-    // VPI_INTERP_LINEAR = 双线性插值
-    // VPI_BORDER_ZERO   = 边界填零
-    vpiSubmitRemap(stream, VPI_BACKEND_CUDA, remapL_, rawL, rectL,
+    // VIC/CUDA backend 异步提交 Remap
+    vpiSubmitRemap(stream, backend_, remapL_, rawL, rectL,
                    VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
-    vpiSubmitRemap(stream, VPI_BACKEND_CUDA, remapR_, rawR, rectR,
+    vpiSubmitRemap(stream, backend_, remapR_, rawR, rectR,
                    VPI_INTERP_LINEAR, VPI_BORDER_ZERO, 0);
 }
 

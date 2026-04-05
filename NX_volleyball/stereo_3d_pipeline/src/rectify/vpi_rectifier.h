@@ -1,9 +1,10 @@
 /**
  * @file vpi_rectifier.h
- * @brief VPI Remap 硬件加速校正 (CUDA backend)
+ * @brief VPI Remap 硬件加速校正 (VIC/CUDA backend)
  *
  * 使用 VPI 的 vpiSubmitRemap 替代 OpenCV cv2.remap,
- * VPI Remap 在 VPI 3.x 上使用 CUDA/VIC backend（不支持 PVA）。
+ * VPI Remap 在 VPI 3.x 上支持 CUDA/VIC backend。
+ * VIC (Video Image Compositor) 是 Jetson 专用硬件, 不占用 GPU SM。
  */
 
 #ifndef STEREO_3D_PIPELINE_VPI_RECTIFIER_H_
@@ -13,6 +14,7 @@
 #include <vpi/Stream.h>
 #include <vpi/algo/Remap.h>
 #include <vpi/WarpMap.h>
+#include <cstdint>
 
 namespace stereo3d {
 
@@ -32,12 +34,14 @@ public:
      * @param calib 标定参数 (用于生成 LUT)
      * @param width 图像宽度
      * @param height 图像高度
+     * @param backend VPI backend flags (VPI_BACKEND_VIC 或 VPI_BACKEND_CUDA)
      * @return true 初始化成功
      */
-    bool init(const StereoCalibration& calib, int width, int height);
+    bool init(const StereoCalibration& calib, int width, int height,
+              uint64_t backend = VPI_BACKEND_VIC);
 
     /**
-     * @brief 异步提交校正任务 (CUDA backend)
+     * @brief 异步提交校正任务
      * @param stream VPI Stream
      * @param rawL 左原始图
      * @param rawR 右原始图
@@ -53,6 +57,7 @@ private:
     VPIPayload remapR_ = nullptr;   ///< 右目 Remap payload
     VPIWarpMap warpMapL_ = {};      ///< 左目 Warp Map (LUT)
     VPIWarpMap warpMapR_ = {};      ///< 右目 Warp Map (LUT)
+    uint64_t backend_ = VPI_BACKEND_VIC;  ///< Remap 执行后端
     int width_  = 0;
     int height_ = 0;
 };

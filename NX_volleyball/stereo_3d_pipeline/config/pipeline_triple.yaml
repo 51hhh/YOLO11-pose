@@ -1,0 +1,64 @@
+# ============================================================
+# Triple Backend: DLA0 FP16 + DLA1 FP16 + GPU Mixed (attn FP16)
+# Frame 0 → DLA0, Frame 1 → DLA1, Frame 2 → GPU, repeat
+# DLA: ~23ms/frame 98-99% acc, GPU Mixed: ~3ms/frame
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""
+  serial_right: ""
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+pipeline:
+  num_slots: 3
+  input_width: 1440
+  input_height: 1080
+
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/matrix_results/yolo26_dla0_fp16.engine"
+  engine_path_dla1: "/home/nvidia/NX_volleyball/model/matrix_results/yolo26_dla1_fp16.engine"
+  engine_path_gpu: "/home/nvidia/NX_volleyball/model/mixed_precision/yolo26_mixed_attn_fp16.engine"
+  input_size: 640
+  use_dla: true
+  dla_core: 0
+  dual_dla: true
+  triple_backend: true
+  confidence_threshold: 0.3
+  nms_threshold: 0.4
+  max_detections: 10
+
+stereo:
+  backend: "CUDA"
+  max_disparity: 256
+  window_size: 5
+  quality: 6
+  strategy: "roi_only"
+
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+
+performance:
+  pwm_frequency: 100.0
+  target_fps: 100
+  log_interval: 100
+  enable_profiling: true

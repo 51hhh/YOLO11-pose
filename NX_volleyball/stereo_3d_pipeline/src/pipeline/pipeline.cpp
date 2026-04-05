@@ -19,6 +19,9 @@
 
 #include "pipeline.h"
 #include "../utils/logger.h"
+#include <vpi/algo/ConvertImageFormat.h>
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 
 namespace stereo3d {
@@ -30,6 +33,13 @@ Pipeline::~Pipeline() {
     for (auto& slot : slots_) {
         slot.destroy();
     }
+    // TNR 资源清理
+    if (tnrPayloadL_) vpiPayloadDestroy(tnrPayloadL_);
+    if (tnrPayloadR_) vpiPayloadDestroy(tnrPayloadR_);
+    if (tnrNV12L_) vpiImageDestroy(tnrNV12L_);
+    if (tnrNV12R_) vpiImageDestroy(tnrNV12R_);
+    if (tnrOutNV12L_) vpiImageDestroy(tnrOutNV12L_);
+    if (tnrOutNV12R_) vpiImageDestroy(tnrOutNV12R_);
     streams_.destroy();
 }
 
@@ -64,12 +74,18 @@ bool Pipeline::init(const PipelineConfig& config) {
         return false;
     }
 
-    // 4. 初始化 VPI Rectifier (PVA backend)
+    // 4. 初始化 VPI Rectifier
     //    Rectifier 按校正后分辨率初始化
-    LOG_INFO("Initializing VPI Rectifier (PVA) at %dx%d...",
-             config_.rect_width, config_.rect_height);
+    uint64_t rectBackend = VPI_BACKEND_VIC;  // 默认 VIC (不占用 GPU)
+    std::string rectBackendCfg = config_.rect_backend;
+    std::transform(rectBackendCfg.begin(), rectBackendCfg.end(), rectBackendCfg.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (rectBackendCfg == "CUDA") rectBackend = VPI_BACKEND_CUDA;
+    config_.rect_backend = rectBackendCfg;
+    LOG_INFO("Initializing VPI Rectifier (%s) at %dx%d...",
+             config_.rect_backend.c_str(), config_.rect_width, config_.rect_height);
     rectifier_ = std::make_unique<VPIRectifier>();
-    if (!rectifier_->init(*calibration_, config_.rect_width, config_.rect_height)) {
+    if (!rectifier_->init(*calibration_, config_.rect_width, config_.rect_height, rectBackend)) {
         LOG_ERROR("Failed to initialize VPI Rectifier");
         return false;
     }
@@ -79,7 +95,8 @@ bool Pipeline::init(const PipelineConfig& config) {
     for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
         VPIStatus err;
         // CPU flag needed for host-side camera memcpy into rawL/rawR
-        uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA | VPI_BACKEND_CPU;
+        // VIC flag needed for VIC-backend remap
+        uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA | VPI_BACKEND_VIC | VPI_BACKEND_CPU;
 
         // 原始图像 → 使用 raw_width x raw_height (相机原始分辨率)
         err = vpiImageCreate(config_.raw_width, config_.raw_height,
@@ -109,7 +126,42 @@ bool Pipeline::init(const PipelineConfig& config) {
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI confidence create failed"); return false; }
     }
 
-    // 6. 初始化海康双目相机 (单实例管理左右)
+    // 6. 初始化 VPI TNR (时域降噪, 在校正前降噪)
+    if (config_.tnr_enabled) {
+        LOG_INFO("Initializing VPI TNR (preset=%d, strength=%.2f)...",
+                 config_.tnr_preset, config_.tnr_strength);
+        VPIStatus err;
+        // 创建 NV12 缓冲 (用于 U8 → NV12 转换 + TNR 处理)
+        // 使用 raw 分辨率, TNR 在校正前执行
+        uint64_t nv12_flags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU;
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12L_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 L create failed"); return false; }
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12R_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 R create failed"); return false; }
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12L_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 L create failed"); return false; }
+        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12R_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 R create failed"); return false; }
+
+        // 创建 TNR payload
+        err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
+                  config_.raw_width, config_.raw_height,
+                  VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadL_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload L create failed"); return false; }
+        err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
+                  config_.raw_width, config_.raw_height,
+                  VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadR_);
+        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload R create failed"); return false; }
+
+        tnrFirstFrame_ = true;
+        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.raw_width, config_.raw_height);
+    }
+
+    // 7. 初始化海康双目相机
 #ifdef HIK_CAMERA_ENABLED
     LOG_INFO("Opening dual cameras...");
     camera_ = std::make_unique<HikvisionCamera>();
@@ -141,9 +193,9 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
 #endif
 
-    // 7. 初始化 TensorRT 检测器 (DLA/GPU)
-    LOG_INFO("Initializing TRT Detector (DLA=%d, core=%d)...",
-             config_.use_dla, config_.dla_core);
+    // 8. 初始化 TensorRT 检测器 (DLA/GPU)
+    LOG_INFO("Initializing TRT Detector (DLA=%d, core=%d, dual=%d)...",
+             config_.use_dla, config_.dla_core, config_.dual_dla);
     detector_ = std::make_unique<TRTDetector>();
     if (!detector_->init(config_.engine_file, config_.use_dla, config_.dla_core,
                          config_.conf_threshold, config_.nms_threshold)) {
@@ -151,22 +203,83 @@ bool Pipeline::init(const PipelineConfig& config) {
         return false;
     }
 
-    // 8. 初始化 VPI 视差计算器 (校正后分辨率)
-    LOG_INFO("Initializing VPI Stereo (maxDisp=%d, winSize=%d, %dx%d)...",
-             config_.max_disparity, config_.window_size,
-             config_.rect_width, config_.rect_height);
-    stereo_ = std::make_unique<VPIStereo>();
-    if (!stereo_->init(config_.max_disparity, config_.window_size,
-                       config_.rect_width, config_.rect_height)) {
-        LOG_ERROR("Failed to initialize VPI Stereo");
-        return false;
+    // 双 DLA 模式: 初始化第二个检测器 (DLA1)
+    if ((config_.dual_dla || config_.triple_backend) && !config_.engine_file_dla1.empty()) {
+        LOG_INFO("Initializing DLA1 Detector: %s", config_.engine_file_dla1.c_str());
+        detector1_ = std::make_unique<TRTDetector>();
+        if (!detector1_->init(config_.engine_file_dla1, true, 1,
+                              config_.conf_threshold, config_.nms_threshold)) {
+            LOG_WARN("Failed to initialize DLA1 Detector - falling back to single DLA");
+            detector1_.reset();
+            config_.dual_dla = false;
+            config_.triple_backend = false;
+        }
     }
 
-    // 9. 初始化 3D 融合
-    fusion_ = std::make_unique<Coordinate3D>();
-    fusion_->init(calibration_->getProjectionLeft(),
-                  calibration_->getBaseline(),
-                  config_.min_depth, config_.max_depth);
+    // 三路轮转模式: 初始化 GPU 检测器
+    if (config_.triple_backend && !config_.engine_file_gpu.empty()) {
+        LOG_INFO("Initializing GPU Detector: %s", config_.engine_file_gpu.c_str());
+        detector2_ = std::make_unique<TRTDetector>();
+        if (!detector2_->init(config_.engine_file_gpu, false, 0,
+                              config_.conf_threshold, config_.nms_threshold)) {
+            LOG_WARN("Failed to initialize GPU Detector - falling back to dual DLA");
+            detector2_.reset();
+            config_.triple_backend = false;
+        }
+    }
+
+    // 9. 初始化立体匹配 (根据策略选择)
+    if (config_.disparity_strategy == DisparityStrategy::ROI_ONLY) {
+        // ROI 模式: 多点块匹配, 不需要全帧视差
+        LOG_INFO("Initializing ROI Stereo Matcher (maxDisp=%d, patchR=%d)...",
+                 config_.max_disparity, 5);
+        roi_matcher_ = std::make_unique<ROIStereoMatcher>();
+        const auto& P1 = calibration_->getProjectionLeft();
+        float focal = static_cast<float>(P1.at<double>(0, 0));
+        float cx    = static_cast<float>(P1.at<double>(0, 2));
+        float cy    = static_cast<float>(P1.at<double>(1, 2));
+        ROIMatchConfig roi_cfg;
+        roi_cfg.maxDisparity = config_.max_disparity;
+        roi_cfg.patchRadius  = 5;
+        roi_cfg.minDepth     = config_.min_depth;
+        roi_cfg.maxDepth     = config_.max_depth;
+        roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+
+        // 初始化混合深度估计 (单目+双目+Kalman)
+        hybrid_depth_ = std::make_unique<HybridDepthEstimator>();
+        HybridDepthConfig hd_cfg;
+        hd_cfg.object_diameter = 0.22f;    // 排球直径
+        hd_cfg.bbox_scale      = 0.95f;
+        hd_cfg.mono_max_z      = 5.0f;
+        hd_cfg.stereo_min_z    = 3.0f;
+        hd_cfg.dt              = 1.0f / config_.trigger_freq_hz;
+        hd_cfg.min_depth       = config_.min_depth;
+        hd_cfg.max_depth       = config_.max_depth;
+        hybrid_depth_->init(focal, calibration_->getBaseline(), cx, cy, hd_cfg);
+        LOG_INFO("  Hybrid Depth: mono(<%.0fm) + stereo(>%.0fm) + Kalman @ %.0fHz",
+                 hd_cfg.mono_max_z, hd_cfg.stereo_min_z, 1.0f / hd_cfg.dt);
+    } else {
+        // 全帧/半分辨率模式: VPI SGM
+        LOG_INFO("Initializing VPI Stereo (maxDisp=%d, winSize=%d, %dx%d)...",
+                 config_.max_disparity, config_.window_size,
+                 config_.rect_width, config_.rect_height);
+        stereo_ = std::make_unique<VPIStereo>();
+        if (!stereo_->init(config_.max_disparity, config_.window_size,
+                           config_.rect_width, config_.rect_height)) {
+            LOG_ERROR("Failed to initialize VPI Stereo");
+            return false;
+        }
+
+        // 全帧模式需要 Coordinate3D 融合器
+        fusion_ = std::make_unique<Coordinate3D>();
+        fusion_->init(calibration_->getProjectionLeft(),
+                      calibration_->getBaseline(),
+                      config_.min_depth, config_.max_depth);
+    }
+
+    const char* strategyStr = (config_.disparity_strategy == DisparityStrategy::ROI_ONLY)
+        ? "ROI Multi-Point" : (config_.disparity_strategy == DisparityStrategy::HALF_RESOLUTION
+        ? "Half Resolution" : "Full Frame");
 
     LOG_INFO("========================================");
     LOG_INFO("Pipeline initialized successfully");
@@ -174,9 +287,7 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_INFO("  Rect resolution: %dx%d", config_.rect_width, config_.rect_height);
     LOG_INFO("  Trigger: %d Hz", config_.trigger_freq_hz);
     LOG_INFO("  Detect: %s (DLA=%d)", config_.engine_file.c_str(), config_.use_dla);
-    LOG_INFO("  Disparity: %s", config_.disparity_strategy == DisparityStrategy::FULL_FRAME
-             ? "Full Frame" : (config_.disparity_strategy == DisparityStrategy::HALF_RESOLUTION
-             ? "Half Resolution" : "ROI Only"));
+    LOG_INFO("  Disparity: %s", strategyStr);
     LOG_INFO("========================================");
 
     return true;
@@ -199,8 +310,13 @@ void Pipeline::start() {
 #endif
 
     // 在独立线程中运行 Pipeline 循环
-    pipeline_thread_ = std::thread(&Pipeline::pipelineLoop, this);
-    LOG_INFO("Pipeline thread started");
+    if (config_.disparity_strategy == DisparityStrategy::ROI_ONLY) {
+        pipeline_thread_ = std::thread(&Pipeline::pipelineLoopROI, this);
+        LOG_INFO("Pipeline thread started (ROI mode)");
+    } else {
+        pipeline_thread_ = std::thread(&Pipeline::pipelineLoop, this);
+        LOG_INFO("Pipeline thread started (Full-frame mode)");
+    }
 }
 
 void Pipeline::stop() {
@@ -288,6 +404,12 @@ void Pipeline::pipelineLoop() {
                 result_callback_(slot.frame_id, slot.results);
             }
 
+            if (frame_callback_) {
+                frame_callback_(slot.frame_id, slot.rectL,
+                                slot.detections, slot.results,
+                                current_fps_.load());
+            }
+
             next_fuse_frame++;
 
             // ---- FPS 统计基于输出帧 ----
@@ -310,8 +432,12 @@ void Pipeline::pipelineLoop() {
             int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
 
+            // 等待 VPI remap 完成 (stage0 异步提交)
+            vpiStreamSync(streams_.vpiStreamPVA);
+            cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+
             // DLA/GPU 都等 rect 完成后开始
-            cudaStreamWaitEvent(streams_.cudaStreamDLA, slot.evtRectDone, 0);
+            cudaStreamWaitEvent(getDLAStream(slot.frame_id), slot.evtRectDone, 0);
             cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
 
             {
@@ -319,7 +445,7 @@ void Pipeline::pipelineLoop() {
                 stage1_detect(slot, slot_idx);
                 globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
             }
-            cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamDLA);
+            cudaEventRecord(slot.evtDetectDone, getDLAStream(slot.frame_id));
 
             {
                 ScopedTimer t2("Stage2_StereoSubmit");
@@ -345,16 +471,20 @@ void Pipeline::pipelineLoop() {
     }
 
     // ===== 排空阶段 =====
+    // 同步最后的 VPI remap
+    vpiStreamSync(streams_.vpiStreamPVA);
+
     // 1) 提交所有已抓取但尚未提交 detect/stereo 的帧
     while (next_detect_frame < next_grab_frame) {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
 
-        cudaStreamWaitEvent(streams_.cudaStreamDLA, slot.evtRectDone, 0);
+        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+        cudaStreamWaitEvent(getDLAStream(slot.frame_id), slot.evtRectDone, 0);
         cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
 
         stage1_detect(slot, slot_idx);
-        cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamDLA);
+        cudaEventRecord(slot.evtDetectDone, getDLAStream(slot.frame_id));
         stage2_stereo(slot);
 
         next_detect_frame++;
@@ -408,21 +538,87 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot) {
     // else: dry-run mode — rawL/rawR contain zeroes (VPI images are zero-initialized)
 #endif
 
-    // 2. VPI Remap 校正 (异步提交)
+    // 2. VPI TNR 降噪 (可选, 在校正前对原始图降噪)
+    if (config_.tnr_enabled) {
+        ScopedTimer tt("TNR");
+
+        // U8 → NV12_ER: Y = U8, UV = 0x80 (中性灰度)
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rawL, tnrNV12L_, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rawR, tnrNV12R_, nullptr);
+
+        // TNR 处理
+        VPITNRParams tnrParams;
+        vpiInitTemporalNoiseReductionParams(&tnrParams);
+        tnrParams.preset   = config_.tnr_preset;
+        tnrParams.strength = config_.tnr_strength;
+
+        VPIImage prevL = tnrFirstFrame_ ? nullptr : tnrOutNV12L_;
+        VPIImage prevR = tnrFirstFrame_ ? nullptr : tnrOutNV12R_;
+
+        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                         tnrPayloadL_, prevL,
+                                         tnrNV12L_, tnrOutNV12L_, &tnrParams);
+        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                         tnrPayloadR_, prevR,
+                                         tnrNV12R_, tnrOutNV12R_, &tnrParams);
+
+        // NV12_ER → U8: 提取 Y 通道回写 rawL/rawR (用于后续 Remap)
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    tnrOutNV12L_, slot.rawL, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    tnrOutNV12R_, slot.rawR, nullptr);
+
+        tnrFirstFrame_ = false;
+        globalPerf().record("TNR", tt.elapsedMs());
+    }
+
+    // 3. VPI Remap 校正 (异步提交, 不阻塞等待)
     rectifier_->submit(streams_.vpiStreamPVA, slot.rawL, slot.rawR,
                        slot.rectL, slot.rectR);
 
-    // 同步 rect stream 确保校正完成，然后记录 rect-done 事件
-    vpiStreamSync(streams_.vpiStreamPVA);
-    // 注意: evtRectDone 录在 cudaStreamGPU 上 (由 GPU 负责后续依赖);
-    // VPI PVA 作业已经 sync 完成，此 event 仅作为下游 Stage 1/2 的 Gate
-    cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+    // 不在此处同步! VPI remap (~1ms) 在下次 stage1 调用前由 caller 同步.
+    // 三缓冲确保 slot 不被过早重用.
 
     NVTX_RANGE_POP();
 }
 
+// ===================================================================
+// Dual DLA helpers: frame-based detector/stream selection
+// ===================================================================
+
+TRTDetector* Pipeline::getDetector(int frame_id) const {
+    if (config_.triple_backend && detector1_ && detector2_) {
+        switch (frame_id % 3) {
+            case 0: return detector_.get();   // DLA0
+            case 1: return detector1_.get();  // DLA1
+            default: return detector2_.get(); // GPU
+        }
+    }
+    if (config_.dual_dla && detector1_ && (frame_id & 1))
+        return detector1_.get();
+    return detector_.get();
+}
+
+cudaStream_t Pipeline::getDLAStream(int frame_id) const {
+    if (config_.triple_backend && detector1_ && detector2_) {
+        switch (frame_id % 3) {
+            case 0: return streams_.cudaStreamDLA;
+            case 1: return streams_.cudaStreamDLA1;
+            default: return streams_.cudaStreamDetGPU;
+        }
+    }
+    if (config_.dual_dla && detector1_ && (frame_id & 1))
+        return streams_.cudaStreamDLA1;
+    return streams_.cudaStreamDLA;
+}
+
 void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage1_Detect");
+
+    auto* det = getDetector(slot.frame_id);
+    auto stream = getDLAStream(slot.frame_id);
 
     // 从 VPI Image 获取 GPU 指针，传给 TensorRT
     VPIImageData imgData;
@@ -432,9 +628,9 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
 
     // 异步推理提交: 仅 enqueue，不在此处同步
-    detector_->enqueue(slot_index, gpu_ptr, pitch,
-                       config_.rect_width, config_.rect_height,
-                       streams_.cudaStreamDLA);
+    det->enqueue(slot_index, gpu_ptr, pitch,
+                 config_.rect_width, config_.rect_height,
+                 stream);
 
     vpiImageUnlock(slot.rectL);
     NVTX_RANGE_POP();
@@ -457,12 +653,10 @@ void Pipeline::stage2_stereo(FrameSlot& slot) {
             break;
 
         case DisparityStrategy::ROI_ONLY:
-            // ROI 模式需要先有检测结果 → 依赖 Stage 1
-            // 此处使用全帧模式代替; ROI 路径在 Stage 3 中按需提取
-            stereo_->compute(streams_.vpiStreamGPU,
-                             slot.rectL, slot.rectR,
-                             slot.disparityMap, slot.confidenceMap);
-            break;
+            // ROI mode uses separate ROI matcher in pipelineLoopROI stage2.
+            // stage2_stereo() should never be called in ROI mode.
+            LOG_ERROR("stage2_stereo called in ROI_ONLY mode — this is a bug");
+            return;
     }
 
     // 不在此处做 vpiStreamSync。
@@ -477,7 +671,7 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     slot.results.clear();
 
     // Detect 结果在 Stage1 中异步 D2H，现已通过 evtDetectDone 保证完成
-    slot.detections = detector_->collect(slot_index,
+    slot.detections = getDetector(slot.frame_id)->collect(slot_index,
                                          config_.rect_width, config_.rect_height);
 
     // 获取视差图 GPU 指针
@@ -498,6 +692,230 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
 
     vpiImageUnlock(slot.disparityMap);
     NVTX_RANGE_POP();
+}
+
+// ===================================================================
+// ROI 模式: Stage 2 — 检测后 ROI 多点匹配 + 三角测距 (一步到位)
+// ===================================================================
+
+void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
+    NVTX_RANGE("Stage2_ROIMatchFuse");
+
+    slot.results.clear();
+
+    // 1. 收集检测结果 (Stage 1 完成后) — 使用与 stage1 相同的 detector
+    auto* det = getDetector(slot.frame_id);
+    slot.detections = det->collect(slot_index,
+                                   config_.rect_width, config_.rect_height);
+
+    if (slot.detections.empty()) {
+        // 无检测: 仅 Kalman 预测
+        if (hybrid_depth_) {
+            slot.results = hybrid_depth_->predictOnly();
+        }
+        NVTX_RANGE_POP();
+        return;
+    }
+
+    // 2. 获取校正后左右图 GPU 指针
+    VPIImageData imgDataL, imgDataR;
+    vpiImageLockData(slot.rectL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+    vpiImageLockData(slot.rectR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+
+    const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
+    int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
+    const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
+    int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
+
+    // 3. ROI 多点立体匹配 (双目结果)
+    auto roi_results = roi_matcher_->match(
+        leftPtr, leftPitch, rightPtr, rightPitch,
+        config_.rect_width, config_.rect_height,
+        slot.detections, streams_.cudaStreamFuse);
+
+    vpiImageUnlock(slot.rectL);
+    vpiImageUnlock(slot.rectR);
+
+    // 4. 混合深度估计 (单目+双目融合+Kalman滤波)
+    if (hybrid_depth_) {
+        slot.results = hybrid_depth_->estimate(slot.detections, roi_results);
+    } else {
+        slot.results = std::move(roi_results);
+    }
+
+    NVTX_RANGE_POP();
+}
+
+// ===================================================================
+// ROI 模式 Pipeline 主循环
+//
+// 三级流水线:
+//   Stage 0: Grab + Rectify  (~3ms)   CPU + VPI
+//   Stage 1: Detect           (~8ms)   DLA (async)
+//   Stage 2: ROI Match + Fuse (~1ms)   GPU (需要 Stage 1 结果)
+//
+// 帧间重叠:
+//   Frame N+2: Stage 0
+//   Frame N+1: Stage 1
+//   Frame N:   Stage 2
+//
+// 吞吐量 = 1 / max(Stage_i) → 100+ FPS
+// ===================================================================
+
+void Pipeline::pipelineLoopROI() {
+    using Clock = std::chrono::high_resolution_clock;
+    auto fps_start = Clock::now();
+    int fps_count = 0;
+
+    int next_grab_frame   = 0;
+    int next_detect_frame = 0;
+    int next_fuse_frame   = 0;
+
+    // ===== 填充: 抓取首帧 =====
+    {
+        int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+        slot.reset();
+        slot.frame_id = next_grab_frame;
+
+        ScopedTimer t0("Stage0_GrabRect");
+        stage0_grab_and_rectify(slot);
+        globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
+        next_grab_frame++;
+    }
+
+    // ===== 填充: 提交首帧检测 =====
+    {
+        int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+
+        // 等待首帧 VPI remap 完成 (stage0 异步提交)
+        vpiStreamSync(streams_.vpiStreamPVA);
+        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+
+        auto dlaStream = getDLAStream(slot.frame_id);
+        cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+
+        ScopedTimer t1("Stage1_DetectSubmit");
+        stage1_detect(slot, slot_idx);
+        globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
+        cudaEventRecord(slot.evtDetectDone, dlaStream);
+        next_detect_frame++;
+    }
+
+    while (running_) {
+        // --- Stage 1: 提交下一个已抓取帧的检测 (先提交, 让 DLA 尽早开始) ---
+        if (next_detect_frame < next_grab_frame) {
+            int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
+            auto& slot = slots_[slot_idx];
+
+            // VPI remap 完成同步 (stage0 异步提交, 此处确保数据就绪)
+            // 由于 grab 耗时 ~6-8ms 而 remap 仅 ~1ms, 此处几乎不阻塞
+            {
+                ScopedTimer tw("Stage1_WaitRect");
+                vpiStreamSync(streams_.vpiStreamPVA);
+                cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+                globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
+            }
+
+            auto dlaStream = getDLAStream(slot.frame_id);
+            cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+
+            {
+                ScopedTimer t1("Stage1_DetectSubmit");
+                stage1_detect(slot, slot_idx);
+                globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
+            }
+            cudaEventRecord(slot.evtDetectDone, dlaStream);
+            next_detect_frame++;
+        }
+
+        // --- Stage 2: ROI 匹配 + 融合帧 N (等待 Detect 完成) ---
+        // 此时新帧 DLA 推理已在后台运行, 与本次 collect 真正并行
+        if (next_fuse_frame < next_detect_frame - 1) {
+            int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
+            auto& slot = slots_[slot_idx];
+
+            {
+                ScopedTimer tw("Stage2_WaitDetect");
+                cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+                cudaStreamSynchronize(streams_.cudaStreamFuse);
+                globalPerf().record("Stage2_WaitDetect", tw.elapsedMs());
+            }
+
+            {
+                ScopedTimer t2("Stage2_ROIMatchFuse");
+                stage2_roi_match_fuse(slot, slot_idx);
+                globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
+            }
+
+            if (result_callback_) {
+                result_callback_(slot.frame_id, slot.results);
+            }
+
+            if (frame_callback_) {
+                frame_callback_(slot.frame_id, slot.rectL,
+                                slot.detections, slot.results,
+                                current_fps_.load());
+            }
+
+            next_fuse_frame++;
+
+            // FPS 统计
+            fps_count++;
+            auto now = Clock::now();
+            double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
+            if (elapsed_s >= 1.0) {
+                current_fps_ = static_cast<float>(fps_count / elapsed_s);
+                if (config_.stats_interval > 0 &&
+                    next_fuse_frame % config_.stats_interval == 0) {
+                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d)", current_fps_.load(), next_fuse_frame);
+                }
+                fps_count = 0;
+                fps_start = now;
+            }
+        }
+
+        // --- Stage 0: 抓取下一帧 ---
+        {
+            int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+            auto& slot = slots_[slot_idx];
+            slot.reset();
+            slot.frame_id = next_grab_frame;
+
+            ScopedTimer t0("Stage0_GrabRect");
+            stage0_grab_and_rectify(slot);
+            globalPerf().record("Stage0_GrabRect", t0.elapsedMs());
+            next_grab_frame++;
+        }
+    }
+
+    // ===== 排空 =====
+    // 同步最后的 VPI remap
+    vpiStreamSync(streams_.vpiStreamPVA);
+
+    while (next_detect_frame < next_grab_frame) {
+        int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+        auto dlaStream = getDLAStream(slot.frame_id);
+        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+        cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+        stage1_detect(slot, slot_idx);
+        cudaEventRecord(slot.evtDetectDone, dlaStream);
+        next_detect_frame++;
+    }
+
+    while (next_fuse_frame < next_detect_frame) {
+        int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
+        auto& slot = slots_[slot_idx];
+        cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+        cudaStreamSynchronize(streams_.cudaStreamFuse);
+        stage2_roi_match_fuse(slot, slot_idx);
+        if (result_callback_) result_callback_(slot.frame_id, slot.results);
+        next_fuse_frame++;
+    }
+
+    LOG_INFO("ROI Pipeline loop exited");
 }
 
 void Pipeline::printPerfReport() const {

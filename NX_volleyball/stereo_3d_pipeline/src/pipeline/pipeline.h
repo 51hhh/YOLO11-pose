@@ -31,8 +31,12 @@ namespace stereo3d { class HikvisionCamera; struct CameraConfig; }
 #include "../rectify/vpi_rectifier.h"
 #include "../detect/trt_detector.h"
 #include "../stereo/vpi_stereo.h"
+#include "../stereo/roi_stereo_matcher.h"
 #include "../fusion/coordinate_3d.h"
+#include "../fusion/hybrid_depth.h"
 #include "../utils/profiler.h"
+
+#include <vpi/algo/TemporalNoiseReduction.h>
 
 #include <atomic>
 #include <functional>
@@ -59,6 +63,7 @@ struct PipelineConfig {
     int raw_height  = 1080;
     int rect_width  = 1280;    ///< 校正后分辨率
     int rect_height = 720;
+    std::string rect_backend = "VIC"; ///< 校正后端: "VIC" (推荐,不占GPU) 或 "CUDA"
 
     // 相机
     int cam_left_index  = 0;
@@ -85,6 +90,10 @@ struct PipelineConfig {
     int  max_detections  = 10;
     bool use_dla = true;           ///< 使用 NVDLA (否则 GPU)
     int  dla_core = 0;             ///< DLA 核心 ID (0 或 1)
+    bool dual_dla = false;         ///< 双 DLA 并行 (DLA0 + DLA1 交替)
+    std::string engine_file_dla1;  ///< DLA1 引擎路径 (dual_dla 模式)
+    bool triple_backend = false;   ///< 三路轮转 (DLA0+DLA1+GPU 循环)
+    std::string engine_file_gpu;   ///< GPU 引擎路径 (triple 模式)
 
     // 视差
     int max_disparity = 128;
@@ -98,12 +107,27 @@ struct PipelineConfig {
 
     // 性能
     int stats_interval = 100;      ///< 每 N 帧打印统计
+
+    // VPI TNR (时域降噪)
+    bool tnr_enabled = false;              ///< 是否启用 VPI TNR
+    VPITNRPreset tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
+    float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
+    VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
 };
 
 /**
  * @brief 结果回调
  */
 using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
+
+/**
+ * @brief 帧回调 (可视化用: 校正后图 + 检测 + 3D结果)
+ */
+using FrameCallback = std::function<void(
+    int frame_id, VPIImage rectL,
+    const std::vector<Detection>& detections,
+    const std::vector<Object3D>& results,
+    float fps)>;
 
 /**
  * @brief 四级流水线主类
@@ -138,6 +162,11 @@ public:
     void setResultCallback(ResultCallback cb) { result_callback_ = std::move(cb); }
 
     /**
+     * @brief 设置帧回调 (可视化: 图像+检测+3D)
+     */
+    void setFrameCallback(FrameCallback cb) { frame_callback_ = std::move(cb); }
+
+    /**
      * @brief 获取当前帧率 (吞吐量)
      */
     float getCurrentFPS() const { return current_fps_.load(); }
@@ -150,12 +179,20 @@ public:
 private:
     // ===== Pipeline 主循环 =====
     void pipelineLoop();
+    void pipelineLoopROI();   ///< ROI_ONLY 策略: 检测后多点匹配
 
     // ===== Stage 函数 =====
     void stage0_grab_and_rectify(FrameSlot& slot);
     void stage1_detect(FrameSlot& slot, int slot_index);
     void stage2_stereo(FrameSlot& slot);
     void stage3_fuse(FrameSlot& slot, int slot_index);
+
+    // ROI 模式专用 Stage
+    void stage2_roi_match_fuse(FrameSlot& slot, int slot_index);
+
+    // Dual DLA 帧分配: 偶数帧→DLA0, 奇数帧→DLA1
+    TRTDetector* getDetector(int frame_id) const;
+    cudaStream_t getDLAStream(int frame_id) const;
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -169,8 +206,21 @@ private:
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
     std::unique_ptr<TRTDetector> detector_;
-    std::unique_ptr<VPIStereo> stereo_;
-    std::unique_ptr<Coordinate3D> fusion_;
+    std::unique_ptr<TRTDetector> detector1_;   ///< DLA1 检测器 (dual_dla 模式)
+    std::unique_ptr<TRTDetector> detector2_;   ///< GPU 检测器 (triple 模式)
+    std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
+    std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
+    std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
+    std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
+
+    // ===== VPI TNR 资源 =====
+    VPIPayload tnrPayloadL_ = nullptr;     ///< 左目 TNR payload
+    VPIPayload tnrPayloadR_ = nullptr;     ///< 右目 TNR payload
+    VPIImage tnrNV12L_   = nullptr;        ///< 左目 NV12 输入缓冲
+    VPIImage tnrNV12R_   = nullptr;        ///< 右目 NV12 输入缓冲
+    VPIImage tnrOutNV12L_   = nullptr;     ///< 左目 TNR 输出
+    VPIImage tnrOutNV12R_   = nullptr;     ///< 右目 TNR 输出
+    bool tnrFirstFrame_ = true;            ///< 首帧标志 (prevOutput 传 NULL)
 
     // ===== 状态 =====
     std::atomic<bool> running_{false};
@@ -178,6 +228,7 @@ private:
     std::thread pipeline_thread_;              ///< Pipeline 工作线程
 
     ResultCallback result_callback_;
+    FrameCallback frame_callback_;
 };
 
 }  // namespace stereo3d

@@ -30,7 +30,9 @@ struct PipelineStreams {
     VPIStream vpiStreamGPU  = nullptr;   ///< CUDA backend (Stage 2 视差)
 
     // ===== CUDA Streams =====
-    cudaStream_t cudaStreamDLA  = nullptr;   ///< DLA 推理 CUDA Stream
+    cudaStream_t cudaStreamDLA  = nullptr;   ///< DLA0 推理 CUDA Stream
+    cudaStream_t cudaStreamDLA1 = nullptr;   ///< DLA1 推理 CUDA Stream (dual DLA)
+    cudaStream_t cudaStreamDetGPU = nullptr; ///< GPU 检测 CUDA Stream (triple 模式)
     cudaStream_t cudaStreamGPU  = nullptr;   ///< GPU 视差 CUDA Stream
     cudaStream_t cudaStreamFuse = nullptr;   ///< 融合 Stage CUDA Stream
 
@@ -41,9 +43,9 @@ struct PipelineStreams {
     bool init() {
         cudaError_t err;
 
-        // VPI Streams
+        // VPI Streams (VIC backend added for hardware remap)
         VPIStatus vpiErr;
-        vpiErr = vpiStreamCreate(VPI_BACKEND_PVA | VPI_BACKEND_CUDA, &vpiStreamPVA);
+        vpiErr = vpiStreamCreate(VPI_BACKEND_PVA | VPI_BACKEND_CUDA | VPI_BACKEND_VIC, &vpiStreamPVA);
         if (vpiErr != VPI_SUCCESS) {
             fprintf(stderr, "[Sync] Failed to create VPI PVA stream\n");
             return false;
@@ -52,6 +54,7 @@ struct PipelineStreams {
         vpiErr = vpiStreamCreate(VPI_BACKEND_CUDA, &vpiStreamGPU);
         if (vpiErr != VPI_SUCCESS) {
             fprintf(stderr, "[Sync] Failed to create VPI GPU stream\n");
+            destroy();
             return false;
         }
 
@@ -59,18 +62,35 @@ struct PipelineStreams {
         err = cudaStreamCreateWithFlags(&cudaStreamDLA, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
             fprintf(stderr, "[Sync] Failed to create DLA stream: %s\n", cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamDLA1, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create DLA1 stream: %s\n", cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamDetGPU, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create DetGPU stream: %s\n", cudaGetErrorString(err));
+            destroy();
             return false;
         }
 
         err = cudaStreamCreateWithFlags(&cudaStreamGPU, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
             fprintf(stderr, "[Sync] Failed to create GPU stream: %s\n", cudaGetErrorString(err));
+            destroy();
             return false;
         }
 
         err = cudaStreamCreateWithFlags(&cudaStreamFuse, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
             fprintf(stderr, "[Sync] Failed to create Fuse stream: %s\n", cudaGetErrorString(err));
+            destroy();
             return false;
         }
 
@@ -84,6 +104,8 @@ struct PipelineStreams {
         if (vpiStreamPVA) vpiStreamSync(vpiStreamPVA);
         if (vpiStreamGPU) vpiStreamSync(vpiStreamGPU);
         if (cudaStreamDLA) cudaStreamSynchronize(cudaStreamDLA);
+        if (cudaStreamDLA1) cudaStreamSynchronize(cudaStreamDLA1);
+        if (cudaStreamDetGPU) cudaStreamSynchronize(cudaStreamDetGPU);
         if (cudaStreamGPU) cudaStreamSynchronize(cudaStreamGPU);
         if (cudaStreamFuse) cudaStreamSynchronize(cudaStreamFuse);
     }
@@ -95,6 +117,8 @@ struct PipelineStreams {
         if (vpiStreamPVA)  { vpiStreamDestroy(vpiStreamPVA);  vpiStreamPVA = nullptr;  }
         if (vpiStreamGPU)  { vpiStreamDestroy(vpiStreamGPU);  vpiStreamGPU = nullptr;  }
         if (cudaStreamDLA) { cudaStreamDestroy(cudaStreamDLA); cudaStreamDLA = nullptr; }
+        if (cudaStreamDLA1){ cudaStreamDestroy(cudaStreamDLA1); cudaStreamDLA1 = nullptr; }
+        if (cudaStreamDetGPU){ cudaStreamDestroy(cudaStreamDetGPU); cudaStreamDetGPU = nullptr; }
         if (cudaStreamGPU) { cudaStreamDestroy(cudaStreamGPU); cudaStreamGPU = nullptr; }
         if (cudaStreamFuse){ cudaStreamDestroy(cudaStreamFuse); cudaStreamFuse = nullptr; }
     }
