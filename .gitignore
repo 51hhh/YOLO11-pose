@@ -42,3 +42,7 @@ NX_volleyball/stereo_3d_pipeline/build/
 NX_volleyball/scripts/nx_trt_build*.sh
 NX_volleyball/scripts/sync_to_nx.ps1
 nx_check.txt
+
+# Copilot / IDE 配置
+.github/
+.vscode/
