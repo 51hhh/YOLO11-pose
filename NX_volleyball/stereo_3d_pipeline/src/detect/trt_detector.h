@@ -81,6 +81,21 @@ private:
         void* inputDevice = nullptr;
         void* outputDevice = nullptr;
         float* outputHost = nullptr;
+        // Multi-scale outputs (6-tensor format: cls+bbox per scale)
+        struct ScaleOutput {
+            void* device = nullptr;
+            float* host = nullptr;
+            int h = 0, w = 0, channels = 0;
+            int stride = 0;
+            bool isCls = false;  // true=classification, false=bbox DFL
+            std::string name;
+        };
+        std::vector<ScaleOutput> scaleOutputs;
+        // GPU DFL decode buffers (shared across scales)
+        float* dflOutDevice = nullptr;   // [max_det * 6] on GPU
+        float* dflOutHost   = nullptr;   // [max_det * 6] pinned
+        int*   dflCountDevice = nullptr; // atomic counter on GPU
+        int*   dflCountHost   = nullptr; // pinned
     };
 
     // TensorRT 组件
@@ -93,15 +108,20 @@ private:
 
     // 参数
     int inputSize_   = 640;     ///< 模型输入正方形尺寸
-    int outputSize_  = 0;       ///< 输出 tensor 元素数
+    int outputSize_  = 0;       ///< 输出 tensor 元素数 (single-output mode)
     float confThreshold_ = 0.5f;
     float nmsThreshold_  = 0.4f;
     bool useDLA_    = true;
     int  dlaCore_   = 0;
+    bool useLetterbox_ = true;  ///< 使用 letterbox 预处理 (保持宽高比)
+    bool multiScaleOutput_ = false;  ///< 6-tensor DFL output mode
+    int  numClasses_ = 1;       ///< Number of classes (volleyball=1)
+    int  regMax_ = 16;          ///< DFL regression max bins
 
     // TensorRT 10.x tensor 名称
     std::string inputTensorName_;
-    std::string outputTensorName_;
+    std::string outputTensorName_;    ///< Single-output mode only
+    int numOutputTensors_ = 0;
 
     bool loadEngine(const std::string& path);
     bool allocateBuffers();
@@ -123,6 +143,21 @@ private:
      */
     std::vector<Detection> postprocess(const float* outputBufferHost,
                                        float scaleX, float scaleY);
+
+    /**
+     * @brief Multi-scale DFL postprocess (CPU fallback)
+     */
+    std::vector<Detection> postprocessMultiScale(const BufferSet& buf,
+                                                  float scaleX, float scaleY);
+
+    /**
+     * @brief Multi-scale DFL postprocess via CUDA kernel (GPU accelerated)
+     *
+     * GPU DFL kernel runs in enqueue(). This method reads the pre-computed
+     * results from dflOutHost and applies NMS.
+     */
+    std::vector<Detection> collectGPUDFLResults(const BufferSet& buf);
+    bool useGPUPostprocess_ = true;   ///< Use CUDA DFL decode (vs CPU)
 
     /**
      * @brief NMS

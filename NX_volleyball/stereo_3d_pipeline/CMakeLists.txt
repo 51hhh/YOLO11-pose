@@ -131,14 +131,18 @@ set(PIPELINE_SOURCES
   src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
+  src/stereo/roi_stereo_matcher.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
+  src/fusion/hybrid_depth.cpp
 )
 
 # CUDA 源文件
 set(CUDA_SOURCES
   src/detect/detect_preprocess.cu
+  src/detect/dfl_postprocess.cu
   src/fusion/depth_extract.cu
+  src/stereo/roi_stereo_match.cu
 )
 
 # 相机源文件 (可选)

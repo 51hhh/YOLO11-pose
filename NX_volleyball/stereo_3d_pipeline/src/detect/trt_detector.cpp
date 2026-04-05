@@ -17,6 +17,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <numeric>
 
 // CUDA 预处理 kernel (灰度 U8 → RGB float32 CHW)
@@ -24,6 +25,24 @@ extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
                                        int srcW, int srcH, int srcPitch,
                                        int dstW, int dstH,
                                        cudaStream_t stream);
+
+// Letterbox 预处理 kernel (保持宽高比 + 灰色填充)
+extern "C" void launchGrayToRGBLetterboxKernel(const unsigned char* gray, float* dst,
+                                                int srcW, int srcH, int srcPitch,
+                                                int dstW, int dstH,
+                                                int newW, int newH,
+                                                int padX, int padY,
+                                                cudaStream_t stream);
+
+// DFL 后处理 kernel (GPU 加速 sigmoid + softmax + dist2bbox)
+extern "C" void launchDFLDecodeKernel(
+    const float* cls_data,
+    const float* bbox_data,
+    float* out_boxes,
+    int* out_count,
+    int H, int W, int nc, int reg_max,
+    int stride, float conf_thresh, int max_det,
+    cudaStream_t stream);
 
 namespace stereo3d {
 
@@ -102,6 +121,7 @@ bool TRTDetector::loadEngine(const std::string& path) {
 
     // 获取 tensor 信息
     int nbBindings = engine_->getNbIOTensors();
+    numOutputTensors_ = 0;
     for (int i = 0; i < nbBindings; ++i) {
         const char* name = engine_->getIOTensorName(i);
         auto mode = engine_->getTensorIOMode(name);
@@ -116,13 +136,26 @@ bool TRTDetector::loadEngine(const std::string& path) {
             LOG_INFO("  Input tensor: %s [%d,%d,%d,%d]",
                      name, dims.d[0], dims.d[1], dims.d[2], dims.d[3]);
         } else {
-            outputTensorName_ = name;
-            outputSize_ = 1;
-            for (int d = 0; d < dims.nbDims; ++d) {
-                outputSize_ *= dims.d[d];
+            numOutputTensors_++;
+            if (numOutputTensors_ == 1) {
+                outputTensorName_ = name;
+                outputSize_ = 1;
+                for (int d = 0; d < dims.nbDims; ++d) {
+                    outputSize_ *= dims.d[d];
+                }
             }
-            LOG_INFO("  Output tensor: %s (%d elements)", name, outputSize_);
+            LOG_INFO("  Output tensor %d: %s [%d dims]", numOutputTensors_, name,
+                     dims.nbDims);
         }
+    }
+
+    // Detect 6-tensor multi-scale output format
+    // Format: cls[1,H,W,nc], bbox[1,H,W,64] alternating per scale
+    if (numOutputTensors_ == 6) {
+        multiScaleOutput_ = true;
+        LOG_INFO("  Detected 6-tensor multi-scale DFL output format");
+    } else {
+        multiScaleOutput_ = false;
     }
 
     return true;
@@ -130,20 +163,68 @@ bool TRTDetector::loadEngine(const std::string& path) {
 
 bool TRTDetector::allocateBuffers() {
     size_t inputBytes  = 3 * inputSize_ * inputSize_ * sizeof(float);
-    size_t outputBytes = outputSize_ * sizeof(float);
 
     cudaError_t err;
     for (auto& b : buffers_) {
         err = cudaMalloc(&b.inputDevice, inputBytes);
         if (err != cudaSuccess) return false;
 
-        err = cudaMalloc(&b.outputDevice, outputBytes);
-        if (err != cudaSuccess) return false;
+        if (multiScaleOutput_) {
+            // 6-tensor mode: allocate per-scale buffers
+            b.scaleOutputs.clear();
+            int nbBindings = engine_->getNbIOTensors();
+            for (int i = 0; i < nbBindings; ++i) {
+                const char* name = engine_->getIOTensorName(i);
+                auto mode = engine_->getTensorIOMode(name);
+                if (mode == nvinfer1::TensorIOMode::kINPUT) continue;
 
-        // Host 输出缓冲 (pinned memory)
-        err = cudaHostAlloc(reinterpret_cast<void**>(&b.outputHost),
-                            outputBytes, cudaHostAllocDefault);
-        if (err != cudaSuccess) return false;
+                auto dims = engine_->getTensorShape(name);
+                // dims: [1, H, W, C] for NHWC format
+                BufferSet::ScaleOutput so;
+                so.name = name;
+                so.h = dims.d[1];
+                so.w = dims.d[2];
+                so.channels = dims.d[3];
+                so.isCls = (so.channels <= 4);  // nc=1 → cls, 64 → bbox DFL
+                // Infer stride from spatial dims: 80→8, 40→16, 20→32
+                so.stride = inputSize_ / so.h;
+
+                size_t bytes = 1;
+                for (int d = 0; d < dims.nbDims; ++d) bytes *= dims.d[d];
+                bytes *= sizeof(float);
+
+                err = cudaMalloc(&so.device, bytes);
+                if (err != cudaSuccess) return false;
+                err = cudaHostAlloc(reinterpret_cast<void**>(&so.host),
+                                    bytes, cudaHostAllocDefault);
+                if (err != cudaSuccess) return false;
+
+                LOG_INFO("  Scale output: %s [%d,%d,%d] stride=%d %s",
+                         name, so.h, so.w, so.channels, so.stride,
+                         so.isCls ? "CLS" : "BBOX");
+                b.scaleOutputs.push_back(so);
+            }
+            // Allocate GPU DFL decode buffers
+            constexpr int MAX_DFL_DET = 512;
+            err = cudaMalloc(&b.dflOutDevice, MAX_DFL_DET * 6 * sizeof(float));
+            if (err != cudaSuccess) return false;
+            err = cudaHostAlloc(reinterpret_cast<void**>(&b.dflOutHost),
+                                MAX_DFL_DET * 6 * sizeof(float), cudaHostAllocDefault);
+            if (err != cudaSuccess) return false;
+            err = cudaMalloc(&b.dflCountDevice, sizeof(int));
+            if (err != cudaSuccess) return false;
+            err = cudaHostAlloc(reinterpret_cast<void**>(&b.dflCountHost),
+                                sizeof(int), cudaHostAllocDefault);
+            if (err != cudaSuccess) return false;
+        } else {
+            // Single-output mode
+            size_t outputBytes = outputSize_ * sizeof(float);
+            err = cudaMalloc(&b.outputDevice, outputBytes);
+            if (err != cudaSuccess) return false;
+            err = cudaHostAlloc(reinterpret_cast<void**>(&b.outputHost),
+                                outputBytes, cudaHostAllocDefault);
+            if (err != cudaSuccess) return false;
+        }
     }
 
     return true;
@@ -154,6 +235,16 @@ void TRTDetector::freeBuffers() {
         if (b.inputDevice)  { cudaFree(b.inputDevice);   b.inputDevice = nullptr; }
         if (b.outputDevice) { cudaFree(b.outputDevice);  b.outputDevice = nullptr; }
         if (b.outputHost)   { cudaFreeHost(b.outputHost); b.outputHost = nullptr; }
+        for (auto& so : b.scaleOutputs) {
+            if (so.device) { cudaFree(so.device); so.device = nullptr; }
+            if (so.host)   { cudaFreeHost(so.host); so.host = nullptr; }
+        }
+        b.scaleOutputs.clear();
+        // Free GPU DFL decode buffers
+        if (b.dflOutDevice)    { cudaFree(b.dflOutDevice);        b.dflOutDevice = nullptr; }
+        if (b.dflOutHost)      { cudaFreeHost(b.dflOutHost);      b.dflOutHost = nullptr; }
+        if (b.dflCountDevice)  { cudaFree(b.dflCountDevice);      b.dflCountDevice = nullptr; }
+        if (b.dflCountHost)    { cudaFreeHost(b.dflCountHost);    b.dflCountHost = nullptr; }
     }
 }
 
@@ -180,22 +271,118 @@ void TRTDetector::enqueue(int slotId,
 
     // 2. 绑定本次推理缓冲并异步推理
     context_->setTensorAddress(inputTensorName_.c_str(), b.inputDevice);
-    context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice);
+
+    if (multiScaleOutput_) {
+        // Bind all 6 output tensors
+        for (auto& so : b.scaleOutputs) {
+            context_->setTensorAddress(so.name.c_str(), so.device);
+        }
+    } else {
+        context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice);
+    }
     context_->enqueueV3(stream);
 
-    // 3. 异步拷回 host (由调用方在后续通过事件/同步保证完成)
-    size_t outputBytes = outputSize_ * sizeof(float);
-    cudaMemcpyAsync(b.outputHost, b.outputDevice, outputBytes,
-                    cudaMemcpyDeviceToHost, stream);
+    // 3. 异步后处理 + 拷回 host
+    if (multiScaleOutput_) {
+        if (useGPUPostprocess_) {
+            // GPU DFL decode: launch kernel per scale on device buffers,
+            // then copy only the small result to host (saves ~100KB D2H)
+            constexpr int MAX_DFL_DET = 512;
+            cudaMemsetAsync(b.dflCountDevice, 0, sizeof(int), stream);
+            for (size_t i = 0; i < b.scaleOutputs.size(); ++i) {
+                const auto& so = b.scaleOutputs[i];
+                if (!so.isCls) continue;
+                // Find matching bbox tensor
+                const BufferSet::ScaleOutput* bboxOut = nullptr;
+                for (size_t j = 0; j < b.scaleOutputs.size(); ++j) {
+                    if (j == i) continue;
+                    const auto& other = b.scaleOutputs[j];
+                    if (!other.isCls && other.h == so.h && other.w == so.w) {
+                        bboxOut = &other;
+                        break;
+                    }
+                }
+                if (!bboxOut) continue;
+                launchDFLDecodeKernel(
+                    static_cast<const float*>(so.device),
+                    static_cast<const float*>(bboxOut->device),
+                    b.dflOutDevice, b.dflCountDevice,
+                    so.h, so.w, so.channels, regMax_,
+                    so.stride, confThreshold_, MAX_DFL_DET, stream);
+            }
+            // Copy small result: count + detections
+            cudaMemcpyAsync(b.dflCountHost, b.dflCountDevice, sizeof(int),
+                            cudaMemcpyDeviceToHost, stream);
+            cudaMemcpyAsync(b.dflOutHost, b.dflOutDevice,
+                            MAX_DFL_DET * 6 * sizeof(float),
+                            cudaMemcpyDeviceToHost, stream);
+        } else {
+            // CPU path: copy all tensors to host
+            for (auto& so : b.scaleOutputs) {
+                size_t bytes = so.h * so.w * so.channels * sizeof(float);
+                cudaMemcpyAsync(so.host, so.device, bytes,
+                                cudaMemcpyDeviceToHost, stream);
+            }
+        }
+    } else {
+        size_t outputBytes = outputSize_ * sizeof(float);
+        cudaMemcpyAsync(b.outputHost, b.outputDevice, outputBytes,
+                        cudaMemcpyDeviceToHost, stream);
+    }
 }
 
 std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {
     int sid = slotId % RING_BUFFER_SIZE;
     auto& b = buffers_[sid];
 
-    float scaleX = static_cast<float>(width) / inputSize_;
-    float scaleY = static_cast<float>(height) / inputSize_;
-    return postprocess(b.outputHost, scaleX, scaleY);
+    if (useLetterbox_) {
+        float scale = std::min(static_cast<float>(inputSize_) / width,
+                               static_cast<float>(inputSize_) / height);
+        float padX = (inputSize_ - width * scale) / 2.0f;
+        float padY = (inputSize_ - height * scale) / 2.0f;
+        float invScale = 1.0f / scale;
+
+        if (multiScaleOutput_) {
+            std::vector<Detection> dets;
+            if (useGPUPostprocess_) {
+                dets = collectGPUDFLResults(b);
+            } else {
+                dets = postprocessMultiScale(b, 1.0f, 1.0f);
+            }
+            for (auto& d : dets) {
+                d.cx     = (d.cx - padX) * invScale;
+                d.cy     = (d.cy - padY) * invScale;
+                d.width  = d.width  * invScale;
+                d.height = d.height * invScale;
+            }
+            return dets;
+        } else {
+            auto dets = postprocess(b.outputHost, 1.0f, 1.0f);
+            for (auto& d : dets) {
+                d.cx     = (d.cx - padX) * invScale;
+                d.cy     = (d.cy - padY) * invScale;
+                d.width  = d.width  * invScale;
+                d.height = d.height * invScale;
+            }
+            return dets;
+        }
+    } else {
+        float scaleX = static_cast<float>(width) / inputSize_;
+        float scaleY = static_cast<float>(height) / inputSize_;
+        if (multiScaleOutput_) {
+            if (useGPUPostprocess_) {
+                auto dets = collectGPUDFLResults(b);
+                for (auto& d : dets) {
+                    d.cx *= scaleX; d.cy *= scaleY;
+                    d.width *= scaleX; d.height *= scaleY;
+                }
+                return dets;
+            }
+            return postprocessMultiScale(b, scaleX, scaleY);
+        } else {
+            return postprocess(b.outputHost, scaleX, scaleY);
+        }
+    }
 }
 
 void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
@@ -203,12 +390,31 @@ void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
                                 void* inputBufferDevice,
                                 cudaStream_t stream)
 {
-    launchGrayToRGBKernel(
-        static_cast<const unsigned char*>(gpuImageU8),
-        static_cast<float*>(inputBufferDevice),
-        srcWidth, srcHeight, pitch,
-        inputSize_, inputSize_,
-        stream);
+    if (useLetterbox_) {
+        // Letterbox: 等比缩放 + 灰色填充, 匹配 YOLO 训练时的预处理
+        float scale = std::min(static_cast<float>(inputSize_) / srcWidth,
+                               static_cast<float>(inputSize_) / srcHeight);
+        int newW = static_cast<int>(srcWidth * scale);
+        int newH = static_cast<int>(srcHeight * scale);
+        int padX = (inputSize_ - newW) / 2;
+        int padY = (inputSize_ - newH) / 2;
+
+        launchGrayToRGBLetterboxKernel(
+            static_cast<const unsigned char*>(gpuImageU8),
+            static_cast<float*>(inputBufferDevice),
+            srcWidth, srcHeight, pitch,
+            inputSize_, inputSize_,
+            newW, newH, padX, padY,
+            stream);
+    } else {
+        // Direct resize (不保持宽高比)
+        launchGrayToRGBKernel(
+            static_cast<const unsigned char*>(gpuImageU8),
+            static_cast<float*>(inputBufferDevice),
+            srcWidth, srcHeight, pitch,
+            inputSize_, inputSize_,
+            stream);
+    }
 }
 
 std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
@@ -366,6 +572,128 @@ float TRTDetector::computeIoU(const Detection& a, const Detection& b) {
     float areaA = a.width * a.height;
     float areaB = b.width * b.height;
     return inter / (areaA + areaB - inter + 1e-6f);
+}
+
+std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
+    // GPU DFL kernel already ran in enqueue(), results in dflOutHost
+    constexpr int MAX_DFL_DET = 512;
+    int count = std::min(*buf.dflCountHost, MAX_DFL_DET);
+
+    std::vector<Detection> raw_dets;
+    raw_dets.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        const float* row = buf.dflOutHost + i * 6;
+        Detection det;
+        det.cx         = row[0];
+        det.cy         = row[1];
+        det.width      = row[2];
+        det.height     = row[3];
+        det.confidence = row[4];
+        det.class_id   = static_cast<int>(row[5]);
+        raw_dets.push_back(det);
+    }
+    return nms(raw_dets);
+}
+
+std::vector<Detection> TRTDetector::postprocessMultiScale(
+    const BufferSet& buf, float scaleX, float scaleY)
+{
+    // 6-tensor output from yolov11n_dla:
+    //   cls_s8  [1,80,80,nc], bbox_s8  [1,80,80,64]
+    //   cls_s16 [1,40,40,nc], bbox_s16 [1,40,40,64]
+    //   cls_s32 [1,20,20,nc], bbox_s32 [1,20,20,64]
+    //
+    // Output tensors are interleaved: cls, bbox, cls, bbox, cls, bbox
+    // Detect by channels: nc (1-4) = cls, 64 = bbox DFL
+
+    std::vector<Detection> raw_dets;
+
+    // Group outputs by scale: find cls+bbox pairs
+    for (size_t i = 0; i < buf.scaleOutputs.size(); ++i) {
+        const auto& so = buf.scaleOutputs[i];
+        if (!so.isCls) continue;
+
+        // Find matching bbox tensor for same scale (same H,W)
+        const BufferSet::ScaleOutput* bboxOut = nullptr;
+        for (size_t j = 0; j < buf.scaleOutputs.size(); ++j) {
+            if (j == i) continue;
+            const auto& other = buf.scaleOutputs[j];
+            if (!other.isCls && other.h == so.h && other.w == so.w) {
+                bboxOut = &other;
+                break;
+            }
+        }
+        if (!bboxOut) continue;
+
+        int H = so.h;
+        int W = so.w;
+        int nc = so.channels;
+        int stride = so.stride;
+        const float* clsData = so.host;
+        const float* bboxData = bboxOut->host;
+
+        // Process each grid cell
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                int offset = y * W + x;
+
+                // Find max class score (sigmoid)
+                float maxConf = 0;
+                int maxClass = 0;
+                for (int c = 0; c < nc; ++c) {
+                    float logit = clsData[offset * nc + c];
+                    float score = 1.0f / (1.0f + std::exp(-logit));  // sigmoid
+                    if (score > maxConf) {
+                        maxConf = score;
+                        maxClass = c;
+                    }
+                }
+                if (maxConf < confThreshold_) continue;
+
+                // DFL decode: bbox [H*W, 4*reg_max] → 4 offsets
+                // Data layout: [H, W, 4*reg_max] where reg_max=16
+                const float* bboxRow = bboxData + offset * (4 * regMax_);
+                float offsets[4];
+
+                for (int edge = 0; edge < 4; ++edge) {
+                    const float* dfl = bboxRow + edge * regMax_;
+
+                    // Softmax across reg_max bins
+                    float maxVal = dfl[0];
+                    for (int k = 1; k < regMax_; ++k)
+                        maxVal = std::max(maxVal, dfl[k]);
+
+                    float sumExp = 0;
+                    float weighted = 0;
+                    for (int k = 0; k < regMax_; ++k) {
+                        float e = std::exp(dfl[k] - maxVal);
+                        sumExp += e;
+                        weighted += e * k;
+                    }
+                    offsets[edge] = weighted / (sumExp + 1e-9f);
+                }
+
+                // dist2bbox: anchor = (x+0.5, y+0.5), offsets = (left, top, right, bottom)
+                float anchorX = (x + 0.5f) * stride;
+                float anchorY = (y + 0.5f) * stride;
+                float x1 = anchorX - offsets[0] * stride;
+                float y1 = anchorY - offsets[1] * stride;
+                float x2 = anchorX + offsets[2] * stride;
+                float y2 = anchorY + offsets[3] * stride;
+
+                Detection det;
+                det.cx         = (x1 + x2) / 2.0f * scaleX;
+                det.cy         = (y1 + y2) / 2.0f * scaleY;
+                det.width      = (x2 - x1) * scaleX;
+                det.height     = (y2 - y1) * scaleY;
+                det.confidence = maxConf;
+                det.class_id   = maxClass;
+                raw_dets.push_back(det);
+            }
+        }
+    }
+
+    return nms(raw_dets);
 }
 
 }  // namespace stereo3d

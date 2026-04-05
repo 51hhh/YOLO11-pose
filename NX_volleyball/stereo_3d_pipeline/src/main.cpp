@@ -19,6 +19,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 // ==================== 全局信号 ====================
 
@@ -143,18 +144,39 @@ int main(int argc, char* argv[]) {
     // 解析命令行
     std::string config_path = "config/pipeline.yaml";
     bool enable_display = false;
+    std::vector<std::string> unknown_args;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
             config_path = argv[++i];
+        } else if (arg == "--config" || arg == "-c") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, "Usage: %s [--config <path>] [--visualize]\n", argv[0]);
+            return 1;
         } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
+            enable_display = true;
+        } else if (arg == "--visualizels") {
+            // 兼容常见拼写误写，避免静默关闭可视化
+            fprintf(stderr, "Warning: unknown option '--visualizels', treating as '--visualize'.\n");
             enable_display = true;
         } else if (arg == "--help" || arg == "-h") {
             printf("Usage: %s [--config <path>] [--visualize]\n", argv[0]);
             printf("  --config, -c    Pipeline configuration YAML\n");
             printf("  --visualize, -v Show detection + distance overlay window\n");
             return 0;
+        } else if (!arg.empty() && arg[0] == '-') {
+            unknown_args.push_back(arg);
         }
+    }
+
+    if (!unknown_args.empty()) {
+        fprintf(stderr, "Error: unknown option(s):");
+        for (const auto& opt : unknown_args) {
+            fprintf(stderr, " %s", opt.c_str());
+        }
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Hint: use --help to see supported options.\n");
+        return 1;
     }
 
     // 注册信号

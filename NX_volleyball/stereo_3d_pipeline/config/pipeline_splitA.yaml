@@ -1,0 +1,61 @@
+# ============================================================
+# stereo_3d_pipeline DLA-GPU Split A 运行配置 (Jetson NX)
+# 使用 yolov11n_dla Split A 校准 INT8 引擎
+# backbone(model.0-9) → DLA0, neck+head(model.10-23) → GPU
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""
+  serial_right: ""
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+pipeline:
+  num_slots: 3
+  input_width: 1440
+  input_height: 1080
+
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/v11dla_splitA_calib.engine"
+  input_size: 640
+  use_dla: false            # DLA 层已在引擎构建时嵌入，运行时不需要额外设置
+  dla_core: 0
+  allow_gpu_fallback: true
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  max_detections: 10
+
+stereo:
+  backend: "CUDA"
+  max_disparity: 256
+  window_size: 5
+  quality: 6
+  use_half_resolution: false
+
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+
+performance:
+  pwm_frequency: 100.0
+  target_fps: 60
+  log_interval: 100
+  enable_profiling: true

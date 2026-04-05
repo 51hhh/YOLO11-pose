@@ -288,6 +288,8 @@ cv::Mat OnnxStereo::compute(const cv::Mat& leftGray, const cv::Mat& rightGray)
         } else {
             // CREStereo / Generic: 多输入, 每个是 (1,3,H,W)
             // 或单输入形状自动处理
+            // 注意: 所有输入 buffer 必须在 Run() 前保持存活
+            std::vector<std::vector<float>> inputBuffers(inputs_.size());
             for (size_t i = 0; i < inputs_.size(); ++i) {
                 auto& inp = inputs_[i];
                 int inputC = inp.shape.size() > 1 ? static_cast<int>(inp.shape[1]) : 3;
@@ -306,7 +308,8 @@ cv::Mat OnnxStereo::compute(const cv::Mat& leftGray, const cv::Mat& rightGray)
                 scaled.convertTo(scaledF, CV_32F, 1.0 / 255.0);
 
                 // 灰度 → 3 通道
-                std::vector<float> data(1 * inputC * inputH * inputW, 0.0f);
+                auto& data = inputBuffers[i];
+                data.resize(1 * inputC * inputH * inputW, 0.0f);
                 for (int y = 0; y < inputH; ++y) {
                     for (int x = 0; x < inputW; ++x) {
                         float v = scaledF.at<float>(y, x);

@@ -83,9 +83,9 @@ struct FrameSlot {
         err = cudaEventCreateWithFlags(&evtRectDone, cudaEventDisableTiming);
         if (err != cudaSuccess) return false;
         err = cudaEventCreateWithFlags(&evtDetectDone, cudaEventDisableTiming);
-        if (err != cudaSuccess) return false;
+        if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; return false; }
         err = cudaEventCreateWithFlags(&evtStereoDone, cudaEventDisableTiming);
-        if (err != cudaSuccess) return false;
+        if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; cudaEventDestroy(evtDetectDone); evtDetectDone = nullptr; return false; }
         return true;
     }
 

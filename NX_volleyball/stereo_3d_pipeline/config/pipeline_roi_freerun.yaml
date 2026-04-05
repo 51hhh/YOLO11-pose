@@ -1,0 +1,57 @@
+# ============================================================
+# stereo_3d_pipeline ROI mode - FREE RUN (no trigger)
+# For USB cameras - maximum throughput test
+# ============================================================
+
+# ========== cameras ==========
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""
+  serial_right: ""
+  exposure_us: 3000.0
+  gain_db: 15.0
+  use_trigger: false           # FREE RUN mode for USB cameras
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+# ========== calibration ==========
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+# ========== rectify (VPI Remap) ==========
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+# ========== detector (TensorRT INT8) ==========
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26n_dla0_int8.engine"
+  input_size: 320
+  use_dla: false
+  dla_core: 0
+  confidence_threshold: 0.45
+  nms_threshold: 0.4
+  max_detections: 10
+
+# ========== stereo (ROI multi-point) ==========
+stereo:
+  strategy: "roi_only"
+  max_disparity: 256
+  window_size: 5
+  quality: 6
+
+# ========== fusion ==========
+fusion:
+  min_depth: 0.5
+  max_depth: 15.0
+
+# ========== performance ==========
+performance:
+  log_interval: 100
+  pwm_frequency: 130

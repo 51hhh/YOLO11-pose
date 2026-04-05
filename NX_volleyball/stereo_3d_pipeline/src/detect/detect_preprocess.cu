@@ -96,6 +96,59 @@ __global__ void bayerToRGBKernel(const unsigned char* __restrict__ bayer,
     dst[2 * planeSize + idx] = b;
 }
 
+// ==================== Letterbox: Gray U8 → RGB float32 CHW ====================
+// Uniform scale + padding (114/255 gray), matches YOLO training preprocessing
+__global__ void grayToRGBLetterboxKernel(const unsigned char* __restrict__ gray,
+                                          float* __restrict__ dst,
+                                          int srcW, int srcH, int srcPitch,
+                                          int dstW, int dstH,
+                                          int newW, int newH,
+                                          int padX, int padY)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= dstW || y >= dstH) return;
+
+    int planeSize = dstW * dstH;
+    int idx = y * dstW + x;
+
+    int cx = x - padX;
+    int cy = y - padY;
+
+    if (cx < 0 || cx >= newW || cy < 0 || cy >= newH) {
+        float padVal = 114.0f / 255.0f;
+        dst[0 * planeSize + idx] = padVal;
+        dst[1 * planeSize + idx] = padVal;
+        dst[2 * planeSize + idx] = padVal;
+        return;
+    }
+
+    float scaleX = (float)srcW / newW;
+    float scaleY = (float)srcH / newH;
+
+    float sx = cx * scaleX;
+    float sy = cy * scaleY;
+    int x0 = (int)sx;
+    int y0 = (int)sy;
+    int x1 = min(x0 + 1, srcW - 1);
+    int y1 = min(y0 + 1, srcH - 1);
+    float dx = sx - x0;
+    float dy = sy - y0;
+
+    float v00 = gray[y0 * srcPitch + x0];
+    float v01 = gray[y0 * srcPitch + x1];
+    float v10 = gray[y1 * srcPitch + x0];
+    float v11 = gray[y1 * srcPitch + x1];
+
+    float val = (1 - dx) * (1 - dy) * v00 + dx * (1 - dy) * v01
+              + (1 - dx) * dy * v10 + dx * dy * v11;
+    val *= (1.0f / 255.0f);
+
+    dst[0 * planeSize + idx] = val;
+    dst[1 * planeSize + idx] = val;
+    dst[2 * planeSize + idx] = val;
+}
+
 // ==================== C 接口 ====================
 
 extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
@@ -109,6 +162,22 @@ extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
     grayToRGBKernel<<<grid, block, 0, stream>>>(gray, dst,
                                                   srcW, srcH, srcPitch,
                                                   dstW, dstH);
+}
+
+extern "C" void launchGrayToRGBLetterboxKernel(const unsigned char* gray, float* dst,
+                                                int srcW, int srcH, int srcPitch,
+                                                int dstW, int dstH,
+                                                int newW, int newH,
+                                                int padX, int padY,
+                                                cudaStream_t stream)
+{
+    dim3 block(32, 32);
+    dim3 grid((dstW + block.x - 1) / block.x,
+              (dstH + block.y - 1) / block.y);
+    grayToRGBLetterboxKernel<<<grid, block, 0, stream>>>(gray, dst,
+                                                          srcW, srcH, srcPitch,
+                                                          dstW, dstH,
+                                                          newW, newH, padX, padY);
 }
 
 extern "C" void launchBayerToRGBKernel(const unsigned char* bayer, float* dst,
