@@ -34,10 +34,14 @@ struct Detection {
  */
 struct Object3D {
     float x, y, z;         ///< 3D 坐标 (米)
+    float vx, vy, vz;      ///< 3D 速度 (m/s)
+    float ax, ay, az;       ///< 3D 加速度 (m/s²)
     float confidence;      ///< 定位置信度
     int class_id;          ///< 类别 ID
+    int track_id;          ///< 跟踪 ID (-1 = 未跟踪)
 
-    Object3D() : x(0), y(0), z(0), confidence(0), class_id(0) {}
+    Object3D() : x(0), y(0), z(0), vx(0), vy(0), vz(0),
+                 ax(0), ay(0), az(0), confidence(0), class_id(0), track_id(-1) {}
 };
 
 /**

@@ -1,72 +1,150 @@
 /**
  * @file hybrid_depth.cpp
- * @brief 单目+双目混合测距 + Kalman 滤波 实现
+ * @brief 单目+双目混合测距 + 9维Kalman滤波 实现
  */
 
 #include "hybrid_depth.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 
 namespace stereo3d {
 
 // ============================================================
-// DepthTrack: Kalman 滤波
+// DepthTrack: 9维 Kalman 滤波 (恒加速模型)
 // ============================================================
 
-void DepthTrack::predict(float dt, float sigma_a) {
-    // 状态预测: z' = z + vz*dt,  vz' = vz
-    z  += vz * dt;
-    vz  = vz;  // 匀速模型
-
-    // 协方差预测: P' = F*P*F^T + Q
-    // F = [1, dt; 0, 1]
-    // Q = sigma_a^2 * [dt^4/4, dt^3/2; dt^3/2, dt^2]
-    float dt2 = dt * dt;
-    float dt3 = dt2 * dt;
-    float dt4 = dt3 * dt;
-    float sa2 = sigma_a * sigma_a;
-
-    float P00 = P[0][0] + dt * P[1][0] + dt * (P[0][1] + dt * P[1][1]);
-    float P01 = P[0][1] + dt * P[1][1];
-    float P10 = P[1][0] + dt * P[1][1];
-    float P11 = P[1][1];
-
-    P[0][0] = P00 + sa2 * dt4 / 4.0f;
-    P[0][1] = P01 + sa2 * dt3 / 2.0f;
-    P[1][0] = P10 + sa2 * dt3 / 2.0f;
-    P[1][1] = P11 + sa2 * dt2;
+void DepthTrack::init(float x0, float y0, float z0) {
+    std::memset(state, 0, sizeof(state));
+    x() = x0; y() = y0; z() = z0;
+    // P = diag(1, 1, 1, 10, 10, 10, 100, 100, 100)
+    std::memset(P, 0, sizeof(P));
+    P[0][0] = P[1][1] = P[2][2] = 1.0f;       // 位置
+    P[3][3] = P[4][4] = P[5][5] = 10.0f;       // 速度
+    P[6][6] = P[7][7] = P[8][8] = 100.0f;      // 加速度
 }
 
-void DepthTrack::update(float z_obs, float R) {
-    // 观测模型: H = [1, 0]
-    // y = z_obs - z (innovation)
-    float y = z_obs - z;
+void DepthTrack::predict(float dt, float sigma_a) {
+    // F = [I3, dt*I3, 0.5*dt^2*I3; 0, I3, dt*I3; 0, 0, I3]
+    // 状态预测: p' = p + v*dt + 0.5*a*dt^2,  v' = v + a*dt,  a' = a
+    const float dt2 = dt * dt;
+    const float half_dt2 = 0.5f * dt2;
 
-    // S = H*P*H^T + R = P[0][0] + R
-    float S = P[0][0] + R;
-    if (S < 1e-6f) S = 1e-6f;
+    for (int i = 0; i < 3; ++i) {
+        state[i]     += state[i + 3] * dt + state[i + 6] * half_dt2;
+        state[i + 3] += state[i + 6] * dt;
+    }
 
-    // K = P*H^T / S = [P[0][0]/S, P[1][0]/S]
-    float K0 = P[0][0] / S;
-    float K1 = P[1][0] / S;
+    // 协方差预测: P' = F*P*F^T + Q
+    // F 是稀疏矩阵, 手动按3×3块展开 (避免9×9通用矩阵乘法)
+    // 先做 T = F*P (9×9), 再做 P' = T*F^T + Q
+    float T[N][N];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < N; ++c) {
+            T[r][c]     = P[r][c] + dt * P[r+3][c] + half_dt2 * P[r+6][c];
+            T[r+3][c]   = P[r+3][c] + dt * P[r+6][c];
+            T[r+6][c]   = P[r+6][c];
+        }
+    }
+    // P' = T * F^T: 列上的操作
+    for (int r = 0; r < N; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            P[r][c]     = T[r][c] + dt * T[r][c+3] + half_dt2 * T[r][c+6];
+            P[r][c+3]   = T[r][c+3] + dt * T[r][c+6];
+            P[r][c+6]   = T[r][c+6];
+        }
+    }
 
-    // 状态更新
-    z  += K0 * y;
-    vz += K1 * y;
+    // Q = sigma_a^2 * G*G^T, G = [0.5*dt^2*I3; dt*I3; I3]
+    const float sa2 = sigma_a * sigma_a;
+    const float dt3 = dt2 * dt;
+    const float dt4 = dt3 * dt;
+    // Q 对角块 (3×3 对角):
+    // Q_pp = sa2 * dt^4/4,  Q_pv = sa2 * dt^3/2,  Q_pa = sa2 * dt^2/2
+    // Q_vv = sa2 * dt^2,    Q_va = sa2 * dt
+    // Q_aa = sa2
+    for (int i = 0; i < 3; ++i) {
+        P[i][i]         += sa2 * dt4 * 0.25f;
+        P[i][i+3]       += sa2 * dt3 * 0.5f;
+        P[i][i+6]       += sa2 * dt2 * 0.5f;
+        P[i+3][i]       += sa2 * dt3 * 0.5f;
+        P[i+3][i+3]     += sa2 * dt2;
+        P[i+3][i+6]     += sa2 * dt;
+        P[i+6][i]       += sa2 * dt2 * 0.5f;
+        P[i+6][i+3]     += sa2 * dt;
+        P[i+6][i+6]     += sa2;
+    }
+}
 
-    // 协方差更新: P = (I - K*H) * P
-    float P00 = (1.0f - K0) * P[0][0];
-    float P01 = (1.0f - K0) * P[0][1];
-    float P10 = P[1][0] - K1 * P[0][0];
-    float P11 = P[1][1] - K1 * P[0][1];
+void DepthTrack::update(float obs_x, float obs_y, float obs_z,
+                        float Rxy, float Rz) {
+    // H = [I3, 0, 0]  (3×9), 观测 = [x, y, z]
+    // R = diag(Rxy, Rxy, Rz)
+    float obs[M] = {obs_x, obs_y, obs_z};
+    float R_diag[M] = {Rxy, Rxy, Rz};
 
-    P[0][0] = P00;
-    P[0][1] = P01;
-    P[1][0] = P10;
-    P[1][1] = P11;
+    // Innovation: y = obs - H*x = obs - state[0:2]
+    float y_inn[M];
+    for (int i = 0; i < M; ++i) y_inn[i] = obs[i] - state[i];
 
-    last_raw_z = z_obs;
+    // S = H*P*H^T + R  (3×3)
+    // Since H selects the first 3 rows/cols: S[i][j] = P[i][j] + R_diag[i] * delta_ij
+    float S[M][M];
+    for (int i = 0; i < M; ++i)
+        for (int j = 0; j < M; ++j)
+            S[i][j] = P[i][j] + (i == j ? R_diag[i] : 0.0f);
+
+    // S^-1 (3×3 Cramer's rule)
+    float det = S[0][0]*(S[1][1]*S[2][2] - S[1][2]*S[2][1])
+              - S[0][1]*(S[1][0]*S[2][2] - S[1][2]*S[2][0])
+              + S[0][2]*(S[1][0]*S[2][1] - S[1][1]*S[2][0]);
+    if (std::fabs(det) < 1e-12f) return;  // singular, skip update
+    float inv_det = 1.0f / det;
+
+    float Si[M][M];
+    Si[0][0] = (S[1][1]*S[2][2] - S[1][2]*S[2][1]) * inv_det;
+    Si[0][1] = (S[0][2]*S[2][1] - S[0][1]*S[2][2]) * inv_det;
+    Si[0][2] = (S[0][1]*S[1][2] - S[0][2]*S[1][1]) * inv_det;
+    Si[1][0] = (S[1][2]*S[2][0] - S[1][0]*S[2][2]) * inv_det;
+    Si[1][1] = (S[0][0]*S[2][2] - S[0][2]*S[2][0]) * inv_det;
+    Si[1][2] = (S[0][2]*S[1][0] - S[0][0]*S[1][2]) * inv_det;
+    Si[2][0] = (S[1][0]*S[2][1] - S[1][1]*S[2][0]) * inv_det;
+    Si[2][1] = (S[0][1]*S[2][0] - S[0][0]*S[2][1]) * inv_det;
+    Si[2][2] = (S[0][0]*S[1][1] - S[0][1]*S[1][0]) * inv_det;
+
+    // K = P * H^T * S^-1  (9×3)
+    // P*H^T = P[:, 0:2] (first 3 columns of P)
+    float K[N][M];
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < M; ++c) {
+            K[r][c] = 0.0f;
+            for (int k = 0; k < M; ++k)
+                K[r][c] += P[r][k] * Si[k][c];
+        }
+
+    // State update: x = x + K * y
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < M; ++c)
+            state[r] += K[r][c] * y_inn[c];
+
+    // Covariance update: P = (I - K*H) * P
+    // (I-KH)[r][c] = delta(r,c) - K[r][c] for c<3, else delta(r,c)
+    float P_new[N][N];
+    for (int r = 0; r < N; ++r)
+        for (int c = 0; c < N; ++c) {
+            float sum = 0.0f;
+            // IKH[r][k] * P[k][c]
+            for (int k = 0; k < N; ++k) {
+                float IKH_rk = (r == k ? 1.0f : 0.0f);
+                if (k < M) IKH_rk -= K[r][k];
+                sum += IKH_rk * P[k][c];
+            }
+            P_new[r][c] = sum;
+        }
+    std::memcpy(P, P_new, sizeof(P));
+
+    last_raw_z = obs_z;
     lost_count = 0;
 }
 
@@ -223,17 +301,15 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
 
     // Step 1: IoU greedy matching
     std::vector<int> det_to_track = greedyIoUMatch(detections);
-    const size_t original_track_count = tracks_.size();  // 记录原始 track 数
+    const size_t original_track_count = tracks_.size();
 
     for (size_t i = 0; i < detections.size(); ++i) {
         const auto& det = detections[i];
         DepthTrack* track = nullptr;
 
         if (det_to_track[i] >= 0) {
-            // Matched to existing track
             track = &tracks_[det_to_track[i]];
         } else {
-            // New detection: create new track
             DepthTrack t;
             t.track_id = next_track_id_++;
             tracks_.push_back(t);
@@ -253,8 +329,8 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             has_stereo = true;
         }
 
-        // Step 4: 选择/融合测距方法
-        float z_pred = track->z > 0.1f ? track->z : z_mono;
+        // Step 4: 选择/融合测距方法 → 确定 z 观测值
+        float z_pred = track->z() > 0.1f ? track->z() : z_mono;
         float z_obs;
         int method;
 
@@ -272,19 +348,31 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         // Step 5: 范围检查
         z_obs = std::max(config_.min_depth, std::min(config_.max_depth, z_obs));
 
-        // Step 6: Kalman 更新
-        float R = getObsNoise(z_obs, method);
-        track->update(z_obs, R);
+        // Step 6: 计算 3D 观测 (像素→世界坐标)
+        float obs_x = (det.cx - cx_) * z_obs / focal_;
+        float obs_y = (det.cy - cy_) * z_obs / focal_;
+
+        // 初始化新 track
+        if (track->age == 1) {
+            track->init(obs_x, obs_y, z_obs);
+        }
+
+        // Step 7: Kalman 更新 (9维, 3D观测)
+        float Rz  = getObsNoise(z_obs, method);
+        // xy 噪声与深度关联: sigma_xy = sigma_z * z / f (误差传播)
+        float Rxy = Rz * (z_obs * z_obs) / (focal_ * focal_) + 0.001f;
+        track->update(obs_x, obs_y, z_obs, Rxy, Rz);
         track->method = method;
         track->updateBBox(det.cx, det.cy, det.width, det.height);
 
-        // Step 7: 计算 3D 坐标
+        // Step 8: 输出 3D 结果 (从 Kalman 状态读取)
         Object3D obj;
-        obj.z = track->z;
-        obj.x = (det.cx - cx_) * track->z / focal_;
-        obj.y = (det.cy - cy_) * track->z / focal_;
+        obj.x  = track->x();    obj.y  = track->y();    obj.z  = track->z();
+        obj.vx = track->vx();   obj.vy = track->vy();   obj.vz = track->vz();
+        obj.ax = track->ax();   obj.ay = track->ay();   obj.az = track->az();
         obj.confidence = det.confidence * std::max(0.0f, 1.0f - track->lost_count * 0.1f);
         obj.class_id = det.class_id;
+        obj.track_id = track->track_id;
 
         if (obj.z >= config_.min_depth && obj.z <= config_.max_depth) {
             output.push_back(obj);
@@ -315,13 +403,14 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
         track.predict(config_.dt, config_.process_accel);
         track.lost_count++;
 
-        if (track.lost_count <= config_.lost_predict_frames && track.z > config_.min_depth) {
+        if (track.lost_count <= config_.lost_predict_frames && track.z() > config_.min_depth) {
             Object3D obj;
-            obj.z = track.z;
-            obj.x = 0;  // 无检测无法算 X,Y
-            obj.y = 0;
+            obj.x  = track.x();    obj.y  = track.y();    obj.z  = track.z();
+            obj.vx = track.vx();   obj.vy = track.vy();   obj.vz = track.vz();
+            obj.ax = track.ax();   obj.ay = track.ay();   obj.az = track.az();
             obj.confidence = std::max(0.0f, 0.5f - track.lost_count * 0.1f);
             obj.class_id = 0;
+            obj.track_id = track.track_id;
             output.push_back(obj);
         }
     }

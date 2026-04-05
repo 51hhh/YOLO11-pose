@@ -14,6 +14,7 @@
 #include <opencv2/opencv.hpp>
 #include <csignal>
 #include <cstdio>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -207,8 +208,12 @@ int main(int argc, char* argv[]) {
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;
             for (const auto& obj : results) {
-                LOG_INFO("[Frame %d] Ball: (%.2f, %.2f, %.2f) m, conf=%.2f",
-                         frame_id, obj.x, obj.y, obj.z, obj.confidence);
+                float speed = std::sqrt(obj.vx*obj.vx + obj.vy*obj.vy + obj.vz*obj.vz);
+                LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m v=(%.1f,%.1f,%.1f)m/s |v|=%.1fm/s conf=%.2f",
+                         frame_id, obj.track_id,
+                         obj.x, obj.y, obj.z,
+                         obj.vx, obj.vy, obj.vz, speed,
+                         obj.confidence);
             }
         });
 
@@ -352,11 +357,13 @@ int main(int argc, char* argv[]) {
                     cv::putText(frame, label, cv::Point(x1, y1 - 8),
                                 cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
 
-                    // 3D 坐标文本
+                    // 3D 坐标 + 速度文本
                     if (i < results.size() && results[i].z > 0) {
+                        const auto& r = results[i];
+                        float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
                         char pos[128];
-                        snprintf(pos, sizeof(pos), "(%.1f, %.1f, %.1f)",
-                                 results[i].x, results[i].y, results[i].z);
+                        snprintf(pos, sizeof(pos), "(%.1f,%.1f,%.1f) v=%.1fm/s",
+                                 r.x, r.y, r.z, speed);
                         cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
                                     cv::FONT_HERSHEY_SIMPLEX, 0.5,
                                     cv::Scalar(255, 200, 0), 1);

@@ -48,20 +48,46 @@ struct HybridDepthConfig {
 };
 
 /**
- * @brief 单目标 Kalman 跟踪状态
+ * @brief 单目标 Kalman 跟踪状态 (9维恒加速模型)
+ *
+ * 状态向量: [x, y, z, vx, vy, vz, ax, ay, az]
+ * 观测向量: [x, y, z] (3D位置, 从像素反投影+混合深度得到)
  */
 struct DepthTrack {
-    // Kalman 状态: [z, vz]
-    float z  = 0.0f;              ///< 滤波后距离 (m)
-    float vz = 0.0f;              ///< 径向速度 (m/s)
-    float P[2][2] = {{1,0},{0,1}};///< 协方差
+    static constexpr int N = 9;  ///< 状态维度
+    static constexpr int M = 3;  ///< 观测维度
+
+    // Kalman 状态: [x, y, z, vx, vy, vz, ax, ay, az]
+    float state[N] = {};
+    float P[N][N]  = {};          ///< 协方差 9×9
+
+    // 快捷访问
+    float& x()  { return state[0]; }
+    float& y()  { return state[1]; }
+    float& z()  { return state[2]; }
+    float& vx() { return state[3]; }
+    float& vy() { return state[4]; }
+    float& vz() { return state[5]; }
+    float& ax() { return state[6]; }
+    float& ay() { return state[7]; }
+    float& az() { return state[8]; }
+
+    float x()  const { return state[0]; }
+    float y()  const { return state[1]; }
+    float z()  const { return state[2]; }
+    float vx() const { return state[3]; }
+    float vy() const { return state[4]; }
+    float vz() const { return state[5]; }
+    float ax() const { return state[6]; }
+    float ay() const { return state[7]; }
+    float az() const { return state[8]; }
 
     // 元数据
     int   track_id   = -1;
     int   age        = 0;         ///< 总帧数
     int   lost_count = 0;         ///< 连续丢失帧数
     float confidence = 0.0f;
-    float last_raw_z = 0.0f;      ///< 上一次原始测量
+    float last_raw_z = 0.0f;      ///< 上一次原始 z 测量
     int   method     = 0;         ///< 0=mono, 1=stereo, 2=blend
 
     // IoU 跟踪用: 上一帧 BBox
@@ -70,8 +96,10 @@ struct DepthTrack {
     float last_w  = 0.0f;
     float last_h  = 0.0f;
 
+    void init(float x0, float y0, float z0);
     void predict(float dt, float sigma_a);
-    void update(float z_obs, float R);
+    void update(float obs_x, float obs_y, float obs_z,
+                float Rxy, float Rz);
     void updateBBox(float cx, float cy, float w, float h);
 };
 
