@@ -54,21 +54,21 @@ bool ROIStereoMatcher::allocateBuffers() {
     cudaError_t err;
 
     err = cudaMalloc(&bboxes_device_, kMaxBoxes * 4 * sizeof(int));
-    if (err != cudaSuccess) { LOG_ERROR("cudaMalloc bboxes failed"); return false; }
+    if (err != cudaSuccess) { LOG_ERROR("cudaMalloc bboxes failed"); freeBuffers(); return false; }
 
     err = cudaMalloc(&detCx_device_, kMaxBoxes * sizeof(float));
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeBuffers(); return false; }
 
     err = cudaMalloc(&detCy_device_, kMaxBoxes * sizeof(float));
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeBuffers(); return false; }
 
     // results: [X, Y, Z, disp, conf] per detection = 5 floats
     err = cudaMalloc(&results_device_, kMaxBoxes * 5 * sizeof(float));
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeBuffers(); return false; }
 
     err = cudaHostAlloc(reinterpret_cast<void**>(&results_host_),
                         kMaxBoxes * 5 * sizeof(float), cudaHostAllocDefault);
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeBuffers(); return false; }
 
     return true;
 }

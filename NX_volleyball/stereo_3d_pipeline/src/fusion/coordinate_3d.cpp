@@ -48,15 +48,15 @@ bool Coordinate3D::allocateGPUBuffers() {
 
     // 深度结果 (每个框一个 float)
     err = cudaMalloc(&depthResults_device_, maxBoxes_ * sizeof(float));
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     err = cudaHostAlloc(reinterpret_cast<void**>(&depthResults_host_),
                         maxBoxes_ * sizeof(float), cudaHostAllocDefault);
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     // BBox 数据 [x1, y1, x2, y2] * maxBoxes
     err = cudaMalloc(&bboxes_device_, maxBoxes_ * 4 * sizeof(int));
-    if (err != cudaSuccess) return false;
+    if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     return true;
 }

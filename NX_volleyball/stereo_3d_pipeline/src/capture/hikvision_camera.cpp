@@ -143,6 +143,7 @@ bool HikvisionCamera::open(const CameraConfig& cfg) {
 
     if (!openCamera(handle_right_, cfg.camera_index_right, cfg.serial_right)) {
         LOG_ERROR("[HikCam] Failed to open RIGHT camera");
+        if (handle_right_) { MV_CC_DestroyHandle(handle_right_); handle_right_ = nullptr; }
         MV_CC_CloseDevice(handle_left_);
         MV_CC_DestroyHandle(handle_left_);
         handle_left_ = nullptr;
