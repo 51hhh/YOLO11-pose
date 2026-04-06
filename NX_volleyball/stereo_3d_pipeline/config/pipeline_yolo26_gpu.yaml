@@ -40,7 +40,7 @@ detector:
   input_size: 640
   input_format: "gray"
   use_dla: false
-  confidence_threshold: 0.3
+  confidence_threshold: 0.15
   nms_threshold: 0.4
   max_detections: 10
 
@@ -54,6 +54,11 @@ fusion:
   min_depth: 0.3
   max_depth: 15.0
   baseline_mm: 326.8
+  object_diameter: 0.200
+  R_mono: 0.003
+  R_stereo: 0.020
+  ivw_R_mono: 0.004
+  ivw_R_stereo: 0.025
 
 performance:
   pwm_frequency: 100.0

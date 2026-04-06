@@ -276,10 +276,12 @@ bool Pipeline::init(const PipelineConfig& config) {
         float cx    = static_cast<float>(P1.at<double>(0, 2));
         float cy    = static_cast<float>(P1.at<double>(1, 2));
         ROIMatchConfig roi_cfg;
-        roi_cfg.maxDisparity = config_.max_disparity;
-        roi_cfg.patchRadius  = 5;
-        roi_cfg.minDepth     = config_.depth.min_depth;
-        roi_cfg.maxDepth     = config_.depth.max_depth;
+        roi_cfg.maxDisparity    = config_.max_disparity;
+        roi_cfg.patchRadius     = 5;
+        roi_cfg.minDepth        = config_.depth.min_depth;
+        roi_cfg.maxDepth        = config_.depth.max_depth;
+        roi_cfg.objectDiameter  = config_.depth.object_diameter;
+        roi_cfg.useCircleFit    = true;
         roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
 
         // 初始化混合深度估计 (单目+双目+Kalman)
@@ -913,8 +915,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 
     // 2. 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
     VPIImageData imgDataL, imgDataR;
-    VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-    VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+    VPIStatus stL, stR;
+    {
+        ScopedTimer tvl("Stage2_VPILock");
+        stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+        stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+        globalPerf().record("Stage2_VPILock", tvl.elapsedMs());
+    }
     if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
         if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
         if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
@@ -929,10 +936,15 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
 
     // 3. ROI 多点立体匹配 (双目结果)
-    auto roi_results = roi_matcher_->match(
-        leftPtr, leftPitch, rightPtr, rightPitch,
-        config_.rect_width, config_.rect_height,
-        slot.detections, streams_.cudaStreamFuse);
+    std::vector<stereo3d::Object3D> roi_results;
+    {
+        ScopedTimer troi("Stage2_ROIMatch");
+        roi_results = roi_matcher_->match(
+            leftPtr, leftPitch, rightPtr, rightPitch,
+            config_.rect_width, config_.rect_height,
+            slot.detections, streams_.cudaStreamFuse);
+        globalPerf().record("Stage2_ROIMatch", troi.elapsedMs());
+    }
 
     vpiImageUnlock(slot.rectGray_vpiL);
     vpiImageUnlock(slot.rectGray_vpiR);
@@ -946,7 +958,9 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             dt = std::clamp(dt, 0.002, 0.1);
         }
         last_fuse_time_ = now;
+        ScopedTimer thd("Stage2_HybridDepth");
         slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
+        globalPerf().record("Stage2_HybridDepth", thd.elapsedMs());
     } else {
         slot.results = std::move(roi_results);
     }
@@ -1088,15 +1102,19 @@ void Pipeline::pipelineLoopROI() {
             }
 
             if (result_callback_) {
+                ScopedTimer trc("Stage2_ResultCB");
                 result_callback_(slot.frame_id, slot.results);
+                globalPerf().record("Stage2_ResultCB", trc.elapsedMs());
             }
 
             if (frame_callback_) {
+                ScopedTimer tfc("Stage2_FrameCB");
                 VPIImage vizImg = (config_.detector_input_format == "bgr")
                                   ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
                 frame_callback_(slot.frame_id, vizImg, slot.rawL,
                                 slot.detections, slot.results,
                                 current_fps_.load());
+                globalPerf().record("Stage2_FrameCB", tfc.elapsedMs());
             }
 
             next_fuse_frame++;
@@ -1106,12 +1124,11 @@ void Pipeline::pipelineLoopROI() {
             double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
             if (elapsed_s >= 1.0) {
                 current_fps_ = static_cast<float>(fps_count / elapsed_s);
-                if (config_.stats_interval > 0 &&
-                    next_fuse_frame % config_.stats_interval == 0) {
-                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d)", current_fps_.load(), next_fuse_frame);
-                }
                 fps_count = 0;
                 fps_start = now;
+                if (config_.stats_interval > 0) {
+                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d)", current_fps_.load(), next_fuse_frame);
+                }
             }
         }
 

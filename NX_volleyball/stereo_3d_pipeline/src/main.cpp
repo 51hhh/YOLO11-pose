@@ -169,6 +169,12 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (fus["bbox_scale"])      cfg.depth.bbox_scale      = fus["bbox_scale"].as<float>();
         if (fus["mono_max_z"])      cfg.depth.mono_max_z      = fus["mono_max_z"].as<float>();
         if (fus["stereo_min_z"])    cfg.depth.stereo_min_z    = fus["stereo_min_z"].as<float>();
+        // Kalman 观测噪声 (距离自适应基值)
+        if (fus["R_mono"])          cfg.depth.R_mono          = fus["R_mono"].as<float>();
+        if (fus["R_stereo"])        cfg.depth.R_stereo        = fus["R_stereo"].as<float>();
+        // IVW 融合权重 (与 Kalman R 分离)
+        if (fus["ivw_R_mono"])      cfg.depth.ivw_R_mono      = fus["ivw_R_mono"].as<float>();
+        if (fus["ivw_R_stereo"])    cfg.depth.ivw_R_stereo    = fus["ivw_R_stereo"].as<float>();
     }
 
     // Performance

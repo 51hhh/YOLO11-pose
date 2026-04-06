@@ -64,6 +64,16 @@ fusion:
   max_depth: 15.0
   baseline_mm: 326.8
   object_diameter: 0.200
+  # Kalman 观测噪声基值: R(z) = R_base × max(1, z²)
+  R_mono: 0.003               # 单目噪声基值 (实测 σ/z ≈ 3-5%)
+  R_stereo: 0.020             # 双目噪声基值 (≈ 单目 2.5× σ)
+  # IVW 融合权重 (3-5m 过渡带, 与 Kalman R 独立)
+  ivw_R_mono: 0.004           # IVW 单目方差
+  ivw_R_stereo: 0.025         # IVW 双目方差 (方差比 ≈ 6:1)
+
+prediction:
+  rk4_dt: 0.01               # RK4 步长 (s), 0.01 → 300 步, 0.002 → 1500 步
+  max_predict_time: 3.0       # 最大预测时间 (s)
 
 performance:
   pwm_frequency: 100.0

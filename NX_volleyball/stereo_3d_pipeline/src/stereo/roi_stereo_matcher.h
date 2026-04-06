@@ -24,6 +24,8 @@ struct ROIMatchConfig {
     int   patchRadius  = 5;       ///< 匹配块半径 (patch = 11x11)
     float minDepth     = 0.3f;    ///< 最小有效深度 (m)
     float maxDepth     = 15.0f;   ///< 最大有效深度 (m)
+    float objectDiameter = 0.215f; ///< 目标直径 (m), 用于圆拟合搜索范围估计
+    bool  useCircleFit = true;    ///< 启用圆拟合匹配 (适合光滑球体)
 };
 
 class ROIStereoMatcher {

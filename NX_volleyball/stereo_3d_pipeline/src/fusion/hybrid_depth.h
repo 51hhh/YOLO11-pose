@@ -21,7 +21,7 @@ namespace stereo3d {
 
 struct HybridDepthConfig {
     // 单目参数
-    float object_diameter = 0.23f;     ///< 排球直径 (m)
+    float object_diameter = 0.215f;    ///< 排球直径 (m), YAML 可覆盖
     float bbox_scale      = 0.95f;     ///< BBox vs 实际球体比例补偿
 
     // 方法切换阈值

@@ -33,13 +33,13 @@ struct TrajectoryPredictorConfig {
     float gravity       = 9.81f;   ///< Gravitational acceleration (m/s^2)
     float air_density   = 1.225f;  ///< Air density (kg/m^3)
     float ball_mass     = 0.270f;  ///< Volleyball mass (kg)
-    float ball_radius   = 0.110f;  ///< Volleyball radius (m)
+    float ball_radius   = 0.115f;  ///< Volleyball radius (m)
     float drag_coeff    = 0.47f;   ///< Drag coefficient (sphere)
     float ground_y      = 2.5f;    ///< Ground Y in camera frame (m, cam Y=down, ~camera height)
 
     // Prediction limits
     float max_predict_time = 3.0f; ///< Max forward integration time (s)
-    float rk4_dt          = 0.002f;///< RK4 step size (s)
+    float rk4_dt          = 0.01f; ///< RK4 step size (s) — RK4 O(h^4) 精度, 0.01 误差 <1mm
 
     // Polynomial fallback
     int   poly_min_frames = 6;     ///< Minimum frames for polynomial fit
