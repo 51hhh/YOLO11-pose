@@ -23,6 +23,21 @@ extern "C" void launchROIMultiPointMatch(
     float minDepth, float maxDepth,
     cudaStream_t stream);
 
+extern "C" void launchROICircleFitMatch(
+    const uint8_t* leftImg,  int leftPitch,
+    const uint8_t* rightImg, int rightPitch,
+    int imgWidth, int imgHeight,
+    const int* bboxes,
+    const float* detCx, const float* detCy,
+    int numBoxes,
+    float* results,
+    int maxDisparity,
+    float focal, float baseline,
+    float cx0, float cy0,
+    float minDepth, float maxDepth,
+    float objectDiameter,
+    cudaStream_t stream);
+
 namespace stereo3d {
 
 ROIStereoMatcher::~ROIStereoMatcher() {
@@ -118,15 +133,28 @@ std::vector<Object3D> ROIStereoMatcher::match(
                     numBoxes * sizeof(float), cudaMemcpyHostToDevice, stream);
 
     // 2. 启动 CUDA Kernel
-    launchROIMultiPointMatch(
-        leftGPU, leftPitch, rightGPU, rightPitch,
-        imgWidth, imgHeight,
-        bboxes_device_, detCx_device_, detCy_device_, numBoxes,
-        results_device_,
-        config_.maxDisparity, config_.patchRadius,
-        focal_, baseline_, cx_, cy_,
-        config_.minDepth, config_.maxDepth,
-        stream);
+    if (config_.useCircleFit) {
+        launchROICircleFitMatch(
+            leftGPU, leftPitch, rightGPU, rightPitch,
+            imgWidth, imgHeight,
+            bboxes_device_, detCx_device_, detCy_device_, numBoxes,
+            results_device_,
+            config_.maxDisparity,
+            focal_, baseline_, cx_, cy_,
+            config_.minDepth, config_.maxDepth,
+            config_.objectDiameter,
+            stream);
+    } else {
+        launchROIMultiPointMatch(
+            leftGPU, leftPitch, rightGPU, rightPitch,
+            imgWidth, imgHeight,
+            bboxes_device_, detCx_device_, detCy_device_, numBoxes,
+            results_device_,
+            config_.maxDisparity, config_.patchRadius,
+            focal_, baseline_, cx_, cy_,
+            config_.minDepth, config_.maxDepth,
+            stream);
+    }
 
     // 3. 拷回 CPU
     cudaMemcpyAsync(results_host_, results_device_,

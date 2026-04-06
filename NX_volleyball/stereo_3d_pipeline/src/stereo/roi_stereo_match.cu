@@ -200,7 +200,7 @@ __global__ void roiMultiPointMatchKernel(
             }
         }
 
-        bool unique = (g2ndSAD - gBestSAD) > (gBestSAD / 4);
+        bool unique = (g2ndSAD - gBestSAD) > (gBestSAD / 6);
 
         // ---- 亚像素抛物线拟合 ----
         float subDisp = (float)gBestDisp;
@@ -237,7 +237,8 @@ __global__ void roiMultiPointMatchKernel(
     // ---- Thread 0: 中值 + 三角测距 ----
     if (threadIdx.x == 0) {
         int n = validCount;
-        if (n < 2) {
+
+        if (n < 1) {
             // 有效点不足, 无法可靠测距
             results[boxIdx * 5 + 0] = 0.0f;
             results[boxIdx * 5 + 1] = 0.0f;
@@ -285,8 +286,9 @@ __global__ void roiMultiPointMatchKernel(
                 Y = (center_y - cy0) * Z / focal;
 
                 // 置信度: 有效点比例 * 一致性 (IQR 范围越窄越好)
-                float validRatio = (float)n / (float)(gridSize * gridSize);
-                float iqr = sampleDisp[q3] - sampleDisp[q1];
+                // 光滑物体 (如排球) 有效点少但单点可靠, 设置最低置信度
+                float validRatio = fmaxf(0.15f, (float)n / (float)(gridSize * gridSize));
+                float iqr = (n > 1) ? (sampleDisp[q3] - sampleDisp[q1]) : 0.0f;
                 float consistency = (iqr < 1.0f) ? 1.0f : 1.0f / iqr;
                 conf = validRatio * fminf(1.0f, consistency);
             }

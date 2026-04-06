@@ -347,10 +347,7 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO("Pipeline initialized, starting...");
 
-    // 可视化: 共享显示缓冲区
-    std::mutex display_mutex;
-    cv::Mat display_frame;
-    bool display_ready = false;
+    // (display variables moved to DisplayJob below)
 
     // 构建彩色校正映射表 (用于可视化: raw Bayer → demosaic → remap → 彩色校正图)
     cv::Mat vis_map1, vis_map2;
@@ -395,23 +392,35 @@ int main(int argc, char* argv[]) {
 
     const bool use_bgr = (cfg.detector_input_format == "bgr");
 
+    // 显示数据: 管线线程仅做GPU→CPU拷贝, 绘制在主线程完成
+    struct DisplayJob {
+        cv::Mat frame;
+        std::vector<stereo3d::Detection> detections;
+        std::vector<stereo3d::Object3D> results;
+        std::vector<stereo3d::LandingPrediction> preds;
+        float fps;
+        int frame_id;
+        int rec_frames;
+    };
+    std::mutex display_job_mutex;
+    DisplayJob display_job;
+    bool display_job_ready = false;
+
     if (enable_display) {
         pipeline.setFrameCallback(
             [&, use_bgr](int frame_id, VPIImage rectL, VPIImage rawL,
                 const std::vector<stereo3d::Detection>& detections,
                 const std::vector<stereo3d::Object3D>& results,
                 float fps) {
-                // UI线程未消费上一帧时跳过，避免可视化拖慢主流水线
+                // 上一帧未消费时跳过 (管线线程零阻塞)
                 {
-                    std::lock_guard<std::mutex> lock(display_mutex);
-                    if (display_ready) return;
+                    std::lock_guard<std::mutex> lock(display_job_mutex);
+                    if (display_job_ready) return;
                 }
 
                 cv::Mat frame;
 
                 if (use_bgr) {
-                    // BGR 模式: VPI HOST_PITCH_LINEAR 对 BGR8 返回全零 (VPI 3.2 bug),
-                    // 改用 CUDA_PITCH_LINEAR 获取 GPU 指针 + cudaMemcpy2D 手动拷贝
                     VPIImageData imgData;
                     VPIStatus st = vpiImageLockData(rectL, VPI_LOCK_READ,
                         VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
@@ -428,7 +437,6 @@ int main(int argc, char* argv[]) {
                         vpiImageUnlock(rectL);
                     }
                 } else if (has_color_remap && rawL) {
-                    // Gray 模式 + 有标定映射: raw Bayer → demosaic → remap
                     VPIImageData rawData;
                     if (vpiImageLockData(rawL, VPI_LOCK_READ,
                         VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &rawData) == VPI_SUCCESS) {
@@ -444,7 +452,6 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // 回退: 灰度校正图
                 if (frame.empty()) {
                     VPIImageData imgData;
                     if (vpiImageLockData(rectL, VPI_LOCK_READ,
@@ -459,134 +466,19 @@ int main(int argc, char* argv[]) {
                     vpiImageUnlock(rectL);
                 }
 
-                // 处理点击测距: 找最近的检测目标
-                {
-                    std::lock_guard<std::mutex> clik(g_click.mtx);
-                    if (g_click.has_click) {
-                        g_click.has_click = false;
-                        g_click.click_z = 0;
-                        float min_dist = 1e9f;
-                        for (size_t i = 0; i < detections.size() && i < results.size(); ++i) {
-                            float dx = detections[i].cx - g_click.click_u;
-                            float dy = detections[i].cy - g_click.click_v;
-                            float dist = dx*dx + dy*dy;
-                            if (dist < min_dist && results[i].z > 0) {
-                                min_dist = dist;
-                                g_click.click_x = results[i].x;
-                                g_click.click_y = results[i].y;
-                                g_click.click_z = results[i].z;
-                            }
-                        }
-                    }
-                }
-
-                // 绘制检测框 + 距离
-                std::vector<stereo3d::LandingPrediction> cur_preds;
+                // 仅存数据, 绘制交给主线程
+                std::lock_guard<std::mutex> lock(display_job_mutex);
+                display_job.frame = std::move(frame);
+                display_job.detections = detections;
+                display_job.results = results;
+                display_job.fps = fps;
+                display_job.frame_id = frame_id;
+                display_job.rec_frames = recorder.frameCount();
                 {
                     std::lock_guard<std::mutex> plock(pred_mutex);
-                    cur_preds = latest_preds;
+                    display_job.preds = latest_preds;
                 }
-
-                for (size_t i = 0; i < detections.size(); ++i) {
-                    const auto& d = detections[i];
-                    int x1 = static_cast<int>(d.cx - d.width / 2);
-                    int y1 = static_cast<int>(d.cy - d.height / 2);
-                    int bw = static_cast<int>(d.width);
-                    int bh = static_cast<int>(d.height);
-                    cv::Scalar color(0, 255, 0);
-                    cv::rectangle(frame, cv::Rect(x1, y1, bw, bh), color, 2);
-
-                    char label[128];
-                    if (i < results.size()) {
-                        snprintf(label, sizeof(label),
-                                 "%.2fm (%.0f%%)", results[i].z, d.confidence * 100);
-                    } else {
-                        snprintf(label, sizeof(label),
-                                 "conf=%.0f%%", d.confidence * 100);
-                    }
-                    cv::putText(frame, label, cv::Point(x1, y1 - 8),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
-
-                    // 3D 坐标 + 速度 + 原始深度
-                    if (i < results.size() && results[i].z > 0) {
-                        const auto& r = results[i];
-                        float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
-                        char pos[160];
-                        snprintf(pos, sizeof(pos), "X=%.3f Y=%.3f Z=%.3f |v|=%.1f",
-                                 r.x, r.y, r.z, speed);
-                        cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
-                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                    cv::Scalar(255, 200, 0), 1);
-                        char depth_info[160];
-                        const char* mstr = r.depth_method == 0 ? "M" :
-                                           r.depth_method == 1 ? "S" : "B";
-                        snprintf(depth_info, sizeof(depth_info),
-                                 "zm=%.3f zs=%.3f [%s]",
-                                 r.z_mono, r.z_stereo, mstr);
-                        cv::putText(frame, depth_info, cv::Point(x1, y1 + bh + 40),
-                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                    cv::Scalar(0, 255, 255), 1);
-
-                        // 落点预测叠加
-                        if (i < cur_preds.size() && cur_preds[i].valid) {
-                            const auto& p = cur_preds[i];
-                            char pred_text[128];
-                            snprintf(pred_text, sizeof(pred_text),
-                                     "LAND(%.1f,%.1f) %.2fs %s",
-                                     p.x, p.y, p.time_to_land,
-                                     p.method == 0 ? "B" : "P");
-                            cv::putText(frame, pred_text,
-                                        cv::Point(x1, y1 + bh + 60),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                        cv::Scalar(0, 100, 255), 2);
-                        }
-                    }
-                }
-
-                // 点击测距显示
-                {
-                    std::lock_guard<std::mutex> clik(g_click.mtx);
-                    if (g_click.display_frames > 0) {
-                        // 十字线
-                        cv::drawMarker(frame,
-                            cv::Point(g_click.click_u, g_click.click_v),
-                            cv::Scalar(0, 255, 255), cv::MARKER_CROSS, 20, 2);
-                        // 坐标文本
-                        if (g_click.click_z > 0) {
-                            char click_text[128];
-                            snprintf(click_text, sizeof(click_text),
-                                     "(%.2f, %.2f, %.2f)m",
-                                     g_click.click_x, g_click.click_y, g_click.click_z);
-                            cv::putText(frame, click_text,
-                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
-                                        cv::Scalar(0, 255, 255), 2);
-                        } else {
-                            cv::putText(frame, "No depth",
-                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
-                                        cv::Scalar(0, 0, 255), 2);
-                        }
-                        g_click.display_frames--;
-                    }
-                }
-
-                // FPS + 帧号 + 记录状态
-                char hud[128];
-                int rec_frames = recorder.frameCount();
-                if (rec_frames > 0) {
-                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d  REC: %d",
-                             fps, frame_id, rec_frames);
-                } else {
-                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d", fps, frame_id);
-                }
-                cv::putText(frame, hud, cv::Point(10, 30),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.8,
-                            cv::Scalar(0, 200, 255), 2);
-
-                std::lock_guard<std::mutex> lock(display_mutex);
-                display_frame = std::move(frame);
-                display_ready = true;
+                display_job_ready = true;
             });
     }
 
@@ -618,12 +510,135 @@ int main(int argc, char* argv[]) {
 
     if (enable_display) {
         while (!g_shutdown.load()) {
+            DisplayJob job;
+            bool has_job = false;
             {
-                std::lock_guard<std::mutex> lock(display_mutex);
-                if (display_ready) {
-                    cv::imshow("Pipeline", display_frame);
-                    display_ready = false;
+                std::lock_guard<std::mutex> lock(display_job_mutex);
+                if (display_job_ready) {
+                    job = std::move(display_job);
+                    display_job_ready = false;
+                    has_job = true;
                 }
+            }
+            if (has_job) {
+                cv::Mat& frame = job.frame;
+
+                // 处理点击测距
+                {
+                    std::lock_guard<std::mutex> clik(g_click.mtx);
+                    if (g_click.has_click) {
+                        g_click.has_click = false;
+                        g_click.click_z = 0;
+                        float min_dist = 1e9f;
+                        for (size_t i = 0; i < job.detections.size() && i < job.results.size(); ++i) {
+                            float dx = job.detections[i].cx - g_click.click_u;
+                            float dy = job.detections[i].cy - g_click.click_v;
+                            float dist = dx*dx + dy*dy;
+                            if (dist < min_dist && job.results[i].z > 0) {
+                                min_dist = dist;
+                                g_click.click_x = job.results[i].x;
+                                g_click.click_y = job.results[i].y;
+                                g_click.click_z = job.results[i].z;
+                            }
+                        }
+                    }
+                }
+
+                // 绘制检测框 + 距离
+                for (size_t i = 0; i < job.detections.size(); ++i) {
+                    const auto& d = job.detections[i];
+                    int x1 = static_cast<int>(d.cx - d.width / 2);
+                    int y1 = static_cast<int>(d.cy - d.height / 2);
+                    int bw = static_cast<int>(d.width);
+                    int bh = static_cast<int>(d.height);
+                    cv::Scalar color(0, 255, 0);
+                    cv::rectangle(frame, cv::Rect(x1, y1, bw, bh), color, 2);
+
+                    char label[128];
+                    if (i < job.results.size()) {
+                        snprintf(label, sizeof(label),
+                                 "%.2fm (%.0f%%)", job.results[i].z, d.confidence * 100);
+                    } else {
+                        snprintf(label, sizeof(label),
+                                 "conf=%.0f%%", d.confidence * 100);
+                    }
+                    cv::putText(frame, label, cv::Point(x1, y1 - 8),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
+
+                    if (i < job.results.size() && job.results[i].z > 0) {
+                        const auto& r = job.results[i];
+                        float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
+                        char pos[160];
+                        snprintf(pos, sizeof(pos), "X=%.3f Y=%.3f Z=%.3f |v|=%.1f",
+                                 r.x, r.y, r.z, speed);
+                        cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                    cv::Scalar(255, 200, 0), 1);
+                        char depth_info[160];
+                        const char* mstr = r.depth_method == 0 ? "M" :
+                                           r.depth_method == 1 ? "S" : "B";
+                        snprintf(depth_info, sizeof(depth_info),
+                                 "zm=%.3f zs=%.3f [%s]",
+                                 r.z_mono, r.z_stereo, mstr);
+                        cv::putText(frame, depth_info, cv::Point(x1, y1 + bh + 40),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                    cv::Scalar(0, 255, 255), 1);
+
+                        if (i < job.preds.size() && job.preds[i].valid) {
+                            const auto& p = job.preds[i];
+                            char pred_text[128];
+                            snprintf(pred_text, sizeof(pred_text),
+                                     "LAND(%.1f,%.1f) %.2fs %s",
+                                     p.x, p.y, p.time_to_land,
+                                     p.method == 0 ? "B" : "P");
+                            cv::putText(frame, pred_text,
+                                        cv::Point(x1, y1 + bh + 60),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                        cv::Scalar(0, 100, 255), 2);
+                        }
+                    }
+                }
+
+                // 点击测距显示
+                {
+                    std::lock_guard<std::mutex> clik(g_click.mtx);
+                    if (g_click.display_frames > 0) {
+                        cv::drawMarker(frame,
+                            cv::Point(g_click.click_u, g_click.click_v),
+                            cv::Scalar(0, 255, 255), cv::MARKER_CROSS, 20, 2);
+                        if (g_click.click_z > 0) {
+                            char click_text[128];
+                            snprintf(click_text, sizeof(click_text),
+                                     "(%.2f, %.2f, %.2f)m",
+                                     g_click.click_x, g_click.click_y, g_click.click_z);
+                            cv::putText(frame, click_text,
+                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                                        cv::Scalar(0, 255, 255), 2);
+                        } else {
+                            cv::putText(frame, "No depth",
+                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                                        cv::Scalar(0, 0, 255), 2);
+                        }
+                        g_click.display_frames--;
+                    }
+                }
+
+                // FPS + 帧号 + 记录状态
+                char hud[128];
+                if (job.rec_frames > 0) {
+                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d  REC: %d",
+                             job.fps, job.frame_id, job.rec_frames);
+                } else {
+                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d",
+                             job.fps, job.frame_id);
+                }
+                cv::putText(frame, hud, cv::Point(10, 30),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                            cv::Scalar(0, 200, 255), 2);
+
+                cv::imshow("Pipeline", frame);
             }
             int key = cv::waitKey(5);
             if (key == 27) {  // ESC

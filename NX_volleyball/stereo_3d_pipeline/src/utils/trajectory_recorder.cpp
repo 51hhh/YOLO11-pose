@@ -30,7 +30,8 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
 void TrajectoryRecorder::writeHeader() {
     file_ << "frame_id,timestamp,track_id,"
           << "x,y,z,vx,vy,vz,ax,ay,az,"
-          << "confidence,method,"
+          << "z_mono,z_stereo,depth_method,"
+          << "confidence,"
           << "landing_x,landing_y,landing_t\n";
     header_written_ = true;
 }
@@ -79,14 +80,14 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
               << r.x << "," << r.y << "," << r.z << ","
               << r.vx << "," << r.vy << "," << r.vz << ","
               << r.ax << "," << r.ay << "," << r.az << ","
+              << r.z_mono << "," << r.z_stereo << "," << r.depth_method << ","
               << r.confidence << ",";
 
         if (i < entry.preds.size() && entry.preds[i].valid) {
-            file_ << entry.preds[i].method << ","
-                  << entry.preds[i].x << "," << entry.preds[i].y << ","
+            file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
                   << entry.preds[i].time_to_land;
         } else {
-            file_ << "-1,0,0,0";
+            file_ << "0,0,0";
         }
         file_ << "\n";
     }

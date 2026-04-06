@@ -145,6 +145,7 @@ set(CUDA_SOURCES
   src/detect/dfl_postprocess.cu
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
+  src/stereo/roi_circle_match.cu
 )
 
 # 相机源文件 (可选)
