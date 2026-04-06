@@ -3,10 +3,10 @@
  * @brief 单目+双目混合测距 + Kalman 滤波
  *
  * 策略：
- *   - Z < 4m: 单目 (BBox 宽度 → 深度, 排球直径=0.22m)
- *   - Z > 5m: 双目 ROI SAD
+ *   - Z < 3m: 单目 (BBox 宽度 → 深度, 排球直径=0.23m)
+ *   - Z > 5m: 双目 Circle-Fit (Sobel + Kåsa 圆拟合)
  *   - 3-5m:   加权融合 (线性过渡)
- *   - Kalman 滤波: 平滑 + 速度估计 + 丢帧预测
+ *   - 9D Kalman 滤波: [x,y,z,vx,vy,vz,ax,ay,az] 恒加速模型
  */
 
 #ifndef STEREO_3D_PIPELINE_HYBRID_DEPTH_H_
@@ -22,7 +22,7 @@ namespace stereo3d {
 
 struct HybridDepthConfig {
     // 单目参数
-    float object_diameter = 0.22f;     ///< 排球直径 (m)
+    float object_diameter = 0.23f;     ///< 排球直径 (m)
     float bbox_scale      = 0.95f;     ///< BBox vs 实际球体比例补偿
 
     // 方法切换阈值
@@ -33,8 +33,8 @@ struct HybridDepthConfig {
     // Kalman 参数
     float dt              = 0.01f;     ///< 帧间隔 (s), 100Hz
     float process_accel   = 50.0f;     ///< 过程噪声: 最大加速度 (m/s^2)
-    float R_mono          = 0.25f;     ///< 单目观测噪声方差
-    float R_stereo        = 0.01f;     ///< 双目观测噪声方差
+    float R_mono          = 0.25f;     ///< 单目观测噪声方差 (初始值/上界)
+    float R_stereo        = 0.01f;     ///< 双目观测噪声方差 (初始值/上界)
 
     // 跟踪管理
     int   lost_predict_frames = 5;     ///< 丢失后纯预测帧数
@@ -45,6 +45,9 @@ struct HybridDepthConfig {
     // 深度限制
     float min_depth = 0.3f;
     float max_depth = 15.0f;
+
+    // 自适应偏差校正 (EMA)
+    float stereo_bias_alpha = 0.05f;  ///< EMA 平滑因子 (加快偏差收敛)
 };
 
 /**
@@ -158,6 +161,9 @@ private:
     // 跟踪列表 (IoU 贪心匹配)
     std::vector<DepthTrack> tracks_;
     int next_track_id_ = 0;
+
+    // 自适应偏差校正: EMA 跟踪 zs/zm 比例
+    float stereo_bias_ = 1.0f;       ///< 当前 EMA 偏差比 (zs/zm)
 
     // 内部方法
     float monoDepth(const Detection& det) const;

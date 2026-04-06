@@ -80,13 +80,14 @@ void DepthTrack::predict(float dt, float sigma_a) {
 void DepthTrack::update(float obs_x, float obs_y, float obs_z,
                         float Rxy, float Rz) {
     // H = [I3, 0, 0]  (3×9), 观测 = [x, y, z]
-    // R = diag(Rxy, Rxy, Rz)
     float obs[M] = {obs_x, obs_y, obs_z};
-    float R_diag[M] = {Rxy, Rxy, Rz};
 
     // Innovation: y = obs - H*x = obs - state[0:2]
     float y_inn[M];
     for (int i = 0; i < M; ++i) y_inn[i] = obs[i] - state[i];
+
+    // 观测噪声矩阵 R (对角)
+    float R_diag[M] = {Rxy, Rxy, Rz};
 
     // S = H*P*H^T + R  (3×3)
     // Since H selects the first 3 rows/cols: S[i][j] = P[i][j] + R_diag[i] * delta_ij
@@ -321,12 +322,26 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         // Step 2: 计算单目深度
         float z_mono = monoDepth(det);
 
-        // Step 3: 查找对应的双目结果
+        // Step 3: 查找对应的双目结果 (始终记录原始值供校准)
         float z_stereo = -1.0f;
         bool has_stereo = false;
-        if (i < roi_results.size() && roi_results[i].confidence > config_.min_confidence) {
-            z_stereo = roi_results[i].z;
-            has_stereo = true;
+        if (i < roi_results.size()) {
+            z_stereo = roi_results[i].z;  // 原始值 (可能为-1)
+            has_stereo = roi_results[i].confidence > config_.min_confidence && z_stereo > 0;
+        }
+
+        // Step 3.5: 自适应偏差校正 — EMA 跟踪 zs/zm 比例
+        float z_stereo_corrected = z_stereo;
+        if (has_stereo && z_mono > 0.5f) {
+            float ratio = z_stereo / z_mono;
+            // 合理范围内更新 EMA (排除异常帧)
+            if (ratio > 0.85f && ratio < 1.15f) {
+                stereo_bias_ += config_.stereo_bias_alpha * (ratio - stereo_bias_);
+            }
+            // 应用偏差校正
+            if (stereo_bias_ > 0.1f) {
+                z_stereo_corrected = z_stereo / stereo_bias_;
+            }
         }
 
         // Step 4: 选择/融合测距方法 → 确定 z 观测值
@@ -338,10 +353,20 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             z_obs = z_mono;
             method = 0;
         } else if (z_pred > config_.mono_max_z) {
-            z_obs = z_stereo;
+            // 纯双目: 使用校正后的值
+            z_obs = z_stereo_corrected;
             method = 1;
         } else {
-            z_obs = blendDepth(z_mono, z_stereo, z_pred);
+            // 过渡带: IVW 逆方差加权融合 (替代线性alpha)
+            float w_mono   = 1.0f / config_.R_mono;    // 1/sigma^2
+            float w_stereo = 1.0f / config_.R_stereo;
+            // 距离相关权重渐变: 近端偏单目, 远端偏双目
+            float blend = (z_pred - config_.stereo_min_z) /
+                          (config_.mono_max_z - config_.stereo_min_z);
+            blend = std::max(0.0f, std::min(1.0f, blend));
+            w_stereo *= blend;  // 近端压制双目权重
+            float w_total = w_mono + w_stereo;
+            z_obs = (w_mono * z_mono + w_stereo * z_stereo_corrected) / w_total;
             method = 2;
         }
 
@@ -373,6 +398,9 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         obj.confidence = det.confidence * std::max(0.0f, 1.0f - track->lost_count * 0.1f);
         obj.class_id = det.class_id;
         obj.track_id = track->track_id;
+        obj.z_mono = z_mono;
+        obj.z_stereo = z_stereo;
+        obj.depth_method = method;
 
         if (obj.z >= config_.min_depth && obj.z <= config_.max_depth) {
             output.push_back(obj);
