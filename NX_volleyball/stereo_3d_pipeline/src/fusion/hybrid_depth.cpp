@@ -176,32 +176,16 @@ float HybridDepthEstimator::monoDepth(const Detection& det) const {
     return focal_ * config_.object_diameter / w;
 }
 
-float HybridDepthEstimator::blendDepth(float z_mono, float z_stereo, float z_pred) const {
-    // 过渡带: [stereo_min_z, mono_max_z]
-    float lo = config_.stereo_min_z;  // 3m
-    float hi = config_.mono_max_z;    // 5m
-
-    // 使用 z_pred 判断在过渡带的位置
-    float ref_z = z_pred > 0.1f ? z_pred : z_mono;  // 优先使用 Kalman 预测
-
-    if (ref_z < lo) return z_mono;
-    if (ref_z > hi) return z_stereo;
-
-    // alpha: 1=纯单目, 0=纯双目
-    float alpha = (hi - ref_z) / (hi - lo);
-    alpha = std::max(0.0f, std::min(1.0f, alpha));
-
-    return alpha * z_mono + (1.0f - alpha) * z_stereo;
-}
-
 float HybridDepthEstimator::getObsNoise(float z, int method) const {
     if (method == 0) return config_.R_mono;
     if (method == 1) return config_.R_stereo;
-    // blend: 线性插值
+    // blend: IVW 有效方差 R_eff = 1/(w_mono + w_stereo)
     float lo = config_.stereo_min_z;
     float hi = config_.mono_max_z;
-    float alpha = std::max(0.0f, std::min(1.0f, (hi - z) / (hi - lo)));
-    return alpha * config_.R_mono + (1.0f - alpha) * config_.R_stereo;
+    float blend = std::max(0.0f, std::min(1.0f, (z - lo) / (hi - lo)));
+    float w_mono   = 1.0f / config_.R_mono;
+    float w_stereo = blend / config_.R_stereo;
+    return 1.0f / (w_mono + w_stereo);
 }
 
 // ============================================================
@@ -450,6 +434,7 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
 void HybridDepthEstimator::reset() {
     tracks_.clear();
     next_track_id_ = 0;
+    stereo_bias_ = 1.0f;
 }
 
 int HybridDepthEstimator::activeTrackCount() const {

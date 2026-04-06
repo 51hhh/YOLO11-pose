@@ -15,7 +15,6 @@
 #include "../pipeline/frame_slot.h"
 #include "../stereo/roi_stereo_matcher.h"
 #include <vector>
-#include <unordered_map>
 #include <cuda_runtime.h>
 
 namespace stereo3d {
@@ -167,7 +166,6 @@ private:
 
     // 内部方法
     float monoDepth(const Detection& det) const;
-    float blendDepth(float z_mono, float z_stereo, float z_pred) const;
     float getObsNoise(float z, int method) const;
     void  pruneDeadTracks();
 
