@@ -31,6 +31,13 @@ struct CameraConfig {
 
     float exposure_us = 9867.0f;           // 曝光时间 (微秒)
     float gain_db = 11.9906f;              // 增益 (dB)
+    bool auto_exposure = false;            // 自动曝光 (Continuous)
+    bool auto_gain = false;                // 自动增益 (Continuous)
+    float ae_upper_us = 5000.0f;           // 自动曝光上限 (μs)
+    float ae_lower_us = 100.0f;            // 自动曝光下限 (μs)
+    float ag_upper_db = 10.0f;             // 自动增益上限 (dB)
+    bool gamma_enable = false;             // Gamma 校正
+    float gamma_value = 0.7f;             // Gamma 值 (<1 压缩高亮)
 
     bool use_trigger = true;               // 外触发模式
     std::string trigger_source = "Line0";  // 触发源

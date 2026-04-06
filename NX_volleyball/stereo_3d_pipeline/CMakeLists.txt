@@ -135,6 +135,8 @@ set(PIPELINE_SOURCES
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
   src/fusion/hybrid_depth.cpp
+  src/fusion/trajectory_predictor.cpp
+  src/utils/trajectory_recorder.cpp
 )
 
 # CUDA 源文件

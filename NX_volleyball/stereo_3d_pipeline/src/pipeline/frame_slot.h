@@ -11,7 +11,6 @@
 
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
-#include <opencv2/core/cuda.hpp>
 #include <vector>
 #include <cstring>
 
@@ -58,11 +57,9 @@ struct FrameSlot {
     int frame_id = -1;                    ///< 帧序号
     bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
 
-    // =========== Stage 0: 原始图像 + 校正后图像 ===========
+    // =========== Stage 0: 原始图像 ===========
     VPIImage rawL      = nullptr;         ///< 左原始图 (Pinned + Mapped)
     VPIImage rawR      = nullptr;         ///< 右原始图
-    VPIImage rectL     = nullptr;         ///< 校正后左图
-    VPIImage rectR     = nullptr;         ///< 校正后右图
 
     // =========== Color Pipeline (VPI) ===========
     VPIImage tempBGR_L      = nullptr;   ///< 左 debayer 输出 BGR (raw res)
@@ -78,18 +75,6 @@ struct FrameSlot {
     // =========== Stage 2: 视差图 ===========
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
     VPIImage confidenceMap = nullptr;     ///< 视差置信度图
-
-    // =========== Pure GPU Color Pipeline ===========
-    cv::Mat hostBayerL;                   ///< 左 BayerRG8 Host 缓冲 (预分配)
-    cv::Mat hostBayerR;                   ///< 右 BayerRG8 Host 缓冲 (预分配)
-    cv::cuda::GpuMat rawBayerL;           ///< 左 BayerRG8 GPU (raw res, U8)
-    cv::cuda::GpuMat rawBayerR;           ///< 右 BayerRG8 GPU (raw res, U8)
-    cv::cuda::GpuMat bgrRawL;             ///< 左 BGR 去马赛克 (raw res, 8UC3)
-    cv::cuda::GpuMat bgrRawR;             ///< 右 BGR 去马赛克 (raw res, 8UC3)
-    cv::cuda::GpuMat rectBGR_L;           ///< 左校正 BGR (rect res, 8UC3)
-    cv::cuda::GpuMat rectBGR_R;           ///< 右校正 BGR (rect res, 8UC3)
-    cv::cuda::GpuMat rectGray_L;          ///< 左校正灰度 (rect res, U8)
-    cv::cuda::GpuMat rectGray_R;          ///< 右校正灰度 (rect res, U8)
 
     // =========== Stage 3: 3D 定位结果 ===========
     std::vector<Object3D> results;        ///< 最终 3D 定位输出
@@ -134,8 +119,6 @@ struct FrameSlot {
         };
         destroyVPI(rawL);
         destroyVPI(rawR);
-        destroyVPI(rectL);
-        destroyVPI(rectR);
         destroyVPI(tempBGR_L);
         destroyVPI(tempBGR_R);
         destroyVPI(rectBGR_vpiL);

@@ -12,6 +12,13 @@ camera:
   serial_right: ""
   exposure_us: 9867.0
   gain_db: 11.9906
+  auto_exposure: false        # 关闭自动曝光, 确认手动基线
+  auto_gain: false             # 增益保持手动 (检测模型已适配)
+  ae_upper_us: 9000.0          # AE 上限 (μs), 留 1ms 余量
+  ae_lower_us: 500.0           # AE 下限 (μs), 防止全黑
+  ag_upper_db: 12.0            # AG 上限 (仅 auto_gain=true 时生效)
+  gamma_enable: false          # Gamma 关闭 (影响 Bayer 原始数据, 模型未适配)
+  gamma_value: 0.7
   use_trigger: true
   trigger_source: "Line0"
   trigger_activation: "RisingEdge"
