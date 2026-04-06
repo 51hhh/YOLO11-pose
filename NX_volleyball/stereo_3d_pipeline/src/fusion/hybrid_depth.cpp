@@ -339,9 +339,9 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             z_obs = z_stereo_corrected;
             method = 1;
         } else {
-            // 过渡带: IVW 逆方差加权融合 (替代线性alpha)
-            float w_mono   = 1.0f / config_.R_mono;    // 1/sigma^2
-            float w_stereo = 1.0f / config_.R_stereo;
+            // 过渡带: IVW 逆方差加权融合 (使用独立 IVW 权重)
+            float w_mono   = 1.0f / config_.ivw_R_mono;
+            float w_stereo = 1.0f / config_.ivw_R_stereo;
             // 距离相关权重渐变: 近端偏单目, 远端偏双目
             float blend = (z_pred - config_.stereo_min_z) /
                           (config_.mono_max_z - config_.stereo_min_z);

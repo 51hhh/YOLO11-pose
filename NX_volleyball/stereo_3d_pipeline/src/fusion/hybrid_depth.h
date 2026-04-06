@@ -47,6 +47,10 @@ struct HybridDepthConfig {
 
     // 自适应偏差校正 (EMA)
     float stereo_bias_alpha = 0.05f;  ///< EMA 平滑因子 (加快偏差收敛)
+
+    // IVW 融合权重 (与 Kalman R 分离)
+    float ivw_R_mono   = 0.004f;   ///< IVW 单目噪声方差 (σ≈0.063m)
+    float ivw_R_stereo = 0.004f;   ///< IVW 双目噪声方差 (σ≈0.063m)
 };
 
 /**
