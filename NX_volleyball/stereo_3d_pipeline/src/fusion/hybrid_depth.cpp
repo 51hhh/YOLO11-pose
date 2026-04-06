@@ -179,13 +179,11 @@ float HybridDepthEstimator::monoDepth(const Detection& det) const {
 float HybridDepthEstimator::getObsNoise(float z, int method) const {
     if (method == 0) return config_.R_mono;
     if (method == 1) return config_.R_stereo;
-    // blend: IVW 有效方差 R_eff = 1/(w_mono + w_stereo)
+    // blend: 线性插值 (R_mono/R_stereo 用作调权参数而非真实方差)
     float lo = config_.stereo_min_z;
     float hi = config_.mono_max_z;
-    float blend = std::max(0.0f, std::min(1.0f, (z - lo) / (hi - lo)));
-    float w_mono   = 1.0f / config_.R_mono;
-    float w_stereo = blend / config_.R_stereo;
-    return 1.0f / (w_mono + w_stereo);
+    float alpha = std::max(0.0f, std::min(1.0f, (hi - z) / (hi - lo)));
+    return alpha * config_.R_mono + (1.0f - alpha) * config_.R_stereo;
 }
 
 // ============================================================
