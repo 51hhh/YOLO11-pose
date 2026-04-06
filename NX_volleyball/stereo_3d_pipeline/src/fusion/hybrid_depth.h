@@ -32,8 +32,8 @@ struct HybridDepthConfig {
     // Kalman 参数
     float dt              = 0.01f;     ///< 帧间隔 (s), 100Hz
     float process_accel   = 50.0f;     ///< 过程噪声: 最大加速度 (m/s^2)
-    float R_mono          = 0.25f;     ///< 单目观测噪声方差 (初始值/上界)
-    float R_stereo        = 0.01f;     ///< 双目观测噪声方差 (初始值/上界)
+    float R_mono          = 0.003f;    ///< 单目观测噪声基值 R(z)=R_mono*z², 实测σ/z≈3-5%
+    float R_stereo        = 0.020f;    ///< 双目观测噪声基值 R(z)=R_stereo*z², σ≈单目2.5倍(方差≈6倍)
 
     // 跟踪管理
     int   lost_predict_frames = 5;     ///< 丢失后纯预测帧数
@@ -50,7 +50,7 @@ struct HybridDepthConfig {
 
     // IVW 融合权重 (与 Kalman R 分离)
     float ivw_R_mono   = 0.004f;   ///< IVW 单目噪声方差 (σ≈0.063m)
-    float ivw_R_stereo = 0.004f;   ///< IVW 双目噪声方差 (σ≈0.063m)
+    float ivw_R_stereo = 0.025f;   ///< IVW 双目噪声方差 (实测方差≈单目6倍)
 };
 
 /**
@@ -166,7 +166,7 @@ private:
     int next_track_id_ = 0;
 
     // 自适应偏差校正: EMA 跟踪 zs/zm 比例
-    float stereo_bias_ = 1.0f;       ///< 当前 EMA 偏差比 (zs/zm)
+    float stereo_bias_ = 0.95f;      ///< 校准初始值 (3-5m实测 zs/zm ≈ 0.95)
 
     // 内部方法
     float monoDepth(const Detection& det) const;

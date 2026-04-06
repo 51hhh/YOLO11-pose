@@ -8,8 +8,8 @@
 camera:
   left_index: 0
   right_index: 1
-  serial_left: ""
-  serial_right: ""
+  serial_left: "00219471413"
+  serial_right: "00D39342665"
   exposure_us: 9867.0
   gain_db: 11.9906
   auto_exposure: false        # 关闭自动曝光, 确认手动基线
@@ -49,13 +49,13 @@ detector:
   input_size: 640
   input_format: "bgr"
   use_dla: false
-  confidence_threshold: 0.3
+  confidence_threshold: 0.15
   nms_threshold: 0.4
   max_detections: 10
 
 stereo:
   strategy: "roi_only"
-  max_disparity: 256
+  max_disparity: 512
   window_size: 5
   quality: 6
 
@@ -63,6 +63,7 @@ fusion:
   min_depth: 0.3
   max_depth: 15.0
   baseline_mm: 326.8
+  object_diameter: 0.200
 
 performance:
   pwm_frequency: 100.0

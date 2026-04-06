@@ -316,15 +316,19 @@ int main(int argc, char* argv[]) {
             for (size_t i = 0; i < results.size(); ++i) {
                 const auto& obj = results[i];
                 float speed = std::sqrt(obj.vx*obj.vx + obj.vy*obj.vy + obj.vz*obj.vz);
+                const char* method_str = obj.depth_method == 0 ? "M" :
+                                         obj.depth_method == 1 ? "S" : "F";
                 if (i < preds.size() && preds[i].valid) {
-                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m |v|=%.1fm/s → land(%.2f,%.2f) in %.2fs",
+                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m [%s zm=%.2f zs=%.2f] |v|=%.1fm/s → land(%.2f,%.2f) in %.2fs",
                              frame_id, obj.track_id,
-                             obj.x, obj.y, obj.z, speed,
+                             obj.x, obj.y, obj.z, method_str,
+                             obj.z_mono, obj.z_stereo, speed,
                              preds[i].x, preds[i].y, preds[i].time_to_land);
                 } else {
-                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m |v|=%.1fm/s conf=%.2f",
+                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m [%s zm=%.2f zs=%.2f] |v|=%.1fm/s conf=%.2f",
                              frame_id, obj.track_id,
-                             obj.x, obj.y, obj.z, speed,
+                             obj.x, obj.y, obj.z, method_str,
+                             obj.z_mono, obj.z_stereo, speed,
                              obj.confidence);
                 }
             }
@@ -497,16 +501,25 @@ int main(int argc, char* argv[]) {
                     cv::putText(frame, label, cv::Point(x1, y1 - 8),
                                 cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
 
-                    // 3D 坐标 + 速度文本
+                    // 3D 坐标 + 速度 + 原始深度
                     if (i < results.size() && results[i].z > 0) {
                         const auto& r = results[i];
                         float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
-                        char pos[128];
-                        snprintf(pos, sizeof(pos), "(%.1f,%.1f,%.1f) v=%.1fm/s",
+                        char pos[160];
+                        snprintf(pos, sizeof(pos), "X=%.3f Y=%.3f Z=%.3f |v|=%.1f",
                                  r.x, r.y, r.z, speed);
                         cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
                                     cv::FONT_HERSHEY_SIMPLEX, 0.5,
                                     cv::Scalar(255, 200, 0), 1);
+                        char depth_info[160];
+                        const char* mstr = r.depth_method == 0 ? "M" :
+                                           r.depth_method == 1 ? "S" : "B";
+                        snprintf(depth_info, sizeof(depth_info),
+                                 "zm=%.3f zs=%.3f [%s]",
+                                 r.z_mono, r.z_stereo, mstr);
+                        cv::putText(frame, depth_info, cv::Point(x1, y1 + bh + 40),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                    cv::Scalar(0, 255, 255), 1);
 
                         // 落点预测叠加
                         if (i < cur_preds.size() && cur_preds[i].valid) {
@@ -517,7 +530,7 @@ int main(int argc, char* argv[]) {
                                      p.x, p.y, p.time_to_land,
                                      p.method == 0 ? "B" : "P");
                             cv::putText(frame, pred_text,
-                                        cv::Point(x1, y1 + bh + 40),
+                                        cv::Point(x1, y1 + bh + 60),
                                         cv::FONT_HERSHEY_SIMPLEX, 0.5,
                                         cv::Scalar(0, 100, 255), 2);
                         }

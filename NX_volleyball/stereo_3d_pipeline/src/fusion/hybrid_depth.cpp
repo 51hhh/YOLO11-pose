@@ -177,13 +177,22 @@ float HybridDepthEstimator::monoDepth(const Detection& det) const {
 }
 
 float HybridDepthEstimator::getObsNoise(float z, int method) const {
-    if (method == 0) return config_.R_mono;
-    if (method == 1) return config_.R_stereo;
-    // blend: 线性插值 (R_mono/R_stereo 用作调权参数而非真实方差)
+    // 距离自适应: R(z) = R_base × max(1, z²)
+    float z2 = std::max(1.0f, z * z);
+    float R_m = config_.R_mono * z2;
+    float R_s = config_.R_stereo * z2;
+    if (method == 0) return R_m;
+    if (method == 1) return R_s;
+    // blend: 使用与IVW相同的权重推导混合方差  Var(z_blend) = f_m²R_m + f_s²R_s
     float lo = config_.stereo_min_z;
     float hi = config_.mono_max_z;
-    float alpha = std::max(0.0f, std::min(1.0f, (hi - z) / (hi - lo)));
-    return alpha * config_.R_mono + (1.0f - alpha) * config_.R_stereo;
+    float blend = std::max(0.0f, std::min(1.0f, (z - lo) / (hi - lo)));
+    float w_m = 1.0f / config_.ivw_R_mono;
+    float w_s = blend / config_.ivw_R_stereo;
+    float w_total = w_m + w_s;
+    float f_m = w_m / w_total;
+    float f_s = w_s / w_total;
+    return f_m * f_m * R_m + f_s * f_s * R_s;
 }
 
 // ============================================================
@@ -432,7 +441,7 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
 void HybridDepthEstimator::reset() {
     tracks_.clear();
     next_track_id_ = 0;
-    stereo_bias_ = 1.0f;
+    stereo_bias_ = 0.95f;
 }
 
 int HybridDepthEstimator::activeTrackCount() const {
