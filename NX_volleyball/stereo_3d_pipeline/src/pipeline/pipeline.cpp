@@ -105,35 +105,26 @@ bool Pipeline::init(const PipelineConfig& config) {
         // VIC flag needed for VIC-backend remap
         uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_PVA | VPI_BACKEND_VIC | VPI_BACKEND_CPU;
 
-        // 原始图像 → 使用 raw_width x raw_height (相机原始分辨率)
+        // 原始图像 → 使用 camera.width x camera.height (相机原始分辨率)
         // BGR 模式: BayerRG8 格式 (用于 ConvertImageFormat debayer)
         // Gray 模式: U8 格式 (直接 remap, 与旧行为一致)
         const VPIImageFormat rawFmt = (config_.detector_input_format == "bgr")
             ? VPI_MAKE_RAW_IMAGE_FORMAT_ABBREV(BAYER_RGGB, PL, UNSIGNED, X000, 1, X8)
             : VPI_IMAGE_FORMAT_U8;
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              rawFmt, flags, &slots_[i].rawL);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawL create failed (err=%d)", (int)err); return false; }
 
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              rawFmt, flags, &slots_[i].rawR);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawR create failed (err=%d)", (int)err); return false; }
 
-        // 校正后图像 → 使用 rect_width x rect_height
-        err = vpiImageCreate(config_.rect_width, config_.rect_height,
-                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectL);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectL create failed"); return false; }
-
-        err = vpiImageCreate(config_.rect_width, config_.rect_height,
-                             VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectR);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectR create failed"); return false; }
-
         // --- Color pipeline images ---
         // Debayer 输出: raw res BGR
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_L);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_L create failed"); return false; }
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_R);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_R create failed"); return false; }
         // 校正后 BGR (检测用)
@@ -189,56 +180,44 @@ bool Pipeline::init(const PipelineConfig& config) {
         // 创建 NV12 缓冲 (用于 U8 → NV12 转换 + TNR 处理)
         // 使用 raw 分辨率, TNR 在校正前执行
         uint64_t nv12_flags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU;
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12L_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12R_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 R create failed"); return false; }
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12L_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.raw_width, config_.raw_height,
+        err = vpiImageCreate(config_.camera.width, config_.camera.height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12R_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 R create failed"); return false; }
 
         // 创建 TNR payload
         err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.raw_width, config_.raw_height,
+                  config_.camera.width, config_.camera.height,
                   VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadL_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload L create failed"); return false; }
         err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.raw_width, config_.raw_height,
+                  config_.camera.width, config_.camera.height,
                   VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadR_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload R create failed"); return false; }
 
         tnrFirstFrame_ = true;
-        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.raw_width, config_.raw_height);
+        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.camera.width, config_.camera.height);
     }
 
     // 7. 初始化海康双目相机
 #ifdef HIK_CAMERA_ENABLED
     LOG_INFO("Opening dual cameras...");
     camera_ = std::make_unique<HikvisionCamera>();
-    CameraConfig cam_cfg;
-    cam_cfg.camera_index_left  = config_.cam_left_index;
-    cam_cfg.camera_index_right = config_.cam_right_index;
-    cam_cfg.serial_left  = config_.cam_left_serial;
-    cam_cfg.serial_right = config_.cam_right_serial;
-    cam_cfg.exposure_us  = config_.exposure_us;
-    cam_cfg.gain_db      = config_.gain_db;
-    cam_cfg.use_trigger  = config_.use_trigger;
-    cam_cfg.trigger_source     = config_.trigger_source;
-    cam_cfg.trigger_activation = config_.trigger_activation;
-    cam_cfg.width  = config_.raw_width;
-    cam_cfg.height = config_.raw_height;
-    if (!camera_->open(cam_cfg)) {
+    if (!camera_->open(config_.camera)) {
         LOG_WARN("Failed to open cameras - running in dry-run mode (synthetic frames)");
         camera_.reset();  // 释放相机, 标记为 dry-run
     }
 
     // 初始化 PWM 触发器 (硬件触发模式时)
-    if (camera_ && config_.use_trigger) {
+    if (camera_ && config_.camera.use_trigger) {
         pwm_trigger_ = std::make_unique<PWMTrigger>(
             config_.trigger_chip, config_.trigger_line, config_.trigger_freq_hz);
         LOG_INFO("PWM trigger configured: chip=%s line=%d freq=%dHz",
@@ -299,20 +278,14 @@ bool Pipeline::init(const PipelineConfig& config) {
         ROIMatchConfig roi_cfg;
         roi_cfg.maxDisparity = config_.max_disparity;
         roi_cfg.patchRadius  = 5;
-        roi_cfg.minDepth     = config_.min_depth;
-        roi_cfg.maxDepth     = config_.max_depth;
+        roi_cfg.minDepth     = config_.depth.min_depth;
+        roi_cfg.maxDepth     = config_.depth.max_depth;
         roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
 
         // 初始化混合深度估计 (单目+双目+Kalman)
         hybrid_depth_ = std::make_unique<HybridDepthEstimator>();
-        HybridDepthConfig hd_cfg;
-        hd_cfg.object_diameter = 0.22f;    // 排球直径
-        hd_cfg.bbox_scale      = 0.95f;
-        hd_cfg.mono_max_z      = 5.0f;
-        hd_cfg.stereo_min_z    = 3.0f;
-        hd_cfg.dt              = 1.0f / config_.trigger_freq_hz;
-        hd_cfg.min_depth       = config_.min_depth;
-        hd_cfg.max_depth       = config_.max_depth;
+        auto hd_cfg = config_.depth;
+        hd_cfg.dt = 1.0f / config_.trigger_freq_hz;
         hybrid_depth_->init(focal, calibration_->getBaseline(), cx, cy, hd_cfg);
         LOG_INFO("  Hybrid Depth: mono(<%.0fm) + stereo(>%.0fm) + Kalman @ %.0fHz",
                  hd_cfg.mono_max_z, hd_cfg.stereo_min_z, 1.0f / hd_cfg.dt);
@@ -332,7 +305,7 @@ bool Pipeline::init(const PipelineConfig& config) {
         fusion_ = std::make_unique<Coordinate3D>();
         fusion_->init(calibration_->getProjectionLeft(),
                       calibration_->getBaseline(),
-                      config_.min_depth, config_.max_depth);
+                      config_.depth.min_depth, config_.depth.max_depth);
     }
 
     const char* strategyStr = (config_.disparity_strategy == DisparityStrategy::ROI_ONLY)
@@ -341,7 +314,7 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     LOG_INFO("========================================");
     LOG_INFO("Pipeline initialized successfully");
-    LOG_INFO("  Raw resolution:  %dx%d", config_.raw_width, config_.raw_height);
+    LOG_INFO("  Raw resolution:  %dx%d", config_.camera.width, config_.camera.height);
     LOG_INFO("  Rect resolution: %dx%d", config_.rect_width, config_.rect_height);
     LOG_INFO("  Trigger: %d Hz", config_.trigger_freq_hz);
     LOG_INFO("  Detect: %s (DLA=%d)", config_.engine_file.c_str(), config_.use_dla);
@@ -747,8 +720,8 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         //       使用 init() 时缓存的 CUDA 指针, 跳过 VPI lock/unlock (~2.4ms 优化)
         //       Tegra 统一内存: HOST 写入 (grab) 直接对 CUDA 可见, 无需显式同步
         {
-            int rw = config_.raw_width;
-            int rh = config_.raw_height;
+            int rw = config_.camera.width;
+            int rh = config_.camera.height;
 
             launchBayerToBGR8(
                 static_cast<const unsigned char*>(slot.rawL_gpu.data),
@@ -833,7 +806,12 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     VPIImage detectImg = (config_.detector_input_format == "bgr")
                          ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
     VPIImageData imgData;
-    vpiImageLockData(detectImg, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
+    VPIStatus st = vpiImageLockData(detectImg, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
+    if (st != VPI_SUCCESS) {
+        LOG_WARN("stage1_detect: vpiImageLockData failed (%d)", (int)st);
+        NVTX_RANGE_POP();
+        return;
+    }
 
     void* gpu_ptr = imgData.buffer.pitch.planes[0].data;
     int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
@@ -887,8 +865,13 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
 
     // 获取视差图 GPU 指针
     VPIImageData dispData;
-    vpiImageLockData(slot.disparityMap, VPI_LOCK_READ,
+    VPIStatus st = vpiImageLockData(slot.disparityMap, VPI_LOCK_READ,
                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &dispData);
+    if (st != VPI_SUCCESS) {
+        LOG_WARN("stage3_fuse: vpiImageLockData failed (%d)", (int)st);
+        NVTX_RANGE_POP();
+        return;
+    }
 
     const int16_t* disp_ptr = static_cast<const int16_t*>(dispData.buffer.pitch.planes[0].data);
     int disp_pitch = dispData.buffer.pitch.planes[0].pitchBytes;
@@ -930,8 +913,15 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 
     // 2. 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
     VPIImageData imgDataL, imgDataR;
-    vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-    vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+    VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+    VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+    if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
+        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
+        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+        NVTX_RANGE_POP();
+        return;
+    }
 
     const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
     int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;

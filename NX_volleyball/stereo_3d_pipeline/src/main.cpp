@@ -6,6 +6,8 @@
  */
 
 #include "pipeline/pipeline.h"
+#include "fusion/trajectory_predictor.h"
+#include "utils/trajectory_recorder.h"
 #include "utils/logger.h"
 
 #include <vpi/Image.h>
@@ -14,6 +16,7 @@
 #include <opencv2/opencv.hpp>
 #include <csignal>
 #include <cstdio>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -33,6 +36,29 @@ static void signalHandler(int sig) {
     g_shutdown.store(true);
 }
 
+// ==================== 点击测距 ====================
+
+struct ClickMeasureState {
+    std::mutex mtx;
+    int click_u = -1;  ///< 点击像素 u
+    int click_v = -1;  ///< 点击像素 v
+    float click_x = 0, click_y = 0, click_z = 0;  ///< 3D 坐标
+    bool has_click = false;
+    int display_frames = 0;  ///< 剩余显示帧数
+};
+
+static ClickMeasureState g_click;
+
+static void mouseCallback(int event, int x, int y, int /*flags*/, void*) {
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        std::lock_guard<std::mutex> lock(g_click.mtx);
+        g_click.click_u = x;
+        g_click.click_v = y;
+        g_click.has_click = true;
+        g_click.display_frames = 150;  // 显示约 1.5s @ 100fps
+    }
+}
+
 // ==================== 配置加载 ====================
 
 static stereo3d::PipelineConfig loadConfig(const std::string& path) {
@@ -40,21 +66,28 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
 
     YAML::Node root = YAML::LoadFile(path);
 
-    // Camera
+    // Camera → 直接写入内嵌 CameraConfig
     if (auto cam = root["camera"]) {
-        if (cam["serial_left"])       cfg.cam_left_serial  = cam["serial_left"].as<std::string>();
-        if (cam["serial_right"])      cfg.cam_right_serial = cam["serial_right"].as<std::string>();
-        if (cam["left_index"])        cfg.cam_left_index   = cam["left_index"].as<int>();
-        if (cam["right_index"])       cfg.cam_right_index  = cam["right_index"].as<int>();
-        if (cam["exposure_us"])       cfg.exposure_us = cam["exposure_us"].as<float>();
-        if (cam["gain_db"])           cfg.gain_db = cam["gain_db"].as<float>();
-        if (cam["use_trigger"])       cfg.use_trigger = cam["use_trigger"].as<bool>();
-        if (cam["trigger_source"])    cfg.trigger_source = cam["trigger_source"].as<std::string>();
-        if (cam["trigger_activation"]) cfg.trigger_activation = cam["trigger_activation"].as<std::string>();
+        if (cam["serial_left"])       cfg.camera.serial_left  = cam["serial_left"].as<std::string>();
+        if (cam["serial_right"])      cfg.camera.serial_right = cam["serial_right"].as<std::string>();
+        if (cam["left_index"])        cfg.camera.camera_index_left  = cam["left_index"].as<int>();
+        if (cam["right_index"])       cfg.camera.camera_index_right = cam["right_index"].as<int>();
+        if (cam["exposure_us"])       cfg.camera.exposure_us = cam["exposure_us"].as<float>();
+        if (cam["gain_db"])           cfg.camera.gain_db = cam["gain_db"].as<float>();
+        if (cam["auto_exposure"])     cfg.camera.auto_exposure = cam["auto_exposure"].as<bool>();
+        if (cam["auto_gain"])         cfg.camera.auto_gain = cam["auto_gain"].as<bool>();
+        if (cam["ae_upper_us"])       cfg.camera.ae_upper_us = cam["ae_upper_us"].as<float>();
+        if (cam["ae_lower_us"])       cfg.camera.ae_lower_us = cam["ae_lower_us"].as<float>();
+        if (cam["ag_upper_db"])       cfg.camera.ag_upper_db = cam["ag_upper_db"].as<float>();
+        if (cam["gamma_enable"])      cfg.camera.gamma_enable = cam["gamma_enable"].as<bool>();
+        if (cam["gamma_value"])       cfg.camera.gamma_value = cam["gamma_value"].as<float>();
+        if (cam["use_trigger"])       cfg.camera.use_trigger = cam["use_trigger"].as<bool>();
+        if (cam["trigger_source"])    cfg.camera.trigger_source = cam["trigger_source"].as<std::string>();
+        if (cam["trigger_activation"]) cfg.camera.trigger_activation = cam["trigger_activation"].as<std::string>();
         if (cam["trigger_chip"])       cfg.trigger_chip = cam["trigger_chip"].as<std::string>();
         if (cam["trigger_line"])       cfg.trigger_line = cam["trigger_line"].as<int>();
-        if (cam["width"])             cfg.raw_width  = cam["width"].as<int>();
-        if (cam["height"])            cfg.raw_height = cam["height"].as<int>();
+        if (cam["width"])             cfg.camera.width  = cam["width"].as<int>();
+        if (cam["height"])            cfg.camera.height = cam["height"].as<int>();
     }
 
     // Calibration
@@ -128,9 +161,14 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
     }
 
     // Fusion
+    // Fusion → 直接写入内嵌 HybridDepthConfig
     if (auto fus = root["fusion"]) {
-        if (fus["min_depth"]) cfg.min_depth = fus["min_depth"].as<float>();
-        if (fus["max_depth"]) cfg.max_depth = fus["max_depth"].as<float>();
+        if (fus["min_depth"])       cfg.depth.min_depth       = fus["min_depth"].as<float>();
+        if (fus["max_depth"])       cfg.depth.max_depth       = fus["max_depth"].as<float>();
+        if (fus["object_diameter"]) cfg.depth.object_diameter = fus["object_diameter"].as<float>();
+        if (fus["bbox_scale"])      cfg.depth.bbox_scale      = fus["bbox_scale"].as<float>();
+        if (fus["mono_max_z"])      cfg.depth.mono_max_z      = fus["mono_max_z"].as<float>();
+        if (fus["stereo_min_z"])    cfg.depth.stereo_min_z    = fus["stereo_min_z"].as<float>();
     }
 
     // Performance
@@ -140,6 +178,43 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
     }
 
     return cfg;
+}
+
+static stereo3d::TrajectoryPredictorConfig loadPredictorConfig(const std::string& path) {
+    stereo3d::TrajectoryPredictorConfig tcfg;
+    try {
+        YAML::Node root = YAML::LoadFile(path);
+        if (auto pred = root["prediction"]) {
+            if (pred["gravity"])          tcfg.gravity       = pred["gravity"].as<float>();
+            if (pred["air_density"])      tcfg.air_density   = pred["air_density"].as<float>();
+            if (pred["ball_mass"])        tcfg.ball_mass     = pred["ball_mass"].as<float>();
+            if (pred["ball_radius"])      tcfg.ball_radius   = pred["ball_radius"].as<float>();
+            if (pred["drag_coeff"])       tcfg.drag_coeff    = pred["drag_coeff"].as<float>();
+            if (pred["ground_y"])         tcfg.ground_y      = pred["ground_y"].as<float>();
+            if (pred["max_predict_time"]) tcfg.max_predict_time = pred["max_predict_time"].as<float>();
+            if (pred["rk4_dt"])           tcfg.rk4_dt        = pred["rk4_dt"].as<float>();
+            if (pred["poly_min_frames"])  tcfg.poly_min_frames = pred["poly_min_frames"].as<int>();
+            if (pred["history_max"])      tcfg.history_max   = pred["history_max"].as<int>();
+            if (pred["min_speed"])        tcfg.min_speed_for_predict = pred["min_speed"].as<float>();
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("prediction config: %s, using defaults", e.what());
+    } catch (...) { LOG_WARN("prediction config: unknown error, using defaults"); }
+    return tcfg;
+}
+
+static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& path) {
+    stereo3d::TrajectoryRecorderConfig rcfg;
+    try {
+        YAML::Node root = YAML::LoadFile(path);
+        if (auto rec = root["recording"]) {
+            if (rec["enabled"])     rcfg.enabled     = rec["enabled"].as<bool>();
+            if (rec["output_path"]) rcfg.output_path = rec["output_path"].as<std::string>();
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("recording config: %s, using defaults", e.what());
+    } catch (...) { LOG_WARN("recording config: unknown error, using defaults"); }
+    return rcfg;
 }
 
 // ==================== main ====================
@@ -202,13 +277,56 @@ int main(int argc, char* argv[]) {
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
 
+    // 初始化落点预测 + 轨迹记录
+    stereo3d::TrajectoryPredictor predictor;
+    stereo3d::TrajectoryRecorder recorder;
+    predictor.init(loadPredictorConfig(config_path));
+    recorder.init(loadRecorderConfig(config_path));
+
+    // 预测帧间隔 (dt) 需要实测, 这里用 FPS 倒数
+    std::chrono::steady_clock::time_point last_result_time{};
+    std::mutex pred_mutex;
+    std::vector<stereo3d::LandingPrediction> latest_preds;
+
     pipeline.setResultCallback(
-        [](int frame_id, const std::vector<stereo3d::Object3D>& results) {
+        [&](int frame_id, const std::vector<stereo3d::Object3D>& results) {
+            // 计算 dt
+            auto now = std::chrono::steady_clock::now();
+            double dt = 0.01; // 默认 100fps
+            if (last_result_time.time_since_epoch().count() > 0) {
+                dt = std::chrono::duration<double>(now - last_result_time).count();
+                dt = std::clamp(dt, 0.001, 0.1);
+            }
+            last_result_time = now;
+
+            // 预测落点
+            auto preds = predictor.update(results, dt);
+            {
+                std::lock_guard<std::mutex> lock(pred_mutex);
+                latest_preds = preds;
+            }
+
+            // 记录轨迹
+            double timestamp = std::chrono::duration<double>(
+                now.time_since_epoch()).count();
+            recorder.record(frame_id, timestamp, results, preds);
+
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;
-            for (const auto& obj : results) {
-                LOG_INFO("[Frame %d] Ball: (%.2f, %.2f, %.2f) m, conf=%.2f",
-                         frame_id, obj.x, obj.y, obj.z, obj.confidence);
+            for (size_t i = 0; i < results.size(); ++i) {
+                const auto& obj = results[i];
+                float speed = std::sqrt(obj.vx*obj.vx + obj.vy*obj.vy + obj.vz*obj.vz);
+                if (i < preds.size() && preds[i].valid) {
+                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m |v|=%.1fm/s → land(%.2f,%.2f) in %.2fs",
+                             frame_id, obj.track_id,
+                             obj.x, obj.y, obj.z, speed,
+                             preds[i].x, preds[i].y, preds[i].time_to_land);
+                } else {
+                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m |v|=%.1fm/s conf=%.2f",
+                             frame_id, obj.track_id,
+                             obj.x, obj.y, obj.z, speed,
+                             obj.confidence);
+                }
             }
         });
 
@@ -258,7 +376,7 @@ int main(int argc, char* argv[]) {
                     CV_16SC2, vis_map1, vis_map2);
                 has_color_remap = true;
                 LOG_INFO("Color remap built for visualization (%dx%d -> %dx%d)",
-                         cfg.raw_width, cfg.raw_height, cfg.rect_width, cfg.rect_height);
+                         cfg.camera.width, cfg.camera.height, cfg.rect_width, cfg.rect_height);
             }
         } catch (const std::exception& e) {
             LOG_WARN("Failed to build color remap: %s (visualization will be grayscale)", e.what());
@@ -331,7 +449,34 @@ int main(int argc, char* argv[]) {
                     vpiImageUnlock(rectL);
                 }
 
+                // 处理点击测距: 找最近的检测目标
+                {
+                    std::lock_guard<std::mutex> clik(g_click.mtx);
+                    if (g_click.has_click) {
+                        g_click.has_click = false;
+                        g_click.click_z = 0;
+                        float min_dist = 1e9f;
+                        for (size_t i = 0; i < detections.size() && i < results.size(); ++i) {
+                            float dx = detections[i].cx - g_click.click_u;
+                            float dy = detections[i].cy - g_click.click_v;
+                            float dist = dx*dx + dy*dy;
+                            if (dist < min_dist && results[i].z > 0) {
+                                min_dist = dist;
+                                g_click.click_x = results[i].x;
+                                g_click.click_y = results[i].y;
+                                g_click.click_z = results[i].z;
+                            }
+                        }
+                    }
+                }
+
                 // 绘制检测框 + 距离
+                std::vector<stereo3d::LandingPrediction> cur_preds;
+                {
+                    std::lock_guard<std::mutex> plock(pred_mutex);
+                    cur_preds = latest_preds;
+                }
+
                 for (size_t i = 0; i < detections.size(); ++i) {
                     const auto& d = detections[i];
                     int x1 = static_cast<int>(d.cx - d.width / 2);
@@ -352,20 +497,70 @@ int main(int argc, char* argv[]) {
                     cv::putText(frame, label, cv::Point(x1, y1 - 8),
                                 cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
 
-                    // 3D 坐标文本
+                    // 3D 坐标 + 速度文本
                     if (i < results.size() && results[i].z > 0) {
+                        const auto& r = results[i];
+                        float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
                         char pos[128];
-                        snprintf(pos, sizeof(pos), "(%.1f, %.1f, %.1f)",
-                                 results[i].x, results[i].y, results[i].z);
+                        snprintf(pos, sizeof(pos), "(%.1f,%.1f,%.1f) v=%.1fm/s",
+                                 r.x, r.y, r.z, speed);
                         cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
                                     cv::FONT_HERSHEY_SIMPLEX, 0.5,
                                     cv::Scalar(255, 200, 0), 1);
+
+                        // 落点预测叠加
+                        if (i < cur_preds.size() && cur_preds[i].valid) {
+                            const auto& p = cur_preds[i];
+                            char pred_text[128];
+                            snprintf(pred_text, sizeof(pred_text),
+                                     "LAND(%.1f,%.1f) %.2fs %s",
+                                     p.x, p.y, p.time_to_land,
+                                     p.method == 0 ? "B" : "P");
+                            cv::putText(frame, pred_text,
+                                        cv::Point(x1, y1 + bh + 40),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                        cv::Scalar(0, 100, 255), 2);
+                        }
                     }
                 }
 
-                // FPS + 帧号
-                char hud[64];
-                snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d", fps, frame_id);
+                // 点击测距显示
+                {
+                    std::lock_guard<std::mutex> clik(g_click.mtx);
+                    if (g_click.display_frames > 0) {
+                        // 十字线
+                        cv::drawMarker(frame,
+                            cv::Point(g_click.click_u, g_click.click_v),
+                            cv::Scalar(0, 255, 255), cv::MARKER_CROSS, 20, 2);
+                        // 坐标文本
+                        if (g_click.click_z > 0) {
+                            char click_text[128];
+                            snprintf(click_text, sizeof(click_text),
+                                     "(%.2f, %.2f, %.2f)m",
+                                     g_click.click_x, g_click.click_y, g_click.click_z);
+                            cv::putText(frame, click_text,
+                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                                        cv::Scalar(0, 255, 255), 2);
+                        } else {
+                            cv::putText(frame, "No depth",
+                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
+                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                                        cv::Scalar(0, 0, 255), 2);
+                        }
+                        g_click.display_frames--;
+                    }
+                }
+
+                // FPS + 帧号 + 记录状态
+                char hud[128];
+                int rec_frames = recorder.frameCount();
+                if (rec_frames > 0) {
+                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d  REC: %d",
+                             fps, frame_id, rec_frames);
+                } else {
+                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d", fps, frame_id);
+                }
                 cv::putText(frame, hud, cv::Point(10, 30),
                             cv::FONT_HERSHEY_SIMPLEX, 0.8,
                             cv::Scalar(0, 200, 255), 2);
@@ -380,10 +575,22 @@ int main(int argc, char* argv[]) {
     pipeline.start();
 
     // 主线程等待退出信号 / 可视化显示
+    // 计算显示尺寸: 保持原始 4:3 比例 (raw_width:raw_height)
+    int disp_w = cfg.rect_width;
+    int disp_h = cfg.rect_height;
+    if (cfg.camera.width > 0 && cfg.camera.height > 0) {
+        // 以 rect_height 为基准，按原始宽高比确定宽度
+        disp_w = cfg.rect_height * cfg.camera.width / cfg.camera.height;
+    }
+
     if (enable_display) {
-        LOG_INFO("Visualization enabled - press ESC to quit");
+        LOG_INFO("Visualization enabled - press ESC to quit, click for depth");
+        LOG_INFO("Display: %dx%d (aspect %d:%d)", disp_w, disp_h,
+                 cfg.camera.width, cfg.camera.height);
         try {
-            cv::namedWindow("Pipeline", cv::WINDOW_AUTOSIZE);
+            cv::namedWindow("Pipeline", cv::WINDOW_NORMAL);
+            cv::resizeWindow("Pipeline", disp_w, disp_h);
+            cv::setMouseCallback("Pipeline", mouseCallback, nullptr);
         } catch (const cv::Exception& e) {
             LOG_WARN("Failed to create visualization window (%s), fallback to headless", e.what());
             enable_display = false;
@@ -413,6 +620,7 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO("Shutting down...");
     pipeline.stop();
+    recorder.close();
     pipeline.printPerfReport();
 
     LOG_INFO("Done.");

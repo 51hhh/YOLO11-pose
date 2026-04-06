@@ -21,10 +21,9 @@
 
 #include "frame_slot.h"
 #include "sync.h"
-#ifdef HIK_CAMERA_ENABLED
-#include "../capture/hikvision_camera.h"
-#else
-namespace stereo3d { class HikvisionCamera; struct CameraConfig; }
+#include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
+#ifndef HIK_CAMERA_ENABLED
+namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #endif
 #include "../calibration/pwm_trigger.h"
 #include "../calibration/stereo_calibration.h"
@@ -65,23 +64,15 @@ enum class DisparityStrategy {
  * @brief Pipeline 运行时参数
  */
 struct PipelineConfig {
-    // 图像尺寸 (分离原始/校正分辨率)
-    int raw_width   = 1440;    ///< 相机原始分辨率
-    int raw_height  = 1080;
-    int rect_width  = 1280;    ///< 校正后分辨率
+    // 相机配置 (内嵌, 避免重复定义)
+    CameraConfig camera;
+
+    // 校正后分辨率
+    int rect_width  = 1280;
     int rect_height = 720;
     std::string rect_backend = "VIC"; ///< 校正后端: "VIC" (推荐,不占GPU) 或 "CUDA"
 
-    // 相机
-    int cam_left_index  = 0;
-    int cam_right_index = 1;
-    std::string cam_left_serial  = "";
-    std::string cam_right_serial = "";
-    float exposure_us  = 9867.0f;
-    float gain_db      = 11.9906f;
-    bool  use_trigger  = true;
-    std::string trigger_source     = "Line0";
-    std::string trigger_activation = "RisingEdge";
+    // PWM 触发器 (Pipeline 级, 非相机级)
     std::string trigger_chip = "gpiochip2";  ///< GPIO 芯片名 (Orin NX: gpiochip2)
     int trigger_line = 7;                     ///< GPIO 线路号 (Orin NX: line 7)
     int trigger_freq_hz = 100;
@@ -109,9 +100,8 @@ struct PipelineConfig {
     int stereo_quality = 6;
     DisparityStrategy disparity_strategy = DisparityStrategy::FULL_FRAME;
 
-    // 深度
-    float min_depth = 0.3f;        ///< 最小深度 (m)
-    float max_depth = 15.0f;       ///< 最大深度 (m)
+    // 深度 (内嵌 HybridDepthConfig, 避免重复)
+    HybridDepthConfig depth;
 
     // 性能
     int stats_interval = 100;      ///< 每 N 帧打印统计
@@ -121,9 +111,6 @@ struct PipelineConfig {
     VPITNRPreset tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
     float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
     VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
-
-    // 色彩管线 (纯 GPU)
-    bool use_color_pipeline = false;       ///< 启用彩色管线 (BayerRG8 → BGR → 校正)
 };
 
 /**

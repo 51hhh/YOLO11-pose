@@ -35,6 +35,9 @@ NX_volleyball/stereo_3d_pipeline/dl_models/*.engine
 NX_volleyball/stereo_3d_pipeline/dl_models/*.whl
 NX_volleyball/stereo_3d_pipeline/dl_models/*.tar.gz
 
+# ROS2 旧架构（本地保留作参考）
+NX_volleyball/ros2_ws/
+
 # 编译产物
 NX_volleyball/stereo_3d_pipeline/build/
 

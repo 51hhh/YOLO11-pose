@@ -92,12 +92,31 @@ void HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg) {
     MV_CC_SetEnumValue(handle, "PixelFormat", PixelType_Gvsp_BayerRG8);
 
     // 曝光
-    MV_CC_SetEnumValue(handle, "ExposureAuto", 0);  // Off
-    MV_CC_SetFloatValue(handle, "ExposureTime", cfg.exposure_us);
+    if (cfg.auto_exposure) {
+        MV_CC_SetEnumValue(handle, "ExposureAuto", 2);  // Continuous
+        MV_CC_SetFloatValue(handle, "AutoExposureTimeUpperLimit", cfg.ae_upper_us);
+        MV_CC_SetFloatValue(handle, "AutoExposureTimeLowerLimit", cfg.ae_lower_us);
+    } else {
+        MV_CC_SetEnumValue(handle, "ExposureAuto", 0);  // Off
+        MV_CC_SetFloatValue(handle, "ExposureTime", cfg.exposure_us);
+    }
 
     // 增益
-    MV_CC_SetEnumValue(handle, "GainAuto", 0);  // Off
-    MV_CC_SetFloatValue(handle, "Gain", cfg.gain_db);
+    if (cfg.auto_gain) {
+        MV_CC_SetEnumValue(handle, "GainAuto", 2);  // Continuous
+        MV_CC_SetFloatValue(handle, "AutoGainUpperLimit", cfg.ag_upper_db);
+        MV_CC_SetFloatValue(handle, "AutoGainLowerLimit", 0.0f);
+    } else {
+        MV_CC_SetEnumValue(handle, "GainAuto", 0);  // Off
+        MV_CC_SetFloatValue(handle, "Gain", cfg.gain_db);
+    }
+
+    // Gamma 校正: 压缩高亮区域动态范围
+    if (cfg.gamma_enable) {
+        MV_CC_SetBoolValue(handle, "GammaEnable", true);
+        MV_CC_SetEnumValue(handle, "GammaSelector", 1);  // User
+        MV_CC_SetFloatValue(handle, "Gamma", cfg.gamma_value);
+    }
 
     // 抓帧策略: 使用"最新帧"模式, 避免缓冲区堆积导致左右帧不同步
     // MV_GrabStrategy_OneByOne=0 (FIFO), LatestImagesOnly=1, LatestImages=2
@@ -124,8 +143,11 @@ void HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg) {
         MV_CC_SetEnumValue(handle, "TriggerMode", 0);  // Off
     }
 
-    LOG_INFO("[HikCam] Configured: %dx%d, exp=%.0fus, gain=%.1fdB, trigger=%s",
-             cfg.width, cfg.height, cfg.exposure_us, cfg.gain_db,
+    LOG_INFO("[HikCam] Configured: %dx%d, exp=%s%.0fus, gain=%s%.1fdB, gamma=%s, trigger=%s",
+             cfg.width, cfg.height,
+             cfg.auto_exposure ? "auto/" : "", cfg.exposure_us,
+             cfg.auto_gain ? "auto/" : "", cfg.gain_db,
+             cfg.gamma_enable ? "on" : "off",
              cfg.use_trigger ? cfg.trigger_source.c_str() : "FreeRun");
 }
 
