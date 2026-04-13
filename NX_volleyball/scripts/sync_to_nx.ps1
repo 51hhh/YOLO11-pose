@@ -24,6 +24,7 @@ $dirs = @(
     "$NX_DIR/stereo_3d_pipeline/src/fusion",
     "$NX_DIR/stereo_3d_pipeline/src/pipeline",
     "$NX_DIR/stereo_3d_pipeline/src/utils",
+    "$NX_DIR/stereo_3d_pipeline/src/track",
     "$NX_DIR/stereo_3d_pipeline/src/calibration",
     "$NX_DIR/stereo_3d_pipeline/config",
     "$NX_DIR/stereo_3d_pipeline/scripts",

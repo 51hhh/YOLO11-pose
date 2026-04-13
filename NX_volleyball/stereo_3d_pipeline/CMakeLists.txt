@@ -137,6 +137,8 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth.cpp
   src/fusion/trajectory_predictor.cpp
   src/utils/trajectory_recorder.cpp
+  src/track/nanotrack_trt.cpp
+  src/track/mixformer_trt.cpp
 )
 
 # CUDA 源文件
@@ -146,6 +148,7 @@ set(CUDA_SOURCES
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
+  src/track/crop_resize.cu
 )
 
 # 相机源文件 (可选)

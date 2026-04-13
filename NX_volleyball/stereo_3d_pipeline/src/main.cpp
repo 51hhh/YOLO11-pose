@@ -183,6 +183,17 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["pwm_frequency"])  cfg.trigger_freq_hz = static_cast<int>(perf["pwm_frequency"].as<float>());
     }
 
+    // SOT Tracker (YOLO 帧间填充)
+    if (auto trk = root["tracker"]) {
+        cfg.tracker.enabled = trk["enabled"] ? trk["enabled"].as<bool>() : false;
+        if (trk["type"])            cfg.tracker.type            = trk["type"].as<std::string>();
+        if (trk["engine_path"])     cfg.tracker.engine_path     = trk["engine_path"].as<std::string>();
+        if (trk["head_engine_path"]) cfg.tracker.head_engine_path = trk["head_engine_path"].as<std::string>();
+        if (trk["detect_interval"]) cfg.tracker.detect_interval = trk["detect_interval"].as<int>();
+        if (trk["lost_threshold"])  cfg.tracker.lost_threshold  = trk["lost_threshold"].as<int>();
+        if (trk["min_confidence"])  cfg.tracker.min_confidence  = trk["min_confidence"].as<float>();
+    }
+
     return cfg;
 }
 

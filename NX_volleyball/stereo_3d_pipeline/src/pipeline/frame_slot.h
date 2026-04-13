@@ -29,6 +29,34 @@ struct Detection {
 };
 
 /**
+ * @brief SOT 跟踪结果
+ */
+struct SOTResult {
+    float cx, cy, width, height;
+    float confidence;
+    bool valid;
+    SOTResult() : cx(0), cy(0), width(0), height(0), confidence(0), valid(false) {}
+};
+
+/**
+ * @brief bbox 来源
+ */
+enum class BboxSource {
+    NONE,       ///< 无检测
+    YOLO,       ///< YOLO 检测
+    TRACKER     ///< SOT 补帧
+};
+
+/**
+ * @brief Tracker 状态
+ */
+enum class TrackerState {
+    IDLE,       ///< 无目标
+    TRACKING,   ///< 正常跟踪
+    LOST        ///< 目标丢失，等待 YOLO 重检测
+};
+
+/**
  * @brief 3D 定位结果
  */
 struct Object3D {
@@ -76,6 +104,11 @@ struct FrameSlot {
     // =========== Stage 1: 检测结果 ===========
     std::vector<Detection> detections;    ///< YOLO 检测结果列表
 
+    // =========== SOT Tracker 补帧 ===========
+    SOTResult sot_bbox_result;            ///< SOT tracker 输出
+    BboxSource bbox_source = BboxSource::NONE; ///< 最终 bbox 来源
+    bool is_detect_frame = true;          ///< 是否为 YOLO 检测帧
+
     // =========== Stage 2: 视差图 ===========
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
     VPIImage confidenceMap = nullptr;     ///< 视差置信度图
@@ -97,6 +130,7 @@ struct FrameSlot {
     };
     CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
     CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
+    CachedGPU rectGray_L_gpu;                  ///< 校正灰度左图 CUDA 指针 (SOT tracker 用)
 
     // =========== 生命周期 ===========
 
@@ -141,6 +175,9 @@ struct FrameSlot {
 
         detections.clear();
         results.clear();
+        sot_bbox_result = SOTResult();
+        bbox_source = BboxSource::NONE;
+        is_detect_frame = true;
         frame_id = -1;
     }
 
@@ -150,6 +187,9 @@ struct FrameSlot {
     void reset() {
         detections.clear();
         results.clear();
+        sot_bbox_result = SOTResult();
+        bbox_source = BboxSource::NONE;
+        is_detect_frame = true;
         frame_id = -1;
         grab_failed = false;
     }

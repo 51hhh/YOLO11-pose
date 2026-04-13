@@ -18,6 +18,8 @@
  */
 
 #include "pipeline.h"
+#include "../track/nanotrack_trt.h"
+#include "../track/mixformer_trt.h"
 #include "../utils/logger.h"
 #include <vpi/algo/ConvertImageFormat.h>
 #include <algorithm>
@@ -262,6 +264,41 @@ bool Pipeline::init(const PipelineConfig& config) {
             LOG_WARN("Failed to initialize GPU Detector - falling back to dual DLA");
             detector2_.reset();
             config_.triple_backend = false;
+        }
+    }
+
+    // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
+    if (config_.tracker.enabled) {
+        const auto& tcfg = config_.tracker;
+        if (tcfg.type == "nanotrack") {
+            tracker_ = std::make_unique<NanoTrackTRT>();
+        } else if (tcfg.type == "mixformer") {
+            tracker_ = std::make_unique<MixFormerTRT>();
+        } else {
+            LOG_ERROR("Unknown tracker type: %s (supported: nanotrack, mixformer)", tcfg.type.c_str());
+            return false;
+        }
+        if (!tracker_->init(tcfg.engine_path, tcfg.head_engine_path, streams_.cudaStreamGPU)) {
+            LOG_ERROR("Failed to initialize SOT tracker (%s)", tcfg.type.c_str());
+            return false;
+        }
+        tracker_state_ = TrackerState::IDLE;
+        tracker_lost_count_ = 0;
+        effective_detect_interval_ = tcfg.detect_interval;
+        LOG_INFO("SOT Tracker initialized: %s (interval=%d, lost_thr=%d)",
+                 tcfg.type.c_str(), tcfg.detect_interval, tcfg.lost_threshold);
+
+        // 缓存 rectGray_vpiL 的 CUDA 指针 (Tegra 统一内存: 指针固定)
+        // 避免 tracker 路径每帧 VPI lock/unlock (~0.6ms)
+        for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
+            if (slots_[i].rectGray_vpiL) {
+                VPIImageData d;
+                vpiImageLockData(slots_[i].rectGray_vpiL, VPI_LOCK_READ,
+                                 VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                slots_[i].rectGray_L_gpu.data = d.buffer.pitch.planes[0].data;
+                slots_[i].rectGray_L_gpu.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
+                vpiImageUnlock(slots_[i].rectGray_vpiL);
+            }
         }
     }
 
@@ -969,6 +1006,165 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 }
 
 // ===================================================================
+// SOT Tracker 辅助: 检测帧后刷新 tracker template
+// ===================================================================
+void Pipeline::tracker_handle_detect_result(FrameSlot& slot) {
+    if (!tracker_) return;
+
+    // 从 YOLO detections 中选最高置信度目标
+    if (slot.detections.empty()) {
+        tracker_lost_count_++;
+        if (tracker_lost_count_ >= config_.tracker.lost_threshold) {
+            if (tracker_state_ != TrackerState::IDLE) {
+                tracker_state_ = TrackerState::LOST;
+                tracker_->reset();
+                tracker_state_ = TrackerState::IDLE;
+                LOG_INFO("[Tracker] LOST → IDLE (no YOLO det for %d frames)", tracker_lost_count_);
+            }
+        }
+        return;
+    }
+
+    // 选最高 confidence 的 detection
+    const auto& best = *std::max_element(
+        slot.detections.begin(), slot.detections.end(),
+        [](const Detection& a, const Detection& b) { return a.confidence < b.confidence; });
+
+    // 使用缓存的 rectGray_vpiL CUDA 指针 (避免 lock/unlock ~0.3ms)
+    const uint8_t* imgPtr = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+    int imgPitch = slot.rectGray_L_gpu.pitchBytes;
+    if (!imgPtr) return;
+
+    if (tracker_state_ == TrackerState::IDLE || tracker_state_ == TrackerState::LOST) {
+        // 首次目标 or 重新捕获 → setTarget
+        tracker_->setTarget(imgPtr, imgPitch, config_.rect_width, config_.rect_height, best);
+        tracker_state_ = TrackerState::TRACKING;
+        tracker_lost_count_ = 0;
+        LOG_INFO("[Tracker] setTarget: (%.0f,%.0f) %dx%d conf=%.2f",
+                 best.cx, best.cy, (int)best.width, (int)best.height, best.confidence);
+    } else {
+        // TRACKING → 用 YOLO 结果刷新 template (纠正漂移)
+        tracker_->setTarget(imgPtr, imgPitch, config_.rect_width, config_.rect_height, best);
+        tracker_lost_count_ = 0;
+    }
+}
+
+// ===================================================================
+// SOT Tracker 辅助: 非检测帧运行 tracker 推理
+// ===================================================================
+void Pipeline::tracker_infill(FrameSlot& slot) {
+    if (!tracker_ || tracker_state_ != TrackerState::TRACKING) {
+        slot.sot_bbox_result = SOTResult{};
+        slot.bbox_source = BboxSource::NONE;
+        return;
+    }
+
+    // 使用缓存的 rectGray_vpiL CUDA 指针 (避免 lock/unlock ~0.3ms)
+    const uint8_t* imgPtr = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+    int imgPitch = slot.rectGray_L_gpu.pitchBytes;
+    if (!imgPtr) {
+        slot.sot_bbox_result = SOTResult{};
+        slot.bbox_source = BboxSource::NONE;
+        return;
+    }
+
+    SOTResult result = tracker_->track(imgPtr, imgPitch,
+                                       config_.rect_width, config_.rect_height);
+
+    if (result.valid && result.confidence >= config_.tracker.min_confidence) {
+        slot.sot_bbox_result = result;
+        slot.bbox_source = BboxSource::TRACKER;
+        tracker_lost_count_ = 0;
+    } else {
+        slot.sot_bbox_result = SOTResult{};
+        slot.bbox_source = BboxSource::NONE;
+        tracker_lost_count_++;
+        if (tracker_lost_count_ >= config_.tracker.lost_threshold) {
+            tracker_state_ = TrackerState::LOST;
+            tracker_->reset();
+            tracker_state_ = TrackerState::IDLE;
+        }
+    }
+}
+
+// ===================================================================
+// ROI 模式: Stage 2 (tracker) — tracker bbox → ROI 匹配 + 深度融合
+// ===================================================================
+void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
+    NVTX_RANGE("Stage2_ROIFuseTracker");
+    slot.results.clear();
+
+    if (slot.bbox_source != BboxSource::TRACKER || !slot.sot_bbox_result.valid) {
+        // 无有效 tracker 结果: 仅 Kalman 预测
+        if (hybrid_depth_) {
+            slot.results = hybrid_depth_->predictOnly();
+        }
+        NVTX_RANGE_POP();
+        return;
+    }
+
+    // 将 tracker bbox 转换为 Detection 格式 (复用 ROI match 路径)
+    const auto& sot = slot.sot_bbox_result;
+    Detection pseudo_det;
+    pseudo_det.cx = sot.cx;
+    pseudo_det.cy = sot.cy;
+    pseudo_det.width = sot.width;
+    pseudo_det.height = sot.height;
+    pseudo_det.confidence = sot.confidence;
+    pseudo_det.class_id = 0;  // volleyball
+    slot.detections = { pseudo_det };
+
+    // 2. 获取校正后灰度左右图 GPU 指针
+    VPIImageData imgDataL, imgDataR;
+    VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
+                                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+    VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
+                                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+    if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
+        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
+        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+        NVTX_RANGE_POP();
+        return;
+    }
+
+    const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
+    int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
+    const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
+    int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
+
+    // 3. ROI 多点立体匹配
+    std::vector<stereo3d::Object3D> roi_results;
+    {
+        ScopedTimer troi("Stage2_ROIMatchTracker");
+        roi_results = roi_matcher_->match(
+            leftPtr, leftPitch, rightPtr, rightPitch,
+            config_.rect_width, config_.rect_height,
+            slot.detections, streams_.cudaStreamFuse);
+        globalPerf().record("Stage2_ROIMatchTracker", troi.elapsedMs());
+    }
+
+    vpiImageUnlock(slot.rectGray_vpiL);
+    vpiImageUnlock(slot.rectGray_vpiR);
+
+    // 4. 混合深度估计
+    if (hybrid_depth_) {
+        auto now = std::chrono::steady_clock::now();
+        double dt = 0.01;
+        if (last_fuse_time_.time_since_epoch().count() > 0) {
+            dt = std::chrono::duration<double>(now - last_fuse_time_).count();
+            dt = std::clamp(dt, 0.002, 0.1);
+        }
+        last_fuse_time_ = now;
+        slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
+    } else {
+        slot.results = std::move(roi_results);
+    }
+
+    NVTX_RANGE_POP();
+}
+
+// ===================================================================
 // ROI 模式 Pipeline 主循环
 //
 // 异步采集 + 三级流水线:
@@ -1016,6 +1212,7 @@ void Pipeline::pipelineLoopROI() {
     {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
+        slot.is_detect_frame = true;  // 首帧必为检测帧
 
         vpiStreamSync(streams_.vpiStreamPVA);
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
@@ -1051,6 +1248,7 @@ void Pipeline::pipelineLoopROI() {
         // ====================================================================
         // Phase B: Stage1 — 提交检测 (与 grab 并行, ~3ms)
         //   此帧已在上一轮 Phase D 中完成 rectify
+        //   SOT 模式: 检测帧→YOLO enqueue, 填充帧→tracker infill
         // ====================================================================
         if (next_detect_frame < next_grab_frame) {
             int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
@@ -1062,27 +1260,51 @@ void Pipeline::pipelineLoopROI() {
                 next_fuse_frame = next_detect_frame - 1;
             } else {
 
-            {
-                ScopedTimer tw("Stage1_WaitRect");
-                cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-                globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
-            }
+            // 判断是否为检测帧
+            bool is_detect = !tracker_ ||
+                             (slot.frame_id % effective_detect_interval_ == 0) ||
+                             (tracker_state_ != TrackerState::TRACKING);
+            slot.is_detect_frame = is_detect;
 
-            auto dlaStream = getDLAStream(slot.frame_id);
-            cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+            if (is_detect) {
+                // ---- YOLO 检测帧 ----
+                {
+                    ScopedTimer tw("Stage1_WaitRect");
+                    cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+                    globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
+                }
 
-            {
-                ScopedTimer t1("Stage1_DetectSubmit");
-                stage1_detect(slot, slot_idx);
-                globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
+                auto dlaStream = getDLAStream(slot.frame_id);
+                cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+
+                {
+                    ScopedTimer t1("Stage1_DetectSubmit");
+                    stage1_detect(slot, slot_idx);
+                    globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
+                }
+                cudaEventRecord(slot.evtDetectDone, dlaStream);
+            } else {
+                // ---- Tracker 填充帧 ----
+                // 等 rectify 完成 (tracker 需要 rectified BGR)
+                vpiStreamSync(streams_.vpiStreamPVA);
+                cudaStreamSynchronize(streams_.cudaStreamGPU);
+
+                {
+                    ScopedTimer tt("Stage1_TrackerInfill");
+                    tracker_infill(slot);
+                    globalPerf().record("Stage1_TrackerInfill", tt.elapsedMs());
+                }
+                // 标记 "detect done" 让 Phase C 的等待逻辑兼容
+                cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamGPU);
             }
-            cudaEventRecord(slot.evtDetectDone, dlaStream);
             next_detect_frame++;
             }
         }
 
         // ====================================================================
         // Phase C: Stage2 — ROI 匹配 + 融合帧 N-1 (与 grab 并行, ~0.1ms)
+        //   检测帧: collect YOLO → ROI match → depth fuse + 刷新 tracker template
+        //   填充帧: tracker bbox → ROI match → depth fuse
         // ====================================================================
         if (next_fuse_frame < next_detect_frame - 1) {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
@@ -1095,10 +1317,23 @@ void Pipeline::pipelineLoopROI() {
                 globalPerf().record("Stage2_WaitDetect", tw.elapsedMs());
             }
 
-            {
-                ScopedTimer t2("Stage2_ROIMatchFuse");
-                stage2_roi_match_fuse(slot, slot_idx);
-                globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
+            if (slot.is_detect_frame) {
+                // ---- YOLO 检测帧: collect + ROI + depth ----
+                {
+                    ScopedTimer t2("Stage2_ROIMatchFuse");
+                    stage2_roi_match_fuse(slot, slot_idx);
+                    globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
+                }
+                slot.bbox_source = BboxSource::YOLO;
+                // 用 YOLO 结果刷新 tracker template
+                tracker_handle_detect_result(slot);
+            } else {
+                // ---- Tracker 填充帧: tracker bbox → ROI + depth ----
+                {
+                    ScopedTimer t2("Stage2_ROIFuseTracker");
+                    stage2_roi_fuse_tracker(slot, slot_idx);
+                    globalPerf().record("Stage2_ROIFuseTracker", t2.elapsedMs());
+                }
             }
 
             if (result_callback_) {
