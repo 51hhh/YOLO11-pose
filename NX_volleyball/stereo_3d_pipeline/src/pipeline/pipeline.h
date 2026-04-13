@@ -33,6 +33,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../stereo/roi_stereo_matcher.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
+#include "../track/sot_tracker.h"
 #include "../utils/profiler.h"
 
 #include <vpi/algo/TemporalNoiseReduction.h>
@@ -93,6 +94,17 @@ struct PipelineConfig {
     std::string engine_file_dla1;  ///< DLA1 引擎路径 (dual_dla 模式)
     bool triple_backend = false;   ///< 三路轮转 (DLA0+DLA1+GPU 循环)
     std::string engine_file_gpu;   ///< GPU 引擎路径 (triple 模式)
+
+    // SOT Tracker 补帧 (YOLO 检测间隙帧)
+    struct TrackerConfig {
+        bool enabled = false;              ///< 是否启用 SOT 补帧
+        std::string type = "nanotrack";    ///< "nanotrack" | "mixformer"
+        std::string engine_path;           ///< TRT 引擎路径
+        std::string head_engine_path;      ///< NanoTrack head 引擎路径
+        int detect_interval = 3;           ///< YOLO 检测间隔 (每N帧一次)
+        int lost_threshold = 5;            ///< 连续无输出帧数 → LOST
+        float min_confidence = 0.3f;       ///< tracker 最低置信度
+    } tracker;
 
     // 视差
     int max_disparity = 128;
@@ -189,6 +201,11 @@ private:
 
     // ROI 模式专用 Stage
     void stage2_roi_match_fuse(FrameSlot& slot, int slot_index);
+    void stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index); ///< tracker bbox → ROI match + depth
+
+    // SOT Tracker 辅助
+    void tracker_handle_detect_result(FrameSlot& slot);  ///< 检测帧: 用 YOLO bbox 刷新 tracker template
+    void tracker_infill(FrameSlot& slot);                ///< 非检测帧: 运行 SOT 推理填充 bbox
 
     // Dual DLA 帧分配: 偶数帧→DLA0, 奇数帧→DLA1
     TRTDetector* getDetector(int frame_id) const;
@@ -228,6 +245,12 @@ private:
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
+
+    // ===== SOT Tracker =====
+    std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器
+    TrackerState tracker_state_ = TrackerState::IDLE;
+    int tracker_lost_count_ = 0;                    ///< 连续丢失帧数
+    int effective_detect_interval_ = 3;             ///< 运行时检测间隔 (LOST 时=1)
 
     // ===== VPI TNR 资源 =====
     VPIPayload tnrPayloadL_ = nullptr;     ///< 左目 TNR payload

@@ -72,3 +72,14 @@ performance:
   target_fps: 100
   log_interval: 100
   enable_profiling: true
+
+# ========== SOT Tracker (YOLO inter-frame infill) ==========
+# Disabled by default. Enable to run YOLO every N frames, tracker fills gaps.
+tracker:
+  enabled: false
+  type: "nanotrack"            # nanotrack | mixformer
+  engine_path: ""
+  head_engine_path: ""         # nanotrack only (backbone+head dual engine)
+  detect_interval: 3           # YOLO every N frames, tracker fills the rest
+  lost_threshold: 5            # consecutive tracker failures before IDLE
+  min_confidence: 0.3          # minimum tracker score to accept

@@ -1,0 +1,79 @@
+# ============================================================
+# stereo_3d_pipeline ROI + NanoTrack SOT infill
+# YOLO DLA every 3 frames, NanoTrack fills 2/3 frames (~0.5ms)
+# Expected: 100 FPS output, DLA load reduced to ~33Hz
+# ============================================================
+
+# ========== Camera (DO NOT MODIFY) ==========
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: ""
+  serial_right: ""
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+# ========== Calibration ==========
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+# ========== Rectification (VPI Remap CUDA) ==========
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+# ========== VPI Temporal Noise Reduction ==========
+tnr:
+  enabled: true
+  preset: "outdoor_medium"
+  strength: 0.6
+  version: "default"
+
+# ========== Detection (TensorRT DLA INT8 640x640) ==========
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26n_dla0_int8_640.engine"
+  input_size: 640
+  use_dla: true
+  dla_core: 0
+  allow_gpu_fallback: true
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  max_detections: 10
+
+# ========== Stereo Matching (ROI multi-point) ==========
+stereo:
+  strategy: "roi_only"
+  max_disparity: 256
+  window_size: 5
+  quality: 6
+
+# ========== 3D Fusion ==========
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+
+# ========== Performance ==========
+performance:
+  pwm_frequency: 100.0
+  target_fps: 100
+  log_interval: 100
+  enable_profiling: true
+
+# ========== SOT Tracker: NanoTrack ==========
+tracker:
+  enabled: true
+  type: "nanotrack"
+  engine_path: "/home/nvidia/NX_volleyball/model/nanotrack_backbone_fp16.engine"
+  head_engine_path: "/home/nvidia/NX_volleyball/model/nanotrack_head_fp16.engine"
+  detect_interval: 3           # YOLO every 3 frames
+  lost_threshold: 5
+  min_confidence: 0.3
