@@ -1273,9 +1273,10 @@ void Pipeline::pipelineLoopROI() {
             } else {
 
             // 判断是否为检测帧
+            // 固定节拍检测：按 detect_interval 控制 YOLO 频率，
+            // 不再因 tracker 是否处于 TRACKING 状态而抢跑检测。
             bool is_detect = !tracker_ ||
-                             (slot.frame_id % effective_detect_interval_ == 0) ||
-                             (tracker_state_ != TrackerState::TRACKING);
+                             (slot.frame_id % effective_detect_interval_ == 0);
             slot.is_detect_frame = is_detect;
 
             if (is_detect) {

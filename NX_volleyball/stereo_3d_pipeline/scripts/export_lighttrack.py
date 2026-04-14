@@ -118,6 +118,15 @@ def main():
         print(f"  template feat: {zf.shape}, search feat: {xf.shape}")
 
     # --- Head ---
+    if hasattr(model.feature_fusor, "pw_corr"):
+        pw_corrs = model.feature_fusor.pw_corr
+        if isinstance(pw_corrs, torch.nn.ModuleList):
+            for mod in pw_corrs:
+                if hasattr(mod, "matrix"):
+                    mod.matrix = False
+        elif hasattr(pw_corrs, "matrix"):
+            pw_corrs.matrix = False
+
     head = HeadONNX(nn.Identity(), model.feature_fusor, model.head).to(device).eval()
     head_path = os.path.join(args.out_dir, "lighttrack_head.onnx")
 

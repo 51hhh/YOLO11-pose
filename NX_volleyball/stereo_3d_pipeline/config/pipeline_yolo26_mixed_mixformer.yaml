@@ -1,0 +1,84 @@
+# ============================================================
+# YOLO26 Mixed Precision + MixFormerV2 tracker @ 100Hz
+# Detector runs at fixed 30fps (detect_interval=3), tracker fills the rest to 100Hz.
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: "00219471413"
+  serial_right: "00D39342665"
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  auto_exposure: false
+  auto_gain: false
+  ae_upper_us: 9000.0
+  ae_lower_us: 500.0
+  ag_upper_db: 12.0
+  gamma_enable: false
+  gamma_value: 0.7
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+tnr:
+  enabled: false
+
+# yolo26 mixed precision - attention FP16 + rest INT8
+# Standard [1,5,8400] output format
+# Detector output is fixed to 30fps via tracker.detect_interval = 3
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_head_fp16.engine"
+  input_size: 640
+  input_format: "bgr"
+  use_dla: false
+  confidence_threshold: 0.15
+  nms_threshold: 0.4
+  max_detections: 10
+
+stereo:
+  strategy: "roi_only"
+  max_disparity: 512
+  window_size: 5
+  quality: 6
+
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+  object_diameter: 0.200
+  R_mono: 0.003
+  R_stereo: 0.020
+  ivw_R_mono: 0.004
+  ivw_R_stereo: 0.025
+
+prediction:
+  rk4_dt: 0.01
+  max_predict_time: 3.0
+
+performance:
+  pwm_frequency: 100.0
+  target_fps: 100
+  log_interval: 100
+  enable_profiling: true
+
+tracker:
+  enabled: true
+  type: "mixformer"
+  engine_path: "/home/nvidia/sot_export/exported/mixformerv2_s.engine"
+  head_engine_path: ""
+  detect_interval: 3
+  lost_threshold: 5
+  min_confidence: 0.3
