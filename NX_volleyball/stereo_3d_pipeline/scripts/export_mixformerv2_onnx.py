@@ -121,7 +121,7 @@ def main():
 
     model = build_mixformer_vit(cfg, train=False)
 
-    ckpt = torch.load(args.checkpoint, map_location='cpu')
+    ckpt = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     if 'net' in ckpt:
         state = ckpt['net']
     elif 'model' in ckpt:
@@ -153,8 +153,13 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     wrapper = MixFormerV2Wrapper(model, score_decoder).to(device).eval()
 
-    template = torch.randn(1, 1, 128, 128, device=device)
-    search = torch.randn(1, 1, 256, 256, device=device)
+    # Use sizes from config (DATA.TEMPLATE.SIZE, DATA.SEARCH.SIZE)
+    t_size = cfg.DATA.TEMPLATE.SIZE if hasattr(cfg, 'DATA') and hasattr(cfg.DATA, 'TEMPLATE') else 128
+    s_size = cfg.DATA.SEARCH.SIZE if hasattr(cfg, 'DATA') and hasattr(cfg.DATA, 'SEARCH') else 256
+    print(f"[INFO] Template size: {t_size}, Search size: {s_size}")
+
+    template = torch.randn(1, 1, t_size, t_size, device=device)
+    search = torch.randn(1, 1, s_size, s_size, device=device)
 
     torch.onnx.export(
         wrapper, (template, search), args.output,
