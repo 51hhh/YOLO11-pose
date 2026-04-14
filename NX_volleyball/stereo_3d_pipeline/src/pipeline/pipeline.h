@@ -105,6 +105,7 @@ struct PipelineConfig {
         int detect_interval = 3;           ///< YOLO 检测间隔 (每N帧一次)
         int lost_threshold = 5;            ///< 连续无输出帧数 → LOST
         float min_confidence = 0.3f;       ///< tracker 最低置信度
+        bool gpu_sync_mode = false;        ///< NX模式: 强制GPU同步防止YOLO/tracker并行(省电) vs 异步管线(服务器)
     } tracker;
 
     // 视差

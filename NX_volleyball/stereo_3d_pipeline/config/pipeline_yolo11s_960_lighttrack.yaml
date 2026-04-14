@@ -77,3 +77,4 @@ tracker:
   detect_interval: 3
   lost_threshold: 5
   min_confidence: 0.3
+  gpu_sync_mode: true  # NX电源受限: 强制GPU同步，防止YOLO+tracker并行导致功率爆口

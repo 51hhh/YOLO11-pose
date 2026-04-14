@@ -1302,6 +1302,20 @@ void Pipeline::pipelineLoopROI() {
                 vpiStreamSync(streams_.vpiStreamPVA);
                 cudaStreamSynchronize(streams_.cudaStreamGPU);
 
+                // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
+                // 防止YOLO+tracker并行运行导致功率爆口
+                // 在detect_interval=3的策略下，最近的YOLO应该已在Phase C collect了
+                // 此处额外同步确保NX上GPU/DLA不会同时高负载
+                {
+                    ScopedTimer tw("Stage1_WaitYOLOComplete");
+                    if (config_.use_dla || config_.dual_dla || config_.triple_backend) {
+                        cudaStreamSynchronize(streams_.cudaStreamDLA);
+                        if (config_.dual_dla) cudaStreamSynchronize(streams_.cudaStreamDLA1);
+                        if (config_.triple_backend) cudaStreamSynchronize(streams_.cudaStreamDetGPU);
+                    }
+                    globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
+                }
+
                 {
                     ScopedTimer tt("Stage1_TrackerInfill");
                     tracker_infill(slot);
@@ -1331,7 +1345,15 @@ void Pipeline::pipelineLoopROI() {
             }
 
             if (slot.is_detect_frame) {
-                // ---- YOLO 检测帧: collect + ROI + depth ----
+                // ---- YOLO 检测帧: 完全等待DLA + collect + ROI + depth ----
+                // *** GPU Power Control: 显式同步确保YOLO完全finish ***
+                {
+                    ScopedTimer tw("Stage2_WaitYOLOComplete");
+                    auto dlaStream = getDLAStream(slot.frame_id);
+                    cudaStreamSynchronize(dlaStream);
+                    globalPerf().record("Stage2_WaitYOLOComplete", tw.elapsedMs());
+                }
+
                 {
                     ScopedTimer t2("Stage2_ROIMatchFuse");
                     stage2_roi_match_fuse(slot, slot_idx);
