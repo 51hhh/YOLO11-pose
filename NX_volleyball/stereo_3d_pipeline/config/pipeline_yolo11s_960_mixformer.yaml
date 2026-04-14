@@ -1,6 +1,6 @@
 # ============================================================
-# YOLO26 Mixed Precision + MixFormerV2 tracker @ 100Hz
-# Detector runs at fixed 30fps (detect_interval=3), tracker fills the rest to 100Hz.
+# YOLO11-S 960×960 (GPU FP16) + MixFormerV2 SOT infill @ 100Hz
+# Detector is fixed to 30fps via detect_interval=3, tracker fills the rest.
 # ============================================================
 
 camera:
@@ -36,12 +36,9 @@ rectify:
 tnr:
   enabled: false
 
-# yolo26 mixed precision - attention FP16 + rest INT8
-# Standard [1,5,8400] output format
-# Detector output is fixed to 30fps via tracker.detect_interval = 3
 detector:
-  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_head_fp16.engine"
-  input_size: 640
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo11_s_960_fp16.engine"
+  input_size: 960
   input_format: "bgr"
   use_dla: false
   confidence_threshold: 0.15
@@ -63,10 +60,6 @@ fusion:
   R_stereo: 0.020
   ivw_R_mono: 0.004
   ivw_R_stereo: 0.025
-
-prediction:
-  rk4_dt: 0.01
-  max_predict_time: 3.0
 
 performance:
   pwm_frequency: 100.0
