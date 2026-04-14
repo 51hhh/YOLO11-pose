@@ -73,7 +73,8 @@ tracker:
   enabled: true
   type: "mixformer"
   engine_path: "/home/nvidia/NX_volleyball/model/mixformerv2_fp16.engine"
-  head_engine_path: ""         # MixFormer single-engine, not used
+  search_engine_path: ""       # MixFormer: not used (single engine)
+  head_engine_path: ""         # MixFormer: not used (single engine)
   detect_interval: 3           # YOLO every 3 frames
   lost_threshold: 5
   min_confidence: 0.3

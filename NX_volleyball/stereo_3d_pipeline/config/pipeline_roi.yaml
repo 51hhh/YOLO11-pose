@@ -78,8 +78,9 @@ performance:
 tracker:
   enabled: false
   type: "nanotrack"            # nanotrack | mixformer
-  engine_path: ""
-  head_engine_path: ""         # nanotrack only (backbone+head dual engine)
+  engine_path: ""              # backbone (single) or template backbone (dual)
+  search_engine_path: ""       # nanotrack dual-backbone: search backbone engine
+  head_engine_path: ""         # nanotrack only (BAN head engine)
   detect_interval: 3           # YOLO every N frames, tracker fills the rest
   lost_threshold: 5            # consecutive tracker failures before IDLE
   min_confidence: 0.3          # minimum tracker score to accept

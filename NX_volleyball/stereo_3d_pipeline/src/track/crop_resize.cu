@@ -65,3 +65,36 @@ extern "C" void cropResizeGPU(
         dst, dst_size,
         roi_x, roi_y, roi_w, roi_h);
 }
+
+/**
+ * @brief 3ch 版本: 灰度 → 3ch CHW float [3, dst_size, dst_size]
+ * 将同一灰度值 repeat 到 R/G/B 三通道 (CHW layout)
+ * 用于 3ch backbone 模型输入
+ */
+extern "C" void cropResizeGPU_3ch(
+    const uint8_t* src, int src_pitch, int src_w, int src_h,
+    float* dst, int dst_size,
+    float cx, float cy, float w, float h,
+    float context_factor,
+    cudaStream_t stream)
+{
+    float s = sqrtf((w * context_factor) * (h * context_factor));
+    float roi_w = s;
+    float roi_h = s;
+    float roi_x = cx - roi_w * 0.5f;
+    float roi_y = cy - roi_h * 0.5f;
+
+    int spatial = dst_size * dst_size;
+    // Crop into first channel plane
+    dim3 block(16, 16);
+    dim3 grid((dst_size + 15) / 16, (dst_size + 15) / 16);
+    cropResizeBilinearKernel<<<grid, block, 0, stream>>>(
+        src, src_pitch, src_w, src_h,
+        dst, dst_size,
+        roi_x, roi_y, roi_w, roi_h);
+    // Copy channel 0 → channel 1 and channel 2
+    cudaMemcpyAsync(dst + spatial, dst, spatial * sizeof(float),
+                    cudaMemcpyDeviceToDevice, stream);
+    cudaMemcpyAsync(dst + 2 * spatial, dst, spatial * sizeof(float),
+                    cudaMemcpyDeviceToDevice, stream);
+}

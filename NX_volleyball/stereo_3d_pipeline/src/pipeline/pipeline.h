@@ -99,7 +99,8 @@ struct PipelineConfig {
     struct TrackerConfig {
         bool enabled = false;              ///< 是否启用 SOT 补帧
         std::string type = "nanotrack";    ///< "nanotrack" | "mixformer"
-        std::string engine_path;           ///< TRT 引擎路径
+        std::string engine_path;           ///< TRT 引擎路径 (backbone / template backbone)
+        std::string search_engine_path;    ///< NanoTrack search backbone 引擎 (双backbone模式)
         std::string head_engine_path;      ///< NanoTrack head 引擎路径
         int detect_interval = 3;           ///< YOLO 检测间隔 (每N帧一次)
         int lost_threshold = 5;            ///< 连续无输出帧数 → LOST

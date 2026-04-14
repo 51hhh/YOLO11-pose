@@ -38,8 +38,10 @@ DLA 检测与 VPI Remap 完美并行 — 检测等待仅 0.12ms。
 stereo_3d_pipeline/
 ├── CMakeLists.txt
 ├── config/
-│   ├── pipeline.yaml           # 默认全帧模式配置
-│   └── pipeline_roi.yaml       # ✅ ROI 模式配置 (98 FPS 生产配置)
+│   ├── pipeline.yaml               # 默认全帧模式配置
+│   ├── pipeline_roi.yaml           # ✅ ROI 模式 (98 FPS, 纯 YOLO)
+│   ├── pipeline_roi_nanotrack.yaml # ✅ ROI + NanoTrack 补帧
+│   └── pipeline_roi_mixformer.yaml # ROI + MixFormerV2 补帧
 ├── scripts/
 │   ├── build_engine.sh         # TensorRT FP16 引擎构建脚本 (GPU/DLA)
 │   ├── build_dla_engine.sh     # DLA 引擎一键构建脚本
@@ -70,6 +72,12 @@ stereo_3d_pipeline/
     │   ├── roi_stereo_matcher.h/cpp  # ✅ ROI 多点 CUDA 匹配器
     │   ├── roi_stereo_match.cu       # ✅ ROI 匹配 CUDA kernel
     │   └── onnx_stereo.h/cpp         # ONNX Runtime DL推理 (CREStereo/HITNet)
+    ├── track/
+    │   ├── sot_tracker.h             # SOT 抽象接口
+    │   ├── nanotrack_trt.h/cpp       # NanoTrack TRT (双backbone + BAN head)
+    │   ├── mixformer_trt.h/cpp       # MixFormerV2 TRT (单引擎)
+    │   ├── crop_resize.h/cu          # CUDA crop+resize kernel (1ch/3ch)
+    │   └── tracker_utils.h           # Hanning 窗 + decoder 工具
     └── utils/
         ├── logger.h                  # printf 格式日志
         ├── profiler.h                # 性能统计 (NVTX + 均值聚合)
@@ -222,9 +230,18 @@ calibration:
 ## 运行
 
 ```bash
-# ROI 模式 (98 FPS, 推荐)
+# === 基础模式 ===
+# ROI 模式 (98 FPS, 每帧 YOLO 检测)
 ./stereo_pipeline --config config/pipeline_roi.yaml
 
+# === SOT Tracker 补帧模式 (推荐) ===
+# NanoTrack: YOLO每3帧 + NanoTrack 填充 (~1.1ms, 双backbone 3ch)
+./stereo_pipeline --config config/pipeline_roi_nanotrack.yaml
+
+# MixFormerV2: YOLO每3帧 + MixFormer 填充 (~2ms, Attention 单引擎)
+./stereo_pipeline --config config/pipeline_roi_mixformer.yaml
+
+# === 其他模式 ===
 # 全帧模式 (用于调试/对比)
 ./stereo_pipeline --config config/pipeline.yaml
 
@@ -253,6 +270,58 @@ Ctrl+C 安全退出。
   - `detector.use_dla: false`（纯 GPU 推理）
   - `detector.input_format: "bayer"`（相机 BayerRG8 输入）
 - 可视化模式建议仅用于联调；追求极限 FPS 时关闭 `--visualize`。
+
+## SOT Tracker 补帧
+
+YOLO 检测间隔帧由轻量 SOT tracker 跟踪目标，降低 DLA/GPU 负载、提高等效检测帧率。
+
+### 支持的 Tracker
+
+| Tracker | 引擎数 | 输入通道 | 推理耗时 | 特点 |
+|---------|--------|---------|----------|------|
+| **NanoTrack** | 3 (template backbone + search backbone + BAN head) | 3ch (灰度复制) | **~1.1ms** | MobileNetV3, 48ch 特征, 最快 |
+| **MixFormerV2** | 1 (全模型) | 1ch 灰度 | ~2ms | Attention 架构, 精度更高 |
+
+### NanoTrack 双 Backbone 架构
+
+NanoTrack 使用 MobileNetV3 SE-block，TRT 10 的 FP16 ForeignNode fusion 不支持动态 shape，
+因此拆分为两个固定 shape 的 backbone engine：
+
+```
+Template backbone: [1,3,127,127] → [1,48,8,8]   (0.39ms)
+Search backbone:   [1,3,255,255] → [1,48,16,16]  (0.48ms)
+BAN head:          [1,48,8,8]+[1,48,16,16] → cls[1,2,16,16]+reg[1,4,16,16] (0.20ms)
+```
+
+灰度图像通过 CUDA kernel `cropResizeGPU_3ch` 复制到 3 通道 (CHW layout)。
+
+### 配置示例 (NanoTrack)
+
+```yaml
+tracker:
+  enabled: true
+  type: "nanotrack"
+  engine_path: "path/to/nanotrack_backbone_template.engine"
+  search_engine_path: "path/to/nanotrack_backbone_search.engine"   # 双backbone模式
+  head_engine_path: "path/to/nanotrack_head.engine"
+  detect_interval: 3           # YOLO 每3帧检测一次
+  lost_threshold: 5            # 连续5帧无检测 → tracker IDLE
+  min_confidence: 0.3          # tracker 置信度阈值
+```
+
+### TRT Engine 构建
+
+```bash
+# NanoTrack (从 ZhangLi1210/NanoTrack_Tensorrt_Cpp 获取 ONNX)
+trtexec --onnx=nanotrack_backbone_template.onnx --saveEngine=nanotrack_backbone_template.engine --fp16 --memPoolSize=workspace:256MiB
+trtexec --onnx=nanotrack_backbone_search.onnx --saveEngine=nanotrack_backbone_search.engine --fp16 --memPoolSize=workspace:256MiB
+trtexec --onnx=nanotrack_head.onnx --saveEngine=nanotrack_head.engine --fp16 --memPoolSize=workspace:256MiB
+
+# SiamFC (从 scripts/export_siamfc.py 导出)
+trtexec --onnx=siamfc_backbone.onnx --saveEngine=siamfc_backbone.engine --fp16 \
+  --minShapes=input:1x1x127x127 --optShapes=input:1x1x255x255 --maxShapes=input:1x1x255x255
+trtexec --onnx=siamfc_head.onnx --saveEngine=siamfc_head.engine --fp16
+```
 
 ## 配置说明
 

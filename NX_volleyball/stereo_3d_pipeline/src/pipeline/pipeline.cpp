@@ -278,7 +278,19 @@ bool Pipeline::init(const PipelineConfig& config) {
             LOG_ERROR("Unknown tracker type: %s (supported: nanotrack, mixformer)", tcfg.type.c_str());
             return false;
         }
-        if (!tracker_->init(tcfg.engine_path, tcfg.head_engine_path, streams_.cudaStreamGPU)) {
+        bool init_ok = false;
+        if (tcfg.type == "nanotrack" && !tcfg.search_engine_path.empty()) {
+            if (tcfg.head_engine_path.empty()) {
+                LOG_ERROR("NanoTrack dual-backbone requires head_engine_path");
+                return false;
+            }
+            auto* nt = dynamic_cast<NanoTrackTRT*>(tracker_.get());
+            if (nt) init_ok = nt->initDualBackbone(tcfg.engine_path, tcfg.search_engine_path,
+                                                    tcfg.head_engine_path, streams_.cudaStreamGPU);
+        } else {
+            init_ok = tracker_->init(tcfg.engine_path, tcfg.head_engine_path, streams_.cudaStreamGPU);
+        }
+        if (!init_ok) {
             LOG_ERROR("Failed to initialize SOT tracker (%s)", tcfg.type.c_str());
             return false;
         }
