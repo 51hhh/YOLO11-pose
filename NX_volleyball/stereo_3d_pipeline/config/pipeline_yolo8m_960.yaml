@@ -1,0 +1,81 @@
+# ============================================================
+# Pipeline config for YOLOv8-M 960×960 (GPU FP16)
+# Base: yolov8m trained on volleyball dataset, 960 input
+# Output: [1, 5, 18900] — standard YOLOv8 format
+# Note: 25.8M params (vs yolo11s 9.4M), higher accuracy but slower
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: "00219471413"
+  serial_right: "00D39342665"
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  auto_exposure: false
+  auto_gain: false
+  ae_upper_us: 9000.0
+  ae_lower_us: 500.0
+  ag_upper_db: 12.0
+  gamma_enable: false
+  gamma_value: 0.7
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+tnr:
+  enabled: false
+  preset: "outdoor_medium"
+  strength: 0.6
+  version: "default"
+
+# YOLOv8-M 960 — GPU FP16
+# 输入 960×960, 输出 [1, 5, 18900], 单类 volleyball
+# 25.8M params, 78.7 GFLOPs — 预计推理 8-12ms on NX GPU
+# 适用于精度优先场景, FPS 可能降至 60-80
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo8_m_960_fp16.engine"
+  input_size: 960
+  input_format: "bgr"
+  use_dla: false
+  confidence_threshold: 0.15
+  nms_threshold: 0.4
+  max_detections: 10
+
+stereo:
+  strategy: "roi_only"
+  max_disparity: 512
+  window_size: 5
+  quality: 6
+
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+  object_diameter: 0.200
+  R_mono: 0.003
+  R_stereo: 0.020
+  ivw_R_mono: 0.004
+  ivw_R_stereo: 0.025
+
+prediction:
+  rk4_dt: 0.01
+  max_predict_time: 3.0
+
+performance:
+  pwm_frequency: 100.0
+  target_fps: 100
+  log_interval: 100
+  enable_profiling: true

@@ -32,6 +32,10 @@ NanoTrackTRT::~NanoTrackTRT() {
     freeBuffers();
     if (backboneCtx_) { delete backboneCtx_; backboneCtx_ = nullptr; }
     if (backboneEngine_) { delete backboneEngine_; backboneEngine_ = nullptr; }
+    if (templateCtx_) { delete templateCtx_; templateCtx_ = nullptr; }
+    if (templateEngine_) { delete templateEngine_; templateEngine_ = nullptr; }
+    if (searchCtx_) { delete searchCtx_; searchCtx_ = nullptr; }
+    if (searchEngine_) { delete searchEngine_; searchEngine_ = nullptr; }
     if (headCtx_) { delete headCtx_; headCtx_ = nullptr; }
     if (headEngine_) { delete headEngine_; headEngine_ = nullptr; }
     if (runtime_) { delete runtime_; runtime_ = nullptr; }
@@ -70,10 +74,69 @@ bool NanoTrackTRT::loadEngine(const std::string& path,
     return true;
 }
 
+// Helper: query output dimensions from an engine
+static int queryOutputElements(nvinfer1::ICudaEngine* engine, const char* tag) {
+    int total = 0;
+    for (int i = 0; i < engine->getNbIOTensors(); i++) {
+        const char* name = engine->getIOTensorName(i);
+        if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kOUTPUT) {
+            auto dims = engine->getTensorShape(name);
+            int elements = 1;
+            for (int d = 0; d < dims.nbDims; d++)
+                elements *= dims.d[d];
+            LOG_INFO("[NanoTrack] %s output: %s -> %d elements", tag, name, elements);
+            total = std::max(total, elements);
+        }
+    }
+    return total;
+}
+
+// Helper: query head outputs (cls + reg)
+static void queryHeadOutputs(nvinfer1::ICudaEngine* engine,
+                              int& cls_elements, int& reg_elements,
+                              int& score_h, int& score_w) {
+    // First pass: identify outputs
+    int out_idx = 0;
+    struct OutInfo { std::string name; int elements; int h; int w; };
+    std::vector<OutInfo> outs;
+    for (int i = 0; i < engine->getNbIOTensors(); i++) {
+        const char* name = engine->getIOTensorName(i);
+        if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kOUTPUT) {
+            auto dims = engine->getTensorShape(name);
+            OutInfo info;
+            info.name = name;
+            info.elements = 1;
+            for (int d = 0; d < dims.nbDims; d++)
+                info.elements *= dims.d[d];
+            info.h = (dims.nbDims >= 2) ? dims.d[dims.nbDims - 2] : 0;
+            info.w = (dims.nbDims >= 2) ? dims.d[dims.nbDims - 1] : 0;
+            outs.push_back(info);
+        }
+    }
+    // Match by name or by size (smaller = cls, larger = reg)
+    for (auto& o : outs) {
+        bool is_cls = o.name.find("cls") != std::string::npos ||
+                      o.name.find("score") != std::string::npos;
+        // Fallback: if name has no keyword, first output (output1) = cls, second (output2) = reg
+        if (!is_cls && outs.size() == 2 && &o == &outs[0]) is_cls = true;
+
+        if (is_cls) {
+            cls_elements = o.elements;
+            score_h = o.h; score_w = o.w;
+            LOG_INFO("[NanoTrack] Head cls: %s -> %d elements, map %dx%d", o.name.c_str(), o.elements, o.h, o.w);
+        } else {
+            reg_elements = o.elements;
+            LOG_INFO("[NanoTrack] Head reg: %s -> %d elements", o.name.c_str(), o.elements);
+        }
+    }
+}
+
 bool NanoTrackTRT::init(const std::string& backbone_path,
                          const std::string& head_path,
                          cudaStream_t stream) {
     stream_ = stream;
+    dual_backbone_ = false;
+    input_channels_ = 1;
 
     runtime_ = nvinfer1::createInferRuntime(sTrtLogger);
     if (!runtime_) {
@@ -84,51 +147,22 @@ bool NanoTrackTRT::init(const std::string& backbone_path,
     if (!loadEngine(backbone_path, backboneEngine_, backboneCtx_)) return false;
     if (!loadEngine(head_path, headEngine_, headCtx_)) return false;
 
-    // Query backbone output dimensions
-    // Backbone: input [1,1,H,H] → output feature map
-    int nbBindings = backboneEngine_->getNbIOTensors();
-    for (int i = 0; i < nbBindings; i++) {
+    // Detect input channels from backbone
+    for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
         const char* name = backboneEngine_->getIOTensorName(i);
-        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kOUTPUT) {
+        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
             auto dims = backboneEngine_->getTensorShape(name);
-            template_feat_elements_ = 1;
-            for (int d = 0; d < dims.nbDims; d++)
-                template_feat_elements_ *= dims.d[d];
-            search_feat_elements_ = template_feat_elements_;  // same backbone, different spatial
-            LOG_INFO("[NanoTrack] Backbone output: %d elements (%s)", template_feat_elements_, name);
+            if (dims.nbDims >= 4) input_channels_ = dims.d[1];
+            break;
         }
     }
+    LOG_INFO("[NanoTrack] Single backbone mode, input_channels=%d", input_channels_);
 
-    // Query head output dimensions (cls + reg)
-    nbBindings = headEngine_->getNbIOTensors();
-    for (int i = 0; i < nbBindings; i++) {
-        const char* name = headEngine_->getIOTensorName(i);
-        if (headEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kOUTPUT) {
-            auto dims = headEngine_->getTensorShape(name);
-            int elements = 1;
-            for (int d = 0; d < dims.nbDims; d++)
-                elements *= dims.d[d];
+    template_feat_elements_ = queryOutputElements(backboneEngine_, "Backbone");
+    search_feat_elements_ = template_feat_elements_;
 
-            std::string sname(name);
-            if (sname.find("cls") != std::string::npos || sname.find("score") != std::string::npos) {
-                cls_elements_ = elements;
-                // Assume last two dims are spatial
-                if (dims.nbDims >= 2) {
-                    score_map_h_ = dims.d[dims.nbDims - 2];
-                    score_map_w_ = dims.d[dims.nbDims - 1];
-                }
-                LOG_INFO("[NanoTrack] Head cls output: %d elements, map %dx%d", elements, score_map_h_, score_map_w_);
-            } else {
-                reg_elements_ = elements;
-                LOG_INFO("[NanoTrack] Head reg output: %d elements", elements);
-            }
-        }
-    }
-
-    // Backbone will be run with different input sizes for template vs search
-    // Need to figure out search output feature size
-    // For search image (255x255), backbone output spatial dim differs from template (127x127)
-    // Re-query with search input shape
+    queryHeadOutputs(headEngine_, cls_elements_, reg_elements_, score_map_h_, score_map_w_);
+    // Re-query search feat size for dynamic-shape backbone
     {
         const char* inputName = nullptr;
         for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
@@ -139,12 +173,10 @@ bool NanoTrackTRT::init(const std::string& backbone_path,
             }
         }
         if (inputName) {
-            // Check if backbone supports dynamic shapes
             auto minDims = backboneEngine_->getProfileShape(inputName, 0, nvinfer1::OptProfileSelector::kMIN);
             auto maxDims = backboneEngine_->getProfileShape(inputName, 0, nvinfer1::OptProfileSelector::kMAX);
             if (minDims.nbDims > 0 && maxDims.d[maxDims.nbDims-1] >= search_size_) {
-                // Dynamic shape backbone — set search shape to get output dims
-                nvinfer1::Dims4 searchDims{1, 1, search_size_, search_size_};
+                nvinfer1::Dims4 searchDims{1, input_channels_, search_size_, search_size_};
                 backboneCtx_->setInputShape(inputName, searchDims);
                 for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
                     const char* name = backboneEngine_->getIOTensorName(i);
@@ -160,24 +192,68 @@ bool NanoTrackTRT::init(const std::string& backbone_path,
     }
 
     allocateBuffers();
-
-    LOG_INFO("[NanoTrack] Initialized: backbone=%s, head=%s",
+    LOG_INFO("[NanoTrack] Initialized (single backbone): %s, head=%s",
              backbone_path.c_str(), head_path.c_str());
     return true;
 }
 
+bool NanoTrackTRT::initDualBackbone(const std::string& template_path,
+                                     const std::string& search_path,
+                                     const std::string& head_path,
+                                     cudaStream_t stream) {
+    stream_ = stream;
+    dual_backbone_ = true;
+    input_channels_ = 3;  // dual-backbone models are 3ch
+
+    runtime_ = nvinfer1::createInferRuntime(sTrtLogger);
+    if (!runtime_) {
+        LOG_ERROR("[NanoTrack] Failed to create TensorRT runtime");
+        return false;
+    }
+
+    if (!loadEngine(template_path, templateEngine_, templateCtx_)) return false;
+    if (!loadEngine(search_path, searchEngine_, searchCtx_)) return false;
+    if (!loadEngine(head_path, headEngine_, headCtx_)) return false;
+
+    // Detect actual input channels
+    for (int i = 0; i < templateEngine_->getNbIOTensors(); i++) {
+        const char* name = templateEngine_->getIOTensorName(i);
+        if (templateEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+            auto dims = templateEngine_->getTensorShape(name);
+            if (dims.nbDims >= 4) input_channels_ = dims.d[1];
+            break;
+        }
+    }
+    LOG_INFO("[NanoTrack] Dual backbone mode, input_channels=%d", input_channels_);
+
+    template_feat_elements_ = queryOutputElements(templateEngine_, "Backbone-Template");
+    search_feat_elements_ = queryOutputElements(searchEngine_, "Backbone-Search");
+    queryHeadOutputs(headEngine_, cls_elements_, reg_elements_, score_map_h_, score_map_w_);
+
+    allocateBuffers();
+    LOG_INFO("[NanoTrack] Initialized (dual backbone): tmpl=%s, search=%s, head=%s",
+             template_path.c_str(), search_path.c_str(), head_path.c_str());
+    return true;
+}
+
 void NanoTrackTRT::allocateBuffers() {
-    cudaMalloc(&d_template_patch_, template_size_ * template_size_ * sizeof(float));
-    cudaMalloc(&d_search_patch_, search_size_ * search_size_ * sizeof(float));
-    cudaMalloc(&d_template_feat_, template_feat_elements_ * sizeof(float));
-    cudaMalloc(&d_search_feat_, search_feat_elements_ * sizeof(float));
+    int tmpl_pixels = input_channels_ * template_size_ * template_size_;
+    int srch_pixels = input_channels_ * search_size_ * search_size_;
+    auto chk = [](cudaError_t err, const char* tag) {
+        if (err != cudaSuccess) { LOG_ERROR("cudaMalloc %s failed: %s", tag, cudaGetErrorString(err)); return false; }
+        return true;
+    };
+    if (!chk(cudaMalloc(&d_template_patch_, tmpl_pixels * sizeof(float)), "tmpl_patch")) return;
+    if (!chk(cudaMalloc(&d_search_patch_, srch_pixels * sizeof(float)), "srch_patch")) return;
+    if (!chk(cudaMalloc(&d_template_feat_, template_feat_elements_ * sizeof(float)), "tmpl_feat")) return;
+    if (!chk(cudaMalloc(&d_search_feat_, search_feat_elements_ * sizeof(float)), "srch_feat")) return;
 
     if (cls_elements_ > 0) {
-        cudaMalloc(&d_head_cls_, cls_elements_ * sizeof(float));
+        if (!chk(cudaMalloc(&d_head_cls_, cls_elements_ * sizeof(float)), "head_cls")) return;
         cudaMallocHost(&h_head_cls_, cls_elements_ * sizeof(float));
     }
     if (reg_elements_ > 0) {
-        cudaMalloc(&d_head_reg_, reg_elements_ * sizeof(float));
+        if (!chk(cudaMalloc(&d_head_reg_, reg_elements_ * sizeof(float)), "head_reg")) return;
         cudaMallocHost(&h_head_reg_, reg_elements_ * sizeof(float));
     }
 }
@@ -203,37 +279,47 @@ void NanoTrackTRT::setTarget(const void* gpu_image, int pitch,
     target_sz_[0] = det.width;
     target_sz_[1] = det.height;
 
-    // Crop template patch (127x127, context_factor=2.0)
-    cropResizeGPU(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
-                  d_template_patch_, template_size_,
-                  det.cx, det.cy, det.width, det.height,
-                  template_context_, stream_);
+    // Crop template patch
+    if (input_channels_ == 3) {
+        cropResizeGPU_3ch(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
+                          d_template_patch_, template_size_,
+                          det.cx, det.cy, det.width, det.height,
+                          template_context_, stream_);
+    } else {
+        cropResizeGPU(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
+                      d_template_patch_, template_size_,
+                      det.cx, det.cy, det.width, det.height,
+                      template_context_, stream_);
+    }
 
-    // Run backbone on template to extract feature (cached)
-    // Set input shape for template
-    const char* inputName = nullptr;
-    for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
-        const char* name = backboneEngine_->getIOTensorName(i);
-        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-            inputName = name;
-            break;
+    // Run backbone on template
+    nvinfer1::ICudaEngine* engine = dual_backbone_ ? templateEngine_ : backboneEngine_;
+    nvinfer1::IExecutionContext* ctx = dual_backbone_ ? templateCtx_ : backboneCtx_;
+
+    if (!dual_backbone_) {
+        // Set input shape for dynamic-shape backbone
+        for (int i = 0; i < engine->getNbIOTensors(); i++) {
+            const char* name = engine->getIOTensorName(i);
+            if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+                nvinfer1::Dims4 tmplDims{1, input_channels_, template_size_, template_size_};
+                ctx->setInputShape(name, tmplDims);
+                break;
+            }
         }
     }
-    if (inputName) {
-        nvinfer1::Dims4 tmplDims{1, 1, template_size_, template_size_};
-        backboneCtx_->setInputShape(inputName, tmplDims);
-    }
 
-    // Bind and execute backbone for template
-    for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
-        const char* name = backboneEngine_->getIOTensorName(i);
-        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-            backboneCtx_->setTensorAddress(name, d_template_patch_);
+    int bbOutCount = 0;
+    for (int i = 0; i < engine->getNbIOTensors(); i++) {
+        const char* name = engine->getIOTensorName(i);
+        if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+            ctx->setTensorAddress(name, d_template_patch_);
         } else {
-            backboneCtx_->setTensorAddress(name, d_template_feat_);
+            ctx->setTensorAddress(name, d_template_feat_);
+            bbOutCount++;
         }
     }
-    backboneCtx_->enqueueV3(stream_);
+    if (bbOutCount != 1) LOG_WARN("[NanoTrack] Template backbone has %d outputs (expected 1)", bbOutCount);
+    ctx->enqueueV3(stream_);
     cudaStreamSynchronize(stream_);
 
     has_target_ = true;
@@ -244,55 +330,82 @@ SOTResult NanoTrackTRT::track(const void* gpu_image, int pitch,
     SOTResult result;
     if (!has_target_) return result;
 
-    // 1. Crop search patch (255x255, context_factor=4.0 centered on last_det_)
-    cropResizeGPU(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
-                  d_search_patch_, search_size_,
-                  last_det_.cx, last_det_.cy, last_det_.width, last_det_.height,
-                  search_context_, stream_);
+    // 1. Crop search patch
+    if (input_channels_ == 3) {
+        cropResizeGPU_3ch(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
+                          d_search_patch_, search_size_,
+                          last_det_.cx, last_det_.cy, last_det_.width, last_det_.height,
+                          search_context_, stream_);
+    } else {
+        cropResizeGPU(static_cast<const uint8_t*>(gpu_image), pitch, img_width, img_height,
+                      d_search_patch_, search_size_,
+                      last_det_.cx, last_det_.cy, last_det_.width, last_det_.height,
+                      search_context_, stream_);
+    }
 
     // 2. Backbone on search patch
-    const char* inputName = nullptr;
-    for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
-        const char* name = backboneEngine_->getIOTensorName(i);
-        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-            inputName = name;
-            break;
+    nvinfer1::ICudaEngine* engine = dual_backbone_ ? searchEngine_ : backboneEngine_;
+    nvinfer1::IExecutionContext* ctx = dual_backbone_ ? searchCtx_ : backboneCtx_;
+
+    if (!dual_backbone_) {
+        for (int i = 0; i < engine->getNbIOTensors(); i++) {
+            const char* name = engine->getIOTensorName(i);
+            if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+                nvinfer1::Dims4 searchDims{1, input_channels_, search_size_, search_size_};
+                ctx->setInputShape(name, searchDims);
+                break;
+            }
         }
-    }
-    if (inputName) {
-        nvinfer1::Dims4 searchDims{1, 1, search_size_, search_size_};
-        backboneCtx_->setInputShape(inputName, searchDims);
     }
 
-    for (int i = 0; i < backboneEngine_->getNbIOTensors(); i++) {
-        const char* name = backboneEngine_->getIOTensorName(i);
-        if (backboneEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-            backboneCtx_->setTensorAddress(name, d_search_patch_);
+    int srchOutCount = 0;
+    for (int i = 0; i < engine->getNbIOTensors(); i++) {
+        const char* name = engine->getIOTensorName(i);
+        if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+            ctx->setTensorAddress(name, d_search_patch_);
         } else {
-            backboneCtx_->setTensorAddress(name, d_search_feat_);
+            ctx->setTensorAddress(name, d_search_feat_);
+            srchOutCount++;
         }
     }
-    backboneCtx_->enqueueV3(stream_);
+    if (srchOutCount != 1) LOG_WARN("[NanoTrack] Search backbone has %d outputs (expected 1)", srchOutCount);
+    ctx->enqueueV3(stream_);
 
     // 3. Head: cross-correlation
     // Head inputs: template_feat + search_feat, outputs: cls + reg
-    int headTensorIdx = 0;
+    int headOutputIdx = 0;
+    int headNumOutputs = 0;
+    for (int i = 0; i < headEngine_->getNbIOTensors(); i++) {
+        const char* name = headEngine_->getIOTensorName(i);
+        if (headEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kOUTPUT) headNumOutputs++;
+    }
+    int headInputIdx = 0;
     for (int i = 0; i < headEngine_->getNbIOTensors(); i++) {
         const char* name = headEngine_->getIOTensorName(i);
         if (headEngine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-            // First input = template_feat, second = search_feat
-            if (headTensorIdx == 0)
-                headCtx_->setTensorAddress(name, d_template_feat_);
-            else
-                headCtx_->setTensorAddress(name, d_search_feat_);
-            headTensorIdx++;
-        } else {
-            // Output: cls or reg
+            // Match by name (template/search keyword), fallback by position
             std::string sname(name);
-            if (sname.find("cls") != std::string::npos || sname.find("score") != std::string::npos)
-                headCtx_->setTensorAddress(name, d_head_cls_);
-            else
-                headCtx_->setTensorAddress(name, d_head_reg_);
+            bool is_template = sname.find("template") != std::string::npos ||
+                               sname.find("input1") != std::string::npos;
+            bool is_search   = sname.find("search") != std::string::npos ||
+                               sname.find("input2") != std::string::npos;
+            if (!is_template && !is_search) {
+                // No keyword: first encountered input = template, second = search
+                is_template = (headInputIdx == 0);
+            }
+            headCtx_->setTensorAddress(name, is_template ? d_template_feat_ : d_search_feat_);
+            headInputIdx++;
+        } else {
+            // Output: match by name, fallback by position (first=cls, second=reg)
+            std::string sname(name);
+            bool is_cls = sname.find("cls") != std::string::npos ||
+                          sname.find("score") != std::string::npos;
+            if (!is_cls && headNumOutputs == 2 && headOutputIdx == 0) {
+                is_cls = true;
+                LOG_WARN("[NanoTrack] Head output '%s' has no cls/score keyword, assuming cls by position", name);
+            }
+            headCtx_->setTensorAddress(name, is_cls ? d_head_cls_ : d_head_reg_);
+            headOutputIdx++;
         }
     }
     headCtx_->enqueueV3(stream_);

@@ -68,12 +68,13 @@ performance:
   log_interval: 100
   enable_profiling: true
 
-# ========== SOT Tracker: NanoTrack ==========
+# ========== SOT Tracker: NanoTrack (dual-backbone, 3ch) ==========
 tracker:
   enabled: true
   type: "nanotrack"
-  engine_path: "/home/nvidia/NX_volleyball/model/nanotrack_backbone_fp16.engine"
-  head_engine_path: "/home/nvidia/NX_volleyball/model/nanotrack_head_fp16.engine"
+  engine_path: "/home/nvidia/sot_export/exported/nanotrack_backbone_template.engine"
+  search_engine_path: "/home/nvidia/sot_export/exported/nanotrack_backbone_search.engine"
+  head_engine_path: "/home/nvidia/sot_export/exported/nanotrack_head_adapted.engine"
   detect_interval: 3           # YOLO every 3 frames
   lost_threshold: 5
   min_confidence: 0.3
