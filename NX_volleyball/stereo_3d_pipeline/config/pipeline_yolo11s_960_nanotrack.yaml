@@ -1,0 +1,93 @@
+# ============================================================
+# YOLO11-S 960×960 (GPU FP16) + NanoTrack SOT infill @ 100Hz
+# PWM 100Hz → YOLO every 3 frames (~33Hz YOLO) → NanoTrack fills 2/3
+# YOLO GPU ~15-20ms, tracker ~1ms, average 7ms/frame < 10ms budget
+# Expected: 100 FPS output
+# ============================================================
+
+# ========== Camera ==========
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: "00219471413"
+  serial_right: "00D39342665"
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  auto_exposure: false
+  auto_gain: false
+  ae_upper_us: 9000.0
+  ae_lower_us: 500.0
+  ag_upper_db: 12.0
+  gamma_enable: false
+  gamma_value: 0.7
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+# ========== Calibration ==========
+calibration:
+  file: "calibration/stereo_calib.yaml"
+
+# ========== Rectification ==========
+rectify:
+  backend: "CUDA"
+  output_width: 1280
+  output_height: 720
+
+# ========== VPI TNR ==========
+tnr:
+  enabled: false
+
+# ========== Detection: YOLO11-S 960 GPU FP16 ==========
+# ~15-20ms per inference on GPU, 960×960 input
+# Output: [1, 5, 18900] standard YOLOv8/v11 format
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo11_s_960_fp16.engine"
+  input_size: 960
+  input_format: "bgr"
+  use_dla: false
+  confidence_threshold: 0.15
+  nms_threshold: 0.4
+  max_detections: 10
+
+# ========== Stereo Matching (ROI) ==========
+stereo:
+  strategy: "roi_only"
+  max_disparity: 512
+  window_size: 5
+  quality: 6
+
+# ========== 3D Fusion ==========
+fusion:
+  min_depth: 0.3
+  max_depth: 15.0
+  baseline_mm: 326.8
+  object_diameter: 0.200
+  R_mono: 0.003
+  R_stereo: 0.020
+  ivw_R_mono: 0.004
+  ivw_R_stereo: 0.025
+
+# ========== Performance: 100Hz PWM ==========
+performance:
+  pwm_frequency: 100.0
+  target_fps: 100
+  log_interval: 100
+  enable_profiling: true
+
+# ========== SOT Tracker: NanoTrack (dual-backbone, 3ch) ==========
+# NanoTrack template: 0.39ms, search: 0.48ms, head: 0.19ms → ~1ms total
+# At 100Hz with interval=3: YOLO ~33Hz, NanoTrack ~67Hz
+tracker:
+  enabled: true
+  type: "nanotrack"
+  engine_path: "/home/nvidia/sot_export/exported/nanotrack_backbone_template.engine"
+  search_engine_path: "/home/nvidia/sot_export/exported/nanotrack_backbone_search.engine"
+  head_engine_path: "/home/nvidia/sot_export/exported/nanotrack_head_adapted.engine"
+  detect_interval: 3
+  lost_threshold: 5
+  min_confidence: 0.3
