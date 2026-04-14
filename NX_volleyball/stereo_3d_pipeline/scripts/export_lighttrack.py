@@ -46,9 +46,11 @@ class BackboneONNX(nn.Module):
 
 
 class HeadONNX(nn.Module):
-    """BAN head wrapper: (template_feat, search_feat) -> (cls_score, bbox_reg)"""
-    def __init__(self, head):
+    """LightTrack head wrapper: (template_feat, search_feat) -> (cls_score, bbox_reg)"""
+    def __init__(self, neck, feature_fusor, head):
         super().__init__()
+        self.neck = neck
+        self.feature_fusor = feature_fusor
         self.head = head
 
     def forward(self, zf, xf):
@@ -56,8 +58,13 @@ class HeadONNX(nn.Module):
             zf = [zf]
         if not isinstance(xf, list):
             xf = [xf]
-        cls, reg = self.head(zf, xf)
-        return cls, reg
+        if isinstance(self.neck, nn.Identity):
+            zf, xf = zf[0], xf[0]
+        else:
+            zf, xf = self.neck(zf[0], xf[0])
+        feat_dict = self.feature_fusor(zf, xf)
+        oup = self.head(feat_dict)
+        return oup['cls'], oup['reg']
 
 
 def main():
@@ -77,7 +84,7 @@ def main():
     from lib.utils.utils import load_pretrain
 
     model = LightTrackM_Subnet(
-        path_name="back_04502514044521042540415045", stride=16
+        path_name="back_04502514044521042540+cls_211000022+reg_100000111_ops_32", stride=16
     )
     model = load_pretrain(model, args.checkpoint)
     model.eval()
@@ -99,6 +106,7 @@ def main():
         },
         opset_version=args.opset,
         do_constant_folding=True,
+        dynamo=False,
     )
     print(f"[OK] Backbone: {backbone_path}")
 
@@ -110,7 +118,7 @@ def main():
         print(f"  template feat: {zf.shape}, search feat: {xf.shape}")
 
     # --- Head ---
-    head = HeadONNX(model.head).to(device).eval()
+    head = HeadONNX(nn.Identity(), model.feature_fusor, model.head).to(device).eval()
     head_path = os.path.join(args.out_dir, "lighttrack_head.onnx")
 
     torch.onnx.export(
@@ -119,6 +127,7 @@ def main():
         output_names=["cls_score", "bbox_reg"],
         opset_version=args.opset,
         do_constant_folding=True,
+        dynamo=False,
     )
     print(f"[OK] Head: {head_path}")
 
