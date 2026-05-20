@@ -21,9 +21,16 @@
 
 #include "frame_slot.h"
 #include "sync.h"
+#ifdef HIK_CAMERA_ENABLED
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
+#endif
+#ifdef ZED_CAMERA_ENABLED
+#include "../capture/zedx_camera.h"
+#endif
 #ifndef HIK_CAMERA_ENABLED
-namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
+#ifndef ZED_CAMERA_ENABLED
+namespace stereo3d { class HikvisionCamera; class ZedxCamera; }
+#endif
 #endif
 #include "../calibration/pwm_trigger.h"
 #include "../calibration/stereo_calibration.h"
@@ -64,8 +71,17 @@ enum class DisparityStrategy {
  * @brief Pipeline 运行时参数
  */
 struct PipelineConfig {
+    // 相机后端选择: "hik" 或 "zed"
+    std::string camera_backend = "hik";
+
     // 相机配置 (内嵌, 避免重复定义)
+#ifdef HIK_CAMERA_ENABLED
     CameraConfig camera;
+#endif
+
+#ifdef ZED_CAMERA_ENABLED
+    ZedCameraConfig zed_camera;
+#endif
 
     // 校正后分辨率
     int rect_width  = 1280;
@@ -204,20 +220,22 @@ private:
     std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
 
     // ===== 异步采集线程 (零拷贝) =====
-    // 按需模式: pipeline 请求 → 采集线程直接写入 VPI Image → 通知完成
-    // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
     std::thread grab_thread_;
     void grabLoop();
 
     std::mutex grab_mutex_;
-    std::condition_variable grab_request_cv_;  ///< pipeline→grab: 请求采集
-    std::condition_variable grab_done_cv_;     ///< grab→pipeline: 采集完成
-    int grab_request_slot_ = -1;               ///< 待采集 slot 索引 (-1=空闲)
-    bool grab_done_ = false;                   ///< 采集完成标志
-    bool grab_done_ok_ = false;                ///< 采集结果
+    std::condition_variable grab_request_cv_;
+    std::condition_variable grab_done_cv_;
+    int grab_request_slot_ = -1;
+    bool grab_done_ = false;
+    bool grab_done_ok_ = false;
 
-    void requestGrab(int slot_idx);   ///< 发起异步采集请求 (非阻塞)
-    bool waitGrab();                  ///< 等待异步采集完成 (阻塞至完成)
+    void requestGrab(int slot_idx);
+    bool waitGrab();
+#endif
+
+#ifdef ZED_CAMERA_ENABLED
+    std::unique_ptr<ZedxCamera> zed_camera_;
 #endif
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;

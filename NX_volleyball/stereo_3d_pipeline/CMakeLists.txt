@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.18)
 project(stereo_3d_pipeline LANGUAGES CXX CUDA)
 
+# ==================== ROS2 ament_cmake ====================
+find_package(ament_cmake QUIET)
+if(ament_cmake_FOUND)
+  set(USE_ROS2 ON)
+  find_package(rclcpp REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(nav_msgs REQUIRED)
+  message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
+else()
+  set(USE_ROS2 OFF)
+  message(STATUS "ROS2: not found, standalone build")
+endif()
+
 # ==================== 编译标准 ====================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +74,16 @@ else()
     set(HIK_FOUND OFF)
     message(WARNING "Hikvision SDK not found, camera module disabled")
   endif()
+endif()
+
+# ZED SDK
+find_package(ZED 4 QUIET)
+if(ZED_FOUND)
+  set(ZED_CAMERA_ENABLED ON)
+  message(STATUS "ZED SDK: ${ZED_VERSION} (${ZED_LIBRARIES})")
+else()
+  set(ZED_CAMERA_ENABLED OFF)
+  message(STATUS "ZED SDK not found, ZED camera disabled")
 endif()
 
 # yaml-cpp
@@ -124,6 +147,11 @@ if(HIK_FOUND)
   link_directories(${MVS_SDK_ROOT}/lib/aarch64)
 endif()
 
+if(ZED_CAMERA_ENABLED)
+  include_directories(${ZED_INCLUDE_DIRS})
+  link_directories(${ZED_LIBRARY_DIR})
+endif()
+
 # ==================== 源文件 ====================
 set(PIPELINE_SOURCES
   src/main.cpp
@@ -146,12 +174,25 @@ set(CUDA_SOURCES
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
+  src/capture/bgra_convert.cu
 )
 
 # 相机源文件 (可选)
 if(HIK_FOUND)
   list(APPEND PIPELINE_SOURCES src/capture/hikvision_camera.cpp)
   add_definitions(-DHIK_CAMERA_ENABLED)
+endif()
+
+if(ZED_CAMERA_ENABLED)
+  list(APPEND PIPELINE_SOURCES src/capture/zedx_camera.cpp)
+  add_definitions(-DZED_CAMERA_ENABLED)
+endif()
+
+if(USE_ROS2)
+  list(APPEND PIPELINE_SOURCES
+    src/ros/goal_pose_bridge.cpp
+    src/tracker/ball_tracker.cpp
+  )
 endif()
 
 # ==================== 目标 ====================
@@ -185,6 +226,15 @@ target_link_libraries(stereo_pipeline
 
 if(HIK_FOUND)
   target_link_libraries(stereo_pipeline MvCameraControl)
+endif()
+
+if(ZED_CAMERA_ENABLED)
+  target_link_libraries(stereo_pipeline ${ZED_LIBRARIES})
+endif()
+
+if(USE_ROS2)
+  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
 # PWM trigger: libgpiod 或 sysfs fallback
@@ -293,5 +343,12 @@ message(STATUS "  OpenCV:         ${OpenCV_VERSION}")
 message(STATUS "  ONNX Runtime:   ${ONNXRUNTIME_FOUND}")
 message(STATUS "  ximgproc (WLS): ${XIMGPROC_FOUND}")
 message(STATUS "  Hikvision SDK:  ${HIK_FOUND}")
+message(STATUS "  ZED SDK:        ${ZED_CAMERA_ENABLED}")
+message(STATUS "  ROS2:           ${USE_ROS2}")
 message(STATUS "  yaml-cpp:       YES")
 message(STATUS "========================================")
+
+# ==================== ament 收尾 ====================
+if(USE_ROS2)
+  ament_package()
+endif()

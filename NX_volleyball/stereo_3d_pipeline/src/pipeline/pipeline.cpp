@@ -227,6 +227,21 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
 #endif
 
+#ifdef ZED_CAMERA_ENABLED
+    if (config_.camera_backend == "zed") {
+        LOG_INFO("Opening ZED X camera...");
+        zed_camera_ = std::make_unique<ZedxCamera>();
+        if (!zed_camera_->open(config_.zed_camera)) {
+            LOG_WARN("Failed to open ZED camera - running in dry-run mode");
+            zed_camera_.reset();
+        } else {
+            auto intr = zed_camera_->getIntrinsics();
+            LOG_INFO("  ZED intrinsics: focal=%.1f baseline=%.4fm cx=%.1f cy=%.1f (%dx%d)",
+                     intr.focal, intr.baseline, intr.cx, intr.cy, intr.width, intr.height);
+        }
+    }
+#endif
+
     // 8. 初始化 TensorRT 检测器 (DLA/GPU)
     LOG_INFO("Initializing TRT Detector (DLA=%d, core=%d, dual=%d)...",
              config_.use_dla, config_.dla_core, config_.dual_dla);
@@ -672,6 +687,44 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         }
     }
     // grab_preloaded == true: 异步采集线程已将数据写入 rawL/rawR (零拷贝)
+#endif
+
+#ifdef ZED_CAMERA_ENABLED
+    if (zed_camera_ && config_.camera_backend == "zed") {
+        if (!zed_camera_->grab()) {
+            slot.grab_failed = true;
+            LOG_WARN("[Pipeline] Frame %d ZED grab failed, skipping", slot.frame_id);
+        } else {
+            // ZED 输出已校正的 BGRA (GPU), 直接转灰度写入 rectGray
+            auto* left_bgra = static_cast<const uint8_t*>(zed_camera_->getLeftBGRA_GPU());
+            auto* right_bgra = static_cast<const uint8_t*>(zed_camera_->getRightBGRA_GPU());
+            int w = zed_camera_->getWidth();
+            int h = zed_camera_->getHeight();
+            int bgra_pitch = w * 4;  // BGRA packed, no padding from ZED SDK
+
+            // 写入 rectGray_vpiL/R (CUDA pitch linear)
+            VPIImageData grayDataL, grayDataR;
+            vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataL);
+            vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataR);
+
+            extern "C" void launchBGRA2Gray(const uint8_t*, int, uint8_t*, int, int, int, cudaStream_t);
+            launchBGRA2Gray(left_bgra, bgra_pitch,
+                           static_cast<uint8_t*>(grayDataL.buffer.pitch.planes[0].data),
+                           grayDataL.buffer.pitch.planes[0].pitchBytes,
+                           w, h, streams_.cudaStreamBGR);
+            launchBGRA2Gray(right_bgra, bgra_pitch,
+                           static_cast<uint8_t*>(grayDataR.buffer.pitch.planes[0].data),
+                           grayDataR.buffer.pitch.planes[0].pitchBytes,
+                           w, h, streams_.cudaStreamBGR);
+
+            cudaStreamSynchronize(streams_.cudaStreamBGR);
+            vpiImageUnlock(slot.rectGray_vpiL);
+            vpiImageUnlock(slot.rectGray_vpiR);
+        }
+        // ZED 已内部校正, 跳过 VPI remap/TNR
+        NVTX_RANGE_POP();
+        return;
+    }
 #endif
 
     // === VPI 流同步: 确保上一帧的 remap/convert 完成后再提交新任务 ===

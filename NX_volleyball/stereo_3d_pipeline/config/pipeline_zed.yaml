@@ -1,0 +1,60 @@
+# Pipeline 配置: ZED X + AGX Orin (GPU-only, 960x960 模型)
+# 不使用 DLA，不使用 VPI 校正（ZED 内部已校正）
+
+camera:
+  backend: "zed"              # "hik" 或 "zed"
+  resolution: "HD1200"        # HD1200=1920x1200@60fps
+  fps: 60
+  manual_exposure: true
+  exposure_pct: 30            # 5ms = 50Hz 半周期，减少灯光闪烁
+  gain: 70
+  image_enhancement: false    # 关闭 ZED 图像增强，降低延迟
+
+# ZED 内部校正，rect_width/height 匹配 ZED 输出
+rectify:
+  output_width: 1920
+  output_height: 1200
+  backend: "CUDA"             # 实际不使用 VPI remap（ZED 路径跳过）
+
+calibration:
+  file: "config/zed_intrinsics.yaml"  # 从 ZED SDK 自动获取，此处仅作 fallback
+
+detector:
+  engine_path: "models/best_960_fp16.engine"
+  input_size: 960
+  use_dla: false              # GPU-only，不使用 DLA
+  dla_core: 0
+  dual_dla: false
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  max_detections: 10
+  input_format: "gray"        # ZED BGRA→Gray 后以灰度输入
+
+stereo:
+  strategy: "roi_only"        # ROI 多点匹配（排球只需单目标深度）
+  max_disparity: 128
+  window_size: 5
+  quality: 6
+
+fusion:
+  min_depth: 1.0
+  max_depth: 20.0
+  object_diameter: 0.21       # 排球直径 21cm
+  bbox_scale: 1.2
+  mono_max_z: 6.0             # <6m 以单目为主
+  stereo_min_z: 4.0           # >4m 以双目为主
+  R_mono: 0.04
+  R_stereo: 0.01
+
+performance:
+  log_interval: 100
+  pwm_frequency: 60           # ZED 60fps
+
+prediction:
+  gravity: 9.81
+  air_density: 1.225
+  ball_mass: 0.270
+  ball_radius: 0.105
+  drag_coeff: 0.47
+  ground_y: 0.0
+  max_predict_time: 3.0

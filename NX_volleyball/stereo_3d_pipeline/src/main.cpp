@@ -68,6 +68,8 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
 
     // Camera → 直接写入内嵌 CameraConfig
     if (auto cam = root["camera"]) {
+        if (cam["backend"]) cfg.camera_backend = cam["backend"].as<std::string>();
+#ifdef HIK_CAMERA_ENABLED
         if (cam["serial_left"])       cfg.camera.serial_left  = cam["serial_left"].as<std::string>();
         if (cam["serial_right"])      cfg.camera.serial_right = cam["serial_right"].as<std::string>();
         if (cam["left_index"])        cfg.camera.camera_index_left  = cam["left_index"].as<int>();
@@ -88,6 +90,15 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (cam["trigger_line"])       cfg.trigger_line = cam["trigger_line"].as<int>();
         if (cam["width"])             cfg.camera.width  = cam["width"].as<int>();
         if (cam["height"])            cfg.camera.height = cam["height"].as<int>();
+#endif
+#ifdef ZED_CAMERA_ENABLED
+        if (cam["resolution"])         cfg.zed_camera.resolution = cam["resolution"].as<std::string>();
+        if (cam["fps"])                cfg.zed_camera.fps = cam["fps"].as<int>();
+        if (cam["manual_exposure"])    cfg.zed_camera.manual_exposure = cam["manual_exposure"].as<bool>();
+        if (cam["exposure_pct"])       cfg.zed_camera.exposure_pct = cam["exposure_pct"].as<int>();
+        if (cam["gain"])               cfg.zed_camera.gain = cam["gain"].as<int>();
+        if (cam["image_enhancement"])  cfg.zed_camera.enable_image_enhancement = cam["image_enhancement"].as<bool>();
+#endif
     }
 
     // Calibration
