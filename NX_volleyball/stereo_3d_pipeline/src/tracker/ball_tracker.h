@@ -9,8 +9,8 @@
 #include <string>
 
 #include "Ball3DFilter.h"
-#include "dataType.h"
 #include "HybridDepth.h"
+#include "../pipeline/frame_slot.h"
 
 namespace stereo3d {
 

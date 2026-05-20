@@ -50,5 +50,3 @@ private:
 } // namespace stereo3d
 
 #endif // STEREO_3D_PIPELINE_ZEDX_CAMERA_H_
-
-#endif // HAVE_ZED_SDK

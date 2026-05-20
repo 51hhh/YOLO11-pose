@@ -87,7 +87,7 @@ StereoIntrinsics ZedxCamera::getIntrinsics() const {
     intr.focal = left_cam.fx;
     intr.cx = left_cam.cx;
     intr.cy = left_cam.cy;
-    intr.baseline = std::abs(info.camera_configuration.calibration_parameters.getCameraBaseline());
+    intr.baseline = std::abs(info.camera_configuration.calibration_parameters.getCameraBaseline()) / 1000.0f;
     intr.width = res.width;
     intr.height = res.height;
     return intr;

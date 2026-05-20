@@ -91,6 +91,9 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (cam["width"])             cfg.camera.width  = cam["width"].as<int>();
         if (cam["height"])            cfg.camera.height = cam["height"].as<int>();
 #endif
+        // 通用尺寸字段 (所有后端)
+        if (cam["width"])             cfg.image_width  = cam["width"].as<int>();
+        if (cam["height"])            cfg.image_height = cam["height"].as<int>();
 #ifdef ZED_CAMERA_ENABLED
         if (cam["resolution"])         cfg.zed_camera.resolution = cam["resolution"].as<std::string>();
         if (cam["fps"])                cfg.zed_camera.fps = cam["fps"].as<int>();
@@ -394,7 +397,7 @@ int main(int argc, char* argv[]) {
                     CV_16SC2, vis_map1, vis_map2);
                 has_color_remap = true;
                 LOG_INFO("Color remap built for visualization (%dx%d -> %dx%d)",
-                         cfg.camera.width, cfg.camera.height, cfg.rect_width, cfg.rect_height);
+                         cfg.image_width, cfg.image_height, cfg.rect_width, cfg.rect_height);
             }
         } catch (const std::exception& e) {
             LOG_WARN("Failed to build color remap: %s (visualization will be grayscale)", e.what());
@@ -500,15 +503,15 @@ int main(int argc, char* argv[]) {
     // 计算显示尺寸: 保持原始 4:3 比例 (raw_width:raw_height)
     int disp_w = cfg.rect_width;
     int disp_h = cfg.rect_height;
-    if (cfg.camera.width > 0 && cfg.camera.height > 0) {
+    if (cfg.image_width > 0 && cfg.image_height > 0) {
         // 以 rect_height 为基准，按原始宽高比确定宽度
-        disp_w = cfg.rect_height * cfg.camera.width / cfg.camera.height;
+        disp_w = cfg.rect_height * cfg.image_width / cfg.image_height;
     }
 
     if (enable_display) {
         LOG_INFO("Visualization enabled - press ESC to quit, click for depth");
         LOG_INFO("Display: %dx%d (aspect %d:%d)", disp_w, disp_h,
-                 cfg.camera.width, cfg.camera.height);
+                 cfg.image_width, cfg.image_height);
         try {
             cv::namedWindow("Pipeline", cv::WINDOW_NORMAL);
             cv::resizeWindow("Pipeline", disp_w, disp_h);

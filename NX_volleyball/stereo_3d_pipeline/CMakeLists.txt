@@ -86,6 +86,21 @@ else()
   message(STATUS "ZED SDK not found, ZED camera disabled")
 endif()
 
+# Eigen3 (ball_tracker)
+find_package(Eigen3 QUIET)
+if(NOT Eigen3_FOUND)
+  # Jetson 上 Eigen 通常在 /usr/include/eigen3
+  find_path(EIGEN3_INCLUDE_DIR Eigen/Dense HINTS /usr/include/eigen3 /usr/local/include/eigen3)
+  if(EIGEN3_INCLUDE_DIR)
+    set(Eigen3_FOUND ON)
+  endif()
+endif()
+if(Eigen3_FOUND)
+  message(STATUS "Eigen3 found")
+else()
+  message(WARNING "Eigen3 not found, ball_tracker may fail to compile")
+endif()
+
 # yaml-cpp
 find_package(yaml-cpp QUIET)
 if(NOT yaml-cpp_FOUND)
@@ -137,10 +152,17 @@ endif()
 # ==================== 包含目录 ====================
 include_directories(
   ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/tracker
   ${OpenCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}
 )
+
+if(EIGEN3_INCLUDE_DIR)
+  include_directories(${EIGEN3_INCLUDE_DIR})
+elseif(EIGEN3_INCLUDE_DIRS)
+  include_directories(${EIGEN3_INCLUDE_DIRS})
+endif()
 
 if(HIK_FOUND)
   include_directories(${MVS_SDK_ROOT}/include)
@@ -192,6 +214,7 @@ if(USE_ROS2)
   list(APPEND PIPELINE_SOURCES
     src/ros/goal_pose_bridge.cpp
     src/tracker/ball_tracker.cpp
+    src/tracker/Ball3DFilter.cpp
   )
 endif()
 

@@ -74,6 +74,10 @@ struct PipelineConfig {
     // 相机后端选择: "hik" 或 "zed"
     std::string camera_backend = "hik";
 
+    // 通用图像尺寸 (相机原始分辨率, 所有后端共用)
+    int image_width  = 1920;
+    int image_height = 1200;
+
     // 相机配置 (内嵌, 避免重复定义)
 #ifdef HIK_CAMERA_ENABLED
     CameraConfig camera;
@@ -236,6 +240,7 @@ private:
 
 #ifdef ZED_CAMERA_ENABLED
     std::unique_ptr<ZedxCamera> zed_camera_;
+    float zed_focal_ = 0, zed_baseline_ = 0, zed_cx_ = 0, zed_cy_ = 0;
 #endif
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;

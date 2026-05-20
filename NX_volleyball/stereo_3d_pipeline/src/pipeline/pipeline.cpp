@@ -31,6 +31,12 @@ extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr
                                    int bayer_pitch, int bgr_pitch,
                                    cudaStream_t stream);
 
+// BGRA→Gray CUDA kernel (bgra_convert.cu)
+extern "C" void launchBGRA2Gray(const uint8_t* src, int srcPitch,
+                                 uint8_t* dst, int dstPitch,
+                                 int width, int height,
+                                 cudaStream_t stream);
+
 namespace stereo3d {
 
 Pipeline::Pipeline() = default;
@@ -73,28 +79,60 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
-    // 3. 初始化标定
-    LOG_INFO("Loading stereo calibration: %s", config_.calibration_file.c_str());
-    calibration_ = std::make_unique<StereoCalibration>();
-    if (!calibration_->load(config_.calibration_file)) {
-        LOG_ERROR("Failed to load calibration");
-        return false;
+    // 2b. ZED 相机 (必须在标定前打开, 以获取 SDK 内参)
+#ifdef ZED_CAMERA_ENABLED
+    if (config_.camera_backend == "zed") {
+        LOG_INFO("Opening ZED X camera...");
+        zed_camera_ = std::make_unique<ZedxCamera>();
+        if (!zed_camera_->open(config_.zed_camera)) {
+            LOG_WARN("Failed to open ZED camera - running in dry-run mode");
+            zed_camera_.reset();
+        } else {
+            auto intr = zed_camera_->getIntrinsics();
+            LOG_INFO("  ZED intrinsics: focal=%.1f baseline=%.4fm cx=%.1f cy=%.1f (%dx%d)",
+                     intr.focal, intr.baseline, intr.cx, intr.cy, intr.width, intr.height);
+        }
     }
+#endif
 
-    // 4. 初始化 VPI Rectifier
-    //    Rectifier 按校正后分辨率初始化
-    uint64_t rectBackend = VPI_BACKEND_VIC;  // 默认 VIC (不占用 GPU)
-    std::string rectBackendCfg = config_.rect_backend;
-    std::transform(rectBackendCfg.begin(), rectBackendCfg.end(), rectBackendCfg.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    if (rectBackendCfg == "CUDA") rectBackend = VPI_BACKEND_CUDA;
-    config_.rect_backend = rectBackendCfg;
-    LOG_INFO("Initializing VPI Rectifier (%s) at %dx%d...",
-             config_.rect_backend.c_str(), config_.rect_width, config_.rect_height);
-    rectifier_ = std::make_unique<VPIRectifier>();
-    if (!rectifier_->init(*calibration_, config_.rect_width, config_.rect_height, rectBackend)) {
-        LOG_ERROR("Failed to initialize VPI Rectifier");
-        return false;
+    // 3. 初始化标定
+#ifdef ZED_CAMERA_ENABLED
+    if (config_.camera_backend == "zed" && zed_camera_ && zed_camera_->isOpened()) {
+        // ZED: 图像已由 SDK 校正, 从 SDK 获取内参, 跳过文件加载和 VPI Rectifier
+        auto intr = zed_camera_->getIntrinsics();
+        zed_focal_    = intr.focal;
+        zed_baseline_ = intr.baseline;
+        zed_cx_       = intr.cx;
+        zed_cy_       = intr.cy;
+        config_.rect_width  = intr.width;
+        config_.rect_height = intr.height;
+        LOG_INFO("ZED intrinsics: focal=%.2f baseline=%.4fm cx=%.1f cy=%.1f (%dx%d)",
+                 zed_focal_, zed_baseline_, zed_cx_, zed_cy_, intr.width, intr.height);
+    } else
+#endif
+    {
+        LOG_INFO("Loading stereo calibration: %s", config_.calibration_file.c_str());
+        calibration_ = std::make_unique<StereoCalibration>();
+        if (!calibration_->load(config_.calibration_file)) {
+            LOG_ERROR("Failed to load calibration");
+            return false;
+        }
+
+        // 4. 初始化 VPI Rectifier
+        //    Rectifier 按校正后分辨率初始化
+        uint64_t rectBackend = VPI_BACKEND_VIC;  // 默认 VIC (不占用 GPU)
+        std::string rectBackendCfg = config_.rect_backend;
+        std::transform(rectBackendCfg.begin(), rectBackendCfg.end(), rectBackendCfg.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        if (rectBackendCfg == "CUDA") rectBackend = VPI_BACKEND_CUDA;
+        config_.rect_backend = rectBackendCfg;
+        LOG_INFO("Initializing VPI Rectifier (%s) at %dx%d...",
+                 config_.rect_backend.c_str(), config_.rect_width, config_.rect_height);
+        rectifier_ = std::make_unique<VPIRectifier>();
+        if (!rectifier_->init(*calibration_, config_.rect_width, config_.rect_height, rectBackend)) {
+            LOG_ERROR("Failed to initialize VPI Rectifier");
+            return false;
+        }
     }
 
     // 5. 分配 VPI Images (使用 VPI zero-copy buffers)
@@ -111,20 +149,20 @@ bool Pipeline::init(const PipelineConfig& config) {
         const VPIImageFormat rawFmt = (config_.detector_input_format == "bgr")
             ? VPI_MAKE_RAW_IMAGE_FORMAT_ABBREV(BAYER_RGGB, PL, UNSIGNED, X000, 1, X8)
             : VPI_IMAGE_FORMAT_U8;
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              rawFmt, flags, &slots_[i].rawL);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawL create failed (err=%d)", (int)err); return false; }
 
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              rawFmt, flags, &slots_[i].rawR);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rawR create failed (err=%d)", (int)err); return false; }
 
         // --- Color pipeline images ---
         // Debayer 输出: raw res BGR
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_L);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_L create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_BGR8, flags, &slots_[i].tempBGR_R);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI tempBGR_R create failed"); return false; }
         // 校正后 BGR (检测用)
@@ -180,31 +218,31 @@ bool Pipeline::init(const PipelineConfig& config) {
         // 创建 NV12 缓冲 (用于 U8 → NV12 转换 + TNR 处理)
         // 使用 raw 分辨率, TNR 在校正前执行
         uint64_t nv12_flags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU;
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12L_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12R_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 R create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12L_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
+        err = vpiImageCreate(config_.image_width, config_.image_height,
                              VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12R_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 R create failed"); return false; }
 
         // 创建 TNR payload
         err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.camera.width, config_.camera.height,
+                  config_.image_width, config_.image_height,
                   VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadL_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload L create failed"); return false; }
         err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.camera.width, config_.camera.height,
+                  config_.image_width, config_.image_height,
                   VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadR_);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload R create failed"); return false; }
 
         tnrFirstFrame_ = true;
-        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.camera.width, config_.camera.height);
+        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.image_width, config_.image_height);
     }
 
     // 7. 初始化海康双目相机
@@ -224,21 +262,8 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.trigger_chip.c_str(), config_.trigger_line, config_.trigger_freq_hz);
     }
 #else
-    LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
-#endif
-
-#ifdef ZED_CAMERA_ENABLED
-    if (config_.camera_backend == "zed") {
-        LOG_INFO("Opening ZED X camera...");
-        zed_camera_ = std::make_unique<ZedxCamera>();
-        if (!zed_camera_->open(config_.zed_camera)) {
-            LOG_WARN("Failed to open ZED camera - running in dry-run mode");
-            zed_camera_.reset();
-        } else {
-            auto intr = zed_camera_->getIntrinsics();
-            LOG_INFO("  ZED intrinsics: focal=%.1f baseline=%.4fm cx=%.1f cy=%.1f (%dx%d)",
-                     intr.focal, intr.baseline, intr.cx, intr.cy, intr.width, intr.height);
-        }
+    if (config_.camera_backend != "zed") {
+        LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
     }
 #endif
 
@@ -281,15 +306,28 @@ bool Pipeline::init(const PipelineConfig& config) {
     }
 
     // 9. 初始化立体匹配 (根据策略选择)
+    float focal = 0, baseline = 0, cx = 0, cy = 0;
+#ifdef ZED_CAMERA_ENABLED
+    if (config_.camera_backend == "zed") {
+        focal    = zed_focal_;
+        baseline = zed_baseline_;
+        cx       = zed_cx_;
+        cy       = zed_cy_;
+    } else
+#endif
+    if (calibration_) {
+        const auto& P1 = calibration_->getProjectionLeft();
+        focal    = static_cast<float>(P1.at<double>(0, 0));
+        cx       = static_cast<float>(P1.at<double>(0, 2));
+        cy       = static_cast<float>(P1.at<double>(1, 2));
+        baseline = calibration_->getBaseline();
+    }
+
     if (config_.disparity_strategy == DisparityStrategy::ROI_ONLY) {
         // ROI 模式: 多点块匹配, 不需要全帧视差
         LOG_INFO("Initializing ROI Stereo Matcher (maxDisp=%d, patchR=%d)...",
                  config_.max_disparity, 5);
         roi_matcher_ = std::make_unique<ROIStereoMatcher>();
-        const auto& P1 = calibration_->getProjectionLeft();
-        float focal = static_cast<float>(P1.at<double>(0, 0));
-        float cx    = static_cast<float>(P1.at<double>(0, 2));
-        float cy    = static_cast<float>(P1.at<double>(1, 2));
         ROIMatchConfig roi_cfg;
         roi_cfg.maxDisparity    = config_.max_disparity;
         roi_cfg.patchRadius     = 5;
@@ -297,13 +335,13 @@ bool Pipeline::init(const PipelineConfig& config) {
         roi_cfg.maxDepth        = config_.depth.max_depth;
         roi_cfg.objectDiameter  = config_.depth.object_diameter;
         roi_cfg.useCircleFit    = true;
-        roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+        roi_matcher_->init(focal, baseline, cx, cy, roi_cfg);
 
         // 初始化混合深度估计 (单目+双目+Kalman)
         hybrid_depth_ = std::make_unique<HybridDepthEstimator>();
         auto hd_cfg = config_.depth;
         hd_cfg.dt = 1.0f / config_.trigger_freq_hz;
-        hybrid_depth_->init(focal, calibration_->getBaseline(), cx, cy, hd_cfg);
+        hybrid_depth_->init(focal, baseline, cx, cy, hd_cfg);
         LOG_INFO("  Hybrid Depth: mono(<%.0fm) + stereo(>%.0fm) + Kalman @ %.0fHz",
                  hd_cfg.mono_max_z, hd_cfg.stereo_min_z, 1.0f / hd_cfg.dt);
     } else {
@@ -320,9 +358,9 @@ bool Pipeline::init(const PipelineConfig& config) {
 
         // 全帧模式需要 Coordinate3D 融合器
         fusion_ = std::make_unique<Coordinate3D>();
-        fusion_->init(calibration_->getProjectionLeft(),
-                      calibration_->getBaseline(),
-                      config_.depth.min_depth, config_.depth.max_depth);
+        cv::Mat P1_mat;
+        if (calibration_) P1_mat = calibration_->getProjectionLeft();
+        fusion_->init(P1_mat, baseline, config_.depth.min_depth, config_.depth.max_depth);
     }
 
     const char* strategyStr = (config_.disparity_strategy == DisparityStrategy::ROI_ONLY)
@@ -331,7 +369,7 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     LOG_INFO("========================================");
     LOG_INFO("Pipeline initialized successfully");
-    LOG_INFO("  Raw resolution:  %dx%d", config_.camera.width, config_.camera.height);
+    LOG_INFO("  Raw resolution:  %dx%d", config_.image_width, config_.image_height);
     LOG_INFO("  Rect resolution: %dx%d", config_.rect_width, config_.rect_height);
     LOG_INFO("  Trigger: %d Hz", config_.trigger_freq_hz);
     LOG_INFO("  Detect: %s (DLA=%d)", config_.engine_file.c_str(), config_.use_dla);
@@ -707,7 +745,6 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataL);
             vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataR);
 
-            extern "C" void launchBGRA2Gray(const uint8_t*, int, uint8_t*, int, int, int, cudaStream_t);
             launchBGRA2Gray(left_bgra, bgra_pitch,
                            static_cast<uint8_t*>(grayDataL.buffer.pitch.planes[0].data),
                            grayDataL.buffer.pitch.planes[0].pitchBytes,
@@ -775,8 +812,8 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         //       使用 init() 时缓存的 CUDA 指针, 跳过 VPI lock/unlock (~2.4ms 优化)
         //       Tegra 统一内存: HOST 写入 (grab) 直接对 CUDA 可见, 无需显式同步
         {
-            int rw = config_.camera.width;
-            int rh = config_.camera.height;
+            int rw = config_.image_width;
+            int rh = config_.image_height;
 
             launchBayerToBGR8(
                 static_cast<const unsigned char*>(slot.rawL_gpu.data),

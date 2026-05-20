@@ -66,8 +66,8 @@ static LandingPoint lockLanding(const LandingPoint& chosen,
 
 static bool startupObservationPlausible(const Eigen::Vector3f& obs,
                                         const Detection& det) {
-    const float box_w = std::max(1.0f, det.bbox[2] - det.bbox[0]);
-    const float box_h = std::max(1.0f, det.bbox[3] - det.bbox[1]);
+    const float box_w = std::max(1.0f, det.width);
+    const float box_h = std::max(1.0f, det.height);
     const float box_px = 0.5f * (box_w + box_h);
 
     if (det.confidence < 0.72f) return false;
@@ -143,8 +143,8 @@ float BallTracker::computeMeasurementNoise(const Eigen::Vector3f& obs,
     else if (obs.y() > 5.0f) noise += 0.04f;
     else if (obs.y() > 3.0f) noise += 0.02f;
 
-    const float box_w = std::max(1.0f, det.bbox[2] - det.bbox[0]);
-    const float box_h = std::max(1.0f, det.bbox[3] - det.bbox[1]);
+    const float box_w = std::max(1.0f, det.width);
+    const float box_h = std::max(1.0f, det.height);
     const float box_px = 0.5f * (box_w + box_h);
 
     if (box_px < 12.0f) noise += 0.08f;
@@ -168,10 +168,10 @@ bool BallTracker::sampleMedianXYZ(const Detection& det,
 
     const int img_w = xyz.cols;
     const int img_h = xyz.rows;
-    cv::Rect box((int)std::floor(det.bbox[0]),
-                 (int)std::floor(det.bbox[1]),
-                 std::max(1, (int)std::round(det.bbox[2] - det.bbox[0])),
-                 std::max(1, (int)std::round(det.bbox[3] - det.bbox[1])));
+    cv::Rect box((int)std::floor(det.cx - det.width * 0.5f),
+                 (int)std::floor(det.cy - det.height * 0.5f),
+                 std::max(1, (int)std::round(det.width)),
+                 std::max(1, (int)std::round(det.height)));
     box &= cv::Rect(0, 0, img_w, img_h);
     if (box.width <= 1 || box.height <= 1) return false;
 
