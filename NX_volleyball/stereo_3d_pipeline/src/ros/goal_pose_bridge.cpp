@@ -56,6 +56,49 @@ GoalPoseBridge::GoalPoseBridge(const std::shared_ptr<rclcpp::Node>& node)
 bool GoalPoseBridge::enabled() const   { return enabled_; }
 bool GoalPoseBridge::enableGui() const { return enable_gui_; }
 
+GoalPoseBridge::GoalPoseBridge(const std::shared_ptr<rclcpp::Node>& node,
+                               const Ros2BridgeConfig& cfg)
+    : node_(node),
+      enabled_(cfg.enabled),
+      enable_gui_(false),
+      realtime_world_topic_(cfg.topic_realtime),
+      landing_world_topic_(cfg.topic_landing),
+      predicted_path_topic_(cfg.topic_predicted_path),
+      actual_path_topic_(cfg.topic_actual_path),
+      realtime_base_topic_(cfg.topic_realtime_base),
+      landing_base_topic_(cfg.topic_landing_base),
+      world_frame_id_(cfg.world_frame_id),
+      base_frame_id_(cfg.base_frame_id),
+      odom_topic_(cfg.odom_topic),
+      swap_xy_(cfg.swap_xy),
+      invert_x_(cfg.invert_x),
+      invert_y_(cfg.invert_y),
+      rotation_deg_(cfg.rotation_deg),
+      translation_x_(cfg.translation_x),
+      translation_y_(cfg.translation_y),
+      odom_timeout_sec_(cfg.odom_timeout_sec)
+{
+    odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+        odom_topic_, 20,
+        std::bind(&GoalPoseBridge::odomCallback, this, std::placeholders::_1));
+
+    if (enabled_) {
+        auto qos_best = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
+        auto qos_rel  = rclcpp::QoS(rclcpp::KeepLast(5)).reliable();
+
+        realtime_world_pub_ = node_->create_publisher<geometry_msgs::msg::PointStamped>(realtime_world_topic_, qos_best);
+        landing_world_pub_  = node_->create_publisher<geometry_msgs::msg::PointStamped>(landing_world_topic_,  qos_rel);
+        predicted_path_pub_ = node_->create_publisher<nav_msgs::msg::Path>(predicted_path_topic_, qos_best);
+        actual_path_pub_    = node_->create_publisher<nav_msgs::msg::Path>(actual_path_topic_,    qos_best);
+        realtime_base_pub_  = node_->create_publisher<geometry_msgs::msg::PointStamped>(realtime_base_topic_, qos_best);
+        landing_base_pub_   = node_->create_publisher<geometry_msgs::msg::PointStamped>(landing_base_topic_,  qos_rel);
+
+        RCLCPP_INFO(node_->get_logger(),
+            "Ball bridge (config ctor): world=%s base=%s realtime=%s",
+            world_frame_id_.c_str(), base_frame_id_.c_str(), realtime_world_topic_.c_str());
+    }
+}
+
 PlanarPoint2D GoalPoseBridge::transformVisionToWorld(double vision_x, double vision_y) const {
     double x = vision_x;
     double y = vision_y;

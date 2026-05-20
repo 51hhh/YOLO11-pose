@@ -67,6 +67,31 @@ enum class DisparityStrategy {
     ROI_ONLY           ///< 仅计算 ROI 区域
 };
 
+#ifdef HAS_ROS2
+/**
+ * @brief ROS2 Bridge 配置 (由 YAML 加载, 不在代码中设默认值)
+ */
+struct Ros2BridgeConfig {
+    bool enabled;
+    std::string world_frame_id;
+    std::string base_frame_id;
+    std::string odom_topic;
+    double odom_timeout_sec;
+    std::string topic_realtime;
+    std::string topic_landing;
+    std::string topic_predicted_path;
+    std::string topic_actual_path;
+    std::string topic_realtime_base;
+    std::string topic_landing_base;
+    bool swap_xy;
+    bool invert_x;
+    bool invert_y;
+    double rotation_deg;
+    double translation_x;
+    double translation_y;
+};
+#endif
+
 /**
  * @brief Pipeline 运行时参数
  */

@@ -78,6 +78,14 @@ void* ZedxCamera::getRightBGRA_GPU() {
     return impl_->right_mat_.getPtr<sl::uchar1>(sl::MEM::GPU);
 }
 
+int ZedxCamera::getLeftPitch() const {
+    return static_cast<int>(impl_->left_mat_.getStepBytes(sl::MEM::GPU));
+}
+
+int ZedxCamera::getRightPitch() const {
+    return static_cast<int>(impl_->right_mat_.getStepBytes(sl::MEM::GPU));
+}
+
 StereoIntrinsics ZedxCamera::getIntrinsics() const {
     auto info = impl_->camera.getCameraInformation();
     auto& left_cam = info.camera_configuration.calibration_parameters.left_cam;

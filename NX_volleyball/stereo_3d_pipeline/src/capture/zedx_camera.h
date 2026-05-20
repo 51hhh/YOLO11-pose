@@ -36,6 +36,8 @@ public:
 
     void* getLeftBGRA_GPU();
     void* getRightBGRA_GPU();
+    int getLeftPitch() const;
+    int getRightPitch() const;
 
     StereoIntrinsics getIntrinsics() const;
     int getWidth() const;

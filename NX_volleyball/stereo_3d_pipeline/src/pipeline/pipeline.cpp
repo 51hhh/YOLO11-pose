@@ -37,6 +37,12 @@ extern "C" void launchBGRA2Gray(const uint8_t* src, int srcPitch,
                                  int width, int height,
                                  cudaStream_t stream);
 
+// BGRA→BGR CUDA kernel (bgra_convert.cu)
+extern "C" void launchBGRA2BGR(const uint8_t* src, int srcPitch,
+                                uint8_t* dst, int dstPitch,
+                                int width, int height,
+                                cudaStream_t stream);
+
 namespace stereo3d {
 
 Pipeline::Pipeline() = default;
@@ -733,30 +739,42 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             slot.grab_failed = true;
             LOG_WARN("[Pipeline] Frame %d ZED grab failed, skipping", slot.frame_id);
         } else {
-            // ZED 输出已校正的 BGRA (GPU), 直接转灰度写入 rectGray
+            // ZED 输出已校正的 BGRA (GPU), 转 BGR + Gray
             auto* left_bgra = static_cast<const uint8_t*>(zed_camera_->getLeftBGRA_GPU());
             auto* right_bgra = static_cast<const uint8_t*>(zed_camera_->getRightBGRA_GPU());
             int w = zed_camera_->getWidth();
             int h = zed_camera_->getHeight();
-            int bgra_pitch = w * 4;  // BGRA packed, no padding from ZED SDK
+            int left_pitch = zed_camera_->getLeftPitch();
+            int right_pitch = zed_camera_->getRightPitch();
 
-            // 写入 rectGray_vpiL/R (CUDA pitch linear)
+            // 写入 rectGray_vpiL/R (立体匹配用)
             VPIImageData grayDataL, grayDataR;
             vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataL);
             vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &grayDataR);
 
-            launchBGRA2Gray(left_bgra, bgra_pitch,
+            launchBGRA2Gray(left_bgra, left_pitch,
                            static_cast<uint8_t*>(grayDataL.buffer.pitch.planes[0].data),
                            grayDataL.buffer.pitch.planes[0].pitchBytes,
                            w, h, streams_.cudaStreamBGR);
-            launchBGRA2Gray(right_bgra, bgra_pitch,
+            launchBGRA2Gray(right_bgra, right_pitch,
                            static_cast<uint8_t*>(grayDataR.buffer.pitch.planes[0].data),
                            grayDataR.buffer.pitch.planes[0].pitchBytes,
                            w, h, streams_.cudaStreamBGR);
 
-            cudaStreamSynchronize(streams_.cudaStreamBGR);
             vpiImageUnlock(slot.rectGray_vpiL);
             vpiImageUnlock(slot.rectGray_vpiR);
+
+            // 写入 rectBGR_vpiL (检测用, BGR 3通道)
+            VPIImageData bgrDataL;
+            vpiImageLockData(slot.rectBGR_vpiL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &bgrDataL);
+
+            launchBGRA2BGR(left_bgra, left_pitch,
+                          static_cast<uint8_t*>(bgrDataL.buffer.pitch.planes[0].data),
+                          bgrDataL.buffer.pitch.planes[0].pitchBytes,
+                          w, h, streams_.cudaStreamBGR);
+
+            cudaStreamSynchronize(streams_.cudaStreamBGR);
+            vpiImageUnlock(slot.rectBGR_vpiL);
         }
         // ZED 已内部校正, 跳过 VPI remap/TNR
         NVTX_RANGE_POP();

@@ -12,6 +12,8 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 
+#include "../pipeline/pipeline.h"
+
 namespace stereo3d {
 
 struct PlanarPoint2D {
@@ -30,6 +32,7 @@ struct TrajectorySample {
 class GoalPoseBridge {
 public:
     explicit GoalPoseBridge(const std::shared_ptr<rclcpp::Node>& node);
+    GoalPoseBridge(const std::shared_ptr<rclcpp::Node>& node, const Ros2BridgeConfig& cfg);
 
     bool enabled() const;
     bool enableGui() const;

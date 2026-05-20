@@ -28,7 +28,7 @@ detector:
   confidence_threshold: 0.5
   nms_threshold: 0.4
   max_detections: 10
-  input_format: "gray"        # ZED BGRA→Gray 后以灰度输入
+  input_format: "bgr"         # ZED BGRA→BGR 保留颜色信息给检测模型
 
 stereo:
   strategy: "roi_only"        # ROI 多点匹配（排球只需单目标深度）
@@ -37,14 +37,16 @@ stereo:
   quality: 6
 
 fusion:
-  min_depth: 1.0
+  min_depth: 0.3
   max_depth: 20.0
   object_diameter: 0.21       # 排球直径 21cm
   bbox_scale: 1.2
-  mono_max_z: 6.0             # <6m 以单目为主
-  stereo_min_z: 4.0           # >4m 以双目为主
-  R_mono: 0.04
-  R_stereo: 0.01
+  mono_max_z: 4.0             # bbox@4m=32px, σ=377mm, 以上单目不可靠
+  stereo_min_z: 1.0           # disp@1m=87px, σ=4.6mm, 双目完全可靠
+  R_mono: 0.025               # Kalman单目噪声 (σ_z=z²×0.024, z_ref=4m+3×安全)
+  R_stereo: 0.001             # Kalman双目噪声 (σ_z=z²×0.0046, z_ref=4m+3×安全)
+  ivw_R_mono: 0.025           # IVW单目方差权重
+  ivw_R_stereo: 0.003         # IVW双目方差权重 (含排球弱纹理3×惩罚)
 
 performance:
   log_interval: 100
@@ -58,3 +60,30 @@ prediction:
   drag_coeff: 0.47
   ground_y: 0.0
   max_predict_time: 3.0
+
+# ===== 显示配置 =====
+display:
+  enable: false               # true=显示窗口(需接显示器), false=headless
+                              # 命令行 --visualize 可覆盖此项
+
+# ===== ROS2 发布配置 =====
+ros2:
+  enable: true                # 编译时需 -DUSE_ROS2=ON，否则此段无效
+  world_frame_id: "vision_world"
+  base_frame_id: "base_link"
+  odom_topic: "/odom"
+  odom_timeout_sec: 0.5
+  topics:
+    ball_realtime: "/ball/realtime"
+    ball_landing: "/ball/landing"
+    predicted_path: "/ball/predicted_path"
+    actual_path: "/ball/actual_path"
+    ball_realtime_base: "/ball/realtime_base"
+    ball_landing_base: "/ball/landing_base"
+  vision_to_world:
+    swap_xy: false
+    invert_x: false
+    invert_y: false
+    rotation_deg: 0.0
+    translation_x: 0.0
+    translation_y: 0.0
