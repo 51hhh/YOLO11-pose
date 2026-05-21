@@ -309,3 +309,49 @@ performance:
 | DLA 检测等待 | 0.12 ms (与 Remap 并行) |
 | ROI 匹配+测距 | 0.01 ms |
 | 平台 | Orin NX Super 16GB, JetPack 6, MAXN_SUPER |
+
+## ZED X + AGX Orin 配置 (pipeline_zed.yaml)
+
+AGX Orin 搭配 ZED X 相机的独立配置，不使用 DLA/VPI 校正（ZED 内部已校正）。
+
+### 运行
+
+```bash
+# Headless (默认, ros2 发布)
+./stereo_pipeline --config config/pipeline_zed.yaml
+
+# 带可视化 (需连接显示器)
+./stereo_pipeline --config config/pipeline_zed.yaml --visualize
+```
+
+### ROS2 发布 (可选)
+
+编译时开启：
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_ROS2=ON
+make -j6
+```
+
+启动后自动发布以下 topic (由 `pipeline_zed.yaml` 中 `ros2:` 段配置):
+
+| Topic | 类型 | QoS | 说明 |
+|-------|------|-----|------|
+| `/ball/realtime` | PointStamped | best_effort | 实时球位置 (world 系) |
+| `/ball/landing` | PointStamped | reliable | 预测落点 (world 系) |
+| `/ball/predicted_path` | Path | best_effort | 预测轨迹 |
+| `/ball/actual_path` | Path | best_effort | 实际轨迹 |
+| `/ball/realtime_base` | PointStamped | best_effort | 实时球位置 (base_link 系) |
+| `/ball/landing_base` | PointStamped | reliable | 预测落点 (base_link 系) |
+
+base_link 系发布需要 `/odom` topic 输入。
+
+### 配置参数 (免编译)
+
+所有运行时参数在 `config/pipeline_zed.yaml` 中修改，重启即生效：
+- `display.enable` — 显示开关
+- `ros2.enable` — ROS2 发布开关
+- `ros2.vision_to_world.*` — 视觉→世界坐标变换参数
+- `detector.*` — 检测阈值、模型路径
+- `fusion.*` — 深度融合参数
+- `prediction.*` — 轨迹预测物理参数

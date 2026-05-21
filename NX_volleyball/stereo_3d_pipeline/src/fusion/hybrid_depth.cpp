@@ -177,10 +177,10 @@ float HybridDepthEstimator::monoDepth(const Detection& det) const {
 }
 
 float HybridDepthEstimator::getObsNoise(float z, int method) const {
-    // 距离自适应: R(z) = R_base × max(1, z²)
-    float z2 = std::max(1.0f, z * z);
-    float R_m = config_.R_mono * z2;
-    float R_s = config_.R_stereo * z2;
+    // 距离自适应: R(z) = R_base × max(1, z^exponent)
+    float zn = std::pow(std::max(1.0f, z), config_.noise_exponent);
+    float R_m = config_.R_mono * zn;
+    float R_s = config_.R_stereo * zn;
     if (method == 0) return R_m;
     if (method == 1) return R_s;
     // blend: 使用与IVW相同的权重推导混合方差  Var(z_blend) = f_m²R_m + f_s²R_s
@@ -377,7 +377,23 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         float Rz  = getObsNoise(z_obs, method);
         // xy 噪声与深度关联: sigma_xy = sigma_z * z / f (误差传播)
         float Rxy = Rz * (z_obs * z_obs) / (focal_ * focal_) + 0.001f;
-        track->update(obs_x, obs_y, z_obs, Rxy, Rz);
+
+        // Innovation gate: 马氏距离剔除异常观测
+        bool gate_passed = true;
+        if (config_.innovation_gate > 0.0f && track->age > 1) {
+            float y_x = obs_x - track->x();
+            float y_y = obs_y - track->y();
+            float y_z = z_obs - track->z();
+            float S_x = track->P[0][0] + Rxy;
+            float S_y = track->P[1][1] + Rxy;
+            float S_z = track->P[2][2] + Rz;
+            float maha2 = y_x*y_x/S_x + y_y*y_y/S_y + y_z*y_z/S_z;
+            gate_passed = (maha2 <= config_.innovation_gate);
+        }
+
+        if (gate_passed) {
+            track->update(obs_x, obs_y, z_obs, Rxy, Rz);
+        }
         track->method = method;
         track->updateBBox(det.cx, det.cy, det.width, det.height);
 

@@ -194,6 +194,10 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         // IVW 融合权重 (与 Kalman R 分离)
         if (fus["ivw_R_mono"])      cfg.depth.ivw_R_mono      = fus["ivw_R_mono"].as<float>();
         if (fus["ivw_R_stereo"])    cfg.depth.ivw_R_stereo    = fus["ivw_R_stereo"].as<float>();
+        // 抗抖动参数
+        if (fus["innovation_gate"]) cfg.depth.innovation_gate = fus["innovation_gate"].as<float>();
+        if (fus["noise_exponent"])  cfg.depth.noise_exponent  = fus["noise_exponent"].as<float>();
+        if (fus["process_accel"])   cfg.depth.process_accel   = fus["process_accel"].as<float>();
     }
 
     // Performance

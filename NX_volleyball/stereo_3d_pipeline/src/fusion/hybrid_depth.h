@@ -51,6 +51,11 @@ struct HybridDepthConfig {
     // IVW 融合权重 (与 Kalman R 分离)
     float ivw_R_mono   = 0.004f;   ///< IVW 单目噪声方差 (σ≈0.063m)
     float ivw_R_stereo = 0.025f;   ///< IVW 双目噪声方差 (实测方差≈单目6倍)
+
+    // 抗抖动
+    float innovation_gate = 0.0f;  ///< Innovation gate (Mahalanobis²阈值), 0=禁用
+    float noise_exponent  = 2.0f;  ///< 噪声距离缩放指数 (2=z², 4=z⁴ 物理模型)
+
 };
 
 /**

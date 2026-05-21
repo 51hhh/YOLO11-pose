@@ -47,6 +47,10 @@ fusion:
   R_stereo: 0.001             # Kalman双目噪声 (σ_z=z²×0.0046, z_ref=4m+3×安全)
   ivw_R_mono: 0.025           # IVW单目方差权重
   ivw_R_stereo: 0.003         # IVW双目方差权重 (含排球弱纹理3×惩罚)
+  # 抗抖动
+  noise_exponent: 2.0         # 噪声距离缩放 z² (配合已校准R_base)
+  innovation_gate: 9.0        # 马氏距离²门限 (χ²(3,0.97)≈9)
+  process_accel: 2.0          # Kalman过程噪声加速度 (m/s²)
 
 performance:
   log_interval: 100
