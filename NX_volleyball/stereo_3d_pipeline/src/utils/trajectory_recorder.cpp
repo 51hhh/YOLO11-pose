@@ -32,9 +32,7 @@ void TrajectoryRecorder::writeHeader() {
         file_ << "frame_id,timestamp,has_detection,"
               << "bbox_cx,bbox_cy,bbox_w,bbox_h,det_confidence,"
               << "z_mono,z_stereo,disparity,stereo_conf,depth_method,"
-              << "x,y,z,vx,vy,vz,ax,ay,az,"
-              << "track_id,confidence,"
-              << "landing_x,landing_y,landing_t\n";
+              << "obs_x,obs_y,obs_z\n";
     } else {
         file_ << "frame_id,timestamp,track_id,"
               << "x,y,z,vx,vy,vz,ax,ay,az,"
@@ -85,7 +83,7 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
             file_ << entry.frame_id << ","
                   << std::fixed << std::setprecision(6) << entry.timestamp << ","
                   << "0,"  // has_detection = false
-                  << ",,,,,,,,,,,,,,,,,,,,,\n";
+                  << ",,,,,,,,,,,,,\n";
         } else {
             for (size_t i = 0; i < entry.results.size(); ++i) {
                 const auto& r = entry.results[i];
@@ -99,18 +97,8 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                       << r.z_mono << "," << r.z_stereo << ","
                       << r.disparity << "," << r.stereo_conf << ","
                       << r.depth_method << ","
-                      << r.x << "," << r.y << "," << r.z << ","
-                      << r.vx << "," << r.vy << "," << r.vz << ","
-                      << r.ax << "," << r.ay << "," << r.az << ","
-                      << r.track_id << "," << r.confidence << ",";
-
-                if (i < entry.preds.size() && entry.preds[i].valid) {
-                    file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
-                          << entry.preds[i].time_to_land;
-                } else {
-                    file_ << ",,";
-                }
-                file_ << "\n";
+                      << r.obs_x << "," << r.obs_y << "," << r.obs_z
+                      << "\n";
             }
         }
     } else {

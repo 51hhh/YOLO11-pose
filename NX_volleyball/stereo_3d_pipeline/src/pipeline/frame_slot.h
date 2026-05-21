@@ -47,12 +47,14 @@ struct Object3D {
     float bbox_w, bbox_h;     ///< 检测框宽高像素
     float disparity;          ///< 双目中值视差 (sub-pixel), -1=无效
     float stereo_conf;        ///< 双目匹配置信度
+    // 原始3D观测 (无Kalman滤波, 用于raw_mode录制)
+    float obs_x, obs_y, obs_z;  ///< 原始观测: (cx-cx0)*z/f, (cy-cy0)*z/f, z_obs
 
     Object3D() : x(0), y(0), z(0), vx(0), vy(0), vz(0),
                  ax(0), ay(0), az(0), z_mono(0), z_stereo(-1),
                  confidence(0), class_id(0), track_id(-1), depth_method(0),
                  bbox_cx(0), bbox_cy(0), bbox_w(0), bbox_h(0),
-                 disparity(-1), stereo_conf(0) {}
+                 disparity(-1), stereo_conf(0), obs_x(0), obs_y(0), obs_z(0) {}
 };
 
 /**

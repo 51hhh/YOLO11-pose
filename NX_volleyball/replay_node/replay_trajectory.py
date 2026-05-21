@@ -41,15 +41,9 @@ class Frame:
     frame_id: int
     timestamp: float
     has_detection: bool
-    x: float
-    y: float
-    z: float
-    vx: float
-    vy: float
-    vz: float
-    landing_x: Optional[float]
-    landing_y: Optional[float]
-    track_id: int
+    obs_x: float
+    obs_y: float
+    obs_z: float
 
 
 def _safe_float(row, key):
@@ -63,21 +57,24 @@ def load_csv(path: str) -> List[Frame]:
     frames = []
     with open(path, 'r') as f:
         reader = csv.DictReader(f)
+        # 兼容新(obs_x/obs_y/obs_z)和旧(x/y/z)格式
         for row in reader:
             has_det = int(row['has_detection']) == 1
+            if 'obs_x' in row:
+                x = _safe_float(row, 'obs_x') or 0.0
+                y = _safe_float(row, 'obs_y') or 0.0
+                z = _safe_float(row, 'obs_z') or 0.0
+            else:
+                x = _safe_float(row, 'x') or 0.0
+                y = _safe_float(row, 'y') or 0.0
+                z = _safe_float(row, 'z') or 0.0
             frames.append(Frame(
                 frame_id=int(row['frame_id']),
                 timestamp=float(row['timestamp']),
                 has_detection=has_det,
-                x=_safe_float(row, 'x') or 0.0,
-                y=_safe_float(row, 'y') or 0.0,
-                z=_safe_float(row, 'z') or 0.0,
-                vx=_safe_float(row, 'vx') or 0.0,
-                vy=_safe_float(row, 'vy') or 0.0,
-                vz=_safe_float(row, 'vz') or 0.0,
-                landing_x=_safe_float(row, 'landing_x'),
-                landing_y=_safe_float(row, 'landing_y'),
-                track_id=int(row['track_id']) if row.get('track_id', '').strip() else 0,
+                obs_x=x,
+                obs_y=y,
+                obs_z=z,
             ))
     return frames
 
@@ -98,16 +95,9 @@ class ReplayNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
         )
-        reliable = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.VOLATILE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=5,
-        )
 
         self.pub_realtime = self.create_publisher(PointStamped, '/ball/realtime', best_effort)
         self.pub_path = self.create_publisher(Path, '/ball/actual_path', best_effort)
-        self.pub_landing = self.create_publisher(PointStamped, '/ball/landing', reliable)
 
         # 终端原始模式
         self.old_settings = termios.tcgetattr(sys.stdin)
@@ -167,13 +157,15 @@ class ReplayNode(Node):
         stamp = self.make_stamp()
 
         # Realtime point
+        # CSV坐标: obs_x=相机右, obs_y=相机下, obs_z=深度
+        # RViz坐标: msg.x=右, msg.y=深度(前), msg.z=上(-obs_y)
         if frame.has_detection:
             msg = PointStamped()
             msg.header.stamp = stamp
             msg.header.frame_id = 'vision_world'
-            msg.point.x = frame.x
-            msg.point.y = frame.y
-            msg.point.z = frame.z
+            msg.point.x = frame.obs_x
+            msg.point.y = frame.obs_z
+            msg.point.z = -frame.obs_y
             self.pub_realtime.publish(msg)
 
         # Actual path (all detected frames up to current)
@@ -186,22 +178,12 @@ class ReplayNode(Node):
                 pose = PoseStamped()
                 pose.header.stamp = stamp
                 pose.header.frame_id = 'vision_world'
-                pose.pose.position.x = f.x
-                pose.pose.position.y = f.y
-                pose.pose.position.z = f.z
+                pose.pose.position.x = f.obs_x
+                pose.pose.position.y = f.obs_z
+                pose.pose.position.z = -f.obs_y
                 pose.pose.orientation.w = 1.0
                 path.poses.append(pose)
         self.pub_path.publish(path)
-
-        # Landing point
-        if frame.landing_x is not None and frame.landing_y is not None:
-            msg = PointStamped()
-            msg.header.stamp = stamp
-            msg.header.frame_id = 'vision_world'
-            msg.point.x = frame.landing_x
-            msg.point.y = frame.landing_y
-            msg.point.z = 0.0
-            self.pub_landing.publish(msg)
 
     def run(self):
         total = len(self.frames)
@@ -240,7 +222,7 @@ class ReplayNode(Node):
                             sys.stdout.write(
                                 f"\r  ▶ [{self.idx:>5}/{total}] "
                                 f"{self.speed:.1f}x "
-                                f"{d} ({f.x:.2f},{f.y:.2f},{f.z:.2f})   "
+                                f"{d} ({f.obs_x:.2f},{f.obs_y:.2f},{f.obs_z:.2f})   "
                             )
                             sys.stdout.flush()
                     else:
@@ -258,7 +240,7 @@ class ReplayNode(Node):
                     sys.stdout.write(
                         f"\r  ⏸ [{self.idx:>5}/{total}] "
                         f"{self.speed:.1f}x "
-                        f"{d} ({f.x:.2f},{f.y:.2f},{f.z:.2f})   "
+                        f"{d} ({f.obs_x:.2f},{f.obs_y:.2f},{f.obs_z:.2f})   "
                     )
                     sys.stdout.flush()
                     time.sleep(0.05)

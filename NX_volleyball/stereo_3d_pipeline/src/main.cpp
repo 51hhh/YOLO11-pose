@@ -415,16 +415,16 @@ int main(int argc, char* argv[]) {
 #ifdef HAS_ROS2
             if (ros2_bridge && ros2_bridge->enabled()) {
                 auto stamp = ros2_node->get_clock()->now();
-                // 视觉坐标系: obj.x=右, obj.y=上, obj.z=深(前)
+                // 视觉坐标系: obj.x=右, obj.y=下(相机), obj.z=深(前). RViz: Z=上
                 // RViz坐标系: X=右, Y=深(前), Z=上
                 // transformVisionToWorld 处理地面平面 (右,深) → (world_x, world_y)
                 for (size_t i = 0; i < results.size(); ++i) {
                     const auto& obj = results[i];
                     auto wpt = ros2_bridge->transformVisionToWorld(obj.x, obj.z);
-                    ros2_bridge->publishRealtimeWorld(wpt.x, wpt.y, obj.y, stamp);
+                    ros2_bridge->publishRealtimeWorld(wpt.x, wpt.y, -obj.y, stamp);
                     double bx, by;
                     if (ros2_bridge->tryWorldToBase(wpt.x, wpt.y, bx, by)) {
-                        ros2_bridge->publishRealtimeBase(bx, by, obj.y, stamp);
+                        ros2_bridge->publishRealtimeBase(bx, by, -obj.y, stamp);
                     }
                 }
                 for (size_t i = 0; i < preds.size(); ++i) {

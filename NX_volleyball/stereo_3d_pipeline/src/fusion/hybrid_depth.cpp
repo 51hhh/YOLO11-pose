@@ -170,10 +170,15 @@ void HybridDepthEstimator::init(float focal, float baseline, float cx, float cy,
 }
 
 float HybridDepthEstimator::monoDepth(const Detection& det) const {
-    // Z = focal * D_real / (bbox_width * bbox_scale)
+    // Z = focal * D_real / (bbox_width_corrected * bbox_scale)
+    // 视角余弦校正: 球体偏离光轴时 bbox 宽度被透视拉伸
+    // 宽度拉伸因子 = sec(θ_h), 仅与水平偏移 dx 相关
+    // 修正: w_true = w_measured × cos(θ_h), cos(θ_h) = f / √(f² + dx²)
     float w = det.width * config_.bbox_scale;
     if (w < 1.0f) return config_.max_depth;
-    return focal_ * config_.object_diameter / w;
+    float dx = det.cx - cx_;
+    float cos_h = focal_ / std::sqrt(focal_ * focal_ + dx * dx);
+    return focal_ * config_.object_diameter / (w * cos_h);
 }
 
 float HybridDepthEstimator::getObsNoise(float z, int method) const {
@@ -416,6 +421,9 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.disparity = roi_results[i].disparity;
             obj.stereo_conf = roi_results[i].stereo_conf;
         }
+        obj.obs_x = obs_x;
+        obj.obs_y = obs_y;
+        obj.obs_z = z_obs;
 
         if (obj.z >= config_.min_depth && obj.z <= config_.max_depth) {
             output.push_back(obj);
