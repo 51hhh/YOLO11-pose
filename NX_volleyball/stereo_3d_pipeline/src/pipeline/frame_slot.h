@@ -42,9 +42,17 @@ struct Object3D {
     int track_id;          ///< 跟踪 ID (-1 = 未跟踪)
     int depth_method;      ///< 0=单目, 1=双目, 2=融合
 
+    // 原始观测信息 (用于离线分析)
+    float bbox_cx, bbox_cy;   ///< 检测框中心像素
+    float bbox_w, bbox_h;     ///< 检测框宽高像素
+    float disparity;          ///< 双目中值视差 (sub-pixel), -1=无效
+    float stereo_conf;        ///< 双目匹配置信度
+
     Object3D() : x(0), y(0), z(0), vx(0), vy(0), vz(0),
                  ax(0), ay(0), az(0), z_mono(0), z_stereo(-1),
-                 confidence(0), class_id(0), track_id(-1), depth_method(0) {}
+                 confidence(0), class_id(0), track_id(-1), depth_method(0),
+                 bbox_cx(0), bbox_cy(0), bbox_w(0), bbox_h(0),
+                 disparity(-1), stereo_conf(0) {}
 };
 
 /**

@@ -91,3 +91,9 @@ ros2:
     rotation_deg: 0.0
     translation_x: 0.0
     translation_y: 0.0
+
+# 录制设置
+recording:
+  enabled: true
+  output_path: "raw_observation_data.csv"
+  raw_mode: true   # true=记录原始观测(无Kalman滤波), false=记录滤波后轨迹

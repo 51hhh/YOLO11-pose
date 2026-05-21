@@ -408,6 +408,14 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         obj.z_mono = z_mono;
         obj.z_stereo = z_stereo;
         obj.depth_method = method;
+        obj.bbox_cx = det.cx;
+        obj.bbox_cy = det.cy;
+        obj.bbox_w  = det.width;
+        obj.bbox_h  = det.height;
+        if (i < roi_results.size()) {
+            obj.disparity = roi_results[i].disparity;
+            obj.stereo_conf = roi_results[i].stereo_conf;
+        }
 
         if (obj.z >= config_.min_depth && obj.z <= config_.max_depth) {
             output.push_back(obj);
@@ -446,6 +454,10 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
             obj.confidence = std::max(0.0f, 0.5f - track.lost_count * 0.1f);
             obj.class_id = 0;
             obj.track_id = track.track_id;
+            obj.bbox_cx = track.last_cx;
+            obj.bbox_cy = track.last_cy;
+            obj.bbox_w  = track.last_w;
+            obj.bbox_h  = track.last_h;
             output.push_back(obj);
         }
     }

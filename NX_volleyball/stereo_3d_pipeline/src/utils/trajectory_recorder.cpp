@@ -28,11 +28,20 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
 }
 
 void TrajectoryRecorder::writeHeader() {
-    file_ << "frame_id,timestamp,track_id,"
-          << "x,y,z,vx,vy,vz,ax,ay,az,"
-          << "z_mono,z_stereo,depth_method,"
-          << "confidence,"
-          << "landing_x,landing_y,landing_t\n";
+    if (cfg_.raw_mode) {
+        file_ << "frame_id,timestamp,has_detection,"
+              << "bbox_cx,bbox_cy,bbox_w,bbox_h,det_confidence,"
+              << "z_mono,z_stereo,disparity,stereo_conf,depth_method,"
+              << "x,y,z,vx,vy,vz,ax,ay,az,"
+              << "track_id,confidence,"
+              << "landing_x,landing_y,landing_t\n";
+    } else {
+        file_ << "frame_id,timestamp,track_id,"
+              << "x,y,z,vx,vy,vz,ax,ay,az,"
+              << "z_mono,z_stereo,depth_method,"
+              << "confidence,"
+              << "landing_x,landing_y,landing_t\n";
+    }
     header_written_ = true;
 }
 
@@ -69,27 +78,65 @@ void TrajectoryRecorder::writerLoop() {
 }
 
 void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
-    for (size_t i = 0; i < entry.results.size(); ++i) {
-        const auto& r = entry.results[i];
-        if (r.track_id < 0) continue;
-
-        file_ << entry.frame_id << ","
-              << std::fixed << std::setprecision(6) << entry.timestamp << ","
-              << r.track_id << ","
-              << std::setprecision(4)
-              << r.x << "," << r.y << "," << r.z << ","
-              << r.vx << "," << r.vy << "," << r.vz << ","
-              << r.ax << "," << r.ay << "," << r.az << ","
-              << r.z_mono << "," << r.z_stereo << "," << r.depth_method << ","
-              << r.confidence << ",";
-
-        if (i < entry.preds.size() && entry.preds[i].valid) {
-            file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
-                  << entry.preds[i].time_to_land;
+    if (cfg_.raw_mode) {
+        // Raw mode: 每帧一行，丢失时输出空值
+        if (entry.results.empty()) {
+            // 没有检测到球 — 输出空行标记
+            file_ << entry.frame_id << ","
+                  << std::fixed << std::setprecision(6) << entry.timestamp << ","
+                  << "0,"  // has_detection = false
+                  << ",,,,,,,,,,,,,,,,,,,,,\n";
         } else {
-            file_ << "0,0,0";
+            for (size_t i = 0; i < entry.results.size(); ++i) {
+                const auto& r = entry.results[i];
+                file_ << entry.frame_id << ","
+                      << std::fixed << std::setprecision(6) << entry.timestamp << ","
+                      << "1,"  // has_detection = true
+                      << std::setprecision(2)
+                      << r.bbox_cx << "," << r.bbox_cy << ","
+                      << r.bbox_w << "," << r.bbox_h << ","
+                      << std::setprecision(4) << r.confidence << ","
+                      << r.z_mono << "," << r.z_stereo << ","
+                      << r.disparity << "," << r.stereo_conf << ","
+                      << r.depth_method << ","
+                      << r.x << "," << r.y << "," << r.z << ","
+                      << r.vx << "," << r.vy << "," << r.vz << ","
+                      << r.ax << "," << r.ay << "," << r.az << ","
+                      << r.track_id << "," << r.confidence << ",";
+
+                if (i < entry.preds.size() && entry.preds[i].valid) {
+                    file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
+                          << entry.preds[i].time_to_land;
+                } else {
+                    file_ << ",,";
+                }
+                file_ << "\n";
+            }
         }
-        file_ << "\n";
+    } else {
+        // Original mode: Kalman-filtered trajectory
+        for (size_t i = 0; i < entry.results.size(); ++i) {
+            const auto& r = entry.results[i];
+            if (r.track_id < 0) continue;
+
+            file_ << entry.frame_id << ","
+                  << std::fixed << std::setprecision(6) << entry.timestamp << ","
+                  << r.track_id << ","
+                  << std::setprecision(4)
+                  << r.x << "," << r.y << "," << r.z << ","
+                  << r.vx << "," << r.vy << "," << r.vz << ","
+                  << r.ax << "," << r.ay << "," << r.az << ","
+                  << r.z_mono << "," << r.z_stereo << "," << r.depth_method << ","
+                  << r.confidence << ",";
+
+            if (i < entry.preds.size() && entry.preds[i].valid) {
+                file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
+                      << entry.preds[i].time_to_land;
+            } else {
+                file_ << "0,0,0";
+            }
+            file_ << "\n";
+        }
     }
 }
 

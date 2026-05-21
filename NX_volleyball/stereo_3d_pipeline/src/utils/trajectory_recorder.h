@@ -26,6 +26,7 @@ namespace stereo3d {
 struct TrajectoryRecorderConfig {
     std::string output_path = "trajectory_data.csv";
     bool enabled = true;
+    bool raw_mode = false;  ///< true=原始观测记录(无Kalman), false=滤波后轨迹
 };
 
 class TrajectoryRecorder {

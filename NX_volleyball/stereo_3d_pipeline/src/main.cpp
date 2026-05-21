@@ -239,6 +239,7 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
         if (auto rec = root["recording"]) {
             if (rec["enabled"])     rcfg.enabled     = rec["enabled"].as<bool>();
             if (rec["output_path"]) rcfg.output_path = rec["output_path"].as<std::string>();
+            if (rec["raw_mode"])    rcfg.raw_mode    = rec["raw_mode"].as<bool>();
         }
     } catch (const std::exception& e) {
         LOG_WARN("recording config: %s, using defaults", e.what());

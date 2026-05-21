@@ -173,6 +173,8 @@ std::vector<Object3D> ROIStereoMatcher::match(
         float conf = results_host_[i * 5 + 4];
 
         output[i].class_id = detections[i].class_id;
+        output[i].disparity = disp;
+        output[i].stereo_conf = conf;
 
         if (Z > 0.0f && conf > 0.0f) {
             output[i].x = X;
