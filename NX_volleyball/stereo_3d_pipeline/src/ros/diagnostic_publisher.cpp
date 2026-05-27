@@ -174,8 +174,8 @@ void DiagnosticPublisher::publishRawObs(
     //   pose.position = (obs_x, obs_y, obs_z)  — 原始3D观测
     //   pose.orientation.x = z_mono
     //   pose.orientation.y = z_stereo
-    //   pose.orientation.z = bbox_w (像素)
-    //   pose.orientation.w = stereo_conf
+    //   pose.orientation.z = depth_method
+    //   pose.orientation.w = confidence
 
     auto msg = std::make_unique<geometry_msgs::msg::PoseArray>();
     msg->header.stamp = node_->get_clock()->now();
@@ -184,13 +184,13 @@ void DiagnosticPublisher::publishRawObs(
 
     for (const auto& obj : results) {
         geometry_msgs::msg::Pose pose;
-        pose.position.x = obj.obs_x;
-        pose.position.y = obj.obs_y;
-        pose.position.z = obj.obs_z;
+        pose.position.x = obj.x;
+        pose.position.y = obj.y;
+        pose.position.z = obj.z;
         pose.orientation.x = obj.z_mono;
         pose.orientation.y = obj.z_stereo;
-        pose.orientation.z = obj.bbox_w;
-        pose.orientation.w = obj.stereo_conf;
+        pose.orientation.z = static_cast<float>(obj.depth_method);
+        pose.orientation.w = obj.confidence;
         msg->poses.push_back(pose);
     }
 
