@@ -229,42 +229,15 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_WARN("Camera support disabled (HIK SDK not found) - pipeline runs without camera");
 #endif
 
-    // 8. 初始化 TensorRT 检测器 (DLA/GPU)
-    LOG_INFO("Initializing TRT Detector (DLA=%d, core=%d, dual=%d)...",
-             config_.use_dla, config_.dla_core, config_.dual_dla);
+    // 8. 初始化 TensorRT 检测器 (GPU)
+    LOG_INFO("Initializing TRT Detector (DLA=%d, core=%d)...",
+             config_.use_dla, config_.dla_core);
     detector_ = std::make_unique<TRTDetector>();
     if (!detector_->init(config_.engine_file, config_.use_dla, config_.dla_core,
                          config_.conf_threshold, config_.nms_threshold,
                          config_.detector_input_format)) {
         LOG_ERROR("Failed to initialize TRT Detector");
         return false;
-    }
-
-    // 双 DLA 模式: 初始化第二个检测器 (DLA1)
-    if ((config_.dual_dla || config_.triple_backend) && !config_.engine_file_dla1.empty()) {
-        LOG_INFO("Initializing DLA1 Detector: %s", config_.engine_file_dla1.c_str());
-        detector1_ = std::make_unique<TRTDetector>();
-        if (!detector1_->init(config_.engine_file_dla1, true, 1,
-                              config_.conf_threshold, config_.nms_threshold,
-                              config_.detector_input_format)) {
-            LOG_WARN("Failed to initialize DLA1 Detector - falling back to single DLA");
-            detector1_.reset();
-            config_.dual_dla = false;
-            config_.triple_backend = false;
-        }
-    }
-
-    // 三路轮转模式: 初始化 GPU 检测器
-    if (config_.triple_backend && !config_.engine_file_gpu.empty()) {
-        LOG_INFO("Initializing GPU Detector: %s", config_.engine_file_gpu.c_str());
-        detector2_ = std::make_unique<TRTDetector>();
-        if (!detector2_->init(config_.engine_file_gpu, false, 0,
-                              config_.conf_threshold, config_.nms_threshold,
-                              config_.detector_input_format)) {
-            LOG_WARN("Failed to initialize GPU Detector - falling back to dual DLA");
-            detector2_.reset();
-            config_.triple_backend = false;
-        }
     }
 
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
@@ -820,29 +793,11 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
 // Dual DLA helpers: frame-based detector/stream selection
 // ===================================================================
 
-TRTDetector* Pipeline::getDetector(int frame_id) const {
-    if (config_.triple_backend && detector1_ && detector2_) {
-        switch (frame_id % 3) {
-            case 0: return detector_.get();   // DLA0
-            case 1: return detector1_.get();  // DLA1
-            default: return detector2_.get(); // GPU
-        }
-    }
-    if (config_.dual_dla && detector1_ && (frame_id & 1))
-        return detector1_.get();
+TRTDetector* Pipeline::getDetector(int /*frame_id*/) const {
     return detector_.get();
 }
 
-cudaStream_t Pipeline::getDLAStream(int frame_id) const {
-    if (config_.triple_backend && detector1_ && detector2_) {
-        switch (frame_id % 3) {
-            case 0: return streams_.cudaStreamDLA;
-            case 1: return streams_.cudaStreamDLA1;
-            default: return streams_.cudaStreamDetGPU;
-        }
-    }
-    if (config_.dual_dla && detector1_ && (frame_id & 1))
-        return streams_.cudaStreamDLA1;
+cudaStream_t Pipeline::getDLAStream(int /*frame_id*/) const {
     return streams_.cudaStreamDLA;
 }
 
@@ -1305,14 +1260,10 @@ void Pipeline::pipelineLoopROI() {
                 // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
                 // 防止YOLO+tracker并行运行导致功率爆口
                 // 在detect_interval=3的策略下，最近的YOLO应该已在Phase C collect了
-                // 此处额外同步确保NX上GPU/DLA不会同时高负载
+                // 等待检测完成
                 {
                     ScopedTimer tw("Stage1_WaitYOLOComplete");
-                    if (config_.use_dla || config_.dual_dla || config_.triple_backend) {
-                        cudaStreamSynchronize(streams_.cudaStreamDLA);
-                        if (config_.dual_dla) cudaStreamSynchronize(streams_.cudaStreamDLA1);
-                        if (config_.triple_backend) cudaStreamSynchronize(streams_.cudaStreamDetGPU);
-                    }
+                    cudaStreamSynchronize(streams_.cudaStreamDLA);
                     globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
                 }
 

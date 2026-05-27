@@ -129,10 +129,6 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (det["engine_path"])            cfg.engine_file = det["engine_path"].as<std::string>();
         if (det["use_dla"])                cfg.use_dla = det["use_dla"].as<bool>();
         if (det["dla_core"])               cfg.dla_core = det["dla_core"].as<int>();
-        if (det["dual_dla"])               cfg.dual_dla = det["dual_dla"].as<bool>();
-        if (det["engine_path_dla1"])       cfg.engine_file_dla1 = det["engine_path_dla1"].as<std::string>();
-        if (det["triple_backend"])         cfg.triple_backend = det["triple_backend"].as<bool>();
-        if (det["engine_path_gpu"])        cfg.engine_file_gpu = det["engine_path_gpu"].as<std::string>();
         if (det["confidence_threshold"])   cfg.conf_threshold = det["confidence_threshold"].as<float>();
         if (det["nms_threshold"])           cfg.nms_threshold = det["nms_threshold"].as<float>();
         if (det["input_size"])             cfg.input_size = det["input_size"].as<int>();
