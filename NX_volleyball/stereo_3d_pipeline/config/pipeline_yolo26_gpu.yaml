@@ -1,111 +1,122 @@
 # ============================================================
-# Pipeline config for yolo26 GPU INT8 testing
-# Uses yolo26_gpu_int8_entropy2 from matrix test results
-# ROI mode stereo matching for minimum latency
+# 管线配置: YOLO26 GPU FP16 + ROI 立体匹配
+# 硬件: Jetson Orin NX Super 16GB, 海康双目 BayerRG8 1440x1080
+# 触发: PWM 100Hz (gpiochip2 line7)
+# 数据流: USB取流 → GPU BayerToBGR → BGR校正 → YOLO检测 + 立体匹配
 # ============================================================
 
+# ========== 相机参数 ==========
 camera:
-  left_index: 0
-  right_index: 1
+  left_index: 0           # 左相机 USB 索引
+  right_index: 1          # 右相机 USB 索引
   serial_left: ""
   serial_right: ""
-  exposure_us: 9867.0
-  gain_db: 11.9906
-  use_trigger: true
+  exposure_us: 9867.0     # 曝光时间 (微秒)
+  gain_db: 11.9906        # 增益 (dB)
+  use_trigger: true       # 硬件触发同步
   trigger_source: "Line0"
   trigger_activation: "RisingEdge"
   trigger_chip: "gpiochip2"
   trigger_line: 7
-  width: 1440
+  width: 1440             # 原始分辨率
   height: 1080
 
+# ========== 标定文件 ==========
 calibration:
   file: "calibration/stereo_calib.yaml"
 
+# ========== 校正 (VPI Remap) ==========
 rectify:
-  backend: "CUDA"
-  output_width: 1280
+  backend: "CUDA"         # CUDA 后端加速
+  output_width: 1280      # 校正后分辨率
   output_height: 720
 
+# ========== 时域降噪 (VPI TNR) ==========
 tnr:
   enabled: true
   preset: "outdoor_medium"
   strength: 0.6
   version: "default"
 
-# yolo26 GPU FP16 - standard [1,5,8400] output format
+# ========== YOLO 检测器 ==========
+# engine 输入: 1x3x640x640 (RGB float32 CHW)
+# bgr 模式: GPU BayerToBGR → BGR校正 → bgrToRGBLetterboxKernel → TRT
+# gray 模式: 灰度复制到3通道 (无彩色信息, 精度下降)
 detector:
   engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_fp16.engine"
-  input_size: 640
-  input_format: "gray"
-  use_dla: false
+  input_size: 640         # letterbox 目标尺寸
+  input_format: "bgr"    # 必须 bgr: engine 需要彩色输入
+  use_dla: false          # GPU 推理 (非 DLA)
   confidence_threshold: 0.15
   nms_threshold: 0.4
   max_detections: 10
 
+# ========== 立体匹配 ==========
 stereo:
-  strategy: "roi_only"
+  strategy: "roi_only"    # 仅检测 ROI 区域做立体匹配 (省算力)
   max_disparity: 256
   window_size: 5
   quality: 6
 
+# ========== 深度融合 ==========
 fusion:
-  min_depth: 0.3
-  max_depth: 15.0
-  baseline_mm: 326.8
-  object_diameter: 0.200
-  R_mono: 0.003
-  R_stereo: 0.020
+  min_depth: 0.3          # 最小有效深度 (米)
+  max_depth: 15.0         # 最大有效深度 (米)
+  baseline_mm: 326.8      # 双目基线 (毫米)
+  object_diameter: 0.200  # 排球直径 (米)
+  R_mono: 0.003           # 单目测距噪声
+  R_stereo: 0.020         # 立体测距噪声
   ivw_R_mono: 0.004
   ivw_R_stereo: 0.025
 
+# ========== 性能参数 ==========
 performance:
-  pwm_frequency: 100.0
-  target_fps: 100
-  log_interval: 100
+  pwm_frequency: 100.0    # PWM 触发频率 (Hz)
+  target_fps: 100         # 目标帧率
+  log_interval: 100       # 每 N 帧打印统计
   enable_profiling: true
 
-# ========== Prediction ==========
+# ========== 落点预测 ==========
 prediction:
   gravity: 9.81
-  air_density: 1.225
-  ball_mass: 0.270
-  ball_radius: 0.105
-  drag_coeff: 0.47
-  ground_y: 0.0
-  max_predict_time: 3.0
+  air_density: 1.225      # 空气密度 (kg/m³)
+  ball_mass: 0.270        # 排球质量 (kg)
+  ball_radius: 0.105      # 排球半径 (m)
+  drag_coeff: 0.47        # 阻力系数
+  ground_y: 0.0           # 地面 y 坐标
+  max_predict_time: 3.0   # 最大预测时间 (秒)
 
-# ========== Display ==========
+# ========== 显示 ==========
 display:
-  enable: false
+  enable: false           # 默认关闭, 用 --visualize 命令行开启
 
 # ========== ROS2 发布配置 ==========
 ros2:
   enable: true
-  world_frame_id: "vision_world"
-  base_frame_id: "base_link"
-  odom_topic: "/odom"
+  world_frame_id: "vision_world"  # 视觉世界坐标系
+  base_frame_id: "base_link"      # 机器人底盘坐标系
+  odom_topic: "/odom"             # 里程计话题 (用于坐标变换)
   odom_timeout_sec: 0.5
   topics:
-    ball_realtime: "/ball/realtime"
-    ball_landing: "/ball/landing"
-    predicted_path: "/ball/predicted_path"
-    actual_path: "/ball/actual_path"
-    ball_realtime_base: "/ball/realtime_base"
-    ball_landing_base: "/ball/landing_base"
-  vision_to_world:
+    ball_realtime: "/ball/realtime"          # 实时球位置 (视觉坐标)
+    ball_landing: "/ball/landing"            # 预测落点 (视觉坐标)
+    predicted_path: "/ball/predicted_path"   # 预测轨迹
+    actual_path: "/ball/actual_path"         # 实际轨迹
+    ball_realtime_base: "/ball/realtime_base"  # 实时球位置 (底盘坐标)
+    ball_landing_base: "/ball/landing_base"    # 预测落点 (底盘坐标)
+  vision_to_world:          # 视觉→世界坐标变换
     swap_xy: false
     invert_x: false
     invert_y: false
     rotation_deg: 0.0
     translation_x: 0.0
     translation_y: 0.0
-  diagnostic:
+  diagnostic:               # 诊断数据发布 (深度图+检测框)
     enable: true
-    depth_full_divisor: 6
+    depth_full_divisor: 6   # 每 N 帧发布一次全分辨率深度图
 
-# ========== Recording ==========
+# ========== 数据录制 ==========
 recording:
   enabled: true
-  output_path: "raw_observation_data.csv"
-  raw_mode: true
+  output_path: "raw_observation_data.csv"  # 原始观测数据输出
+  raw_mode: true            # 原始模式 (不含滤波后数据)
