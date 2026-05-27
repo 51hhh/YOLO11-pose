@@ -1,8 +1,8 @@
 # ============================================================
-# stereo_3d_pipeline ROI config (DLA INT8 640x640 + VPI TNR)
+# stereo_3d_pipeline ROI config (GPU INT8 640x640 + VPI TNR)
 # ROI multi-point stereo matching, replacing full-frame disparity
 # Target: 100 FPS volleyball tracking
-# Tested: 98 FPS on Jetson Orin NX Super (2026-04-03)
+# Tested: 100 FPS on Jetson Orin NX Super (2026-05-24)
 # ============================================================
 
 # ========== Camera (DO NOT MODIFY) ==========
@@ -39,15 +39,14 @@ tnr:
   strength: 0.6                # 0.0~1.0
   version: "default"           # default|v1|v2|v3
 
-# ========== Detection (TensorRT DLA INT8 640x640) ==========
-# Engine: yolo26n DLA0 INT8 - 3.37ms avg, 313 qps
-# Runs on DLA, freeing GPU for rectification/stereo
+# ========== Detection (TensorRT GPU INT8 640x640) ==========
+# Engine: yolo26 GPU INT8 - 2.89ms avg, 345 qps
 detector:
-  engine_path: "/home/nvidia/NX_volleyball/model/yolo26n_dla0_int8_640.engine"
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_int8.engine"
   input_size: 640
-  use_dla: true
+  use_dla: false
   dla_core: 0
-  allow_gpu_fallback: true
+  allow_gpu_fallback: false
   confidence_threshold: 0.5
   nms_threshold: 0.4
   max_detections: 10

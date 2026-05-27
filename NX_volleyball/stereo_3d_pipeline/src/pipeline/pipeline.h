@@ -88,12 +88,8 @@ struct PipelineConfig {
     float nms_threshold  = 0.4f;
     int  max_detections  = 10;
     std::string detector_input_format = "gray"; ///< gray|bayer|bgr
-    bool use_dla = true;           ///< 使用 NVDLA (否则 GPU)
+    bool use_dla = false;          ///< 使用 NVDLA (否则 GPU)
     int  dla_core = 0;             ///< DLA 核心 ID (0 或 1)
-    bool dual_dla = false;         ///< 双 DLA 并行 (DLA0 + DLA1 交替)
-    std::string engine_file_dla1;  ///< DLA1 引擎路径 (dual_dla 模式)
-    bool triple_backend = false;   ///< 三路轮转 (DLA0+DLA1+GPU 循环)
-    std::string engine_file_gpu;   ///< GPU 引擎路径 (triple 模式)
 
     // SOT Tracker 补帧 (YOLO 检测间隙帧)
     struct TrackerConfig {
@@ -241,8 +237,6 @@ private:
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
     std::unique_ptr<TRTDetector> detector_;
-    std::unique_ptr<TRTDetector> detector1_;   ///< DLA1 检测器 (dual_dla 模式)
-    std::unique_ptr<TRTDetector> detector2_;   ///< GPU 检测器 (triple 模式)
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
