@@ -27,6 +27,12 @@
 #include <cctype>
 #include <cuda_runtime.h>
 
+#ifdef HAS_ROS2
+#include <rclcpp/rclcpp.hpp>
+#include "ros/goal_pose_bridge.h"
+#include "ros/diagnostic_publisher.h"
+#endif
+
 // ==================== 全局信号 ====================
 
 static std::atomic<bool> g_shutdown{false};
@@ -231,6 +237,39 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
     return rcfg;
 }
 
+#ifdef HAS_ROS2
+static stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
+    stereo3d::Ros2BridgeConfig cfg{};
+    YAML::Node root = YAML::LoadFile(path);
+    auto ros = root["ros2"];
+    if (!ros) return cfg;
+
+    cfg.enabled          = ros["enable"].as<bool>(false);
+    cfg.world_frame_id   = ros["world_frame_id"].as<std::string>("vision_world");
+    cfg.base_frame_id    = ros["base_frame_id"].as<std::string>("base_link");
+    cfg.odom_topic       = ros["odom_topic"].as<std::string>("/odom");
+    cfg.odom_timeout_sec = ros["odom_timeout_sec"].as<double>(0.5);
+
+    if (auto t = ros["topics"]) {
+        cfg.topic_realtime       = t["ball_realtime"].as<std::string>("/ball/realtime");
+        cfg.topic_landing        = t["ball_landing"].as<std::string>("/ball/landing");
+        cfg.topic_predicted_path = t["predicted_path"].as<std::string>("/ball/predicted_path");
+        cfg.topic_actual_path    = t["actual_path"].as<std::string>("/ball/actual_path");
+        cfg.topic_realtime_base  = t["ball_realtime_base"].as<std::string>("/ball/realtime_base");
+        cfg.topic_landing_base   = t["ball_landing_base"].as<std::string>("/ball/landing_base");
+    }
+    if (auto v = ros["vision_to_world"]) {
+        cfg.swap_xy       = v["swap_xy"].as<bool>(false);
+        cfg.invert_x      = v["invert_x"].as<bool>(false);
+        cfg.invert_y      = v["invert_y"].as<bool>(false);
+        cfg.rotation_deg  = v["rotation_deg"].as<double>(0.0);
+        cfg.translation_x = v["translation_x"].as<double>(0.0);
+        cfg.translation_y = v["translation_y"].as<double>(0.0);
+    }
+    return cfg;
+}
+#endif
+
 // ==================== main ====================
 
 int main(int argc, char* argv[]) {
@@ -297,6 +336,62 @@ int main(int argc, char* argv[]) {
     predictor.init(loadPredictorConfig(config_path));
     recorder.init(loadRecorderConfig(config_path));
 
+    // === ROS2 Bridge 初始化 ===
+#ifdef HAS_ROS2
+    std::shared_ptr<rclcpp::Node> ros2_node;
+    std::unique_ptr<stereo3d::GoalPoseBridge> ros2_bridge;
+    std::unique_ptr<stereo3d::DiagnosticPublisher> ros2_diag;
+    std::thread ros2_spin_thread;
+    stereo3d::Ros2BridgeConfig ros2_cfg{};
+
+    try {
+        ros2_cfg = loadRos2Config(config_path);
+    } catch (const std::exception& e) {
+        LOG_WARN("ROS2 config load failed: %s, bridge disabled", e.what());
+        ros2_cfg.enabled = false;
+    }
+
+    if (ros2_cfg.enabled) {
+        rclcpp::init(argc, argv);
+        ros2_node = std::make_shared<rclcpp::Node>("stereo_3d_pipeline");
+        ros2_bridge = std::make_unique<stereo3d::GoalPoseBridge>(ros2_node, ros2_cfg);
+
+        // 诊断发布器 (录制深度图 + 检测框)
+        stereo3d::DiagnosticPublisherConfig diag_cfg;
+        try {
+            YAML::Node root = YAML::LoadFile(config_path);
+            if (auto ros = root["ros2"]) {
+                if (auto diag = ros["diagnostic"]) {
+                    diag_cfg.enabled = diag["enable"].as<bool>(false);
+                    if (diag["depth_full_divisor"])
+                        diag_cfg.depth_full_divisor = diag["depth_full_divisor"].as<int>(6);
+                }
+            }
+        } catch (...) {}
+        ros2_diag = std::make_unique<stereo3d::DiagnosticPublisher>(ros2_node, diag_cfg);
+
+        ros2_spin_thread = std::thread([&ros2_node]() {
+            rclcpp::spin(ros2_node);
+        });
+        LOG_INFO("ROS2 bridge enabled: %s (diag=%d)", ros2_cfg.topic_realtime.c_str(), diag_cfg.enabled);
+    }
+#endif
+
+    // === 诊断回调 (录制深度图+检测框) ===
+#ifdef HAS_ROS2
+    if (ros2_diag && ros2_diag->enabled()) {
+        pipeline.setDiagnosticCallback(
+            [&](int frame_id, const float* depth_gpu, int depth_pitch,
+                int depth_w, int depth_h,
+                const std::vector<stereo3d::Detection>& detections,
+                const std::vector<stereo3d::Object3D>& results) {
+                ros2_diag->publish(frame_id, depth_gpu, depth_pitch, depth_w, depth_h,
+                                   depth_w * 2, depth_h * 2,
+                                   detections, results);
+            });
+    }
+#endif
+
     // 预测帧间隔 (dt) 需要实测, 这里用 FPS 倒数
     std::chrono::steady_clock::time_point last_result_time{};
     std::mutex pred_mutex;
@@ -324,6 +419,33 @@ int main(int argc, char* argv[]) {
             double timestamp = std::chrono::duration<double>(
                 now.time_since_epoch()).count();
             recorder.record(frame_id, timestamp, results, preds);
+
+            // ROS2 发布
+#ifdef HAS_ROS2
+            if (ros2_bridge && ros2_bridge->enabled()) {
+                auto stamp = ros2_node->get_clock()->now();
+                for (size_t i = 0; i < results.size(); ++i) {
+                    const auto& obj = results[i];
+                    auto wpt = ros2_bridge->transformVisionToWorld(obj.x, obj.z);
+                    ros2_bridge->publishRealtimeWorld(wpt.x, wpt.y, -obj.y, stamp);
+                    double bx, by;
+                    if (ros2_bridge->tryWorldToBase(wpt.x, wpt.y, bx, by)) {
+                        ros2_bridge->publishRealtimeBase(bx, by, -obj.y, stamp);
+                    }
+                }
+                for (size_t i = 0; i < preds.size(); ++i) {
+                    if (preds[i].valid) {
+                        auto wl = ros2_bridge->transformVisionToWorld(preds[i].x, preds[i].y);
+                        ros2_bridge->publishLandingWorld(wl.x, wl.y, stamp);
+                        double bx, by;
+                        if (ros2_bridge->tryWorldToBase(wl.x, wl.y, bx, by)) {
+                            ros2_bridge->publishLandingBase(bx, by, stamp);
+                        }
+                        break;  // 只发布第一个有效落点
+                    }
+                }
+            }
+#endif
 
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;
@@ -661,6 +783,15 @@ int main(int argc, char* argv[]) {
     }
 
     LOG_INFO("Shutting down...");
+
+#ifdef HAS_ROS2
+    if (ros2_cfg.enabled) {
+        rclcpp::shutdown();
+        if (ros2_spin_thread.joinable()) ros2_spin_thread.join();
+        LOG_INFO("ROS2 bridge shutdown");
+    }
+#endif
+
     pipeline.stop();
     recorder.close();
     pipeline.printPerfReport();

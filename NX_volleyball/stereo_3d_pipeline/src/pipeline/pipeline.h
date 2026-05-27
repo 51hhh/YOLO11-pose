@@ -61,6 +61,28 @@ enum class DisparityStrategy {
     ROI_ONLY           ///< 仅计算 ROI 区域
 };
 
+#ifdef HAS_ROS2
+struct Ros2BridgeConfig {
+    bool enabled;
+    std::string world_frame_id;
+    std::string base_frame_id;
+    std::string odom_topic;
+    double odom_timeout_sec;
+    std::string topic_realtime;
+    std::string topic_landing;
+    std::string topic_predicted_path;
+    std::string topic_actual_path;
+    std::string topic_realtime_base;
+    std::string topic_landing_base;
+    bool swap_xy;
+    bool invert_x;
+    bool invert_y;
+    double rotation_deg;
+    double translation_x;
+    double translation_y;
+};
+#endif
+
 /**
  * @brief Pipeline 运行时参数
  */
@@ -140,6 +162,15 @@ using FrameCallback = std::function<void(
     float fps)>;
 
 /**
+ * @brief 诊断回调 (深度图 + 检测框 + 3D结果)
+ */
+using DiagnosticCallback = std::function<void(
+    int frame_id, const float* depth_gpu, int depth_pitch,
+    int depth_w, int depth_h,
+    const std::vector<Detection>& detections,
+    const std::vector<Object3D>& results)>;
+
+/**
  * @brief 四级流水线主类
  */
 class Pipeline {
@@ -175,6 +206,11 @@ public:
      * @brief 设置帧回调 (可视化: 图像+检测+3D)
      */
     void setFrameCallback(FrameCallback cb) { frame_callback_ = std::move(cb); }
+
+    /**
+     * @brief 设置诊断回调 (ROS2 录制用)
+     */
+    void setDiagnosticCallback(DiagnosticCallback cb) { diagnostic_callback_ = std::move(cb); }
 
     /**
      * @brief 获取当前帧率 (吞吐量)
@@ -267,6 +303,7 @@ private:
 
     ResultCallback result_callback_;
     FrameCallback frame_callback_;
+    DiagnosticCallback diagnostic_callback_;
 };
 
 }  // namespace stereo3d
