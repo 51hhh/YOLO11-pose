@@ -570,22 +570,9 @@ int main(int argc, char* argv[]) {
                                      cudaMemcpyDeviceToHost);
                         vpiImageUnlock(rectL);
                     }
-                } else if (has_color_remap && rawL) {
-                    VPIImageData rawData;
-                    if (vpiImageLockData(rawL, VPI_LOCK_READ,
-                        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &rawData) == VPI_SUCCESS) {
-                        int rh = rawData.buffer.pitch.planes[0].height;
-                        int rw = rawData.buffer.pitch.planes[0].width;
-                        int rp = rawData.buffer.pitch.planes[0].pitchBytes;
-                        cv::Mat rawBayer(rh, rw, CV_8UC1,
-                                         rawData.buffer.pitch.planes[0].data, rp);
-                        cv::Mat bgrRaw;
-                        cv::cvtColor(rawBayer, bgrRaw, cv::COLOR_BayerBG2BGR);
-                        cv::remap(bgrRaw, frame, vis_map1, vis_map2, cv::INTER_LINEAR);
-                        vpiImageUnlock(rawL);
-                    }
                 }
 
+                // 灰度快速路径 (跳过 CPU debayer+remap, 避免 10ms 阻塞)
                 if (frame.empty()) {
                     VPIImageData imgData;
                     if (vpiImageLockData(rectL, VPI_LOCK_READ,
