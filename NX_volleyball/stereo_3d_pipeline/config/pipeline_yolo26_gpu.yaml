@@ -65,3 +65,48 @@ performance:
   target_fps: 100
   log_interval: 100
   enable_profiling: true
+
+# ========== Prediction ==========
+prediction:
+  gravity: 9.81
+  air_density: 1.225
+  ball_mass: 0.270
+  ball_radius: 0.105
+  drag_coeff: 0.47
+  ground_y: 0.0
+  max_predict_time: 3.0
+
+# ========== Display ==========
+display:
+  enable: false
+
+# ========== ROS2 发布配置 ==========
+ros2:
+  enable: true
+  world_frame_id: "vision_world"
+  base_frame_id: "base_link"
+  odom_topic: "/odom"
+  odom_timeout_sec: 0.5
+  topics:
+    ball_realtime: "/ball/realtime"
+    ball_landing: "/ball/landing"
+    predicted_path: "/ball/predicted_path"
+    actual_path: "/ball/actual_path"
+    ball_realtime_base: "/ball/realtime_base"
+    ball_landing_base: "/ball/landing_base"
+  vision_to_world:
+    swap_xy: false
+    invert_x: false
+    invert_y: false
+    rotation_deg: 0.0
+    translation_x: 0.0
+    translation_y: 0.0
+  diagnostic:
+    enable: true
+    depth_full_divisor: 6
+
+# ========== Recording ==========
+recording:
+  enabled: true
+  output_path: "raw_observation_data.csv"
+  raw_mode: true

@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/build"
-CONFIG="${CONFIG:-$PROJECT_DIR/config/pipeline_roi.yaml}"
+CONFIG="${CONFIG:-$PROJECT_DIR/config/pipeline_yolo26_gpu.yaml}"
 DURATION=""
 OUTPUT_DIR="$PROJECT_DIR/bags"
 TOPICS="/debug/depth_full /debug/depth_roi /debug/raw_obs /ball/realtime /ball/landing /ball/predicted_path /ball/actual_path"
