@@ -33,10 +33,9 @@ tnr:
   strength: 0.6
   version: "default"
 
-# yolo26 GPU INT8 - 3.20ms, 86% accuracy
-# Standard [1,5,8400] output format
+# yolo26 GPU FP16 - standard [1,5,8400] output format
 detector:
-  engine_path: "/home/nvidia/NX_volleyball/model/matrix_results/yolo26_gpu_int8_entropy2.engine"
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_fp16.engine"
   input_size: 640
   input_format: "gray"
   use_dla: false
