@@ -542,6 +542,10 @@ int main(int argc, char* argv[]) {
                 const std::vector<stereo3d::Detection>& detections,
                 const std::vector<stereo3d::Object3D>& results,
                 float fps) {
+                // 降低显示帧率: 每 display_divisor 帧才处理一次 (~30fps @ 100Hz)
+                constexpr int display_divisor = 3;
+                if (frame_id % display_divisor != 0) return;
+
                 // 上一帧未消费时跳过 (管线线程零阻塞)
                 {
                     std::lock_guard<std::mutex> lock(display_job_mutex);
