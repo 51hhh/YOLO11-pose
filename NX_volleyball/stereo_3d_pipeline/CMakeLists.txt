@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.18)
 project(stereo_3d_pipeline LANGUAGES CXX CUDA)
 
+# ==================== ROS2 ament_cmake ====================
+find_package(ament_cmake QUIET)
+if(ament_cmake_FOUND)
+  set(USE_ROS2 ON)
+  find_package(rclcpp REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(nav_msgs REQUIRED)
+  find_package(sensor_msgs REQUIRED)
+  message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
+else()
+  set(USE_ROS2 OFF)
+  message(STATUS "ROS2: not found, standalone build")
+endif()
+
 # ==================== 编译标准 ====================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -157,6 +171,14 @@ if(HIK_FOUND)
   add_definitions(-DHIK_CAMERA_ENABLED)
 endif()
 
+# ROS2 源文件 (条件编译)
+if(USE_ROS2)
+  list(APPEND PIPELINE_SOURCES
+    src/ros/goal_pose_bridge.cpp
+    src/ros/diagnostic_publisher.cpp
+  )
+endif()
+
 # ==================== 目标 ====================
 add_executable(stereo_pipeline
   ${PIPELINE_SOURCES}
@@ -195,6 +217,12 @@ if(GPIOD_FOUND)
   target_link_libraries(stereo_pipeline ${GPIOD_LIB})
 else()
   target_compile_definitions(stereo_pipeline PRIVATE NO_GPIOD)
+endif()
+
+# ROS2 链接
+if(USE_ROS2)
+  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
 # ==================== 标定工具 ====================
@@ -296,5 +324,11 @@ message(STATUS "  OpenCV:         ${OpenCV_VERSION}")
 message(STATUS "  ONNX Runtime:   ${ONNXRUNTIME_FOUND}")
 message(STATUS "  ximgproc (WLS): ${XIMGPROC_FOUND}")
 message(STATUS "  Hikvision SDK:  ${HIK_FOUND}")
+message(STATUS "  ROS2:           ${USE_ROS2}")
 message(STATUS "  yaml-cpp:       YES")
 message(STATUS "========================================")
+
+# ==================== ament 收尾 ====================
+if(USE_ROS2)
+  ament_package()
+endif()
