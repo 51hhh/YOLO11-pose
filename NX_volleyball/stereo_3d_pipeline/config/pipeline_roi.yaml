@@ -39,14 +39,13 @@ tnr:
   strength: 0.6                # 0.0~1.0
   version: "default"           # default|v1|v2|v3
 
-# ========== Detection (TensorRT GPU INT8 640x640) ==========
-# Engine: yolo26 GPU INT8 - 2.89ms avg, 345 qps
+# ========== Detection (TensorRT GPU FP16 640x640) ==========
+# Engine: yolo26 GPU FP16 - 4.44ms avg, 224 qps
 detector:
-  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_int8.engine"
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_fp16.engine"
   input_size: 640
   use_dla: false
   dla_core: 0
-  allow_gpu_fallback: false
   confidence_threshold: 0.5
   nms_threshold: 0.4
   max_detections: 10

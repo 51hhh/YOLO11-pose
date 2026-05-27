@@ -49,3 +49,9 @@ nx_check.txt
 # Copilot / IDE 配置
 .github/
 .vscode/
+# Python cache
+__pycache__/
+*.pyc
+
+# Local model artifacts
+NX_volleyball/stereo_3d_pipeline/models/
