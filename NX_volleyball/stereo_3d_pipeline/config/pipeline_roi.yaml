@@ -1,8 +1,8 @@
 # ============================================================
-# stereo_3d_pipeline ROI config (GPU INT8 640x640 + VPI TNR)
+# stereo_3d_pipeline ROI config (GPU FP16 640x640 + VPI TNR)
 # ROI multi-point stereo matching, replacing full-frame disparity
 # Target: 100 FPS volleyball tracking
-# Tested: 100 FPS on Jetson Orin NX Super (2026-05-24)
+# Tested: 100 FPS on Jetson Orin NX Super (2026-05-27)
 # ============================================================
 
 # ========== Camera (DO NOT MODIFY) ==========
