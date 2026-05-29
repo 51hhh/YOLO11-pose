@@ -1,0 +1,181 @@
+camera:
+  focal: 727.0
+  baseline: 0.12
+  cx: 979.6
+  cy: 583.2
+  width: 1920
+  height: 1200
+
+physics:
+  gravity: 9.81
+  gravity_vec: [0.0, 9.81, 0.0]
+  ball_diameter: 0.21
+  restitution: 0.75
+
+filters:
+  const_accel_9d:
+    sigma_a: 5.0
+    R_base: 0.01
+    noise_exponent: 2.0
+    innovation_gate: 9.0
+  gravity_ekf_6d:
+    sigma_a: 5.0
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+  gravity_bounce:
+    sigma_a: 5.0
+    R_base: 0.01
+    noise_exponent: 2.0
+    innovation_gate: 9.0
+    bounce_vy_threshold: 1.0
+    bounce_obs_threshold: 0.15
+    restitution: 0.75
+    P_boost_vy: 100.0
+  gravity_ekf_calibrated:
+    sigma_a: 5.0
+    innovation_gate: 9.0
+  gravity_ekf_adaptive_r:
+    sigma_a: 5.0
+    innovation_gate: 9.0
+  gravity_ekf_fallback:
+    sigma_a: 5.0
+    innovation_gate: 6.0
+    fallback_max: 3
+    P_inflate: 2.0
+  gravity_drag_7d:
+    sigma_a: 5.0
+    sigma_k: 0.01
+    innovation_gate: 9.0
+    k_drag_init: 0.023
+  gravity_bounce_v2:
+    sigma_a: 5.0
+    innovation_gate: 9.0
+    restitution: 0.75
+    P_boost_vy: 50.0
+    pause_frames: 1
+  one_euro:
+    min_cutoff: 1.0
+    beta: 0.007
+    d_cutoff: 1.0
+  adaptive_ekf:
+    sigma_a_init: 5.0
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    window_size: 20
+  imm:
+    R_base: 0.003
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    sigma_static: 0.5
+    sigma_flight: 10.0
+    sigma_maneuver: 80.0
+  gravity_one_euro:
+    sigma_a: 5.0
+    R_base: 0.3
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    min_cutoff: 0.15
+    beta: 0.0005
+  gravity_one_euro_v2:
+    sigma_a: 5.0
+    R_base: 1.5
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    min_cutoff: 0.005
+    beta: 0.0
+  gravity_one_euro_adaptive:
+    sigma_a: 5.0
+    R_base: 0.3
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    min_cutoff: 0.15
+    max_cutoff: 5.0
+    beta: 0.0005
+    innov_scale: 0.5
+  aekf_one_euro:
+    sigma_a: 5.0
+    R_base: 0.3
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    window_size: 20
+    min_cutoff: 0.15
+    beta: 0.0005
+  fallback_v2:
+    sigma_a: 5.0
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    P_inflate_per_frame: 1.5
+    max_consecutive_outliers: 5
+  adaptive_q_one_euro:
+    sigma_a: 5.0
+    R_base: 0.3
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    window_size: 20
+    min_cutoff: 0.005
+    beta: 0.0
+  confidence_ekf:
+    sigma_a: 5.0
+    R_base: 0.5
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    gamma: 2.0
+    eps: 0.1
+    min_cutoff: 0.01
+    beta: 0.0
+  imm_2model:
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    sigma_static: 0.3
+    sigma_flight: 5.0
+    p_stay_static: 0.97
+    p_stay_flight: 0.97
+  robust_bounce_ekf:
+    sigma_a: 5.0
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    bounce_confirm_frames: 2
+    restitution: 0.75
+    P_bounce_inflate: 50.0
+    max_outlier_frames: 5
+  confidence_v2:
+    sigma_a: 5.0
+    R_base: 3.0
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    gamma: 0.5
+    eps: 0.1
+    min_cutoff: 0.005
+    beta: 0.0
+  adaptive_q_v2:
+    sigma_a: 5.0
+    R_base: 1.5
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    window_size: 20
+    min_cutoff: 0.005
+    beta: 0.0
+  fast_gravity_ekf:
+    sigma_a: 5.0
+    R_base: 0.015
+    noise_exponent: 2.85
+    innovation_gate: 25.0
+    boost_R_base: 0.005
+    boost_sigma_a: 50.0
+    boost_gate: 100.0
+    boost_frames: 10
+    init_frames: 5
+    max_speed: 15.0
+
+evaluation:
+  z_bins: [1.0, 3.0, 5.0, 7.0, 9.0]
+  smoothing_window: 60
+  settle_threshold_sigma: 2.0
+  jump_threshold: 0.3
+
+data_dir: "../data"
