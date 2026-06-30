@@ -61,11 +61,14 @@ detector:
     subpixel_enabled: true             # ROI multi-point ZNCC + parabolic subpixel disparity
     subpixel_patch_radius: 5
     subpixel_search_radius_px: 8
-    subpixel_max_points: 24
+    subpixel_max_points: 12
     subpixel_min_points: 4
     subpixel_min_confidence: 0.25
-    subpixel_max_disp_delta_px: 8.0
-    subpixel_max_stddev_px: 2.0
+    subpixel_max_disp_delta_px: 2.0
+    subpixel_max_disp_delta_ratio: 0.03
+    subpixel_max_depth_delta_m: 0.5
+    subpixel_max_stddev_px: 1.0
+    subpixel_time_budget_ms: 1.5
     epipolar_y_tolerance: 12.0
     max_size_ratio: 2.0
     fallback_search_margin_px: 48

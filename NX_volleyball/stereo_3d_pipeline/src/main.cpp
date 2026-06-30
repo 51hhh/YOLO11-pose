@@ -189,8 +189,14 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.subpixel_min_confidence = dual["subpixel_min_confidence"].as<float>();
             if (dual["subpixel_max_disp_delta_px"])
                 cfg.dual_yolo.subpixel_max_disp_delta_px = dual["subpixel_max_disp_delta_px"].as<float>();
+            if (dual["subpixel_max_disp_delta_ratio"])
+                cfg.dual_yolo.subpixel_max_disp_delta_ratio = dual["subpixel_max_disp_delta_ratio"].as<float>();
+            if (dual["subpixel_max_depth_delta_m"])
+                cfg.dual_yolo.subpixel_max_depth_delta_m = dual["subpixel_max_depth_delta_m"].as<float>();
             if (dual["subpixel_max_stddev_px"])
                 cfg.dual_yolo.subpixel_max_stddev_px = dual["subpixel_max_stddev_px"].as<float>();
+            if (dual["subpixel_time_budget_ms"])
+                cfg.dual_yolo.subpixel_time_budget_ms = dual["subpixel_time_budget_ms"].as<float>();
             if (dual["epipolar_y_tolerance"])
                 cfg.dual_yolo.epipolar_y_tolerance = dual["epipolar_y_tolerance"].as<float>();
             if (dual["max_size_ratio"])

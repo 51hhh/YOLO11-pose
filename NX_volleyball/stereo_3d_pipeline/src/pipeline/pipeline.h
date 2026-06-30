@@ -130,11 +130,14 @@ struct PipelineConfig {
         bool subpixel_enabled = true;      ///< roi_subpixel_match: 启用 ROI 多点亚像素视差细化
         int subpixel_patch_radius = 5;     ///< ZNCC 匹配块半径 (patch=2r+1)
         int subpixel_search_radius_px = 8; ///< 以圆心视差为中心的左右搜索半宽
-        int subpixel_max_points = 24;      ///< ROI 内最多采样点数
+        int subpixel_max_points = 12;      ///< ROI 内最多采样点数
         int subpixel_min_points = 4;       ///< 接受亚像素视差的最少有效点
         float subpixel_min_confidence = 0.25f; ///< 接受亚像素视差的最低置信度
-        float subpixel_max_disp_delta_px = 8.0f; ///< 相对圆心视差最大允许偏差
-        float subpixel_max_stddev_px = 2.0f; ///< 多点视差最大标准差
+        float subpixel_max_disp_delta_px = 2.0f; ///< 相对圆心视差最大允许绝对偏差
+        float subpixel_max_disp_delta_ratio = 0.03f; ///< 相对圆心视差最大比例偏差
+        float subpixel_max_depth_delta_m = 0.5f; ///< 亚像素视差相对圆心测距最大跳变
+        float subpixel_max_stddev_px = 1.0f; ///< 多点视差最大标准差
+        float subpixel_time_budget_ms = 1.5f; ///< 每帧亚像素 CPU 预算, 0 表示不限制
         float epipolar_y_tolerance = 12.0f;///< 左右中心 y 允许差值 (px)
         float max_size_ratio = 2.0f;       ///< 左右 bbox 尺寸比例上限
         int fallback_search_margin_px = 48;///< 期望视差两侧搜索半宽 (px)
@@ -306,6 +309,13 @@ private:
         int subpixel_refined = 0;
         int subpixel_rejected = 0;
         int subpixel_low_conf = 0;
+        int subpixel_budget_skip = 0;
+        int subpixel_support_sum = 0;
+        int subpixel_support_max = 0;
+        double subpixel_time_ms = 0.0;
+        double subpixel_max_time_ms = 0.0;
+        float subpixel_gate_min_px = 0.0f;
+        float subpixel_gate_max_px = 0.0f;
         int depth_reject = 0;
         int image_lock_fail = 0;
     };

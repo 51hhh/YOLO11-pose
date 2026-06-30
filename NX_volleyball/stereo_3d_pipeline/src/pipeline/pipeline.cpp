@@ -274,7 +274,8 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
         LOG_INFO("  Dual YOLO: right_engine=%s, use_for_depth=%d, fallback_roi=%d, "
                  "epipolar_fallback=%d, center_refine=%d, roi_denoise=%d, "
-                 "depth_solver=%s, subpx=%d patch=%d search=%d pts=%d",
+                 "depth_solver=%s, subpx=%d patch=%d search=%d pts=%d "
+                 "delta=%.2fpx ratio=%.3f depthJump=%.2fm budget=%.2fms",
                  right_engine.c_str(),
                  config_.dual_yolo.use_for_depth,
                  config_.dual_yolo.fallback_to_roi_match,
@@ -285,7 +286,11 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.dual_yolo.subpixel_enabled,
                  config_.dual_yolo.subpixel_patch_radius,
                  config_.dual_yolo.subpixel_search_radius_px,
-                 config_.dual_yolo.subpixel_max_points);
+                 config_.dual_yolo.subpixel_max_points,
+                 config_.dual_yolo.subpixel_max_disp_delta_px,
+                 config_.dual_yolo.subpixel_max_disp_delta_ratio,
+                 config_.dual_yolo.subpixel_max_depth_delta_m,
+                 config_.dual_yolo.subpixel_time_budget_ms);
     }
 
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
@@ -971,6 +976,7 @@ struct SubpixelDisparityResult {
     float disparity = 0.0f;
     float confidence = 0.0f;
     float stddev = 0.0f;
+    float delta_gate_px = 0.0f;
     int support = 0;
     int attempted = 0;
 };
@@ -1326,6 +1332,32 @@ float medianOfSortedCPU(const std::vector<float>& values)
     return 0.5f * (values[mid - 1] + values[mid]);
 }
 
+float computeSubpixelDispDeltaGateCPU(
+    float initial_disp,
+    float focal,
+    float baseline,
+    const PipelineConfig::DualYoloConfig& dual_cfg)
+{
+    const float abs_gate = std::max(0.25f, dual_cfg.subpixel_max_disp_delta_px);
+    const float ratio_gate = std::max(0.25f,
+        std::max(0.0f, dual_cfg.subpixel_max_disp_delta_ratio) * initial_disp);
+    float gate = std::min(abs_gate, ratio_gate);
+
+    const float fb = focal * baseline;
+    const float max_depth_delta = dual_cfg.subpixel_max_depth_delta_m;
+    if (fb > 1e-3f && initial_disp > 0.5f && max_depth_delta > 0.01f) {
+        const float z0 = fb / initial_disp;
+        const float disp_far = fb / (z0 + max_depth_delta);
+        float depth_gate = std::max(0.0f, initial_disp - disp_far);
+        if (z0 > max_depth_delta + 0.01f) {
+            const float disp_near = fb / (z0 - max_depth_delta);
+            depth_gate = std::min(depth_gate, std::max(0.0f, disp_near - initial_disp));
+        }
+        gate = std::min(gate, std::max(0.25f, depth_gate));
+    }
+    return std::max(0.25f, gate);
+}
+
 SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
@@ -1333,7 +1365,9 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     const CircleFit2D& left_circle,
     const CircleFit2D& right_circle,
     const PipelineConfig::DualYoloConfig& dual_cfg,
-    int max_disparity)
+    int max_disparity,
+    float focal,
+    float baseline)
 {
     SubpixelDisparityResult result;
     if (!left_img || !right_img || left_pitch <= 0 || right_pitch <= 0 ||
@@ -1351,7 +1385,9 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
     const int max_points = std::clamp(dual_cfg.subpixel_max_points, 1, 64);
     const int min_points = std::clamp(dual_cfg.subpixel_min_points, 1, max_points);
-    const float max_delta = std::max(0.5f, dual_cfg.subpixel_max_disp_delta_px);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    result.delta_gate_px = max_delta;
     const float max_stddev = std::max(0.05f, dual_cfg.subpixel_max_stddev_px);
     const float min_score = std::max(0.10f, dual_cfg.subpixel_min_confidence * 0.60f);
     const float sample_radius = std::min(left_circle.radius, right_circle.radius);
@@ -1656,19 +1692,44 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         }
 
         float disparity_conf = 1.0f;
-        if (use_subpixel_depth) {
+        const float subpixel_budget_ms =
+            std::max(0.0f, config_.dual_yolo.subpixel_time_budget_ms);
+        if (use_subpixel_depth &&
+            (subpixel_budget_ms <= 0.0f ||
+             local_stats.subpixel_time_ms < static_cast<double>(subpixel_budget_ms))) {
             ++local_stats.subpixel_attempted;
+            const auto subpixel_start = Clock::now();
             const SubpixelDisparityResult refined =
                 refineDisparityByROIMultiPointCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
                     left_circle, right_circle,
                     config_.dual_yolo,
-                    config_.max_disparity);
+                    config_.max_disparity,
+                    focal,
+                    baseline);
+            const double subpixel_ms = std::chrono::duration<double, std::milli>(
+                Clock::now() - subpixel_start).count();
+            local_stats.subpixel_time_ms += subpixel_ms;
+            local_stats.subpixel_max_time_ms =
+                std::max(local_stats.subpixel_max_time_ms, subpixel_ms);
+            if (refined.delta_gate_px > 0.0f) {
+                if (local_stats.subpixel_gate_min_px <= 0.0f ||
+                    refined.delta_gate_px < local_stats.subpixel_gate_min_px) {
+                    local_stats.subpixel_gate_min_px = refined.delta_gate_px;
+                }
+                local_stats.subpixel_gate_max_px =
+                    std::max(local_stats.subpixel_gate_max_px,
+                             refined.delta_gate_px);
+            }
+            globalPerf().record("Stage2_SubpixelMatch", subpixel_ms);
             if (refined.valid) {
                 disparity = refined.disparity;
                 disparity_conf = std::clamp(0.70f + 0.30f * refined.confidence,
                                             0.0f, 1.0f);
+                local_stats.subpixel_support_sum += refined.support;
+                local_stats.subpixel_support_max =
+                    std::max(local_stats.subpixel_support_max, refined.support);
                 ++local_stats.subpixel_refined;
             } else {
                 ++local_stats.subpixel_rejected;
@@ -1676,6 +1737,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     ++local_stats.subpixel_low_conf;
                 }
             }
+        } else if (use_subpixel_depth) {
+            ++local_stats.subpixel_budget_skip;
         }
 
         const float z = focal * baseline / disparity;
@@ -1686,6 +1749,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         const float dy_norm = std::min(1.0f, refined_dy / y_tol);
         const float geom_conf = std::max(0.2f, 1.0f - 0.5f * dy_norm);
+        // ROI 亚像素匹配只稳定视差; X/Y 仍按左目圆心投影, 球心半径修正需单独建模。
         obj.x = (left_circle.cx - cx0) * z / focal;
         obj.y = (left_circle.cy - cy0) * z / focal;
         obj.z = z;
@@ -2196,10 +2260,16 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         if (config_.dual_yolo.log_matches &&
             config_.stats_interval > 0 &&
             slot.frame_id % config_.stats_interval == 0) {
+            const float subpixel_avg_support =
+                match_stats.subpixel_refined > 0
+                    ? static_cast<float>(match_stats.subpixel_support_sum) /
+                          static_cast<float>(match_stats.subpixel_refined)
+                    : 0.0f;
             LOG_INFO("[DualYOLO] frame=%d left=%d right=%d matches=%d valid=%d "
                      "missL=%d missR=%d fb=%d/%d fail=%d prior=%d l2r=%d r2l=%d "
                      "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
-                     "size=%d circle=%d subpx=%d/%d rej=%d low=%d depth=%d lock=%d",
+                     "size=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
+                     "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d",
                      slot.frame_id,
                      match_stats.left_count,
                      match_stats.right_count,
@@ -2225,6 +2295,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                      match_stats.subpixel_attempted,
                      match_stats.subpixel_rejected,
                      match_stats.subpixel_low_conf,
+                     match_stats.subpixel_budget_skip,
+                     match_stats.subpixel_time_ms,
+                     match_stats.subpixel_max_time_ms,
+                     subpixel_avg_support,
+                     match_stats.subpixel_support_max,
+                     match_stats.subpixel_gate_min_px,
+                     match_stats.subpixel_gate_max_px,
                      match_stats.depth_reject,
                      match_stats.image_lock_fail);
         }
