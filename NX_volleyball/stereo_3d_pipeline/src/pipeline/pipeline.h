@@ -126,6 +126,15 @@ struct PipelineConfig {
         bool center_refine = true;         ///< 在 bbox/搜索 ROI 内做圆心拟合细化
         bool roi_denoise = true;           ///< 圆心拟合前做局部 3x3 读数降噪
         bool log_matches = true;           ///< 按 stats_interval 打印匹配统计
+        std::string depth_solver = "circle_center"; ///< circle_center|roi_subpixel_match
+        bool subpixel_enabled = true;      ///< roi_subpixel_match: 启用 ROI 多点亚像素视差细化
+        int subpixel_patch_radius = 5;     ///< ZNCC 匹配块半径 (patch=2r+1)
+        int subpixel_search_radius_px = 8; ///< 以圆心视差为中心的左右搜索半宽
+        int subpixel_max_points = 24;      ///< ROI 内最多采样点数
+        int subpixel_min_points = 4;       ///< 接受亚像素视差的最少有效点
+        float subpixel_min_confidence = 0.25f; ///< 接受亚像素视差的最低置信度
+        float subpixel_max_disp_delta_px = 8.0f; ///< 相对圆心视差最大允许偏差
+        float subpixel_max_stddev_px = 2.0f; ///< 多点视差最大标准差
         float epipolar_y_tolerance = 12.0f;///< 左右中心 y 允许差值 (px)
         float max_size_ratio = 2.0f;       ///< 左右 bbox 尺寸比例上限
         int fallback_search_margin_px = 48;///< 期望视差两侧搜索半宽 (px)
@@ -293,6 +302,10 @@ private:
         int epipolar_reject = 0;
         int size_reject = 0;
         int circle_fit_fail = 0;
+        int subpixel_attempted = 0;
+        int subpixel_refined = 0;
+        int subpixel_rejected = 0;
+        int subpixel_low_conf = 0;
         int depth_reject = 0;
         int image_lock_fail = 0;
     };

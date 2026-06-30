@@ -173,6 +173,24 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.roi_denoise = dual["roi_denoise"].as<bool>();
             if (dual["log_matches"])
                 cfg.dual_yolo.log_matches = dual["log_matches"].as<bool>();
+            if (dual["depth_solver"])
+                cfg.dual_yolo.depth_solver = dual["depth_solver"].as<std::string>();
+            if (dual["subpixel_enabled"])
+                cfg.dual_yolo.subpixel_enabled = dual["subpixel_enabled"].as<bool>();
+            if (dual["subpixel_patch_radius"])
+                cfg.dual_yolo.subpixel_patch_radius = dual["subpixel_patch_radius"].as<int>();
+            if (dual["subpixel_search_radius_px"])
+                cfg.dual_yolo.subpixel_search_radius_px = dual["subpixel_search_radius_px"].as<int>();
+            if (dual["subpixel_max_points"])
+                cfg.dual_yolo.subpixel_max_points = dual["subpixel_max_points"].as<int>();
+            if (dual["subpixel_min_points"])
+                cfg.dual_yolo.subpixel_min_points = dual["subpixel_min_points"].as<int>();
+            if (dual["subpixel_min_confidence"])
+                cfg.dual_yolo.subpixel_min_confidence = dual["subpixel_min_confidence"].as<float>();
+            if (dual["subpixel_max_disp_delta_px"])
+                cfg.dual_yolo.subpixel_max_disp_delta_px = dual["subpixel_max_disp_delta_px"].as<float>();
+            if (dual["subpixel_max_stddev_px"])
+                cfg.dual_yolo.subpixel_max_stddev_px = dual["subpixel_max_stddev_px"].as<float>();
             if (dual["epipolar_y_tolerance"])
                 cfg.dual_yolo.epipolar_y_tolerance = dual["epipolar_y_tolerance"].as<float>();
             if (dual["max_size_ratio"])

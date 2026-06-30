@@ -57,6 +57,15 @@ detector:
     center_refine: true                # CPU circle fit inside bbox/search ROI
     roi_denoise: true                  # local 3x3 denoise only inside ROI
     log_matches: true
+    depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match
+    subpixel_enabled: true             # ROI multi-point ZNCC + parabolic subpixel disparity
+    subpixel_patch_radius: 5
+    subpixel_search_radius_px: 8
+    subpixel_max_points: 24
+    subpixel_min_points: 4
+    subpixel_min_confidence: 0.25
+    subpixel_max_disp_delta_px: 8.0
+    subpixel_max_stddev_px: 2.0
     epipolar_y_tolerance: 12.0
     max_size_ratio: 2.0
     fallback_search_margin_px: 48
