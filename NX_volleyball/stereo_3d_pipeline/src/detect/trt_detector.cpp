@@ -75,6 +75,12 @@ public:
     }
 } sTrtLogger;
 
+bool checkCudaSubmit(cudaError_t err, const char* op) {
+    if (err == cudaSuccess) return true;
+    LOG_ERROR("[TRT] %s failed: %s", op, cudaGetErrorString(err));
+    return false;
+}
+
 TRTDetector::TRTDetector() = default;
 
 TRTDetector::~TRTDetector() {
@@ -287,34 +293,62 @@ std::vector<Detection> TRTDetector::detect(const void* gpuImageU8, int pitch,
                                            cudaStream_t stream)
 {
     // 兼容接口: 使用 slot 0 同步执行
-    enqueue(0, gpuImageU8, pitch, width, height, stream);
-    cudaStreamSynchronize(stream);
+    if (!enqueue(0, gpuImageU8, pitch, width, height, stream)) {
+        return {};
+    }
+    cudaError_t err = cudaStreamSynchronize(stream);
+    if (!checkCudaSubmit(err, "detect cudaStreamSynchronize")) {
+        return {};
+    }
     return collect(0, width, height);
 }
 
-void TRTDetector::enqueue(int slotId,
+bool TRTDetector::enqueue(int slotId,
                           const void* gpuImageU8, int pitch,
                           int width, int height,
                           cudaStream_t stream)
 {
     int sid = slotId % RING_BUFFER_SIZE;
     auto& b = buffers_[sid];
+    if (!gpuImageU8 || pitch <= 0 || width <= 0 || height <= 0) {
+        LOG_ERROR("[TRT] Invalid enqueue input: ptr=%p pitch=%d size=%dx%d",
+                  gpuImageU8, pitch, width, height);
+        return false;
+    }
 
     // 1. GPU 预处理: U8 灰度 → float32 RGB CHW
     preprocessGPU(gpuImageU8, pitch, width, height, b.inputDevice, stream);
+    if (!checkCudaSubmit(cudaGetLastError(), "preprocessGPU launch")) {
+        return false;
+    }
 
     // 2. 绑定本次推理缓冲并异步推理
-    context_->setTensorAddress(inputTensorName_.c_str(), b.inputDevice);
+    if (!context_->setTensorAddress(inputTensorName_.c_str(), b.inputDevice)) {
+        LOG_ERROR("[TRT] setTensorAddress input '%s' failed",
+                  inputTensorName_.c_str());
+        return false;
+    }
 
     if (multiScaleOutput_) {
         // Bind all 6 output tensors
         for (auto& so : b.scaleOutputs) {
-            context_->setTensorAddress(so.name.c_str(), so.device);
+            if (!context_->setTensorAddress(so.name.c_str(), so.device)) {
+                LOG_ERROR("[TRT] setTensorAddress output '%s' failed",
+                          so.name.c_str());
+                return false;
+            }
         }
     } else {
-        context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice);
+        if (!context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice)) {
+            LOG_ERROR("[TRT] setTensorAddress output '%s' failed",
+                      outputTensorName_.c_str());
+            return false;
+        }
     }
-    context_->enqueueV3(stream);
+    if (!context_->enqueueV3(stream)) {
+        LOG_ERROR("[TRT] enqueueV3 failed");
+        return false;
+    }
 
     // 3. 异步后处理 + 拷回 host
     if (multiScaleOutput_) {
@@ -344,25 +378,45 @@ void TRTDetector::enqueue(int slotId,
                     so.h, so.w, so.channels, regMax_,
                     so.stride, confThreshold_, MAX_DFL_DET, stream);
             }
+            if (!checkCudaSubmit(cudaGetLastError(), "DFL decode launch")) {
+                return false;
+            }
             // Copy small result: count + detections
-            cudaMemcpyAsync(b.dflCountHost, b.dflCountDevice, sizeof(int),
-                            cudaMemcpyDeviceToHost, stream);
-            cudaMemcpyAsync(b.dflOutHost, b.dflOutDevice,
-                            MAX_DFL_DET * 6 * sizeof(float),
-                            cudaMemcpyDeviceToHost, stream);
+            if (!checkCudaSubmit(
+                    cudaMemcpyAsync(b.dflCountHost, b.dflCountDevice, sizeof(int),
+                                    cudaMemcpyDeviceToHost, stream),
+                    "copy DFL count to host")) {
+                return false;
+            }
+            if (!checkCudaSubmit(
+                    cudaMemcpyAsync(b.dflOutHost, b.dflOutDevice,
+                                    MAX_DFL_DET * 6 * sizeof(float),
+                                    cudaMemcpyDeviceToHost, stream),
+                    "copy DFL detections to host")) {
+                return false;
+            }
         } else {
             // CPU path: copy all tensors to host
             for (auto& so : b.scaleOutputs) {
                 size_t bytes = so.h * so.w * so.channels * sizeof(float);
-                cudaMemcpyAsync(so.host, so.device, bytes,
-                                cudaMemcpyDeviceToHost, stream);
+                if (!checkCudaSubmit(
+                        cudaMemcpyAsync(so.host, so.device, bytes,
+                                        cudaMemcpyDeviceToHost, stream),
+                        "copy output tensor to host")) {
+                    return false;
+                }
             }
         }
     } else {
         size_t outputBytes = outputSize_ * sizeof(float);
-        cudaMemcpyAsync(b.outputHost, b.outputDevice, outputBytes,
-                        cudaMemcpyDeviceToHost, stream);
+        if (!checkCudaSubmit(
+                cudaMemcpyAsync(b.outputHost, b.outputDevice, outputBytes,
+                                cudaMemcpyDeviceToHost, stream),
+                "copy output to host")) {
+            return false;
+        }
     }
+    return true;
 }
 
 std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {

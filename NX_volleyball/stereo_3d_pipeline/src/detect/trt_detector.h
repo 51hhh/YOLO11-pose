@@ -69,7 +69,7 @@ public:
      * @brief 异步提交一次推理 (不阻塞)
      * @param slotId RingBuffer 槽位 ID [0, RING_BUFFER_SIZE)
      */
-    void enqueue(int slotId,
+    bool enqueue(int slotId,
                  const void* gpuImageU8, int pitch,
                  int width, int height,
                  cudaStream_t stream);

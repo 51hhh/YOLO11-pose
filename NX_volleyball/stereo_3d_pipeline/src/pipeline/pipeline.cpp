@@ -161,18 +161,27 @@ bool Pipeline::init(const PipelineConfig& config) {
     if (colorPipelineEnabled()) {
         LOG_INFO("Caching CUDA pointers for Bayer pipeline...");
         for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
-            VPIImageData tmp;
-            auto cachePtr = [](VPIImage img, FrameSlot::CachedGPU& out) {
+            auto cachePtr = [i](const char* name, VPIImage img,
+                                FrameSlot::CachedGPU& out) -> bool {
                 VPIImageData d;
-                vpiImageLockData(img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                VPIStatus st = vpiImageLockData(
+                    img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                if (st != VPI_SUCCESS) {
+                    LOG_ERROR("Failed to cache %s CUDA pointer for slot %d (err=%d)",
+                              name, i, (int)st);
+                    return false;
+                }
                 out.data = d.buffer.pitch.planes[0].data;
                 out.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
                 vpiImageUnlock(img);
+                return out.data != nullptr && out.pitchBytes > 0;
             };
-            cachePtr(slots_[i].rawL, slots_[i].rawL_gpu);
-            cachePtr(slots_[i].rawR, slots_[i].rawR_gpu);
-            cachePtr(slots_[i].tempBGR_L, slots_[i].tempBGR_L_gpu);
-            cachePtr(slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu);
+            if (!cachePtr("rawL", slots_[i].rawL, slots_[i].rawL_gpu) ||
+                !cachePtr("rawR", slots_[i].rawR, slots_[i].rawR_gpu) ||
+                !cachePtr("tempBGR_L", slots_[i].tempBGR_L, slots_[i].tempBGR_L_gpu) ||
+                !cachePtr("tempBGR_R", slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu)) {
+                return false;
+            }
         }
     }
 
@@ -309,11 +318,22 @@ bool Pipeline::init(const PipelineConfig& config) {
         for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
             if (slots_[i].rectGray_vpiL) {
                 VPIImageData d;
-                vpiImageLockData(slots_[i].rectGray_vpiL, VPI_LOCK_READ,
-                                 VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                VPIStatus st = vpiImageLockData(
+                    slots_[i].rectGray_vpiL, VPI_LOCK_READ,
+                    VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+                if (st != VPI_SUCCESS) {
+                    LOG_ERROR("Failed to cache rectGray_vpiL CUDA pointer for slot %d (err=%d)",
+                              i, (int)st);
+                    return false;
+                }
                 slots_[i].rectGray_L_gpu.data = d.buffer.pitch.planes[0].data;
                 slots_[i].rectGray_L_gpu.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
                 vpiImageUnlock(slots_[i].rectGray_vpiL);
+                if (!slots_[i].rectGray_L_gpu.data ||
+                    slots_[i].rectGray_L_gpu.pitchBytes <= 0) {
+                    LOG_ERROR("Invalid rectGray_vpiL CUDA pointer for slot %d", i);
+                    return false;
+                }
             }
         }
     }
@@ -482,19 +502,27 @@ void Pipeline::grabLoop() {
 
         // 直接锁定 VPI Image 并写入 (零拷贝: camera DMA → 统一内存)
         VPIImageData imgDataL, imgDataR;
-        vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
-        vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
+        VPIStatus stL = vpiImageLockData(
+            slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
+        VPIStatus stR = vpiImageLockData(
+            slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
 
         GrabResult resL, resR;
-        bool ok = camera_->grabFramePair(
-            static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
-            static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
-            imgDataL.buffer.pitch.planes[0].pitchBytes,
-            imgDataR.buffer.pitch.planes[0].pitchBytes,
-            1000, resL, resR);
+        bool ok = false;
+        if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+            ok = camera_->grabFramePair(
+                static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
+                static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+                imgDataL.buffer.pitch.planes[0].pitchBytes,
+                imgDataR.buffer.pitch.planes[0].pitchBytes,
+                1000, resL, resR);
+        } else {
+            LOG_WARN("[Pipeline] grabLoop VPI raw lock failed: L=%d R=%d",
+                     (int)stL, (int)stR);
+        }
 
-        vpiImageUnlock(slot.rawL);
-        vpiImageUnlock(slot.rawR);
+        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rawL);
+        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rawR);
 
         // 通知 pipeline 采集完成
         {
@@ -713,19 +741,27 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     if (camera_ && !grab_preloaded) {
         // 同步采集: 直接在 pipeline 线程阻塞抓取 (pipelineLoop 全帧模式使用)
         VPIImageData imgDataL, imgDataR;
-        vpiImageLockData(slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
-        vpiImageLockData(slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
+        VPIStatus stL = vpiImageLockData(
+            slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
+        VPIStatus stR = vpiImageLockData(
+            slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
 
         GrabResult resL, resR;
-        bool grab_ok = camera_->grabFramePair(
-            static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
-            static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
-            imgDataL.buffer.pitch.planes[0].pitchBytes,
-            imgDataR.buffer.pitch.planes[0].pitchBytes,
-            1000, resL, resR);
+        bool grab_ok = false;
+        if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+            grab_ok = camera_->grabFramePair(
+                static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
+                static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+                imgDataL.buffer.pitch.planes[0].pitchBytes,
+                imgDataR.buffer.pitch.planes[0].pitchBytes,
+                1000, resL, resR);
+        } else {
+            LOG_WARN("[Pipeline] stage0 raw lock failed: L=%d R=%d",
+                     (int)stL, (int)stR);
+        }
 
-        vpiImageUnlock(slot.rawL);
-        vpiImageUnlock(slot.rawR);
+        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rawL);
+        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rawR);
 
         if (!grab_ok) {
             slot.grab_failed = true;
@@ -802,7 +838,22 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
                 slot.tempBGR_R_gpu.pitchBytes,
                 streams_.cudaStreamBGR);
 
-            cudaStreamSynchronize(streams_.cudaStreamBGR);
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                LOG_ERROR("BayerToBGR kernel launch failed: %s",
+                          cudaGetErrorString(err));
+                slot.grab_failed = true;
+                NVTX_RANGE_POP();
+                return;
+            }
+            err = cudaStreamSynchronize(streams_.cudaStreamBGR);
+            if (err != cudaSuccess) {
+                LOG_ERROR("BayerToBGR stream sync failed: %s",
+                          cudaGetErrorString(err));
+                slot.grab_failed = true;
+                NVTX_RANGE_POP();
+                return;
+            }
         }
 
         //    b) BGR Remap: 校正 (与 init() 中 payload 相同 backend)
@@ -1578,12 +1629,17 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
 
     // 异步推理提交: 仅 enqueue，不在此处同步
-    det->enqueue(slot_index, gpu_ptr, pitch,
-                 config_.rect_width, config_.rect_height,
-                 stream);
-    slot.detection_submitted = true;
+    const bool submitted = det->enqueue(slot_index, gpu_ptr, pitch,
+                                        config_.rect_width, config_.rect_height,
+                                        stream);
 
     vpiImageUnlock(detectImg);
+    if (!submitted) {
+        LOG_WARN("stage1_detect: left TRT enqueue failed");
+        NVTX_RANGE_POP();
+        return;
+    }
+    slot.detection_submitted = true;
 
     if (dualYoloEnabled() && slot.is_detect_frame) {
         auto* detR = getRightDetector();
@@ -1605,12 +1661,18 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
         void* gpu_ptr_r = imgDataR.buffer.pitch.planes[0].data;
         int pitch_r = imgDataR.buffer.pitch.planes[0].pitchBytes;
 
-        detR->enqueue(slot_index, gpu_ptr_r, pitch_r,
-                      config_.rect_width, config_.rect_height,
-                      streamR);
-        slot.right_detection_submitted = true;
+        const bool submittedR = detR->enqueue(slot_index, gpu_ptr_r, pitch_r,
+                                              config_.rect_width,
+                                              config_.rect_height,
+                                              streamR);
 
         vpiImageUnlock(detectImgR);
+        if (!submittedR) {
+            LOG_WARN("stage1_detect: right TRT enqueue failed");
+            NVTX_RANGE_POP();
+            return;
+        }
+        slot.right_detection_submitted = true;
     }
     NVTX_RANGE_POP();
 }
