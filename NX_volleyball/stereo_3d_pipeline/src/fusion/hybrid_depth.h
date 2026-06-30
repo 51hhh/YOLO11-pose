@@ -154,6 +154,14 @@ public:
      */
     int activeTrackCount() const;
 
+    /**
+     * @brief 根据上一帧 bbox track 估计当前检测的预测深度
+     * @return 匹配到活跃 track 时返回 z, 否则返回 -1
+     */
+    float predictDepthForDetection(
+        const Detection& det,
+        float iou_threshold = 0.2f) const;
+
 private:
     float focal_    = 0.0f;
     float baseline_ = 0.0f;

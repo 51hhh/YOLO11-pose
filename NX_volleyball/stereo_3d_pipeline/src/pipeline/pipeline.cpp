@@ -26,6 +26,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <cmath>
+#include <limits>
 
 // 自定义 CUDA Bayer→BGR8 kernel (bilinear 插值, 在 detect_preprocess.cu 中)
 extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
@@ -110,7 +112,7 @@ bool Pipeline::init(const PipelineConfig& config) {
         // 原始图像 → 使用 camera.width x camera.height (相机原始分辨率)
         // BGR 模式: BayerRG8 格式 (用于 ConvertImageFormat debayer)
         // Gray 模式: U8 格式 (直接 remap, 与旧行为一致)
-        const VPIImageFormat rawFmt = (config_.detector_input_format == "bgr")
+        const VPIImageFormat rawFmt = colorPipelineEnabled()
             ? VPI_MAKE_RAW_IMAGE_FORMAT_ABBREV(BAYER_RGGB, PL, UNSIGNED, X000, 1, X8)
             : VPI_IMAGE_FORMAT_U8;
         err = vpiImageCreate(config_.camera.width, config_.camera.height,
@@ -156,7 +158,7 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     // 5b. 缓存 Bayer→BGR 所需的 CUDA 指针 (Tegra 统一内存: 指针固定)
     //     避免每帧 8 次 VPI lock/unlock, 节省 ~2.4ms/frame
-    if (config_.detector_input_format == "bgr") {
+    if (colorPipelineEnabled()) {
         LOG_INFO("Caching CUDA pointers for Bayer pipeline...");
         for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
             VPIImageData tmp;
@@ -214,8 +216,10 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_INFO("Opening dual cameras...");
     camera_ = std::make_unique<HikvisionCamera>();
     if (!camera_->open(config_.camera)) {
-        LOG_WARN("Failed to open cameras - running in dry-run mode (synthetic frames)");
-        camera_.reset();  // 释放相机, 标记为 dry-run
+        LOG_ERROR("Failed to open stereo cameras. Both Hikvision cameras are required; "
+                  "check USB connection, serial/index config, and whether MVS holds a device.");
+        camera_.reset();
+        return false;
     }
 
     // 初始化 PWM 触发器 (硬件触发模式时)
@@ -238,6 +242,33 @@ bool Pipeline::init(const PipelineConfig& config) {
                          config_.detector_input_format)) {
         LOG_ERROR("Failed to initialize TRT Detector");
         return false;
+    }
+
+    if (config_.dual_yolo.enabled) {
+        const std::string right_engine = config_.dual_yolo.right_engine_file.empty()
+            ? config_.engine_file : config_.dual_yolo.right_engine_file;
+        const std::string right_format = config_.dual_yolo.right_input_format.empty()
+            ? config_.detector_input_format : config_.dual_yolo.right_input_format;
+        LOG_INFO("Initializing right TRT Detector for dual YOLO (DLA=%d, core=%d)...",
+                 config_.dual_yolo.right_use_dla, config_.dual_yolo.right_dla_core);
+        detector_right_ = std::make_unique<TRTDetector>();
+        if (!detector_right_->init(right_engine,
+                                   config_.dual_yolo.right_use_dla,
+                                   config_.dual_yolo.right_dla_core,
+                                   config_.conf_threshold,
+                                   config_.nms_threshold,
+                                   right_format)) {
+            LOG_ERROR("Failed to initialize right TRT Detector");
+            return false;
+        }
+        LOG_INFO("  Dual YOLO: right_engine=%s, use_for_depth=%d, fallback_roi=%d, "
+                 "epipolar_fallback=%d, center_refine=%d, roi_denoise=%d",
+                 right_engine.c_str(),
+                 config_.dual_yolo.use_for_depth,
+                 config_.dual_yolo.fallback_to_roi_match,
+                 config_.dual_yolo.fallback_epipolar_search,
+                 config_.dual_yolo.center_refine,
+                 config_.dual_yolo.roi_denoise);
     }
 
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
@@ -305,6 +336,14 @@ bool Pipeline::init(const PipelineConfig& config) {
         roi_cfg.objectDiameter  = config_.depth.object_diameter;
         roi_cfg.useCircleFit    = true;
         roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+
+        const float required_disp = focal * calibration_->getBaseline() /
+                                    std::max(0.01f, config_.depth.min_depth);
+        if (required_disp > config_.max_disparity) {
+            LOG_WARN("max_disparity=%d is below f*B/min_depth=%.0f px; "
+                     "long-baseline near objects may be rejected",
+                     config_.max_disparity, required_disp);
+        }
 
         // 初始化混合深度估计 (单目+双目+Kalman)
         hybrid_depth_ = std::make_unique<HybridDepthEstimator>();
@@ -527,7 +566,7 @@ void Pipeline::pipelineLoop() {
             // 等 Detect 完成
             {
                 ScopedTimer tw("Stage3_WaitDetect");
-                cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+                waitDetectDone(streams_.cudaStreamFuse, slot);
                 cudaStreamSynchronize(streams_.cudaStreamFuse);
                 globalPerf().record("Stage3_WaitDetect", tw.elapsedMs());
             }
@@ -550,7 +589,7 @@ void Pipeline::pipelineLoop() {
             }
 
             if (frame_callback_) {
-                VPIImage vizImg = (config_.detector_input_format == "bgr")
+                VPIImage vizImg = leftDetectorUsesBGR()
                                   ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
                 frame_callback_(slot.frame_id, vizImg, slot.rawL,
                                 slot.detections, slot.results,
@@ -599,7 +638,7 @@ void Pipeline::pipelineLoop() {
                 stage1_detect(slot, slot_idx);
                 globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
             }
-            cudaEventRecord(slot.evtDetectDone, getDLAStream(slot.frame_id));
+            recordDetectDoneEvents(slot);
 
             {
                 ScopedTimer t2("Stage2_StereoSubmit");
@@ -639,7 +678,7 @@ void Pipeline::pipelineLoop() {
         cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
 
         stage1_detect(slot, slot_idx);
-        cudaEventRecord(slot.evtDetectDone, getDLAStream(slot.frame_id));
+        recordDetectDoneEvents(slot);
         stage2_stereo(slot);
 
         next_detect_frame++;
@@ -650,7 +689,7 @@ void Pipeline::pipelineLoop() {
         int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
 
-        cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+        waitDetectDone(streams_.cudaStreamFuse, slot);
         cudaStreamSynchronize(streams_.cudaStreamFuse);
         vpiStreamSync(streams_.vpiStreamGPU);
 
@@ -738,7 +777,7 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     }
 
     // 3. 校正路径 — 根据 input_format 选择 color 或 gray
-    if (config_.detector_input_format == "bgr") {
+    if (colorPipelineEnabled()) {
         // Color Pipeline: Debayer → BGR Remap → Gray Convert
         //    a) Debayer: Bayer RG8 → BGR8 (自定义 CUDA bilinear kernel)
         //       使用 init() 时缓存的 CUDA 指针, 跳过 VPI lock/unlock (~2.4ms 优化)
@@ -790,7 +829,7 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
 }
 
 // ===================================================================
-// Dual DLA helpers: frame-based detector/stream selection
+// Detector helpers
 // ===================================================================
 
 TRTDetector* Pipeline::getDetector(int /*frame_id*/) const {
@@ -801,15 +840,731 @@ cudaStream_t Pipeline::getDLAStream(int /*frame_id*/) const {
     return streams_.cudaStreamDLA;
 }
 
+TRTDetector* Pipeline::getRightDetector() const {
+    return detector_right_.get();
+}
+
+cudaStream_t Pipeline::getRightDLAStream(int /*frame_id*/) const {
+    return streams_.cudaStreamDLA_R;
+}
+
+bool Pipeline::dualYoloEnabled() const {
+    return config_.dual_yolo.enabled && detector_right_;
+}
+
+namespace {
+bool isBGRFormat(std::string fmt) {
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return fmt == "bgr";
+}
+
+struct CircleFit2D {
+    float cx = 0.0f;
+    float cy = 0.0f;
+    float radius = 0.0f;
+    float confidence = 0.0f;
+    bool valid = false;
+};
+
+struct CircleFitOptions {
+    bool denoise = true;
+    int max_roi_pixels = 18000;
+    float min_radius_ratio = 0.35f;
+    float max_radius_ratio = 1.65f;
+    float max_center_shift = 0.0f;
+};
+
+inline float sampleGrayCPU(const uint8_t* img, int pitch, int x, int y, bool denoise)
+{
+    const uint8_t* row = img + y * pitch;
+    if (!denoise) return static_cast<float>(row[x]);
+
+    const uint8_t* prev = img + (y - 1) * pitch;
+    const uint8_t* next = img + (y + 1) * pitch;
+    const int v =
+        4 * static_cast<int>(row[x]) +
+        2 * (static_cast<int>(row[x - 1]) + static_cast<int>(row[x + 1]) +
+             static_cast<int>(prev[x]) + static_cast<int>(next[x])) +
+        static_cast<int>(prev[x - 1]) + static_cast<int>(prev[x + 1]) +
+        static_cast<int>(next[x - 1]) + static_cast<int>(next[x + 1]);
+    return static_cast<float>(v) * (1.0f / 16.0f);
+}
+
+bool solve3x3CPU(
+    double A00, double A01, double A02,
+    double A10, double A11, double A12,
+    double A20, double A21, double A22,
+    double b0,  double b1,  double b2,
+    double& x0, double& x1, double& x2)
+{
+    double det = A00 * (A11 * A22 - A12 * A21)
+               - A01 * (A10 * A22 - A12 * A20)
+               + A02 * (A10 * A21 - A11 * A20);
+    if (std::abs(det) < 1e-12) return false;
+
+    const double inv_det = 1.0 / det;
+    x0 = (b0 * (A11 * A22 - A12 * A21)
+        - A01 * (b1 * A22 - A12 * b2)
+        + A02 * (b1 * A21 - A11 * b2)) * inv_det;
+    x1 = (A00 * (b1 * A22 - A12 * b2)
+        - b0 * (A10 * A22 - A12 * A20)
+        + A02 * (A10 * b2 - b1 * A20)) * inv_det;
+    x2 = (A00 * (A11 * b2 - b1 * A21)
+        - A01 * (A10 * b2 - b1 * A20)
+        + b0 * (A10 * A21 - A11 * A20)) * inv_det;
+    return true;
+}
+
+CircleFit2D fitCircleInRegionCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    int x1, int y1, int x2, int y2,
+    float expected_cx, float expected_cy, float expected_radius,
+    const CircleFitOptions& options)
+{
+    CircleFit2D out;
+    if (!img || pitch <= 0 || img_w <= 0 || img_h <= 0 ||
+        expected_radius < 4.0f) {
+        return out;
+    }
+
+    const int border = options.denoise ? 2 : 1;
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 - x1 < 8 || y2 - y1 < 8) return out;
+
+    const int roi_w = x2 - x1 + 1;
+    const int roi_h = y2 - y1 + 1;
+    const int area = roi_w * roi_h;
+    const int max_pixels = std::max(256, options.max_roi_pixels);
+    const int stride = std::max(
+        1, static_cast<int>(std::ceil(std::sqrt(
+               static_cast<float>(area) / static_cast<float>(max_pixels)))));
+
+    float max_grad = 0.0f;
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, options.denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, options.denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, options.denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, options.denoise);
+            max_grad = std::max(max_grad, std::sqrt(gx * gx + gy * gy));
+        }
+    }
+    if (max_grad < 8.0f) return out;
+
+    const float grad_thresh = std::max(10.0f, max_grad * 0.25f);
+    double sw = 0.0, swx = 0.0, swy = 0.0;
+    double swxx = 0.0, swyy = 0.0, swxy = 0.0;
+    double swxz = 0.0, swyz = 0.0, swz = 0.0;
+    int edge_count = 0;
+
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, options.denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, options.denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, options.denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, options.denoise);
+            const float mag = std::sqrt(gx * gx + gy * gy);
+            if (mag < grad_thresh) continue;
+
+            const double w = static_cast<double>(mag);
+            const double dx = static_cast<double>(x);
+            const double dy = static_cast<double>(y);
+            const double z = dx * dx + dy * dy;
+            sw += w;
+            swx += w * dx;
+            swy += w * dy;
+            swxx += w * dx * dx;
+            swyy += w * dy * dy;
+            swxy += w * dx * dy;
+            swxz += w * dx * z;
+            swyz += w * dy * z;
+            swz += w * z;
+            ++edge_count;
+        }
+    }
+
+    if (edge_count < 8 || sw <= 0.0) return out;
+
+    double a = 0.0, b = 0.0, c = 0.0;
+    if (!solve3x3CPU(swxx, swxy, swx,
+                     swxy, swyy, swy,
+                     swx,  swy,  sw,
+                     swxz, swyz, swz,
+                     a, b, c)) {
+        return out;
+    }
+
+    const float cx = static_cast<float>(a * 0.5);
+    const float cy = static_cast<float>(b * 0.5);
+    const float r2 = static_cast<float>(c + static_cast<double>(cx) * cx +
+                                        static_cast<double>(cy) * cy);
+    if (r2 <= 0.0f) return out;
+    const float radius = std::sqrt(r2);
+
+    const float min_r = std::max(4.0f, expected_radius * options.min_radius_ratio);
+    const float max_r = std::max(min_r + 1.0f, expected_radius * options.max_radius_ratio);
+    const float center_dist = std::sqrt((cx - expected_cx) * (cx - expected_cx) +
+                                        (cy - expected_cy) * (cy - expected_cy));
+    const float max_center_shift = options.max_center_shift > 0.0f
+        ? options.max_center_shift
+        : std::max(roi_w, roi_h) * 0.5f;
+    if (radius < min_r || radius > max_r || center_dist > max_center_shift) return out;
+
+    out.cx = cx;
+    out.cy = cy;
+    out.radius = radius;
+    const float dense_edge_count = static_cast<float>(edge_count * stride * stride);
+    const float edge_conf = std::min(1.0f, dense_edge_count / 80.0f);
+    const float center_conf = std::max(0.2f, 1.0f - center_dist / std::max(1.0f, max_center_shift));
+    out.confidence = edge_conf * center_conf;
+    out.valid = true;
+    return out;
+}
+
+CircleFit2D fitCircleInBBoxCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const Detection& det, bool denoise, int max_roi_pixels)
+{
+    if (det.width < 8.0f || det.height < 8.0f) return {};
+
+    const int x1 = static_cast<int>(std::floor(det.cx - det.width * 0.55f));
+    const int y1 = static_cast<int>(std::floor(det.cy - det.height * 0.55f));
+    const int x2 = static_cast<int>(std::ceil(det.cx + det.width * 0.55f));
+    const int y2 = static_cast<int>(std::ceil(det.cy + det.height * 0.55f));
+
+    CircleFitOptions options;
+    options.denoise = denoise;
+    options.max_roi_pixels = max_roi_pixels;
+    options.max_center_shift = std::max(det.width, det.height) * 0.65f;
+    return fitCircleInRegionCPU(img, pitch, img_w, img_h,
+                                x1, y1, x2, y2,
+                                det.cx, det.cy,
+                                std::max(det.width, det.height) * 0.5f,
+                                options);
+}
+
+CircleFit2D circleFromDetectionCPU(const Detection& det)
+{
+    CircleFit2D circle;
+    if (det.width < 2.0f || det.height < 2.0f) return circle;
+    circle.cx = det.cx;
+    circle.cy = det.cy;
+    circle.radius = std::max(det.width, det.height) * 0.5f;
+    circle.confidence = 1.0f;
+    circle.valid = true;
+    return circle;
+}
+
+Detection detectionFromCircleCPU(const CircleFit2D& circle, const Detection& source)
+{
+    Detection det;
+    det.cx = circle.cx;
+    det.cy = circle.cy;
+    det.width = std::max(2.0f, circle.radius * 2.0f);
+    det.height = det.width;
+    det.confidence = source.confidence * std::max(0.2f, circle.confidence);
+    det.class_id = source.class_id;
+    return det;
+}
+
+Detection detectionWithCircleCenterCPU(const CircleFit2D& circle, const Detection& source)
+{
+    Detection det = source;
+    det.cx = circle.cx;
+    det.cy = circle.cy;
+    det.confidence = source.confidence * std::max(0.2f, circle.confidence);
+    return det;
+}
+
+float estimateDisparityFromBBoxCPU(
+    const Detection& det, float baseline,
+    const HybridDepthConfig& depth_cfg, int max_disparity)
+{
+    if (det.width <= 1.0f || depth_cfg.object_diameter <= 0.01f ||
+        baseline <= 0.0f || max_disparity <= 0) {
+        return -1.0f;
+    }
+
+    const float disp = baseline * det.width * depth_cfg.bbox_scale /
+                       depth_cfg.object_diameter;
+    return std::clamp(disp, 1.0f, static_cast<float>(max_disparity));
+}
+
+CircleFit2D searchCircleOnEpipolarCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const CircleFit2D& source_circle,
+    float predicted_cx, float predicted_cy,
+    float y_tolerance,
+    const PipelineConfig::DualYoloConfig& dual_cfg)
+{
+    if (!img || pitch <= 0 || !source_circle.valid) return {};
+
+    const float expected_radius = std::max(4.0f, source_circle.radius);
+    const float max_width = std::max(32.0f, static_cast<float>(dual_cfg.fallback_max_width_px));
+    const float max_roi_half_x = max_width * 0.5f;
+    const float radius_pad = expected_radius * 1.05f;
+    const float margin = std::max(4.0f, static_cast<float>(dual_cfg.fallback_search_margin_px));
+    const float center_half_x = std::min(margin, std::max(4.0f, max_roi_half_x - radius_pad));
+    const float roi_half_x = std::min(max_roi_half_x, center_half_x + radius_pad);
+    const float roi_half_y = radius_pad + y_tolerance + 2.0f;
+
+    const int x1 = static_cast<int>(std::floor(predicted_cx - roi_half_x));
+    const int x2 = static_cast<int>(std::ceil(predicted_cx + roi_half_x));
+    const int y1 = static_cast<int>(std::floor(predicted_cy - roi_half_y));
+    const int y2 = static_cast<int>(std::ceil(predicted_cy + roi_half_y));
+
+    CircleFitOptions options;
+    options.denoise = dual_cfg.roi_denoise;
+    options.max_roi_pixels = dual_cfg.circle_max_roi_pixels;
+    options.min_radius_ratio = 0.45f;
+    options.max_radius_ratio = 1.70f;
+    options.max_center_shift = std::sqrt(center_half_x * center_half_x +
+                                         y_tolerance * y_tolerance) + 2.0f;
+
+    CircleFit2D circle = fitCircleInRegionCPU(
+        img, pitch, img_w, img_h,
+        x1, y1, x2, y2,
+        predicted_cx, predicted_cy,
+        expected_radius,
+        options);
+    if (!circle.valid) return circle;
+    if (std::abs(circle.cx - predicted_cx) > center_half_x ||
+        std::abs(circle.cy - predicted_cy) > y_tolerance) {
+        return {};
+    }
+    return circle;
+}
+}  // namespace
+
+bool Pipeline::leftDetectorUsesBGR() const {
+    return isBGRFormat(config_.detector_input_format);
+}
+
+bool Pipeline::rightDetectorUsesBGR() const {
+    const std::string fmt = config_.dual_yolo.right_input_format.empty()
+        ? config_.detector_input_format : config_.dual_yolo.right_input_format;
+    return isBGRFormat(fmt);
+}
+
+bool Pipeline::colorPipelineEnabled() const {
+    return leftDetectorUsesBGR() ||
+           (config_.dual_yolo.enabled && rightDetectorUsesBGR());
+}
+
+void Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {
+    // 左目 lock/enqueue 失败时也要刷新 event，否则下游可能等待到旧 slot 事件。
+    cudaEventRecord(slot.evtDetectDone,
+                    slot.detection_submitted
+                        ? getDLAStream(slot.frame_id)
+                        : streams_.cudaStreamGPU);
+    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
+        cudaEventRecord(slot.evtDetectRightDone, getRightDLAStream(slot.frame_id));
+    }
+}
+
+void Pipeline::waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const {
+    cudaStreamWaitEvent(stream, slot.evtDetectDone, 0);
+    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
+        cudaStreamWaitEvent(stream, slot.evtDetectRightDone, 0);
+    }
+}
+
+void Pipeline::collectRightDetections(FrameSlot& slot, int slot_index) {
+    slot.detections_right.clear();
+    if (!dualYoloEnabled() || !slot.is_detect_frame ||
+        !slot.right_detection_submitted) {
+        return;
+    }
+
+    slot.detections_right = detector_right_->collect(slot_index,
+                                                     config_.rect_width,
+                                                     config_.rect_height);
+}
+
+Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections,
+    const uint8_t* left_cpu, int left_pitch,
+    const uint8_t* right_cpu, int right_pitch,
+    int img_width, int img_height,
+    DualYoloMatchStats* stats) const
+{
+    DualYoloMatchStats local_stats;
+    local_stats.left_count = static_cast<int>(left_detections.size());
+    local_stats.right_count = static_cast<int>(right_detections.size());
+    if (right_detections.empty()) {
+        local_stats.right_missing = static_cast<int>(left_detections.size());
+    }
+    if (left_detections.empty()) {
+        local_stats.left_missing = static_cast<int>(right_detections.size());
+    }
+
+    DualYoloMatchOutput output;
+    output.detections = left_detections;
+    output.results.resize(output.detections.size());
+    for (size_t i = 0; i < output.results.size(); ++i) {
+        output.results[i].class_id = output.detections[i].class_id;
+        output.results[i].z = -1.0f;
+    }
+
+    if ((left_detections.empty() && right_detections.empty()) || !calibration_) {
+        if (!calibration_) {
+            local_stats.no_candidate =
+                static_cast<int>(left_detections.size() + right_detections.size());
+        }
+        if (stats) *stats = local_stats;
+        return output;
+    }
+
+    const bool image_available = left_cpu && right_cpu &&
+                                 left_pitch > 0 && right_pitch > 0;
+    if (!image_available &&
+        (config_.dual_yolo.center_refine ||
+         config_.dual_yolo.fallback_epipolar_search)) {
+        local_stats.image_lock_fail =
+            static_cast<int>(left_detections.size() + right_detections.size());
+    }
+
+    const auto& P1 = calibration_->getProjectionLeft();
+    const float focal = static_cast<float>(P1.at<double>(0, 0));
+    const float cx0 = static_cast<float>(P1.at<double>(0, 2));
+    const float cy0 = static_cast<float>(P1.at<double>(1, 2));
+    const float baseline = calibration_->getBaseline();
+    const float y_tol = std::max(1.0f, config_.dual_yolo.epipolar_y_tolerance);
+    const float max_ratio = std::max(1.0f, config_.dual_yolo.max_size_ratio);
+
+    std::vector<bool> right_used(right_detections.size(), false);
+    std::vector<bool> right_blocked_by_left(right_detections.size(), false);
+    std::vector<bool> left_has_stereo(left_detections.size(), false);
+
+    auto refine_detection = [&](const uint8_t* img, int pitch,
+                                const Detection& det) -> CircleFit2D {
+        if (!config_.dual_yolo.center_refine) {
+            return circleFromDetectionCPU(det);
+        }
+        return fitCircleInBBoxCPU(img, pitch, img_width, img_height, det,
+                                  config_.dual_yolo.roi_denoise,
+                                  config_.dual_yolo.circle_max_roi_pixels);
+    };
+
+    auto build_object = [&](const Detection& left_det,
+                            const CircleFit2D& left_circle,
+                            const CircleFit2D& right_circle,
+                            float semantic_conf,
+                            Object3D& obj) -> bool {
+        const float refined_dy = std::abs(left_circle.cy - right_circle.cy);
+        if (refined_dy > y_tol) {
+            ++local_stats.epipolar_reject;
+            return false;
+        }
+
+        const float radius_ratio = std::max(left_circle.radius / right_circle.radius,
+                                            right_circle.radius / left_circle.radius);
+        if (radius_ratio > max_ratio) {
+            ++local_stats.size_reject;
+            return false;
+        }
+
+        const float disparity = left_circle.cx - right_circle.cx;
+        if (disparity <= 0.0f) {
+            ++local_stats.nonpositive_disparity;
+            return false;
+        }
+        if (disparity > config_.max_disparity) {
+            ++local_stats.over_max_disparity;
+            return false;
+        }
+
+        const float z = focal * baseline / disparity;
+        if (z < config_.depth.min_depth || z > config_.depth.max_depth) {
+            ++local_stats.depth_reject;
+            return false;
+        }
+
+        const float dy_norm = std::min(1.0f, refined_dy / y_tol);
+        const float geom_conf = std::max(0.2f, 1.0f - 0.5f * dy_norm);
+        obj.x = (left_circle.cx - cx0) * z / focal;
+        obj.y = (left_circle.cy - cy0) * z / focal;
+        obj.z = z;
+        obj.z_stereo = z;
+        obj.confidence = semantic_conf *
+                         std::sqrt(left_circle.confidence * right_circle.confidence) *
+                         geom_conf;
+        obj.class_id = left_det.class_id;
+        obj.depth_method = 1;
+        return true;
+    };
+
+    auto mark_right_detection_near = [&](const CircleFit2D& right_circle,
+                                         int class_id) {
+        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+            if (right_used[ri]) continue;
+            const Detection& right = right_detections[ri];
+            if (right.class_id != class_id) continue;
+            const float dx = std::abs(right.cx - right_circle.cx);
+            const float dy = std::abs(right.cy - right_circle.cy);
+            const float x_tol = std::max(right.width * 0.75f,
+                                         right_circle.radius * 1.25f);
+            if (dx <= x_tol && dy <= y_tol) {
+                right_used[ri] = true;
+                right_blocked_by_left[ri] = true;
+            }
+        }
+    };
+
+    auto find_left_detection_near = [&](const CircleFit2D& left_circle,
+                                        int class_id) -> int {
+        int best_idx = -1;
+        float best_dist2 = std::numeric_limits<float>::max();
+        for (size_t li = 0; li < left_detections.size(); ++li) {
+            if (left_has_stereo[li]) continue;
+            const Detection& left = left_detections[li];
+            if (left.class_id != class_id) continue;
+            const float dx = std::abs(left.cx - left_circle.cx);
+            const float dy = std::abs(left.cy - left_circle.cy);
+            const float x_tol = std::max(left.width * 0.75f,
+                                         left_circle.radius * 1.25f);
+            const float y_merge_tol = std::max(y_tol, std::max(left.height * 0.75f,
+                                                               left_circle.radius * 1.25f));
+            if (dx <= x_tol && dy <= y_merge_tol) {
+                const float dist2 = dx * dx + dy * dy;
+                if (dist2 < best_dist2) {
+                    best_dist2 = dist2;
+                    best_idx = static_cast<int>(li);
+                }
+            }
+        }
+        return best_idx;
+    };
+
+    auto estimate_fallback_disparity = [&](const Detection& det,
+                                           bool allow_track_depth) -> float {
+        if (allow_track_depth && hybrid_depth_) {
+            const float z_prior = hybrid_depth_->predictDepthForDetection(det);
+            if (z_prior >= config_.depth.min_depth &&
+                z_prior <= config_.depth.max_depth) {
+                ++local_stats.fallback_prior_depth;
+                return std::clamp(focal * baseline / z_prior,
+                                  1.0f,
+                                  static_cast<float>(config_.max_disparity));
+            }
+        }
+        return estimateDisparityFromBBoxCPU(
+            det, baseline, config_.depth, config_.max_disparity);
+    };
+
+    for (size_t li = 0; li < left_detections.size(); ++li) {
+        const auto& left = left_detections[li];
+        output.results[li].class_id = left.class_id;
+        output.results[li].z = -1.0f;
+
+        int best_idx = -1;
+        float best_score = 1e9f;
+
+        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+            if (right_used[ri]) continue;
+            const auto& right = right_detections[ri];
+            if (left.class_id != right.class_id) {
+                ++local_stats.class_mismatch;
+                continue;
+            }
+            if (left.width <= 1.0f || left.height <= 1.0f ||
+                right.width <= 1.0f || right.height <= 1.0f) {
+                ++local_stats.invalid_box;
+                continue;
+            }
+
+            const float disparity = left.cx - right.cx;
+            if (disparity <= 0.0f) {
+                ++local_stats.nonpositive_disparity;
+                continue;
+            }
+            if (disparity > config_.max_disparity) {
+                ++local_stats.over_max_disparity;
+                continue;
+            }
+
+            const float dy = std::abs(left.cy - right.cy);
+            const float candidate_y_tol =
+                std::max(y_tol, 0.35f * std::max(left.height, right.height));
+            if (dy > candidate_y_tol) {
+                ++local_stats.epipolar_reject;
+                continue;
+            }
+
+            const float w_ratio = std::max(left.width / right.width,
+                                           right.width / left.width);
+            const float h_ratio = std::max(left.height / right.height,
+                                           right.height / left.height);
+            if (w_ratio > max_ratio || h_ratio > max_ratio) {
+                ++local_stats.size_reject;
+                continue;
+            }
+
+            const float size_cost = std::abs(std::log(w_ratio)) +
+                                    std::abs(std::log(h_ratio));
+            const float score = dy / candidate_y_tol + size_cost -
+                                0.25f * right.confidence;
+            if (score < best_score) {
+                best_score = score;
+                best_idx = static_cast<int>(ri);
+            }
+        }
+
+        if (best_idx < 0) {
+            ++local_stats.no_candidate;
+            continue;
+        }
+        const auto& right = right_detections[best_idx];
+        CircleFit2D left_circle = refine_detection(left_cpu, left_pitch, left);
+        CircleFit2D right_circle = refine_detection(right_cpu, right_pitch, right);
+        if (!left_circle.valid || !right_circle.valid) {
+            ++local_stats.circle_fit_fail;
+            continue;
+        }
+
+        Object3D obj;
+        const float semantic_conf = std::sqrt(left.confidence * right.confidence);
+        if (!build_object(left, left_circle, right_circle, semantic_conf, obj)) {
+            continue;
+        }
+
+        output.detections[li] = detectionWithCircleCenterCPU(left_circle, left);
+        output.results[li] = obj;
+        right_used[best_idx] = true;
+        left_has_stereo[li] = true;
+        ++local_stats.matched;
+    }
+
+    if (config_.dual_yolo.fallback_epipolar_search && image_available) {
+        for (size_t li = 0; li < left_detections.size(); ++li) {
+            if (left_has_stereo[li]) continue;
+
+            const Detection& left = left_detections[li];
+            ++local_stats.fallback_attempted;
+            ++local_stats.fallback_left_to_right;
+
+            CircleFit2D left_circle = refine_detection(left_cpu, left_pitch, left);
+            if (!left_circle.valid) {
+                ++local_stats.circle_fit_fail;
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            const float expected_disp = estimate_fallback_disparity(left, true);
+            if (expected_disp <= 0.0f) {
+                ++local_stats.invalid_box;
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            CircleFit2D right_circle = searchCircleOnEpipolarCPU(
+                right_cpu, right_pitch, img_width, img_height,
+                left_circle,
+                left_circle.cx - expected_disp,
+                left_circle.cy,
+                y_tol,
+                config_.dual_yolo);
+            if (!right_circle.valid) {
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            Object3D obj;
+            if (!build_object(left, left_circle, right_circle, left.confidence, obj)) {
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            output.detections[li] = detectionWithCircleCenterCPU(left_circle, left);
+            output.results[li] = obj;
+            left_has_stereo[li] = true;
+            mark_right_detection_near(right_circle, left.class_id);
+            ++local_stats.matched;
+            ++local_stats.fallback_matched;
+        }
+
+        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+            if (right_used[ri] || right_blocked_by_left[ri]) continue;
+
+            const Detection& right = right_detections[ri];
+            ++local_stats.fallback_attempted;
+            ++local_stats.fallback_right_to_left;
+
+            CircleFit2D right_circle = refine_detection(right_cpu, right_pitch, right);
+            if (!right_circle.valid) {
+                ++local_stats.circle_fit_fail;
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            const float expected_disp = estimate_fallback_disparity(right, false);
+            if (expected_disp <= 0.0f) {
+                ++local_stats.invalid_box;
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            CircleFit2D left_circle = searchCircleOnEpipolarCPU(
+                left_cpu, left_pitch, img_width, img_height,
+                right_circle,
+                right_circle.cx + expected_disp,
+                right_circle.cy,
+                y_tol,
+                config_.dual_yolo);
+            if (!left_circle.valid) {
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            Detection left_proxy = detectionFromCircleCPU(left_circle, right);
+            Object3D obj;
+            if (!build_object(left_proxy, left_circle, right_circle,
+                              right.confidence, obj)) {
+                ++local_stats.fallback_failed;
+                continue;
+            }
+
+            int left_idx = find_left_detection_near(left_circle, right.class_id);
+            if (left_idx >= 0) {
+                const Detection& left_source = left_detections[left_idx];
+                output.detections[left_idx] =
+                    detectionWithCircleCenterCPU(left_circle, left_source);
+                output.results[left_idx] = obj;
+                left_has_stereo[left_idx] = true;
+            } else if (!left_detections.empty()) {
+                ++local_stats.fallback_failed;
+                continue;
+            } else {
+                output.detections.push_back(left_proxy);
+                output.results.push_back(obj);
+            }
+            right_used[ri] = true;
+            ++local_stats.matched;
+            ++local_stats.fallback_matched;
+        }
+    }
+
+    if (stats) *stats = local_stats;
+    return output;
+}
+
 void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage1_Detect");
+    slot.detection_submitted = false;
+    slot.right_detection_submitted = false;
 
     auto* det = getDetector(slot.frame_id);
     auto stream = getDLAStream(slot.frame_id);
+    cudaStreamWaitEvent(stream, slot.evtRectDone, 0);
 
     // 从 VPI Image 获取 GPU 指针，传给 TensorRT
     // BGR 模式: 使用校正后 BGR 图像; Gray 模式: 使用校正后灰度图
-    VPIImage detectImg = (config_.detector_input_format == "bgr")
+    VPIImage detectImg = leftDetectorUsesBGR()
                          ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
     VPIImageData imgData;
     VPIStatus st = vpiImageLockData(detectImg, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
@@ -826,8 +1581,37 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     det->enqueue(slot_index, gpu_ptr, pitch,
                  config_.rect_width, config_.rect_height,
                  stream);
+    slot.detection_submitted = true;
 
     vpiImageUnlock(detectImg);
+
+    if (dualYoloEnabled() && slot.is_detect_frame) {
+        auto* detR = getRightDetector();
+        auto streamR = getRightDLAStream(slot.frame_id);
+        cudaStreamWaitEvent(streamR, slot.evtRectDone, 0);
+
+        VPIImage detectImgR = rightDetectorUsesBGR()
+                             ? slot.rectBGR_vpiR : slot.rectGray_vpiR;
+        VPIImageData imgDataR;
+        VPIStatus stR = vpiImageLockData(detectImgR, VPI_LOCK_READ,
+                                         VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR,
+                                         &imgDataR);
+        if (stR != VPI_SUCCESS) {
+            LOG_WARN("stage1_detect: right vpiImageLockData failed (%d)", (int)stR);
+            NVTX_RANGE_POP();
+            return;
+        }
+
+        void* gpu_ptr_r = imgDataR.buffer.pitch.planes[0].data;
+        int pitch_r = imgDataR.buffer.pitch.planes[0].pitchBytes;
+
+        detR->enqueue(slot_index, gpu_ptr_r, pitch_r,
+                      config_.rect_width, config_.rect_height,
+                      streamR);
+        slot.right_detection_submitted = true;
+
+        vpiImageUnlock(detectImgR);
+    }
     NVTX_RANGE_POP();
 }
 
@@ -866,8 +1650,13 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     slot.results.clear();
 
     // Detect 结果在 Stage1 中异步 D2H，现已通过 evtDetectDone 保证完成
-    slot.detections = getDetector(slot.frame_id)->collect(slot_index,
-                                         config_.rect_width, config_.rect_height);
+    if (slot.detection_submitted) {
+        slot.detections = getDetector(slot.frame_id)->collect(
+            slot_index, config_.rect_width, config_.rect_height);
+    } else {
+        slot.detections.clear();
+    }
+    collectRightDetections(slot, slot_index);
 
     // 获取视差图 GPU 指针
     VPIImageData dispData;
@@ -905,10 +1694,18 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 
     // 1. 收集检测结果 (Stage 1 完成后) — 使用与 stage1 相同的 detector
     auto* det = getDetector(slot.frame_id);
-    slot.detections = det->collect(slot_index,
-                                   config_.rect_width, config_.rect_height);
+    if (slot.detection_submitted) {
+        slot.detections = det->collect(slot_index,
+                                       config_.rect_width, config_.rect_height);
+    } else {
+        slot.detections.clear();
+    }
+    collectRightDetections(slot, slot_index);
 
-    if (slot.detections.empty()) {
+    const bool can_try_right_only =
+        dualYoloEnabled() && !slot.detections_right.empty() &&
+        config_.dual_yolo.fallback_epipolar_search;
+    if (slot.detections.empty() && !can_try_right_only) {
         // 无检测: 仅 Kalman 预测
         if (hybrid_depth_) {
             slot.results = hybrid_depth_->predictOnly();
@@ -917,41 +1714,189 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         return;
     }
 
-    // 2. 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
-    VPIImageData imgDataL, imgDataR;
-    VPIStatus stL, stR;
-    {
-        ScopedTimer tvl("Stage2_VPILock");
-        stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-        stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
-        globalPerf().record("Stage2_VPILock", tvl.elapsedMs());
+    auto has_valid_stereo = [this](const Object3D& obj) {
+        return obj.z > 0.0f && obj.confidence > config_.depth.min_confidence;
+    };
+
+    auto count_valid = [&](const std::vector<Object3D>& results) {
+        int n = 0;
+        for (const auto& obj : results) {
+            if (has_valid_stereo(obj)) ++n;
+        }
+        return n;
+    };
+
+    std::vector<stereo3d::Object3D> roi_results;
+    std::vector<Detection> fusion_detections = slot.detections;
+    bool need_roi_texture_match = true;
+
+    if (dualYoloEnabled()) {
+        ScopedTimer tdual("Stage2_DualYoloMatch");
+        DualYoloMatchStats match_stats;
+        DualYoloMatchOutput semantic_match;
+
+        const bool need_host_images =
+            config_.dual_yolo.center_refine ||
+            config_.dual_yolo.fallback_epipolar_search;
+        if (need_host_images) {
+            VPIImageData hostDataL, hostDataR;
+            VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
+                                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                                             &hostDataL);
+            VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
+                                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                                             &hostDataR);
+            if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+                const uint8_t* leftCPU = static_cast<const uint8_t*>(
+                    hostDataL.buffer.pitch.planes[0].data);
+                const uint8_t* rightCPU = static_cast<const uint8_t*>(
+                    hostDataR.buffer.pitch.planes[0].data);
+                int leftPitch = hostDataL.buffer.pitch.planes[0].pitchBytes;
+                int rightPitch = hostDataR.buffer.pitch.planes[0].pitchBytes;
+                semantic_match = matchDualYoloDetections(
+                    slot.detections, slot.detections_right,
+                    leftCPU, leftPitch, rightCPU, rightPitch,
+                    config_.rect_width, config_.rect_height,
+                    &match_stats);
+            } else {
+                semantic_match = matchDualYoloDetections(
+                    slot.detections, slot.detections_right,
+                    nullptr, 0, nullptr, 0,
+                    config_.rect_width, config_.rect_height,
+                    &match_stats);
+            }
+            if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
+            if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+        } else {
+            semantic_match = matchDualYoloDetections(
+                slot.detections, slot.detections_right,
+                nullptr, 0, nullptr, 0,
+                config_.rect_width, config_.rect_height,
+                &match_stats);
+        }
+
+        int semantic_valid = count_valid(semantic_match.results);
+        globalPerf().record("Stage2_DualYoloMatch", tdual.elapsedMs());
+
+        if (config_.dual_yolo.log_matches &&
+            config_.stats_interval > 0 &&
+            slot.frame_id % config_.stats_interval == 0) {
+            LOG_INFO("[DualYOLO] frame=%d left=%d right=%d matches=%d valid=%d "
+                     "missL=%d missR=%d fb=%d/%d fail=%d prior=%d l2r=%d r2l=%d "
+                     "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
+                     "size=%d circle=%d depth=%d lock=%d",
+                     slot.frame_id,
+                     match_stats.left_count,
+                     match_stats.right_count,
+                     match_stats.matched,
+                     semantic_valid,
+                     match_stats.left_missing,
+                     match_stats.right_missing,
+                     match_stats.fallback_matched,
+                     match_stats.fallback_attempted,
+                     match_stats.fallback_failed,
+                     match_stats.fallback_prior_depth,
+                     match_stats.fallback_left_to_right,
+                     match_stats.fallback_right_to_left,
+                     match_stats.no_candidate,
+                     match_stats.class_mismatch,
+                     match_stats.invalid_box,
+                     match_stats.nonpositive_disparity,
+                     match_stats.over_max_disparity,
+                     match_stats.epipolar_reject,
+                     match_stats.size_reject,
+                     match_stats.circle_fit_fail,
+                     match_stats.depth_reject,
+                     match_stats.image_lock_fail);
+        }
+
+        if (config_.dual_yolo.use_for_depth) {
+            fusion_detections = std::move(semantic_match.detections);
+            roi_results = std::move(semantic_match.results);
+            need_roi_texture_match =
+                config_.dual_yolo.fallback_to_roi_match &&
+                semantic_valid < static_cast<int>(fusion_detections.size());
+
+            if (!config_.dual_yolo.fallback_to_roi_match &&
+                semantic_valid < static_cast<int>(fusion_detections.size())) {
+                // 双路 YOLO/极线 fallback 找不到可靠视差时，只输出预测，不用单目 bbox 更新深度。
+                std::vector<Detection> valid_detections;
+                std::vector<Object3D> valid_results;
+                const size_t n = std::min(fusion_detections.size(), roi_results.size());
+                valid_detections.reserve(n);
+                valid_results.reserve(n);
+                for (size_t i = 0; i < n; ++i) {
+                    if (!has_valid_stereo(roi_results[i])) continue;
+                    valid_detections.push_back(fusion_detections[i]);
+                    valid_results.push_back(roi_results[i]);
+                }
+                fusion_detections = std::move(valid_detections);
+                roi_results = std::move(valid_results);
+            }
+        }
     }
-    if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
-        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
-        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
-        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+
+    if (need_roi_texture_match) {
+        // 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
+        VPIImageData imgDataL, imgDataR;
+        VPIStatus stL, stR;
+        {
+            ScopedTimer tvl("Stage2_VPILock");
+            stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
+                                   VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
+            stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
+                                   VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
+            globalPerf().record("Stage2_VPILock", tvl.elapsedMs());
+        }
+        if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
+            if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
+            if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+            if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+            NVTX_RANGE_POP();
+            return;
+        }
+
+        const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
+        int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
+        const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
+        int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
+
+        std::vector<stereo3d::Object3D> texture_results;
+        {
+            ScopedTimer troi("Stage2_ROIMatch");
+            texture_results = roi_matcher_->match(
+                leftPtr, leftPitch, rightPtr, rightPitch,
+                config_.rect_width, config_.rect_height,
+                fusion_detections, streams_.cudaStreamFuse);
+            globalPerf().record("Stage2_ROIMatch", troi.elapsedMs());
+        }
+
+        vpiImageUnlock(slot.rectGray_vpiL);
+        vpiImageUnlock(slot.rectGray_vpiR);
+
+        if (config_.dual_yolo.use_for_depth && !roi_results.empty()) {
+            const size_t n = std::min(roi_results.size(), texture_results.size());
+            for (size_t i = 0; i < n; ++i) {
+                if ((roi_results[i].z <= 0.0f ||
+                     roi_results[i].confidence <= config_.depth.min_confidence) &&
+                    texture_results[i].z > 0.0f &&
+                    texture_results[i].confidence > config_.depth.min_confidence) {
+                    roi_results[i] = texture_results[i];
+                }
+            }
+        } else {
+            roi_results = std::move(texture_results);
+        }
+    }
+
+    slot.detections = std::move(fusion_detections);
+    if (slot.detections.empty()) {
+        if (hybrid_depth_) {
+            slot.results = hybrid_depth_->predictOnly();
+        }
         NVTX_RANGE_POP();
         return;
     }
-
-    const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
-    int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
-    const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
-    int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
-
-    // 3. ROI 多点立体匹配 (双目结果)
-    std::vector<stereo3d::Object3D> roi_results;
-    {
-        ScopedTimer troi("Stage2_ROIMatch");
-        roi_results = roi_matcher_->match(
-            leftPtr, leftPitch, rightPtr, rightPitch,
-            config_.rect_width, config_.rect_height,
-            slot.detections, streams_.cudaStreamFuse);
-        globalPerf().record("Stage2_ROIMatch", troi.elapsedMs());
-    }
-
-    vpiImageUnlock(slot.rectGray_vpiL);
-    vpiImageUnlock(slot.rectGray_vpiR);
 
     // 4. 混合深度估计 (单目+双目融合+Kalman滤波)
     if (hybrid_depth_) {
@@ -1149,6 +2094,9 @@ void Pipeline::pipelineLoopROI() {
     using Clock = std::chrono::high_resolution_clock;
     auto fps_start = Clock::now();
     int fps_count = 0;
+    constexpr double kStage1SubmitOutlierMs = 15.0;
+    constexpr double kStage2WaitYoloOutlierMs = 8.0;
+    constexpr double kStage0WaitGrabOutlierMs = 8.0;
 
     int next_grab_frame   = 0;
     int next_detect_frame = 0;
@@ -1165,7 +2113,9 @@ void Pipeline::pipelineLoopROI() {
 #ifdef HIK_CAMERA_ENABLED
         if (camera_) {
             requestGrab(slot_idx);
-            waitGrab();
+            if (!waitGrab()) {
+                slot.grab_failed = true;
+            }
             grab_preloaded = true;
         }
 #endif
@@ -1181,17 +2131,28 @@ void Pipeline::pipelineLoopROI() {
         auto& slot = slots_[slot_idx];
         slot.is_detect_frame = true;  // 首帧必为检测帧
 
-        vpiStreamSync(streams_.vpiStreamPVA);
-        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+        if (slot.grab_failed) {
+            vpiStreamSync(streams_.vpiStreamPVA);
+            next_detect_frame++;
+        } else {
+            vpiStreamSync(streams_.vpiStreamPVA);
+            cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
 
-        auto dlaStream = getDLAStream(slot.frame_id);
-        cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+            auto dlaStream = getDLAStream(slot.frame_id);
+            cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
 
-        ScopedTimer t1("Stage1_DetectSubmit");
-        stage1_detect(slot, slot_idx);
-        globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
-        cudaEventRecord(slot.evtDetectDone, dlaStream);
-        next_detect_frame++;
+            ScopedTimer t1("Stage1_DetectSubmit");
+            stage1_detect(slot, slot_idx);
+            const double stage1_ms = t1.elapsedMs();
+            globalPerf().record("Stage1_DetectSubmit", stage1_ms);
+            if (stage1_ms > kStage1SubmitOutlierMs) {
+                LOG_WARN("[PerfOutlier] Stage1_DetectSubmit frame=%d slot=%d ms=%.2f right_submitted=%d",
+                         slot.frame_id, slot_idx, stage1_ms,
+                         slot.right_detection_submitted ? 1 : 0);
+            }
+            recordDetectDoneEvents(slot);
+            next_detect_frame++;
+        }
     }
 
     while (running_) {
@@ -1224,58 +2185,65 @@ void Pipeline::pipelineLoopROI() {
             if (slot.grab_failed) {
                 vpiStreamSync(streams_.vpiStreamPVA);
                 next_detect_frame++;
-                next_fuse_frame = next_detect_frame - 1;
             } else {
+                // 判断是否为检测帧
+                // 固定节拍检测：按 detect_interval 控制 YOLO 频率，
+                // 不再因 tracker 是否处于 TRACKING 状态而抢跑检测。
+                bool is_detect = !tracker_ ||
+                                 (slot.frame_id % effective_detect_interval_ == 0);
+                slot.is_detect_frame = is_detect;
 
-            // 判断是否为检测帧
-            // 固定节拍检测：按 detect_interval 控制 YOLO 频率，
-            // 不再因 tracker 是否处于 TRACKING 状态而抢跑检测。
-            bool is_detect = !tracker_ ||
-                             (slot.frame_id % effective_detect_interval_ == 0);
-            slot.is_detect_frame = is_detect;
+                if (is_detect) {
+                    // ---- YOLO 检测帧 ----
+                    {
+                        ScopedTimer tw("Stage1_WaitRect");
+                        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+                        globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
+                    }
 
-            if (is_detect) {
-                // ---- YOLO 检测帧 ----
-                {
-                    ScopedTimer tw("Stage1_WaitRect");
-                    cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-                    globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
+                    auto dlaStream = getDLAStream(slot.frame_id);
+                    cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
+
+                    {
+                        ScopedTimer t1("Stage1_DetectSubmit");
+                        stage1_detect(slot, slot_idx);
+                        const double stage1_ms = t1.elapsedMs();
+                        globalPerf().record("Stage1_DetectSubmit", stage1_ms);
+                        if (stage1_ms > kStage1SubmitOutlierMs) {
+                            LOG_WARN("[PerfOutlier] Stage1_DetectSubmit frame=%d slot=%d ms=%.2f right_submitted=%d",
+                                     slot.frame_id, slot_idx, stage1_ms,
+                                     slot.right_detection_submitted ? 1 : 0);
+                        }
+                    }
+                    recordDetectDoneEvents(slot);
+                } else {
+                    // ---- Tracker 填充帧 ----
+                    // 等 rectify 完成 (tracker 需要 rectified BGR)
+                    vpiStreamSync(streams_.vpiStreamPVA);
+                    cudaStreamSynchronize(streams_.cudaStreamGPU);
+
+                    // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
+                    // 防止YOLO+tracker并行运行导致功率爆口
+                    // 在detect_interval=3的策略下，最近的YOLO应该已在Phase C collect了
+                    // 等待检测完成
+                    {
+                        ScopedTimer tw("Stage1_WaitYOLOComplete");
+                        cudaStreamSynchronize(streams_.cudaStreamDLA);
+                        if (dualYoloEnabled()) {
+                            cudaStreamSynchronize(streams_.cudaStreamDLA_R);
+                        }
+                        globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
+                    }
+
+                    {
+                        ScopedTimer tt("Stage1_TrackerInfill");
+                        tracker_infill(slot);
+                        globalPerf().record("Stage1_TrackerInfill", tt.elapsedMs());
+                    }
+                    // 标记 "detect done" 让 Phase C 的等待逻辑兼容
+                    cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamGPU);
                 }
-
-                auto dlaStream = getDLAStream(slot.frame_id);
-                cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
-
-                {
-                    ScopedTimer t1("Stage1_DetectSubmit");
-                    stage1_detect(slot, slot_idx);
-                    globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
-                }
-                cudaEventRecord(slot.evtDetectDone, dlaStream);
-            } else {
-                // ---- Tracker 填充帧 ----
-                // 等 rectify 完成 (tracker 需要 rectified BGR)
-                vpiStreamSync(streams_.vpiStreamPVA);
-                cudaStreamSynchronize(streams_.cudaStreamGPU);
-
-                // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
-                // 防止YOLO+tracker并行运行导致功率爆口
-                // 在detect_interval=3的策略下，最近的YOLO应该已在Phase C collect了
-                // 等待检测完成
-                {
-                    ScopedTimer tw("Stage1_WaitYOLOComplete");
-                    cudaStreamSynchronize(streams_.cudaStreamDLA);
-                    globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
-                }
-
-                {
-                    ScopedTimer tt("Stage1_TrackerInfill");
-                    tracker_infill(slot);
-                    globalPerf().record("Stage1_TrackerInfill", tt.elapsedMs());
-                }
-                // 标记 "detect done" 让 Phase C 的等待逻辑兼容
-                cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamGPU);
-            }
-            next_detect_frame++;
+                next_detect_frame++;
             }
         }
 
@@ -1288,9 +2256,14 @@ void Pipeline::pipelineLoopROI() {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
 
+            if (slot.grab_failed) {
+                next_fuse_frame++;
+                continue;
+            }
+
             {
                 ScopedTimer tw("Stage2_WaitDetect");
-                cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+                waitDetectDone(streams_.cudaStreamFuse, slot);
                 cudaStreamSynchronize(streams_.cudaStreamFuse);
                 globalPerf().record("Stage2_WaitDetect", tw.elapsedMs());
             }
@@ -1302,7 +2275,16 @@ void Pipeline::pipelineLoopROI() {
                     ScopedTimer tw("Stage2_WaitYOLOComplete");
                     auto dlaStream = getDLAStream(slot.frame_id);
                     cudaStreamSynchronize(dlaStream);
-                    globalPerf().record("Stage2_WaitYOLOComplete", tw.elapsedMs());
+                    if (dualYoloEnabled() && slot.right_detection_submitted) {
+                        cudaStreamSynchronize(getRightDLAStream(slot.frame_id));
+                    }
+                    const double wait_yolo_ms = tw.elapsedMs();
+                    globalPerf().record("Stage2_WaitYOLOComplete", wait_yolo_ms);
+                    if (wait_yolo_ms > kStage2WaitYoloOutlierMs) {
+                        LOG_WARN("[PerfOutlier] Stage2_WaitYOLOComplete frame=%d slot=%d ms=%.2f right_submitted=%d",
+                                 slot.frame_id, slot_idx, wait_yolo_ms,
+                                 slot.right_detection_submitted ? 1 : 0);
+                    }
                 }
 
                 {
@@ -1330,7 +2312,7 @@ void Pipeline::pipelineLoopROI() {
 
             if (frame_callback_) {
                 ScopedTimer tfc("Stage2_FrameCB");
-                VPIImage vizImg = (config_.detector_input_format == "bgr")
+                VPIImage vizImg = leftDetectorUsesBGR()
                                   ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
                 frame_callback_(slot.frame_id, vizImg, slot.rawL,
                                 slot.detections, slot.results,
@@ -1366,7 +2348,12 @@ void Pipeline::pipelineLoopROI() {
             if (camera_) {
                 ScopedTimer tw("Stage0_WaitGrab");
                 bool ok = waitGrab();
-                globalPerf().record("Stage0_WaitGrab", tw.elapsedMs());
+                const double wait_grab_ms = tw.elapsedMs();
+                globalPerf().record("Stage0_WaitGrab", wait_grab_ms);
+                if (wait_grab_ms > kStage0WaitGrabOutlierMs) {
+                    LOG_WARN("[PerfOutlier] Stage0_WaitGrab frame=%d slot=%d ms=%.2f ok=%d",
+                             slot.frame_id, grab_slot_idx, wait_grab_ms, ok ? 1 : 0);
+                }
                 if (!ok) slot.grab_failed = true;
                 grab_preloaded = true;
             }
@@ -1387,18 +2374,26 @@ void Pipeline::pipelineLoopROI() {
     while (next_detect_frame < next_grab_frame) {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
+        if (slot.grab_failed) {
+            next_detect_frame++;
+            continue;
+        }
         auto dlaStream = getDLAStream(slot.frame_id);
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
         cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
         stage1_detect(slot, slot_idx);
-        cudaEventRecord(slot.evtDetectDone, dlaStream);
+        recordDetectDoneEvents(slot);
         next_detect_frame++;
     }
 
     while (next_fuse_frame < next_detect_frame) {
         int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
-        cudaStreamWaitEvent(streams_.cudaStreamFuse, slot.evtDetectDone, 0);
+        if (slot.grab_failed) {
+            next_fuse_frame++;
+            continue;
+        }
+        waitDetectDone(streams_.cudaStreamFuse, slot);
         cudaStreamSynchronize(streams_.cudaStreamFuse);
         stage2_roi_match_fuse(slot, slot_idx);
         if (result_callback_) result_callback_(slot.frame_id, slot.results);

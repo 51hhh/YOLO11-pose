@@ -113,6 +113,26 @@ struct PipelineConfig {
     bool use_dla = false;          ///< 使用 NVDLA (否则 GPU)
     int  dla_core = 0;             ///< DLA 核心 ID (0 或 1)
 
+    // 双路 YOLO + 极线语义匹配测试
+    struct DualYoloConfig {
+        bool enabled = false;              ///< 是否同时运行右目 YOLO
+        std::string right_engine_file;     ///< 右目 engine, 为空则复用左目 engine_path
+        std::string right_input_format;    ///< 右目输入格式, 为空则复用 detector_input_format
+        bool right_use_dla = false;        ///< 右目是否使用 DLA
+        int right_dla_core = 1;            ///< 右目 DLA core, 仅用于日志/engine 匹配
+        bool use_for_depth = true;         ///< 用左右 YOLO 语义匹配结果作为 stereo 观测
+        bool fallback_to_roi_match = true; ///< 旧 ROI 纹理匹配回退, 双 YOLO 测试默认关闭
+        bool fallback_epipolar_search = true; ///< 单目漏检时在另一目极线附近做有界搜索
+        bool center_refine = true;         ///< 在 bbox/搜索 ROI 内做圆心拟合细化
+        bool roi_denoise = true;           ///< 圆心拟合前做局部 3x3 读数降噪
+        bool log_matches = true;           ///< 按 stats_interval 打印匹配统计
+        float epipolar_y_tolerance = 12.0f;///< 左右中心 y 允许差值 (px)
+        float max_size_ratio = 2.0f;       ///< 左右 bbox 尺寸比例上限
+        int fallback_search_margin_px = 48;///< 期望视差两侧搜索半宽 (px)
+        int fallback_max_width_px = 220;   ///< 极线 fallback 搜索窗口最大宽度
+        int circle_max_roi_pixels = 18000; ///< CPU 圆拟合最大采样像素数, 超过后步进采样
+    } dual_yolo;
+
     // SOT Tracker 补帧 (YOLO 检测间隙帧)
     struct TrackerConfig {
         bool enabled = false;              ///< 是否启用 SOT 补帧
@@ -244,6 +264,49 @@ private:
     // Dual DLA 帧分配: 偶数帧→DLA0, 奇数帧→DLA1
     TRTDetector* getDetector(int frame_id) const;
     cudaStream_t getDLAStream(int frame_id) const;
+    TRTDetector* getRightDetector() const;
+    cudaStream_t getRightDLAStream(int frame_id) const;
+    bool dualYoloEnabled() const;
+    bool leftDetectorUsesBGR() const;
+    bool rightDetectorUsesBGR() const;
+    bool colorPipelineEnabled() const;
+    void recordDetectDoneEvents(FrameSlot& slot) const;
+    void waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const;
+    void collectRightDetections(FrameSlot& slot, int slot_index);
+    struct DualYoloMatchStats {
+        int left_count = 0;
+        int right_count = 0;
+        int matched = 0;
+        int left_missing = 0;
+        int right_missing = 0;
+        int fallback_attempted = 0;
+        int fallback_matched = 0;
+        int fallback_left_to_right = 0;
+        int fallback_right_to_left = 0;
+        int fallback_failed = 0;
+        int fallback_prior_depth = 0;
+        int class_mismatch = 0;
+        int invalid_box = 0;
+        int no_candidate = 0;
+        int nonpositive_disparity = 0;
+        int over_max_disparity = 0;
+        int epipolar_reject = 0;
+        int size_reject = 0;
+        int circle_fit_fail = 0;
+        int depth_reject = 0;
+        int image_lock_fail = 0;
+    };
+    struct DualYoloMatchOutput {
+        std::vector<Detection> detections;
+        std::vector<Object3D> results;
+    };
+    DualYoloMatchOutput matchDualYoloDetections(
+        const std::vector<Detection>& left_detections,
+        const std::vector<Detection>& right_detections,
+        const uint8_t* left_cpu, int left_pitch,
+        const uint8_t* right_cpu, int right_pitch,
+        int img_width, int img_height,
+        DualYoloMatchStats* stats) const;
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -273,6 +336,7 @@ private:
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
     std::unique_ptr<TRTDetector> detector_;
+    std::unique_ptr<TRTDetector> detector_right_;
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合

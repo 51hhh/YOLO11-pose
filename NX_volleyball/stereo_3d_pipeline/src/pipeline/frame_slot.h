@@ -102,7 +102,10 @@ struct FrameSlot {
     VPIImage rectGray_vpiR  = nullptr;   ///< 右校正灰度 (rect res)
 
     // =========== Stage 1: 检测结果 ===========
-    std::vector<Detection> detections;    ///< YOLO 检测结果列表
+    std::vector<Detection> detections;    ///< 左目 YOLO 检测结果列表
+    std::vector<Detection> detections_right; ///< 右目 YOLO 检测结果列表 (双路测试)
+    bool detection_submitted = false;      ///< 本帧是否真正提交过左目 YOLO
+    bool right_detection_submitted = false; ///< 本帧是否提交过右目 YOLO
 
     // =========== SOT Tracker 补帧 ===========
     SOTResult sot_bbox_result;            ///< SOT tracker 输出
@@ -118,7 +121,8 @@ struct FrameSlot {
 
     // =========== CUDA Event 同步 ===========
     cudaEvent_t evtRectDone   = nullptr;  ///< Stage 0 校正完成
-    cudaEvent_t evtDetectDone = nullptr;  ///< Stage 1 检测完成
+    cudaEvent_t evtDetectDone = nullptr;  ///< Stage 1 左目检测完成
+    cudaEvent_t evtDetectRightDone = nullptr; ///< Stage 1 右目检测完成
     cudaEvent_t evtStereoDone = nullptr;  ///< Stage 2 视差完成
 
     // =========== Cached CUDA Pointers (Tegra 统一内存优化) ===========
@@ -143,8 +147,24 @@ struct FrameSlot {
         if (err != cudaSuccess) return false;
         err = cudaEventCreateWithFlags(&evtDetectDone, cudaEventDisableTiming);
         if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; return false; }
+        err = cudaEventCreateWithFlags(&evtDetectRightDone, cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            cudaEventDestroy(evtRectDone);
+            evtRectDone = nullptr;
+            cudaEventDestroy(evtDetectDone);
+            evtDetectDone = nullptr;
+            return false;
+        }
         err = cudaEventCreateWithFlags(&evtStereoDone, cudaEventDisableTiming);
-        if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; cudaEventDestroy(evtDetectDone); evtDetectDone = nullptr; return false; }
+        if (err != cudaSuccess) {
+            cudaEventDestroy(evtRectDone);
+            evtRectDone = nullptr;
+            cudaEventDestroy(evtDetectDone);
+            evtDetectDone = nullptr;
+            cudaEventDestroy(evtDetectRightDone);
+            evtDetectRightDone = nullptr;
+            return false;
+        }
         return true;
     }
 
@@ -171,9 +191,13 @@ struct FrameSlot {
         };
         destroyEvent(evtRectDone);
         destroyEvent(evtDetectDone);
+        destroyEvent(evtDetectRightDone);
         destroyEvent(evtStereoDone);
 
         detections.clear();
+        detections_right.clear();
+        detection_submitted = false;
+        right_detection_submitted = false;
         results.clear();
         sot_bbox_result = SOTResult();
         bbox_source = BboxSource::NONE;
@@ -186,6 +210,9 @@ struct FrameSlot {
      */
     void reset() {
         detections.clear();
+        detections_right.clear();
+        detection_submitted = false;
+        right_detection_submitted = false;
         results.clear();
         sot_bbox_result = SOTResult();
         bbox_source = BboxSource::NONE;

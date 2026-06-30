@@ -69,6 +69,7 @@ static void mouseCallback(int event, int x, int y, int /*flags*/, void*) {
 
 static stereo3d::PipelineConfig loadConfig(const std::string& path) {
     stereo3d::PipelineConfig cfg;
+    bool camera_trigger_frequency_set = false;
 
     YAML::Node root = YAML::LoadFile(path);
 
@@ -90,6 +91,10 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (cam["use_trigger"])       cfg.camera.use_trigger = cam["use_trigger"].as<bool>();
         if (cam["trigger_source"])    cfg.camera.trigger_source = cam["trigger_source"].as<std::string>();
         if (cam["trigger_activation"]) cfg.camera.trigger_activation = cam["trigger_activation"].as<std::string>();
+        if (cam["trigger_frequency_hz"]) {
+            cfg.camera.trigger_frequency_hz = cam["trigger_frequency_hz"].as<int>();
+            camera_trigger_frequency_set = true;
+        }
         if (cam["trigger_chip"])       cfg.trigger_chip = cam["trigger_chip"].as<std::string>();
         if (cam["trigger_line"])       cfg.trigger_line = cam["trigger_line"].as<int>();
         if (cam["width"])             cfg.camera.width  = cam["width"].as<int>();
@@ -140,6 +145,42 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (det["input_size"])             cfg.input_size = det["input_size"].as<int>();
         if (det["max_detections"])         cfg.max_detections = det["max_detections"].as<int>();
         if (det["input_format"])           cfg.detector_input_format = det["input_format"].as<std::string>();
+        if (auto dual = det["dual_yolo"]) {
+            if (dual["enabled"]) cfg.dual_yolo.enabled = dual["enabled"].as<bool>();
+            if (dual["right_engine_path"])
+                cfg.dual_yolo.right_engine_file = dual["right_engine_path"].as<std::string>();
+            if (dual["right_engine_file"])
+                cfg.dual_yolo.right_engine_file = dual["right_engine_file"].as<std::string>();
+            if (dual["right_input_format"])
+                cfg.dual_yolo.right_input_format = dual["right_input_format"].as<std::string>();
+            cfg.dual_yolo.right_use_dla = cfg.use_dla;
+            if (dual["right_use_dla"])
+                cfg.dual_yolo.right_use_dla = dual["right_use_dla"].as<bool>();
+            if (dual["right_dla_core"])
+                cfg.dual_yolo.right_dla_core = dual["right_dla_core"].as<int>();
+            if (dual["use_for_depth"])
+                cfg.dual_yolo.use_for_depth = dual["use_for_depth"].as<bool>();
+            if (dual["fallback_to_roi_match"])
+                cfg.dual_yolo.fallback_to_roi_match = dual["fallback_to_roi_match"].as<bool>();
+            if (dual["fallback_epipolar_search"])
+                cfg.dual_yolo.fallback_epipolar_search = dual["fallback_epipolar_search"].as<bool>();
+            if (dual["center_refine"])
+                cfg.dual_yolo.center_refine = dual["center_refine"].as<bool>();
+            if (dual["roi_denoise"])
+                cfg.dual_yolo.roi_denoise = dual["roi_denoise"].as<bool>();
+            if (dual["log_matches"])
+                cfg.dual_yolo.log_matches = dual["log_matches"].as<bool>();
+            if (dual["epipolar_y_tolerance"])
+                cfg.dual_yolo.epipolar_y_tolerance = dual["epipolar_y_tolerance"].as<float>();
+            if (dual["max_size_ratio"])
+                cfg.dual_yolo.max_size_ratio = dual["max_size_ratio"].as<float>();
+            if (dual["fallback_search_margin_px"])
+                cfg.dual_yolo.fallback_search_margin_px = dual["fallback_search_margin_px"].as<int>();
+            if (dual["fallback_max_width_px"])
+                cfg.dual_yolo.fallback_max_width_px = dual["fallback_max_width_px"].as<int>();
+            if (dual["circle_max_roi_pixels"])
+                cfg.dual_yolo.circle_max_roi_pixels = dual["circle_max_roi_pixels"].as<int>();
+        }
     }
 
     // Stereo
@@ -171,6 +212,7 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (fus["bbox_scale"])      cfg.depth.bbox_scale      = fus["bbox_scale"].as<float>();
         if (fus["mono_max_z"])      cfg.depth.mono_max_z      = fus["mono_max_z"].as<float>();
         if (fus["stereo_min_z"])    cfg.depth.stereo_min_z    = fus["stereo_min_z"].as<float>();
+        if (fus["min_confidence"])  cfg.depth.min_confidence  = fus["min_confidence"].as<float>();
         // Kalman 观测噪声 (距离自适应基值)
         if (fus["R_mono"])          cfg.depth.R_mono          = fus["R_mono"].as<float>();
         if (fus["R_stereo"])        cfg.depth.R_stereo        = fus["R_stereo"].as<float>();
@@ -183,6 +225,9 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
     if (auto perf = root["performance"]) {
         if (perf["log_interval"])   cfg.stats_interval = perf["log_interval"].as<int>();
         if (perf["pwm_frequency"])  cfg.trigger_freq_hz = static_cast<int>(perf["pwm_frequency"].as<float>());
+    }
+    if (!camera_trigger_frequency_set) {
+        cfg.camera.trigger_frequency_hz = cfg.trigger_freq_hz;
     }
 
     // SOT Tracker (YOLO 帧间填充)

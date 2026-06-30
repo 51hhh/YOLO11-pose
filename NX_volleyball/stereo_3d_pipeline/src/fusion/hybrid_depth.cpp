@@ -452,6 +452,33 @@ int HybridDepthEstimator::activeTrackCount() const {
     return count;
 }
 
+float HybridDepthEstimator::predictDepthForDetection(
+    const Detection& det,
+    float iou_threshold) const
+{
+    float best_iou = iou_threshold;
+    float best_z = -1.0f;
+
+    for (const auto& track : tracks_) {
+        if (track.lost_count > config_.lost_degrade_frames ||
+            track.last_w < 1.0f ||
+            track.z() < config_.min_depth ||
+            track.z() > config_.max_depth) {
+            continue;
+        }
+
+        const float iou = computeIoU(
+            det.cx, det.cy, det.width, det.height,
+            track.last_cx, track.last_cy, track.last_w, track.last_h);
+        if (iou > best_iou) {
+            best_iou = iou;
+            best_z = track.z();
+        }
+    }
+
+    return best_z;
+}
+
 void HybridDepthEstimator::pruneDeadTracks() {
     tracks_.erase(
         std::remove_if(tracks_.begin(), tracks_.end(),
