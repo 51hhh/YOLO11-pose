@@ -43,6 +43,8 @@ struct CameraConfig {
     std::string trigger_source = "Line0";  // 触发源
     std::string trigger_activation = "RisingEdge";
     int trigger_frequency_hz = 100;         // 外触发频率, 用于帧计数追帧超时
+    int image_node_num = 3;                 // SDK 取流 FIFO 深度, 吸收 USB 到达抖动
+    int embedded_info_clear_rows = 2;       // FrameSpecInfo 写入图像首部后清除的行数
 
     int width = 1440;                      // 图像宽度
     int height = 1080;                     // 图像高度

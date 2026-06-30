@@ -291,11 +291,12 @@ uint32_t counterStep(uint32_t older, uint32_t newer) {
     return newer - older;
 }
 
-void clearEmbeddedInfoRows(uint8_t* dst, int pitch, int width, int height) {
+void clearEmbeddedInfoRows(uint8_t* dst, int pitch, int width, int height,
+                           int clear_rows) {
     // 海康 FrameSpecInfo 会把水印写入图像 payload 的首行附近。
     // 同步元数据已从 SDK frame info 取出，图像进入 debayer/YOLO 前清掉这些字节。
-    constexpr int kEmbeddedInfoRows = 2;
-    const int rows = std::min(height, kEmbeddedInfoRows);
+    if (!dst || clear_rows <= 0 || pitch <= 0 || width <= 0 || height <= 0) return;
+    const int rows = std::min(height, clear_rows);
     for (int y = 0; y < rows; ++y) {
         std::memset(dst + y * pitch, 0, static_cast<size_t>(width));
     }
@@ -403,8 +404,20 @@ bool HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg, con
 
     // 硬触发双目优先保持左右触发序列一致。LatestImagesOnly 会让两台相机
     // 独立丢弃旧帧, 容易出现 L#n/R#n+1 的错配; 小 FIFO 能吸收 USB 抖动。
-    MV_CC_SetGrabStrategy(handle, MV_GrabStrategy_OneByOne);
-    MV_CC_SetImageNodeNum(handle, 3);
+    int ret = MV_CC_SetGrabStrategy(handle, MV_GrabStrategy_OneByOne);
+    if (ret != MV_OK) {
+        LOG_ERROR("[HikCam][%s] Set GrabStrategy=OneByOne failed, ret=0x%X",
+                  tag, ret);
+        return false;
+    }
+    const unsigned int image_node_num =
+        static_cast<unsigned int>(std::clamp(cfg.image_node_num, 2, 16));
+    ret = MV_CC_SetImageNodeNum(handle, image_node_num);
+    if (ret != MV_OK) {
+        LOG_ERROR("[HikCam][%s] Set ImageNodeNum=%u failed, ret=0x%X",
+                  tag, image_node_num, ret);
+        return false;
+    }
 
     // 触发模式
     if (cfg.use_trigger) {
@@ -512,13 +525,15 @@ bool HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg, con
     }
 
     LOG_INFO("[HikCam][%s] Configured before grabbing: %dx%d, exp=%s%.0fus, "
-             "gain=%s%.1fdB, gamma=%s, trigger=%s/%s",
+             "gain=%s%.1fdB, gamma=%s, trigger=%s/%s, fifo=%u, clear_rows=%d",
              tag, cfg.width, cfg.height,
              cfg.auto_exposure ? "auto/" : "", cfg.exposure_us,
              cfg.auto_gain ? "auto/" : "", cfg.gain_db,
              cfg.gamma_enable ? "on" : "off",
              cfg.use_trigger ? cfg.trigger_source.c_str() : "FreeRun",
-             cfg.use_trigger ? cfg.trigger_activation.c_str() : "None");
+             cfg.use_trigger ? cfg.trigger_activation.c_str() : "None",
+             image_node_num,
+             std::max(0, cfg.embedded_info_clear_rows));
     return true;
 }
 
@@ -676,8 +691,9 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
         }
     }
 
-    if (config_.use_trigger) {
-        clearEmbeddedInfoRows(dst, dstPitch, srcWidth, srcHeight);
+    if (config_.use_trigger && config_.embedded_info_clear_rows > 0) {
+        clearEmbeddedInfoRows(dst, dstPitch, srcWidth, srcHeight,
+                              config_.embedded_info_clear_rows);
     }
 
     result.success = true;
@@ -742,7 +758,7 @@ bool HikvisionCamera::grabFramePair(
             std::max<unsigned int>(
                 5U,
                 static_cast<unsigned int>(2 * trigger_period_ns / 1000000LL)));
-        constexpr int kMaxAlignReads = 4;
+        const int kMaxAlignReads = std::clamp(config_.image_node_num + 1, 4, 16);
         constexpr int kRequiredBaselineSamples = 3;
         constexpr int64_t kExpectedFrameCounterDelta = 0;
 

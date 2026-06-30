@@ -95,6 +95,9 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
             cfg.camera.trigger_frequency_hz = cam["trigger_frequency_hz"].as<int>();
             camera_trigger_frequency_set = true;
         }
+        if (cam["image_node_num"]) cfg.camera.image_node_num = cam["image_node_num"].as<int>();
+        if (cam["embedded_info_clear_rows"])
+            cfg.camera.embedded_info_clear_rows = cam["embedded_info_clear_rows"].as<int>();
         if (cam["trigger_chip"])       cfg.trigger_chip = cam["trigger_chip"].as<std::string>();
         if (cam["trigger_line"])       cfg.trigger_line = cam["trigger_line"].as<int>();
         if (cam["width"])             cfg.camera.width  = cam["width"].as<int>();
