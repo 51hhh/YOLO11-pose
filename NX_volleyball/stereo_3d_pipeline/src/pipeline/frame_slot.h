@@ -81,8 +81,8 @@ struct Object3D {
  * Pipeline 每一帧在此结构中流转:
  *   Stage 0 写入 rawL/rawR → rectL/rectR
  *   Stage 1 写入 detections
- *   Stage 2 写入 disparityMap
- *   Stage 3 读取 detections + disparityMap → 写入 results
+ *   全帧模式 Stage 2 写入 disparityMap
+ *   ROI/双路 YOLO Stage 2 直接写入 results
  */
 struct FrameSlot {
     // =========== 帧标识 ===========

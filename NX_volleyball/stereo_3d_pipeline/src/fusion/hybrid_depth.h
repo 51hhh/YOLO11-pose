@@ -162,6 +162,14 @@ public:
         const Detection& det,
         float iou_threshold = 0.2f) const;
 
+    /**
+     * @brief 返回当前最可信活跃目标的预测深度
+     *
+     * 用于右目单检 fallback: 右目 bbox 不在左目 track 坐标系内,
+     * 不能直接做 IoU 匹配; 单排球场景下可用全局主 track 作为视差先验。
+     */
+    float predictPrimaryDepth() const;
+
 private:
     float focal_    = 0.0f;
     float baseline_ = 0.0f;

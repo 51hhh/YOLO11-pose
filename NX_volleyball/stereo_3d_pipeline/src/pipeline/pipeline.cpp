@@ -146,14 +146,16 @@ bool Pipeline::init(const PipelineConfig& config) {
                              VPI_IMAGE_FORMAT_U8, flags, &slots_[i].rectGray_vpiR);
         if (err != VPI_SUCCESS) { LOG_ERROR("VPI rectGray_vpiR create failed"); return false; }
 
-        // 视差图 (S16 格式, Q10.5 定点数) → 校正后分辨率
-        err = vpiImageCreate(config_.rect_width, config_.rect_height,
-                             VPI_IMAGE_FORMAT_S16, VPI_BACKEND_CUDA, &slots_[i].disparityMap);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI disparity create failed"); return false; }
+        if (config_.disparity_strategy != DisparityStrategy::ROI_ONLY) {
+            // 视差图 (S16 格式, Q10.5 定点数) → 校正后分辨率
+            err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                                 VPI_IMAGE_FORMAT_S16, VPI_BACKEND_CUDA, &slots_[i].disparityMap);
+            if (err != VPI_SUCCESS) { LOG_ERROR("VPI disparity create failed"); return false; }
 
-        err = vpiImageCreate(config_.rect_width, config_.rect_height,
-                             VPI_IMAGE_FORMAT_U16, VPI_BACKEND_CUDA, &slots_[i].confidenceMap);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI confidence create failed"); return false; }
+            err = vpiImageCreate(config_.rect_width, config_.rect_height,
+                                 VPI_IMAGE_FORMAT_U16, VPI_BACKEND_CUDA, &slots_[i].confidenceMap);
+            if (err != VPI_SUCCESS) { LOG_ERROR("VPI confidence create failed"); return false; }
+        }
     }
 
     // 5b. 缓存 Bayer→BGR 所需的 CUDA 指针 (Tegra 统一内存: 指针固定)
@@ -340,22 +342,33 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     // 9. 初始化立体匹配 (根据策略选择)
     if (config_.disparity_strategy == DisparityStrategy::ROI_ONLY) {
-        // ROI 模式: 多点块匹配, 不需要全帧视差
-        LOG_INFO("Initializing ROI Stereo Matcher (maxDisp=%d, patchR=%d)...",
-                 config_.max_disparity, 5);
-        roi_matcher_ = std::make_unique<ROIStereoMatcher>();
         const auto& P1 = calibration_->getProjectionLeft();
         float focal = static_cast<float>(P1.at<double>(0, 0));
         float cx    = static_cast<float>(P1.at<double>(0, 2));
         float cy    = static_cast<float>(P1.at<double>(1, 2));
-        ROIMatchConfig roi_cfg;
-        roi_cfg.maxDisparity    = config_.max_disparity;
-        roi_cfg.patchRadius     = 5;
-        roi_cfg.minDepth        = config_.depth.min_depth;
-        roi_cfg.maxDepth        = config_.depth.max_depth;
-        roi_cfg.objectDiameter  = config_.depth.object_diameter;
-        roi_cfg.useCircleFit    = true;
-        roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+
+        const bool dual_yolo_depth_only =
+            config_.dual_yolo.enabled &&
+            config_.dual_yolo.use_for_depth &&
+            !config_.dual_yolo.fallback_to_roi_match;
+        const bool need_roi_matcher =
+            config_.tracker.enabled || !dual_yolo_depth_only;
+        if (need_roi_matcher) {
+            // ROI 模式: 多点块匹配, 不需要全帧视差
+            LOG_INFO("Initializing ROI Stereo Matcher (maxDisp=%d, patchR=%d)...",
+                     config_.max_disparity, 5);
+            roi_matcher_ = std::make_unique<ROIStereoMatcher>();
+            ROIMatchConfig roi_cfg;
+            roi_cfg.maxDisparity    = config_.max_disparity;
+            roi_cfg.patchRadius     = 5;
+            roi_cfg.minDepth        = config_.depth.min_depth;
+            roi_cfg.maxDepth        = config_.depth.max_depth;
+            roi_cfg.objectDiameter  = config_.depth.object_diameter;
+            roi_cfg.useCircleFit    = true;
+            roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+        } else {
+            LOG_INFO("Skipping ROI Stereo Matcher: dual YOLO depth path has ROI fallback disabled");
+        }
 
         const float required_disp = focal * calibration_->getBaseline() /
                                     std::max(0.01f, config_.depth.min_depth);
@@ -391,9 +404,16 @@ bool Pipeline::init(const PipelineConfig& config) {
                       config_.depth.min_depth, config_.depth.max_depth);
     }
 
-    const char* strategyStr = (config_.disparity_strategy == DisparityStrategy::ROI_ONLY)
-        ? "ROI Multi-Point" : (config_.disparity_strategy == DisparityStrategy::HALF_RESOLUTION
-        ? "Half Resolution" : "Full Frame");
+    const bool dualYoloDepthOnly =
+        config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
+        config_.dual_yolo.enabled &&
+        config_.dual_yolo.use_for_depth &&
+        !config_.dual_yolo.fallback_to_roi_match;
+    const char* strategyStr = dualYoloDepthOnly
+        ? "Dual YOLO Epipolar Center"
+        : ((config_.disparity_strategy == DisparityStrategy::ROI_ONLY)
+            ? "ROI Multi-Point" : (config_.disparity_strategy == DisparityStrategy::HALF_RESOLUTION
+            ? "Half Resolution" : "Full Frame"));
 
     LOG_INFO("========================================");
     LOG_INFO("Pipeline initialized successfully");
@@ -1394,8 +1414,10 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     auto estimate_fallback_disparity = [&](const Detection& det,
                                            bool allow_track_depth) -> float {
-        if (allow_track_depth && hybrid_depth_) {
-            const float z_prior = hybrid_depth_->predictDepthForDetection(det);
+        if (hybrid_depth_) {
+            const float z_prior = allow_track_depth
+                ? hybrid_depth_->predictDepthForDetection(det)
+                : hybrid_depth_->predictPrimaryDepth();
             if (z_prior >= config_.depth.min_depth &&
                 z_prior <= config_.depth.max_depth) {
                 ++local_stats.fallback_prior_depth;
@@ -1899,6 +1921,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     }
 
     if (need_roi_texture_match) {
+        if (!roi_matcher_) {
+            LOG_ERROR("ROI texture match requested but ROIStereoMatcher is not initialized");
+            if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+            NVTX_RANGE_POP();
+            return;
+        }
+
         // 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
         VPIImageData imgDataL, imgDataR;
         VPIStatus stL, stR;
@@ -2088,6 +2117,13 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     pseudo_det.class_id = 0;  // volleyball
     slot.detections = { pseudo_det };
 
+    if (!roi_matcher_) {
+        LOG_ERROR("Tracker ROI fuse requested but ROIStereoMatcher is not initialized");
+        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+        NVTX_RANGE_POP();
+        return;
+    }
+
     // 2. 获取校正后灰度左右图 GPU 指针
     VPIImageData imgDataL, imgDataR;
     VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
@@ -2164,6 +2200,22 @@ void Pipeline::pipelineLoopROI() {
     int next_detect_frame = 0;
     int next_fuse_frame   = 0;
 
+    auto sync_rect_for_detect = [&](FrameSlot& slot, int slot_idx) -> bool {
+        ScopedTimer tw("Stage1_WaitRect");
+        VPIStatus st = vpiStreamSync(streams_.vpiStreamPVA);
+        const double wait_rect_ms = tw.elapsedMs();
+        globalPerf().record("Stage1_WaitRect", wait_rect_ms);
+        if (st != VPI_SUCCESS) {
+            LOG_ERROR("[Pipeline] VPI rectification sync failed before detect: "
+                      "frame=%d slot=%d err=%d",
+                      slot.frame_id, slot_idx, (int)st);
+            slot.grab_failed = true;
+            return false;
+        }
+        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+        return true;
+    };
+
     // ===== 填充: 同步抓取 + 处理首帧 =====
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
@@ -2194,12 +2246,8 @@ void Pipeline::pipelineLoopROI() {
         slot.is_detect_frame = true;  // 首帧必为检测帧
 
         if (slot.grab_failed) {
-            vpiStreamSync(streams_.vpiStreamPVA);
             next_detect_frame++;
-        } else {
-            vpiStreamSync(streams_.vpiStreamPVA);
-            cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-
+        } else if (sync_rect_for_detect(slot, slot_idx)) {
             auto dlaStream = getDLAStream(slot.frame_id);
             cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
 
@@ -2213,8 +2261,8 @@ void Pipeline::pipelineLoopROI() {
                          slot.right_detection_submitted ? 1 : 0);
             }
             recordDetectDoneEvents(slot);
-            next_detect_frame++;
         }
+        next_detect_frame++;
     }
 
     while (running_) {
@@ -2245,7 +2293,6 @@ void Pipeline::pipelineLoopROI() {
             auto& slot = slots_[slot_idx];
 
             if (slot.grab_failed) {
-                vpiStreamSync(streams_.vpiStreamPVA);
                 next_detect_frame++;
             } else {
                 // 判断是否为检测帧
@@ -2257,10 +2304,9 @@ void Pipeline::pipelineLoopROI() {
 
                 if (is_detect) {
                     // ---- YOLO 检测帧 ----
-                    {
-                        ScopedTimer tw("Stage1_WaitRect");
-                        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-                        globalPerf().record("Stage1_WaitRect", tw.elapsedMs());
+                    if (!sync_rect_for_detect(slot, slot_idx)) {
+                        next_detect_frame++;
+                        continue;
                     }
 
                     auto dlaStream = getDLAStream(slot.frame_id);
@@ -2440,8 +2486,11 @@ void Pipeline::pipelineLoopROI() {
             next_detect_frame++;
             continue;
         }
+        if (!sync_rect_for_detect(slot, slot_idx)) {
+            next_detect_frame++;
+            continue;
+        }
         auto dlaStream = getDLAStream(slot.frame_id);
-        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
         cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
         stage1_detect(slot, slot_idx);
         recordDetectDoneEvents(slot);

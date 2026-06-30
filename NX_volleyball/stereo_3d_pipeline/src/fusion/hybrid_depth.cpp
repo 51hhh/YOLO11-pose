@@ -479,6 +479,30 @@ float HybridDepthEstimator::predictDepthForDetection(
     return best_z;
 }
 
+float HybridDepthEstimator::predictPrimaryDepth() const
+{
+    float best_score = -1.0f;
+    float best_z = -1.0f;
+
+    for (const auto& track : tracks_) {
+        if (track.lost_count > config_.lost_degrade_frames ||
+            track.z() < config_.min_depth ||
+            track.z() > config_.max_depth) {
+            continue;
+        }
+
+        const float score = track.confidence +
+                            0.001f * static_cast<float>(track.age) -
+                            0.05f * static_cast<float>(track.lost_count);
+        if (score > best_score) {
+            best_score = score;
+            best_z = track.z();
+        }
+    }
+
+    return best_z;
+}
+
 void HybridDepthEstimator::pruneDeadTracks() {
     tracks_.erase(
         std::remove_if(tracks_.begin(), tracks_.end(),
