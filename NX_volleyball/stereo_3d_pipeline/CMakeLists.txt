@@ -255,6 +255,23 @@ if(HIK_FOUND)
     target_compile_definitions(capture_chessboard PRIVATE NO_GPIOD)
   endif()
   message(STATUS "Calibration tools: capture_chessboard + stereo_calibrate")
+
+  add_executable(hik_frame_metadata_probe
+    tools/hik_frame_metadata_probe.cpp
+  )
+  set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
+  target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_link_libraries(hik_frame_metadata_probe
+    MvCameraControl
+    pthread
+  )
+  if(GPIOD_FOUND)
+    target_include_directories(hik_frame_metadata_probe PRIVATE ${GPIOD_INCLUDE})
+    target_link_libraries(hik_frame_metadata_probe ${GPIOD_LIB})
+  else()
+    target_compile_definitions(hik_frame_metadata_probe PRIVATE NO_GPIOD)
+  endif()
+  message(STATUS "Hikvision tools: hik_frame_metadata_probe")
 else()
   message(STATUS "Calibration tools: stereo_calibrate only (no HIK SDK)")
 endif()
