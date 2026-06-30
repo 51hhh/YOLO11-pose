@@ -42,6 +42,7 @@ struct CameraConfig {
     bool use_trigger = true;               // 外触发模式
     std::string trigger_source = "Line0";  // 触发源
     std::string trigger_activation = "RisingEdge";
+    int trigger_frequency_hz = 100;         // 外触发频率, 用于帧计数追帧超时
 
     int width = 1440;                      // 图像宽度
     int height = 1080;                     // 图像高度
@@ -53,8 +54,11 @@ struct CameraConfig {
  */
 struct GrabResult {
     bool success = false;
-    uint64_t timestamp_us = 0;    // 设备时间戳
-    uint32_t frame_number = 0;    // 帧号
+    uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
+    int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
+    uint32_t frame_number = 0;    // SDK 帧号
+    uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
+    uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断
 };
 
 /**
@@ -133,9 +137,10 @@ public:
 
 private:
     bool openCamera(void*& handle, int index, const std::string& serial);
-    void configureCamera(void* handle, const CameraConfig& cfg);
+    bool configureCamera(void* handle, const CameraConfig& cfg, const char* tag);
     bool grabOneFrame(void* handle, uint8_t* dst, int pitch,
                       unsigned int timeout_ms, GrabResult& result);
+    void resetSyncState();
 
     void* handle_left_  = nullptr;
     void* handle_right_ = nullptr;
@@ -152,6 +157,16 @@ private:
     static constexpr int MAX_RECONNECT_RETRIES = 3;
     int consecutive_failures_ = 0;
     bool reconnect();
+
+    // --- 双目配对状态 ---
+    bool sync_initialized_ = false;
+    int sync_baseline_samples_ = 0;
+    int64_t candidate_timestamp_offset_ns_ = 0;
+    int64_t expected_timestamp_offset_ns_ = 0;
+    int64_t expected_frame_counter_delta_ = 0;
+    int64_t expected_frame_number_delta_ = 0;
+    int64_t expected_trigger_delta_ = 0;
+    int consecutive_sync_mismatches_ = 0;
 };
 
 }  // namespace stereo3d
