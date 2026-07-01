@@ -149,27 +149,52 @@ cmake .. -DCUDA_ARCH="87"   # 仅 Orin NX
 
 实操版检查清单与交接模板见：`docs/相机标定实施手册.md`。
 
-### 1. 采集棋盘格图像
+### 0. 构建标定工具
 
-使用 C++ 采集工具（与主程序使用相同的海康 SDK 和 PWM 触发）：
+在 NX 的 `NX_volleyball/stereo_3d_pipeline` 目录执行：
 
 ```bash
-# PWM 触发模式（默认）
-./capture_chessboard -o calibration_images -e 3000
+cmake -S . -B build_standalone -DCMAKE_BUILD_TYPE=Release -DCUDA_ARCH=87 \
+  -DCMAKE_DISABLE_FIND_PACKAGE_ament_cmake=ON \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
+  -DCUDAToolkit_ROOT=/usr/local/cuda-12.6
+cmake --build build_standalone --target capture_chessboard stereo_calibrate -j$(nproc)
+cd build_standalone
+```
 
-# 自由运行模式（无需外部触发信号）
-./capture_chessboard --free-run -o calibration_images
+### 1. 采集棋盘格图像
 
-# 自定义参数
-./capture_chessboard --board-w 9 --board-h 6 --left 0 --right 1 -e 2000
+使用 C++ 采集工具（与主程序使用相同的海康 SDK、FrameSpecInfo 水印同步和 PWM 触发）：
+
+```bash
+# GUI 预览采集：适合人工摆棋盘，按空格保存
+./capture_chessboard \
+  -o calibration_images \
+  --serial-left 00D39342665 \
+  --serial-right 00219471413 \
+  --live-check
+
+# SSH/headless 自动采集：每秒保存一对，共 40 对
+./capture_chessboard --headless -n 40 -o calibration_images \
+  --serial-left 00D39342665 \
+  --serial-right 00219471413
+
+# 仅排查画面时使用，自由运行不用于正式标定
+./capture_chessboard --free-run -o calibration_images --live-check
 ```
 
 操作方式：
-- **空格** — 采集当前帧（需左右均检测到棋盘格）
+- **空格** — 采集当前同步帧
 - **q / ESC** — 退出
 - **c** — 清空已采集图像
+- **l** — 开关实时棋盘检测叠加
 
-建议采集 20-30 对图像，覆盖不同角度和位置。
+说明：
+- 相机触发频率仍是 `100Hz`，GUI 只是把显示限到约 `30fps`，避免预览卡顿。
+- `--live-check` 只在 GUI 预览中每 10 个预览帧做一次轻量棋盘检测，左上角显示 `L/R: OK/MISS`。
+- 默认棋盘内角点按 `6x9` 处理，同时会自动尝试交换方向 `9x6` 以适配摆放方向。
+
+建议采集 30-50 对图像，覆盖不同角度和位置。正式采集后检查 `calibration_images/capture_metadata.csv`，`frame_counter_delta` 应稳定为 0。
 
 ### 2. 执行标定
 
@@ -180,21 +205,23 @@ cmake .. -DCUDA_ARCH="87"   # 仅 Orin NX
 # 自定义棋盘格尺寸
 ./stereo_calibrate -s 25.0 --board-w 11 --board-h 8 -d calibration_images
 
-# 跳过可视化
-./stereo_calibrate -s 30.0 --no-vis
+# SSH 跳过可视化，可选 CUDA 预处理
+./stereo_calibrate -s 30.0 --no-vis --gpu-preprocess
 ```
 
 标定工具自动完成：
-1. 多级角点检测（严格→宽松降级策略）
+1. SB 棋盘检测 + 多级角点检测降级
 2. 亚像素精化（`cornerSubPix`）
-3. 单目标定 + 焦距合理性检查
+3. 单目标定
 4. 2σ 异常图像剔除
-5. 立体标定（`CALIB_USE_INTRINSIC_GUESS`）
+5. 立体标定（默认 `CALIB_FIX_INTRINSIC`，可用 `--optimize-intrinsics` 联合优化）
 6. 立体校正（`stereoRectify`, `alpha=0`）
 7. 深度精度报告
 8. 校正效果可视化预览
 
 输出文件 `stereo_calib.yaml` 与 `StereoCalibration::load()` 完全兼容。
+
+旧目录 `NX_volleyball/calibration/*.py` 保留为 legacy 参考，不再作为正式标定入口；等 C++ 工具完成一次新基线标定并验证后再考虑移除。
 
 ### 3. 配置使用
 

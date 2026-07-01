@@ -12,6 +12,8 @@
  */
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudaimgproc.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -24,8 +26,8 @@
 namespace fs = std::filesystem;
 
 // ======================== Defaults ========================
-static constexpr int BOARD_W = 9;
-static constexpr int BOARD_H = 6;
+static constexpr int BOARD_W = 6;
+static constexpr int BOARD_H = 9;
 static const char* DEFAULT_DIR = "calibration_images";
 static const char* DEFAULT_OUT = "stereo_calib.yaml";
 
@@ -37,6 +39,8 @@ struct Args {
     int         board_w     = BOARD_W;
     int         board_h     = BOARD_H;
     bool        no_vis      = false;
+    bool        use_gpu_preprocess = false;
+    bool        fix_intrinsics = true;
 };
 
 static Args parseArgs(int argc, char* argv[]) {
@@ -55,14 +59,20 @@ static Args parseArgs(int argc, char* argv[]) {
             a.board_h = std::atoi(argv[++i]);
         else if (arg == "--no-vis")
             a.no_vis = true;
+        else if (arg == "--gpu-preprocess")
+            a.use_gpu_preprocess = true;
+        else if (arg == "--optimize-intrinsics")
+            a.fix_intrinsics = false;
         else if (arg == "-h" || arg == "--help") {
             printf("Usage: %s -s SQUARE_SIZE [options]\n"
                    "  -s, --square-size MM   Square size in mm (required)\n"
                    "  -d, --images-dir DIR   Image directory (default: calibration_images)\n"
                    "  -o, --output FILE      Output YAML (default: stereo_calib.yaml)\n"
-                   "  --board-w N            Inner corners width (default: 9)\n"
-                   "  --board-h N            Inner corners height (default: 6)\n"
+                   "  --board-w N            Inner corners width (default: 6)\n"
+                   "  --board-h N            Inner corners height (default: 9)\n"
                    "  --no-vis               Skip visualization\n"
+                   "  --gpu-preprocess       Use CUDA for Bayer/BGR to gray preprocessing when available\n"
+                   "  --optimize-intrinsics  Let stereoCalibrate refine intrinsics (default: fix monocular intrinsics)\n"
                    "  -h, --help             Show help\n",
                    argv[0]);
             std::exit(0);
@@ -70,6 +80,11 @@ static Args parseArgs(int argc, char* argv[]) {
     }
     if (a.square_size <= 0.0f) {
         fprintf(stderr, "[ERROR] Square size required: -s <mm>\n");
+        std::exit(1);
+    }
+    if (a.board_w < 2 || a.board_h < 2) {
+        fprintf(stderr, "[ERROR] Invalid chessboard inner corners: %dx%d\n",
+                a.board_w, a.board_h);
         std::exit(1);
     }
     return a;
@@ -91,7 +106,7 @@ static std::vector<std::string> globImages(const fs::path& dir) {
     return files;
 }
 
-static cv::Mat toGray(const std::string& path) {
+static cv::Mat toGrayCPU(const std::string& path) {
     cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
     if (img.empty()) return {};
     if (img.channels() == 3)
@@ -107,6 +122,31 @@ static cv::Mat toGray(const std::string& path) {
     return img;
 }
 
+static cv::Mat toGrayGPU(const std::string& path) {
+    cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
+    if (img.empty()) return {};
+    try {
+        cv::cuda::GpuMat gpu(img);
+        cv::cuda::GpuMat gray_gpu;
+        if (img.channels() == 3) {
+            cv::cuda::cvtColor(gpu, gray_gpu, cv::COLOR_BGR2GRAY);
+        } else if (img.channels() == 1 && img.type() == CV_8UC1) {
+            cv::cuda::cvtColor(gpu, gray_gpu, cv::COLOR_BayerBG2GRAY);
+        } else {
+            return toGrayCPU(path);
+        }
+        cv::Mat gray;
+        gray_gpu.download(gray);
+        return gray;
+    } catch (const cv::Exception&) {
+        return toGrayCPU(path);
+    }
+}
+
+static cv::Mat toGray(const std::string& path, bool use_gpu_preprocess) {
+    return use_gpu_preprocess ? toGrayGPU(path) : toGrayCPU(path);
+}
+
 // Chessboard detection flags (strict to relaxed)
 static const std::vector<int> CB_FLAGS_LIST = {
     cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_FILTER_QUADS,
@@ -119,6 +159,16 @@ static bool findCorners(const cv::Mat& gray, cv::Size boardSize,
                         std::vector<cv::Point2f>& corners) {
     static const cv::TermCriteria subpixCrit(
         cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER, 30, 0.001);
+
+    // SB detector is slower than FAST_CHECK but more robust for high-res,
+    // oblique boards. It still runs on CPU in OpenCV; GPU is used only for
+    // optional image preprocessing above.
+    int sb_flags = cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_EXHAUSTIVE;
+    if (cv::findChessboardCornersSB(gray, boardSize, corners, sb_flags)) {
+        cv::cornerSubPix(gray, corners, cv::Size(11,11),
+                         cv::Size(-1,-1), subpixCrit);
+        return true;
+    }
 
     for (int flags : CB_FLAGS_LIST) {
         bool found = cv::findChessboardCorners(gray, boardSize, corners, flags);
@@ -184,14 +234,20 @@ int main(int argc, char* argv[]) {
     printf("\n%zu image pairs, detecting corners...\n\n", n);
 
     for (size_t i = 0; i < n; ++i) {
-        cv::Mat gL = toGray(leftFiles[i]);
-        cv::Mat gR = toGray(rightFiles[i]);
+        cv::Mat gL = toGray(leftFiles[i], args.use_gpu_preprocess);
+        cv::Mat gR = toGray(rightFiles[i], args.use_gpu_preprocess);
         if (gL.empty() || gR.empty()) {
             printf("[%3zu/%zu] SKIP (cannot read)\n", i+1, n);
             continue;
         }
         if (imgSize.width == 0)
             imgSize = gL.size();
+        if (gL.size() != imgSize || gR.size() != imgSize) {
+            printf("[%3zu/%zu] SKIP (image size mismatch L=%dx%d R=%dx%d expected=%dx%d)\n",
+                   i+1, n, gL.cols, gL.rows, gR.cols, gR.rows,
+                   imgSize.width, imgSize.height);
+            continue;
+        }
 
         std::vector<cv::Point2f> cL, cR;
         bool fL = findCorners(gL, boardSize, cL);
@@ -288,11 +344,14 @@ int main(int argc, char* argv[]) {
     cv::TermCriteria stereoCrit(cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER,
                                 100, 1e-6);
 
+    int stereo_flags = args.fix_intrinsics
+        ? cv::CALIB_FIX_INTRINSIC
+        : cv::CALIB_USE_INTRINSIC_GUESS;
     double rmsS = cv::stereoCalibrate(
         objPoints, imgPointsL, imgPointsR,
         K1, D1, K2, D2, imgSize,
         R, T, E, F,
-        cv::CALIB_USE_INTRINSIC_GUESS,
+        stereo_flags,
         stereoCrit);
 
     double baseline = cv::norm(T);
