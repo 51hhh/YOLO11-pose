@@ -23,9 +23,26 @@
 
 namespace stereo3d {
 
+enum class TrajectoryRecordDetail {
+    LEGACY = 0,
+    DEPTH_CANDIDATES = 1,
+    EXTENDED = 2,
+};
+
 struct TrajectoryRecorderConfig {
     std::string output_path = "trajectory_data.csv";
     bool enabled = true;
+    bool raw_mode = false; ///< true=写未滤波观测, false=写 Kalman 后轨迹
+    TrajectoryRecordDetail detail_level = TrajectoryRecordDetail::LEGACY;
+
+    bool recordDepthCandidates() const {
+        return static_cast<int>(detail_level) >=
+               static_cast<int>(TrajectoryRecordDetail::DEPTH_CANDIDATES);
+    }
+    bool recordExtendedGeometry() const {
+        return static_cast<int>(detail_level) >=
+               static_cast<int>(TrajectoryRecordDetail::EXTENDED);
+    }
 };
 
 class TrajectoryRecorder {

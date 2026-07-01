@@ -22,6 +22,8 @@
 #include "../track/mixformer_trt.h"
 #include "../utils/logger.h"
 #include <vpi/algo/ConvertImageFormat.h>
+#include <opencv2/features2d.hpp>
+#include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -273,12 +275,34 @@ bool Pipeline::init(const PipelineConfig& config) {
             return false;
         }
         LOG_INFO("  Dual YOLO: right_engine=%s, use_for_depth=%d, fallback_roi=%d, "
+                 "modes[bbox=%d bboxEdge=%d circle=%d circleEdge=%d roiCent=%d "
+                 "radial=%d edgePair=%d cornerPts=%d texturePts=%d binaryPts=%d "
+                 "orbPts=%d briskPts=%d akazePts=%d centerPatch=%d "
+                 "subpx=%d fallback=%d tmpl=%d featFb=%d], "
                  "epipolar_fallback=%d, center_refine=%d, roi_denoise=%d, "
                  "depth_solver=%s, subpx=%d patch=%d search=%d pts=%d "
                  "delta=%.2fpx ratio=%.3f depthJump=%.2fm budget=%.2fms",
                  right_engine.c_str(),
                  config_.dual_yolo.use_for_depth,
                  config_.dual_yolo.fallback_to_roi_match,
+                 config_.dual_yolo.depth_bbox_pair,
+                 config_.dual_yolo.depth_bbox_edges,
+                 config_.dual_yolo.depth_circle_center,
+                 config_.dual_yolo.depth_circle_edges,
+                 config_.dual_yolo.depth_roi_edge_centroid,
+                 config_.dual_yolo.depth_roi_radial_center,
+                 config_.dual_yolo.depth_roi_edge_pair_center,
+                 config_.dual_yolo.depth_roi_corner_points,
+                 config_.dual_yolo.depth_roi_texture_points,
+                 config_.dual_yolo.depth_roi_binary_points,
+                 config_.dual_yolo.depth_roi_orb_points,
+                 config_.dual_yolo.depth_roi_brisk_points,
+                 config_.dual_yolo.depth_roi_akaze_points,
+                 config_.dual_yolo.depth_roi_center_patch,
+                 config_.dual_yolo.depth_roi_subpixel,
+                 config_.dual_yolo.depth_epipolar_fallback,
+                 config_.dual_yolo.depth_fallback_template,
+                 config_.dual_yolo.depth_fallback_feature_points,
                  config_.dual_yolo.fallback_epipolar_search,
                  config_.dual_yolo.center_refine,
                  config_.dual_yolo.roi_denoise,
@@ -358,9 +382,45 @@ bool Pipeline::init(const PipelineConfig& config) {
         float cx    = static_cast<float>(P1.at<double>(0, 2));
         float cy    = static_cast<float>(P1.at<double>(1, 2));
 
+        auto is_subpixel_solver = [](std::string solver) {
+            std::transform(solver.begin(), solver.end(), solver.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return solver == "roi_subpixel_match" ||
+                   solver == "subpixel" ||
+                   solver == "multi_point";
+        };
+        const bool dual_yolo_depth_modes_enabled =
+            config_.dual_yolo.depth_bbox_pair ||
+            config_.dual_yolo.depth_bbox_edges ||
+            (config_.dual_yolo.depth_circle_center &&
+             config_.dual_yolo.center_refine) ||
+            (config_.dual_yolo.depth_circle_edges &&
+             config_.dual_yolo.center_refine) ||
+            (config_.dual_yolo.depth_roi_edge_centroid &&
+             config_.dual_yolo.center_refine) ||
+            config_.dual_yolo.depth_roi_radial_center ||
+            config_.dual_yolo.depth_roi_edge_pair_center ||
+            config_.dual_yolo.depth_roi_corner_points ||
+            config_.dual_yolo.depth_roi_texture_points ||
+            config_.dual_yolo.depth_roi_binary_points ||
+            config_.dual_yolo.depth_roi_orb_points ||
+            config_.dual_yolo.depth_roi_brisk_points ||
+            config_.dual_yolo.depth_roi_akaze_points ||
+            (config_.dual_yolo.depth_roi_center_patch &&
+             config_.dual_yolo.center_refine) ||
+            (config_.dual_yolo.depth_roi_subpixel &&
+             config_.dual_yolo.subpixel_enabled &&
+             is_subpixel_solver(config_.dual_yolo.depth_solver)) ||
+            (config_.dual_yolo.depth_epipolar_fallback &&
+             config_.dual_yolo.fallback_epipolar_search) ||
+            (config_.dual_yolo.depth_fallback_template &&
+             config_.dual_yolo.fallback_epipolar_search) ||
+            (config_.dual_yolo.depth_fallback_feature_points &&
+             config_.dual_yolo.fallback_epipolar_search);
         const bool dual_yolo_depth_only =
             config_.dual_yolo.enabled &&
             config_.dual_yolo.use_for_depth &&
+            dual_yolo_depth_modes_enabled &&
             !config_.dual_yolo.fallback_to_roi_match;
         const bool need_roi_matcher =
             config_.tracker.enabled || !dual_yolo_depth_only;
@@ -419,6 +479,29 @@ bool Pipeline::init(const PipelineConfig& config) {
         config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
         config_.dual_yolo.enabled &&
         config_.dual_yolo.use_for_depth &&
+        (config_.dual_yolo.depth_bbox_pair ||
+         config_.dual_yolo.depth_bbox_edges ||
+         (config_.dual_yolo.center_refine &&
+          (config_.dual_yolo.depth_circle_center ||
+           config_.dual_yolo.depth_circle_edges ||
+           config_.dual_yolo.depth_roi_edge_centroid ||
+           config_.dual_yolo.depth_roi_center_patch)) ||
+         config_.dual_yolo.depth_roi_radial_center ||
+         config_.dual_yolo.depth_roi_edge_pair_center ||
+         config_.dual_yolo.depth_roi_corner_points ||
+         config_.dual_yolo.depth_roi_texture_points ||
+         config_.dual_yolo.depth_roi_binary_points ||
+         config_.dual_yolo.depth_roi_orb_points ||
+         config_.dual_yolo.depth_roi_brisk_points ||
+         config_.dual_yolo.depth_roi_akaze_points ||
+         (config_.dual_yolo.depth_roi_subpixel &&
+          config_.dual_yolo.subpixel_enabled) ||
+         (config_.dual_yolo.depth_epipolar_fallback &&
+          config_.dual_yolo.fallback_epipolar_search) ||
+         (config_.dual_yolo.depth_fallback_template &&
+          config_.dual_yolo.fallback_epipolar_search) ||
+         (config_.dual_yolo.depth_fallback_feature_points &&
+          config_.dual_yolo.fallback_epipolar_search)) &&
         !config_.dual_yolo.fallback_to_roi_match;
     const std::string strategyStr = dualYoloDepthOnly
         ? ("Dual YOLO " + config_.dual_yolo.depth_solver)
@@ -547,6 +630,14 @@ void Pipeline::grabLoop() {
                 imgDataL.buffer.pitch.planes[0].pitchBytes,
                 imgDataR.buffer.pitch.planes[0].pitchBytes,
                 1000, resL, resR);
+            slot.left_timestamp_us = resL.timestamp_us;
+            slot.right_timestamp_us = resR.timestamp_us;
+            slot.left_frame_number = resL.frame_number;
+            slot.right_frame_number = resR.frame_number;
+            slot.left_frame_counter = resL.frame_counter;
+            slot.right_frame_counter = resR.frame_counter;
+            slot.left_trigger_index = resL.trigger_index;
+            slot.right_trigger_index = resR.trigger_index;
         } else {
             LOG_WARN("[Pipeline] grabLoop VPI raw lock failed: L=%d R=%d",
                      (int)stL, (int)stR);
@@ -786,6 +877,14 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
                 imgDataL.buffer.pitch.planes[0].pitchBytes,
                 imgDataR.buffer.pitch.planes[0].pitchBytes,
                 1000, resL, resR);
+            slot.left_timestamp_us = resL.timestamp_us;
+            slot.right_timestamp_us = resR.timestamp_us;
+            slot.left_frame_number = resL.frame_number;
+            slot.right_frame_number = resR.frame_number;
+            slot.left_frame_counter = resL.frame_counter;
+            slot.right_frame_counter = resR.frame_counter;
+            slot.left_trigger_index = resL.trigger_index;
+            slot.right_trigger_index = resR.trigger_index;
         } else {
             LOG_WARN("[Pipeline] stage0 raw lock failed: L=%d R=%d",
                      (int)stL, (int)stR);
@@ -949,10 +1048,147 @@ bool isROISubpixelDepthSolver(std::string solver) {
            solver == "multi_point";
 }
 
+bool dualYoloBBoxDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_bbox_pair;
+}
+
+bool dualYoloBBoxEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_bbox_edges;
+}
+
+bool dualYoloCircleDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_circle_center && cfg.center_refine;
+}
+
+bool dualYoloCircleEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_circle_edges && cfg.center_refine;
+}
+
+bool dualYoloROIEdgeCentroidDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_edge_centroid && cfg.center_refine;
+}
+
+bool dualYoloROIRadialCenterDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_radial_center;
+}
+
+bool dualYoloROIEdgePairCenterDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_edge_pair_center;
+}
+
+bool dualYoloROICornerPointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_corner_points;
+}
+
+bool dualYoloROITexturePointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_texture_points;
+}
+
+bool dualYoloROIBinaryPointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_binary_points;
+}
+
+bool dualYoloROIORBPointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_orb_points;
+}
+
+bool dualYoloROIBRISKPointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_brisk_points;
+}
+
+bool dualYoloROIAKAZEPointsDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_akaze_points;
+}
+
+bool dualYoloROICenterPatchDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_center_patch && cfg.center_refine;
+}
+
+bool dualYoloSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_subpixel &&
+           cfg.subpixel_enabled &&
+           isROISubpixelDepthSolver(cfg.depth_solver);
+}
+
+bool dualYoloEpipolarFallbackEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_epipolar_fallback && cfg.fallback_epipolar_search;
+}
+
+bool dualYoloFallbackTemplateEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_fallback_template && cfg.fallback_epipolar_search;
+}
+
+bool dualYoloFallbackFeaturePointsEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_fallback_feature_points && cfg.fallback_epipolar_search;
+}
+
+bool dualYoloNeedsCircleSeedRefine(const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.center_refine &&
+           (cfg.depth_circle_center ||
+            cfg.depth_circle_edges ||
+            cfg.depth_roi_edge_centroid ||
+            cfg.depth_roi_center_patch ||
+            dualYoloSubpixelDepthEnabled(cfg) ||
+            dualYoloEpipolarFallbackEnabled(cfg) ||
+            dualYoloFallbackTemplateEnabled(cfg) ||
+            dualYoloFallbackFeaturePointsEnabled(cfg));
+}
+
+bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
+    return dualYoloBBoxDepthEnabled(cfg) ||
+           dualYoloBBoxEdgesDepthEnabled(cfg) ||
+           dualYoloCircleDepthEnabled(cfg) ||
+           dualYoloCircleEdgesDepthEnabled(cfg) ||
+           dualYoloROIEdgeCentroidDepthEnabled(cfg) ||
+           dualYoloROIRadialCenterDepthEnabled(cfg) ||
+           dualYoloROIEdgePairCenterDepthEnabled(cfg) ||
+           dualYoloROICornerPointsDepthEnabled(cfg) ||
+           dualYoloROITexturePointsDepthEnabled(cfg) ||
+           dualYoloROIBinaryPointsDepthEnabled(cfg) ||
+           dualYoloROIORBPointsDepthEnabled(cfg) ||
+           dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+           dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
+           dualYoloROICenterPatchDepthEnabled(cfg) ||
+           dualYoloSubpixelDepthEnabled(cfg) ||
+           dualYoloEpipolarFallbackEnabled(cfg) ||
+           dualYoloFallbackTemplateEnabled(cfg) ||
+           dualYoloFallbackFeaturePointsEnabled(cfg);
+}
+
+bool dualYoloNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
+    return dualYoloNeedsCircleSeedRefine(cfg) ||
+           dualYoloROIRadialCenterDepthEnabled(cfg) ||
+           dualYoloROIEdgePairCenterDepthEnabled(cfg) ||
+           dualYoloROICornerPointsDepthEnabled(cfg) ||
+           dualYoloROITexturePointsDepthEnabled(cfg) ||
+           dualYoloROIBinaryPointsDepthEnabled(cfg) ||
+           dualYoloROIORBPointsDepthEnabled(cfg) ||
+           dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+           dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
+           dualYoloSubpixelDepthEnabled(cfg) ||
+           dualYoloEpipolarFallbackEnabled(cfg) ||
+           dualYoloFallbackTemplateEnabled(cfg) ||
+           dualYoloFallbackFeaturePointsEnabled(cfg);
+}
+
 struct CircleFit2D {
     float cx = 0.0f;
     float cy = 0.0f;
     float radius = 0.0f;
+    float confidence = 0.0f;
+    int source = 0;  // 0=none, 1=bbox proxy, 2=ROI fit, 3=epipolar, 4=template, 5=feature proxy
+    bool valid = false;
+};
+
+constexpr int kCircleSourceBboxProxy = 1;
+constexpr int kCircleSourceRoiFit = 2;
+constexpr int kCircleSourceEpipolarSearch = 3;
+constexpr int kCircleSourceTemplateSearch = 4;
+constexpr int kCircleSourceFeatureProxy = 5;
+
+struct PointMeasure2D {
+    float cx = 0.0f;
+    float cy = 0.0f;
     float confidence = 0.0f;
     bool valid = false;
 };
@@ -977,6 +1213,36 @@ struct SubpixelDisparityResult {
     float confidence = 0.0f;
     float stddev = 0.0f;
     float delta_gate_px = 0.0f;
+    int support = 0;
+    int attempted = 0;
+};
+
+enum class SparseFeatureMode {
+    CORNER,
+    TEXTURE,
+    BINARY
+};
+
+enum class OpenCVFeatureMode {
+    ORB,
+    BRISK,
+    AKAZE
+};
+
+struct SparseFeaturePoint {
+    int x = 0;
+    int y = 0;
+    float response = 0.0f;
+};
+
+struct SparseFeatureDisparityResult {
+    bool valid = false;
+    bool low_confidence = false;
+    float disparity = 0.0f;
+    float confidence = 0.0f;
+    float stddev = 0.0f;
+    float anchor_cx = 0.0f;
+    float anchor_cy = 0.0f;
     int support = 0;
     int attempted = 0;
 };
@@ -1019,6 +1285,20 @@ bool solve3x3CPU(
     x2 = (A00 * (A11 * b2 - b1 * A21)
         - A01 * (A10 * b2 - b1 * A20)
         + b0 * (A10 * A21 - A11 * A20)) * inv_det;
+    return true;
+}
+
+bool solve2x2CPU(
+    double A00, double A01,
+    double A10, double A11,
+    double b0, double b1,
+    double& x0, double& x1)
+{
+    const double det = A00 * A11 - A01 * A10;
+    if (std::abs(det) < 1e-12) return false;
+    const double inv_det = 1.0 / det;
+    x0 = (b0 * A11 - A01 * b1) * inv_det;
+    x1 = (A00 * b1 - b0 * A10) * inv_det;
     return true;
 }
 
@@ -1146,11 +1426,298 @@ CircleFit2D fitCircleInBBoxCPU(
     options.denoise = denoise;
     options.max_roi_pixels = max_roi_pixels;
     options.max_center_shift = std::max(det.width, det.height) * 0.65f;
-    return fitCircleInRegionCPU(img, pitch, img_w, img_h,
-                                x1, y1, x2, y2,
-                                det.cx, det.cy,
-                                std::max(det.width, det.height) * 0.5f,
-                                options);
+    CircleFit2D circle = fitCircleInRegionCPU(img, pitch, img_w, img_h,
+                                              x1, y1, x2, y2,
+                                              det.cx, det.cy,
+                                              std::max(det.width, det.height) * 0.5f,
+                                              options);
+    if (circle.valid) circle.source = kCircleSourceRoiFit;
+    return circle;
+}
+
+PointMeasure2D edgeCentroidInBBoxCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const Detection& det, bool denoise, int max_roi_pixels)
+{
+    PointMeasure2D out;
+    if (!img || pitch <= 0 || det.width < 8.0f || det.height < 8.0f) {
+        return out;
+    }
+
+    const int border = denoise ? 2 : 1;
+    int x1 = static_cast<int>(std::floor(det.cx - det.width * 0.55f));
+    int y1 = static_cast<int>(std::floor(det.cy - det.height * 0.55f));
+    int x2 = static_cast<int>(std::ceil(det.cx + det.width * 0.55f));
+    int y2 = static_cast<int>(std::ceil(det.cy + det.height * 0.55f));
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 - x1 < 8 || y2 - y1 < 8) return out;
+
+    const int roi_w = x2 - x1 + 1;
+    const int roi_h = y2 - y1 + 1;
+    const int area = roi_w * roi_h;
+    const int max_pixels = std::max(256, max_roi_pixels);
+    const int stride = std::max(
+        1, static_cast<int>(std::ceil(std::sqrt(
+               static_cast<float>(area) / static_cast<float>(max_pixels)))));
+
+    float max_grad = 0.0f;
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, denoise);
+            max_grad = std::max(max_grad, std::sqrt(gx * gx + gy * gy));
+        }
+    }
+    if (max_grad < 8.0f) return out;
+
+    const float grad_thresh = std::max(10.0f, max_grad * 0.25f);
+    double sw = 0.0;
+    double swx = 0.0;
+    double swy = 0.0;
+    int edge_count = 0;
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, denoise);
+            const float mag = std::sqrt(gx * gx + gy * gy);
+            if (mag < grad_thresh) continue;
+            const double w = static_cast<double>(mag);
+            sw += w;
+            swx += w * static_cast<double>(x);
+            swy += w * static_cast<double>(y);
+            ++edge_count;
+        }
+    }
+    if (edge_count < 8 || sw <= 0.0) return out;
+
+    out.cx = static_cast<float>(swx / sw);
+    out.cy = static_cast<float>(swy / sw);
+    const float dense_edge_count = static_cast<float>(edge_count * stride * stride);
+    out.confidence = std::min(1.0f, dense_edge_count / 80.0f);
+    out.valid = true;
+    return out;
+}
+
+PointMeasure2D radialCenterInBBoxCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const Detection& det, bool denoise, int max_roi_pixels)
+{
+    PointMeasure2D out;
+    if (!img || pitch <= 0 || det.width < 8.0f || det.height < 8.0f) {
+        return out;
+    }
+
+    const int border = denoise ? 2 : 1;
+    int x1 = static_cast<int>(std::floor(det.cx - det.width * 0.55f));
+    int y1 = static_cast<int>(std::floor(det.cy - det.height * 0.55f));
+    int x2 = static_cast<int>(std::ceil(det.cx + det.width * 0.55f));
+    int y2 = static_cast<int>(std::ceil(det.cy + det.height * 0.55f));
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 - x1 < 8 || y2 - y1 < 8) return out;
+
+    const int roi_w = x2 - x1 + 1;
+    const int roi_h = y2 - y1 + 1;
+    const int area = roi_w * roi_h;
+    const int max_pixels = std::max(256, max_roi_pixels);
+    const int stride = std::max(
+        1, static_cast<int>(std::ceil(std::sqrt(
+               static_cast<float>(area) / static_cast<float>(max_pixels)))));
+
+    float max_grad = 0.0f;
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, denoise);
+            max_grad = std::max(max_grad, std::sqrt(gx * gx + gy * gy));
+        }
+    }
+    if (max_grad < 8.0f) return out;
+
+    const float grad_thresh = std::max(10.0f, max_grad * 0.25f);
+    double A00 = 0.0, A01 = 0.0, A11 = 0.0;
+    double b0 = 0.0, b1 = 0.0;
+    double sw = 0.0;
+    int edge_count = 0;
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, denoise);
+            const float mag = std::sqrt(gx * gx + gy * gy);
+            if (mag < grad_thresh) continue;
+
+            const double inv_mag = 1.0 / std::max(1e-6, static_cast<double>(mag));
+            const double ux = static_cast<double>(gx) * inv_mag;
+            const double uy = static_cast<double>(gy) * inv_mag;
+            const double m00 = 1.0 - ux * ux;
+            const double m01 = -ux * uy;
+            const double m11 = 1.0 - uy * uy;
+            const double w = static_cast<double>(mag);
+            const double px = static_cast<double>(x);
+            const double py = static_cast<double>(y);
+
+            A00 += w * m00;
+            A01 += w * m01;
+            A11 += w * m11;
+            b0 += w * (m00 * px + m01 * py);
+            b1 += w * (m01 * px + m11 * py);
+            sw += w;
+            ++edge_count;
+        }
+    }
+    if (edge_count < 8 || sw <= 0.0) return out;
+
+    double cx = 0.0;
+    double cy = 0.0;
+    if (!solve2x2CPU(A00, A01, A01, A11, b0, b1, cx, cy)) {
+        return out;
+    }
+
+    const float center_shift = std::sqrt(
+        static_cast<float>((cx - det.cx) * (cx - det.cx) +
+                           (cy - det.cy) * (cy - det.cy)));
+    const float max_shift = std::max(det.width, det.height) * 0.55f;
+    if (cx < x1 || cx > x2 || cy < y1 || cy > y2 || center_shift > max_shift) {
+        return out;
+    }
+
+    std::vector<float> radii;
+    radii.reserve(static_cast<size_t>(edge_count));
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                             sampleGrayCPU(img, pitch, x - 1, y, denoise);
+            const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                             sampleGrayCPU(img, pitch, x, y - 1, denoise);
+            const float mag = std::sqrt(gx * gx + gy * gy);
+            if (mag < grad_thresh) continue;
+            radii.push_back(std::sqrt(
+                static_cast<float>((static_cast<double>(x) - cx) *
+                                   (static_cast<double>(x) - cx) +
+                                   (static_cast<double>(y) - cy) *
+                                   (static_cast<double>(y) - cy))));
+        }
+    }
+    if (radii.size() < 8) return out;
+    std::sort(radii.begin(), radii.end());
+    const size_t mid = radii.size() / 2;
+    const float radius = (radii.size() & 1U) != 0U
+        ? radii[mid]
+        : 0.5f * (radii[mid - 1] + radii[mid]);
+    const float expected = std::max(det.width, det.height) * 0.5f;
+    if (radius < std::max(4.0f, expected * 0.35f) || radius > expected * 1.75f) {
+        return out;
+    }
+
+    const float dense_edge_count = static_cast<float>(edge_count * stride * stride);
+    const float edge_conf = std::min(1.0f, dense_edge_count / 80.0f);
+    const float shift_conf = std::max(0.2f, 1.0f - center_shift / std::max(1.0f, max_shift));
+    out.cx = static_cast<float>(cx);
+    out.cy = static_cast<float>(cy);
+    out.confidence = edge_conf * shift_conf;
+    out.valid = true;
+    return out;
+}
+
+PointMeasure2D edgePairCenterInBBoxCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const Detection& det, bool denoise, int max_roi_pixels)
+{
+    PointMeasure2D out;
+    if (!img || pitch <= 0 || det.width < 8.0f || det.height < 8.0f) {
+        return out;
+    }
+
+    const int border = denoise ? 2 : 1;
+    int x1 = static_cast<int>(std::floor(det.cx - det.width * 0.60f));
+    int y1 = static_cast<int>(std::floor(det.cy - det.height * 0.45f));
+    int x2 = static_cast<int>(std::ceil(det.cx + det.width * 0.60f));
+    int y2 = static_cast<int>(std::ceil(det.cy + det.height * 0.45f));
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 - x1 < 8 || y2 - y1 < 8) return out;
+
+    const int roi_w = x2 - x1 + 1;
+    const int roi_h = y2 - y1 + 1;
+    const int area = roi_w * roi_h;
+    const int max_pixels = std::max(256, max_roi_pixels);
+    const int row_stride = std::max(
+        1, static_cast<int>(std::ceil(std::sqrt(
+               static_cast<float>(area) / static_cast<float>(max_pixels)))));
+    const int x_mid = static_cast<int>(std::lround(det.cx));
+    const float min_width = std::max(6.0f, det.width * 0.35f);
+    const float max_width = std::max(min_width + 1.0f, det.width * 1.45f);
+
+    std::vector<float> centers_x;
+    std::vector<float> centers_y;
+    std::vector<float> weights;
+    for (int y = y1; y <= y2; y += row_stride) {
+        float best_left = -1.0f;
+        float best_left_score = 0.0f;
+        float best_right = -1.0f;
+        float best_right_score = 0.0f;
+        for (int x = x1 + 1; x <= x2 - 1; ++x) {
+            const float score = std::abs(sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                                         sampleGrayCPU(img, pitch, x - 1, y, denoise));
+            if (x <= x_mid && score > best_left_score) {
+                best_left_score = score;
+                best_left = static_cast<float>(x);
+            } else if (x > x_mid && score > best_right_score) {
+                best_right_score = score;
+                best_right = static_cast<float>(x);
+            }
+        }
+        if (best_left < 0.0f || best_right < 0.0f) continue;
+        const float width = best_right - best_left;
+        const float score = std::min(best_left_score, best_right_score);
+        if (width < min_width || width > max_width || score < 8.0f) continue;
+        centers_x.push_back(0.5f * (best_left + best_right));
+        centers_y.push_back(static_cast<float>(y));
+        weights.push_back(score);
+    }
+
+    if (centers_x.size() < 3) return out;
+    double sw = 0.0;
+    double swx = 0.0;
+    double swy = 0.0;
+    for (size_t i = 0; i < centers_x.size(); ++i) {
+        const double w = static_cast<double>(weights[i]);
+        sw += w;
+        swx += w * static_cast<double>(centers_x[i]);
+        swy += w * static_cast<double>(centers_y[i]);
+    }
+    if (sw <= 0.0) return out;
+
+    const float cx = static_cast<float>(swx / sw);
+    const float cy = static_cast<float>(swy / sw);
+    const float center_shift = std::sqrt((cx - det.cx) * (cx - det.cx) +
+                                         (cy - det.cy) * (cy - det.cy));
+    const float max_shift = std::max(det.width, det.height) * 0.45f;
+    if (center_shift > max_shift) return out;
+
+    const float support_conf = std::min(1.0f,
+        static_cast<float>(centers_x.size() * row_stride) / std::max(8.0f, det.height * 0.45f));
+    const float shift_conf = std::max(0.2f, 1.0f - center_shift / std::max(1.0f, max_shift));
+    out.cx = cx;
+    out.cy = cy;
+    out.confidence = support_conf * shift_conf;
+    out.valid = true;
+    return out;
 }
 
 CircleFit2D circleFromDetectionCPU(const Detection& det)
@@ -1161,6 +1728,7 @@ CircleFit2D circleFromDetectionCPU(const Detection& det)
     circle.cy = det.cy;
     circle.radius = std::max(det.width, det.height) * 0.5f;
     circle.confidence = 1.0f;
+    circle.source = kCircleSourceBboxProxy;
     circle.valid = true;
     return circle;
 }
@@ -1242,6 +1810,7 @@ CircleFit2D searchCircleOnEpipolarCPU(
         std::abs(circle.cy - predicted_cy) > y_tolerance) {
         return {};
     }
+    circle.source = kCircleSourceEpipolarSearch;
     return circle;
 }
 
@@ -1294,6 +1863,124 @@ float znccPatchCPU(
     const double denom = std::sqrt(var_l * var_r);
     if (denom < 1e-6) return -2.0f;
     return static_cast<float>(cov / denom);
+}
+
+CircleFit2D searchTemplateOnEpipolarCPU(
+    const uint8_t* source_img, int source_pitch,
+    const uint8_t* target_img, int target_pitch,
+    int img_w, int img_h,
+    const CircleFit2D& source_circle,
+    float predicted_cx, float predicted_cy,
+    float y_tolerance,
+    const PipelineConfig::DualYoloConfig& dual_cfg)
+{
+    CircleFit2D out;
+    if (!source_img || !target_img || source_pitch <= 0 || target_pitch <= 0 ||
+        !source_circle.valid) {
+        return out;
+    }
+
+    const int patch_radius = std::clamp(
+        static_cast<int>(std::lround(std::min(source_circle.radius * 0.35f, 10.0f))),
+        4, 10);
+    const int source_x = static_cast<int>(std::lround(source_circle.cx));
+    const int source_y = static_cast<int>(std::lround(source_circle.cy));
+    if (!patchInsideCPU(img_w, img_h, source_x, source_y,
+                        patch_radius, dual_cfg.roi_denoise)) {
+        return out;
+    }
+
+    const float max_width = std::max(32.0f, static_cast<float>(dual_cfg.fallback_max_width_px));
+    const float margin = std::min(
+        std::max(4.0f, static_cast<float>(dual_cfg.fallback_search_margin_px)),
+        max_width * 0.5f);
+    const int x_start = std::max(patch_radius + 1,
+        static_cast<int>(std::floor(predicted_cx - margin)));
+    const int x_end = std::min(img_w - patch_radius - 2,
+        static_cast<int>(std::ceil(predicted_cx + margin)));
+    const int y_start = std::max(patch_radius + 1,
+        static_cast<int>(std::floor(predicted_cy - y_tolerance)));
+    const int y_end = std::min(img_h - patch_radius - 2,
+        static_cast<int>(std::ceil(predicted_cy + y_tolerance)));
+    if (x_start >= x_end || y_start >= y_end) return out;
+
+    auto score_at = [&](int x, int y) -> float {
+        if (!patchInsideCPU(img_w, img_h, x, y, patch_radius, dual_cfg.roi_denoise)) {
+            return -2.0f;
+        }
+        return znccPatchCPU(source_img, source_pitch, target_img, target_pitch,
+                            source_x, source_y, x, y,
+                            patch_radius, dual_cfg.roi_denoise);
+    };
+
+    float best_score = -2.0f;
+    float second_score = -2.0f;
+    int best_x = -1;
+    int best_y = -1;
+    const int coarse_step = (x_end - x_start) > 64 ? 2 : 1;
+    for (int y = y_start; y <= y_end; y += coarse_step) {
+        for (int x = x_start; x <= x_end; x += coarse_step) {
+            const float score = score_at(x, y);
+            if (score > best_score) {
+                second_score = best_score;
+                best_score = score;
+                best_x = x;
+                best_y = y;
+            } else if (score > second_score) {
+                second_score = score;
+            }
+        }
+    }
+    if (best_x < 0 || best_y < 0) return out;
+
+    const int refine_x1 = std::max(x_start, best_x - coarse_step);
+    const int refine_x2 = std::min(x_end, best_x + coarse_step);
+    const int refine_y1 = std::max(y_start, best_y - coarse_step);
+    const int refine_y2 = std::min(y_end, best_y + coarse_step);
+    for (int y = refine_y1; y <= refine_y2; ++y) {
+        for (int x = refine_x1; x <= refine_x2; ++x) {
+            const float score = score_at(x, y);
+            if (score > best_score) {
+                second_score = best_score;
+                best_score = score;
+                best_x = x;
+                best_y = y;
+            } else if (score > second_score && (x != best_x || y != best_y)) {
+                second_score = score;
+            }
+        }
+    }
+
+    const float min_score = std::max(0.12f, dual_cfg.subpixel_min_confidence * 0.55f);
+    const float uniqueness = second_score > -1.5f ? best_score - second_score : 1.0f;
+    if (best_score < min_score || (uniqueness < 0.005f && best_score < 0.70f)) {
+        return out;
+    }
+
+    float sub_x = static_cast<float>(best_x);
+    if (best_x > x_start && best_x < x_end) {
+        const float s_minus = score_at(best_x - 1, best_y);
+        const float s_plus = score_at(best_x + 1, best_y);
+        const float denom = s_minus - 2.0f * best_score + s_plus;
+        if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
+            sub_x += std::clamp(0.5f * (s_minus - s_plus) / denom, -1.0f, 1.0f);
+        }
+    }
+
+    if (std::abs(sub_x - predicted_cx) > margin ||
+        std::abs(static_cast<float>(best_y) - predicted_cy) > y_tolerance) {
+        return out;
+    }
+
+    out.cx = sub_x;
+    out.cy = static_cast<float>(best_y);
+    out.radius = source_circle.radius;
+    out.confidence = std::max(0.2f,
+        std::clamp((best_score - min_score) / std::max(0.01f, 1.0f - min_score),
+                   0.0f, 1.0f));
+    out.source = kCircleSourceTemplateSearch;
+    out.valid = true;
+    return out;
 }
 
 std::vector<SubpixelSampleOffset> makeSubpixelSampleOffsetsCPU(
@@ -1356,6 +2043,835 @@ float computeSubpixelDispDeltaGateCPU(
         gate = std::min(gate, std::max(0.25f, depth_gate));
     }
     return std::max(0.25f, gate);
+}
+
+float censusPatchSimilarityCPU(
+    const uint8_t* left, int left_pitch,
+    const uint8_t* right, int right_pitch,
+    int x_left, int y_left,
+    int x_right, int y_right,
+    int radius,
+    bool denoise)
+{
+    radius = std::clamp(radius, 2, 8);
+    const int step = std::max(1, radius / 2);
+    const float center_l = sampleGrayCPU(left, left_pitch, x_left, y_left, denoise);
+    const float center_r = sampleGrayCPU(right, right_pitch, x_right, y_right, denoise);
+    int bits = 0;
+    int same = 0;
+    for (int dy = -radius; dy <= radius; dy += step) {
+        for (int dx = -radius; dx <= radius; dx += step) {
+            if (dx == 0 && dy == 0) continue;
+            const bool bit_l = sampleGrayCPU(left, left_pitch,
+                                             x_left + dx, y_left + dy,
+                                             denoise) > center_l;
+            const bool bit_r = sampleGrayCPU(right, right_pitch,
+                                             x_right + dx, y_right + dy,
+                                             denoise) > center_r;
+            same += bit_l == bit_r ? 1 : 0;
+            ++bits;
+        }
+    }
+    if (bits < 8) return -2.0f;
+    return static_cast<float>(same) / static_cast<float>(bits);
+}
+
+std::vector<SparseFeaturePoint> detectSparseFeaturePointsInBBoxCPU(
+    const uint8_t* img, int pitch, int img_w, int img_h,
+    const Detection& det,
+    SparseFeatureMode mode,
+    int patch_radius,
+    int max_points,
+    bool denoise,
+    int max_roi_pixels)
+{
+    std::vector<SparseFeaturePoint> selected;
+    if (!img || pitch <= 0 || img_w <= 0 || img_h <= 0 ||
+        det.width < 10.0f || det.height < 10.0f) {
+        return selected;
+    }
+
+    max_points = std::clamp(max_points, 4, 64);
+    patch_radius = std::clamp(patch_radius, 2, 12);
+    const int border = patch_radius + (denoise ? 2 : 1);
+    int x1 = static_cast<int>(std::floor(det.cx - det.width * 0.46f));
+    int y1 = static_cast<int>(std::floor(det.cy - det.height * 0.46f));
+    int x2 = static_cast<int>(std::ceil(det.cx + det.width * 0.46f));
+    int y2 = static_cast<int>(std::ceil(det.cy + det.height * 0.46f));
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 - x1 < patch_radius * 2 + 4 ||
+        y2 - y1 < patch_radius * 2 + 4) {
+        return selected;
+    }
+
+    const int roi_w = x2 - x1 + 1;
+    const int roi_h = y2 - y1 + 1;
+    const int area = roi_w * roi_h;
+    const int stride = std::max(
+        1, static_cast<int>(std::ceil(std::sqrt(
+               static_cast<float>(area) /
+               static_cast<float>(std::max(256, max_roi_pixels))))));
+    const float rx = std::max(1.0f, det.width * 0.46f);
+    const float ry = std::max(1.0f, det.height * 0.46f);
+    const float inner_gate = 0.92f;
+
+    std::vector<SparseFeaturePoint> candidates;
+    candidates.reserve(static_cast<size_t>(area / std::max(1, stride * stride)));
+    float best_response = 0.0f;
+
+    auto local_variance = [&](int x, int y) -> float {
+        double sum = 0.0;
+        double sum2 = 0.0;
+        int n = 0;
+        for (int yy = -1; yy <= 1; ++yy) {
+            for (int xx = -1; xx <= 1; ++xx) {
+                const double v = sampleGrayCPU(img, pitch, x + xx, y + yy, denoise);
+                sum += v;
+                sum2 += v * v;
+                ++n;
+            }
+        }
+        const double mean = sum / std::max(1, n);
+        return static_cast<float>(std::max(0.0, sum2 / std::max(1, n) - mean * mean));
+    };
+
+    for (int y = y1; y <= y2; y += stride) {
+        for (int x = x1; x <= x2; x += stride) {
+            const float nx = (static_cast<float>(x) - det.cx) / rx;
+            const float ny = (static_cast<float>(y) - det.cy) / ry;
+            if (nx * nx + ny * ny > inner_gate * inner_gate) continue;
+            if (!patchInsideCPU(img_w, img_h, x, y, patch_radius, denoise)) continue;
+
+            float response = 0.0f;
+            if (mode == SparseFeatureMode::CORNER ||
+                mode == SparseFeatureMode::BINARY) {
+                double sxx = 0.0;
+                double syy = 0.0;
+                double sxy = 0.0;
+                for (int yy = -1; yy <= 1; ++yy) {
+                    for (int xx = -1; xx <= 1; ++xx) {
+                        const float gx = sampleGrayCPU(img, pitch, x + xx + 1, y + yy, denoise) -
+                                         sampleGrayCPU(img, pitch, x + xx - 1, y + yy, denoise);
+                        const float gy = sampleGrayCPU(img, pitch, x + xx, y + yy + 1, denoise) -
+                                         sampleGrayCPU(img, pitch, x + xx, y + yy - 1, denoise);
+                        sxx += static_cast<double>(gx) * gx;
+                        syy += static_cast<double>(gy) * gy;
+                        sxy += static_cast<double>(gx) * gy;
+                    }
+                }
+                const double tr = sxx + syy;
+                const double det_m = sxx * syy - sxy * sxy;
+                if (tr > 1e-6 && det_m > 0.0) {
+                    const double disc = std::max(0.0, tr * tr - 4.0 * det_m);
+                    response = static_cast<float>(0.5 * (tr - std::sqrt(disc)));
+                }
+                if (mode == SparseFeatureMode::BINARY) {
+                    const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                                     sampleGrayCPU(img, pitch, x - 1, y, denoise);
+                    const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                                     sampleGrayCPU(img, pitch, x, y - 1, denoise);
+                    const float mag = std::sqrt(gx * gx + gy * gy);
+                    const float texture = mag * std::sqrt(std::max(0.0f, local_variance(x, y)));
+                    response = 0.65f * response + 0.35f * texture;
+                }
+            } else {
+                const float gx = sampleGrayCPU(img, pitch, x + 1, y, denoise) -
+                                 sampleGrayCPU(img, pitch, x - 1, y, denoise);
+                const float gy = sampleGrayCPU(img, pitch, x, y + 1, denoise) -
+                                 sampleGrayCPU(img, pitch, x, y - 1, denoise);
+                const float mag = std::sqrt(gx * gx + gy * gy);
+                response = mag * std::sqrt(std::max(0.0f, local_variance(x, y)));
+            }
+
+            if (response <= 1e-3f) continue;
+            candidates.push_back({x, y, response});
+            best_response = std::max(best_response, response);
+        }
+    }
+
+    if (candidates.empty() || best_response <= 0.0f) return selected;
+    std::sort(candidates.begin(), candidates.end(),
+              [](const SparseFeaturePoint& a, const SparseFeaturePoint& b) {
+                  return a.response > b.response;
+              });
+
+    const float min_response = best_response * 0.12f;
+    const float min_dist = std::max(3.0f, std::min(det.width, det.height) * 0.08f);
+    const float min_dist2 = min_dist * min_dist;
+    selected.reserve(static_cast<size_t>(max_points));
+    for (const auto& p : candidates) {
+        if (p.response < min_response) break;
+        bool too_close = false;
+        for (const auto& kept : selected) {
+            const float dx = static_cast<float>(p.x - kept.x);
+            const float dy = static_cast<float>(p.y - kept.y);
+            if (dx * dx + dy * dy < min_dist2) {
+                too_close = true;
+                break;
+            }
+        }
+        if (too_close) continue;
+        selected.push_back(p);
+        if (static_cast<int>(selected.size()) >= max_points) break;
+    }
+    return selected;
+}
+
+SparseFeatureDisparityResult matchSparseFeatureDisparityCPU(
+    const uint8_t* left_img, int left_pitch,
+    const uint8_t* right_img, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    bool source_left,
+    float initial_disp,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    SparseFeatureMode mode)
+{
+    SparseFeatureDisparityResult result;
+    if (!left_img || !right_img || left_pitch <= 0 || right_pitch <= 0 ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        initial_disp > static_cast<float>(max_disparity)) {
+        return result;
+    }
+
+    const int patch_radius = std::clamp(dual_cfg.subpixel_patch_radius, 2, 8);
+    const int max_points = std::clamp(std::max(dual_cfg.subpixel_max_points, 16), 4, 48);
+    const int min_points = std::clamp(std::max(3, dual_cfg.subpixel_min_points),
+                                      3, max_points);
+    const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
+    const int y_radius = std::clamp(
+        static_cast<int>(std::lround(dual_cfg.epipolar_y_tolerance * 0.20f)),
+        1, 3);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    const float max_stddev = std::max(0.05f, dual_cfg.subpixel_max_stddev_px);
+    const bool binary_mode = mode == SparseFeatureMode::BINARY;
+    const float min_score = binary_mode
+        ? std::max(0.58f, 0.50f + dual_cfg.subpixel_min_confidence * 0.35f)
+        : std::max(0.12f, dual_cfg.subpixel_min_confidence * 0.60f);
+
+    const Detection& source_det = source_left ? left_det : right_det;
+    const auto points = detectSparseFeaturePointsInBBoxCPU(
+        source_left ? left_img : right_img,
+        source_left ? left_pitch : right_pitch,
+        img_w, img_h, source_det, mode, patch_radius, max_points,
+        dual_cfg.roi_denoise, dual_cfg.circle_max_roi_pixels);
+    if (static_cast<int>(points.size()) < min_points) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const uint8_t* source_img = source_left ? left_img : right_img;
+    const uint8_t* target_img = source_left ? right_img : left_img;
+    const int source_pitch = source_left ? left_pitch : right_pitch;
+    const int target_pitch = source_left ? right_pitch : left_pitch;
+    const int d_start = std::max(1, static_cast<int>(std::floor(initial_disp)) - search_radius);
+    const int d_end = std::min(max_disparity,
+                               static_cast<int>(std::ceil(initial_disp)) + search_radius);
+    if (d_start >= d_end) return result;
+
+    std::vector<float> disparities;
+    std::vector<float> scores;
+    std::vector<float> anchors_x;
+    std::vector<float> anchors_y;
+    disparities.reserve(points.size());
+    scores.reserve(points.size());
+    anchors_x.reserve(points.size());
+    anchors_y.reserve(points.size());
+
+    auto score_at = [&](const SparseFeaturePoint& p, int disp, int dy) -> float {
+        const int target_x = source_left ? (p.x - disp) : (p.x + disp);
+        const int target_y = p.y + dy;
+        if (!patchInsideCPU(img_w, img_h, target_x, target_y,
+                            patch_radius, dual_cfg.roi_denoise)) {
+            return -2.0f;
+        }
+        if (binary_mode) {
+            return censusPatchSimilarityCPU(source_img, source_pitch,
+                                            target_img, target_pitch,
+                                            p.x, p.y, target_x, target_y,
+                                            patch_radius, dual_cfg.roi_denoise);
+        }
+        return znccPatchCPU(source_img, source_pitch, target_img, target_pitch,
+                            p.x, p.y, target_x, target_y,
+                            patch_radius, dual_cfg.roi_denoise);
+    };
+
+    for (const auto& p : points) {
+        if (!patchInsideCPU(img_w, img_h, p.x, p.y,
+                            patch_radius, dual_cfg.roi_denoise)) {
+            continue;
+        }
+        ++result.attempted;
+        float best_score = -2.0f;
+        float second_score = -2.0f;
+        int best_disp = -1;
+        int best_dy = 0;
+        for (int dy = -y_radius; dy <= y_radius; ++dy) {
+            for (int disp = d_start; disp <= d_end; ++disp) {
+                const float score = score_at(p, disp, dy);
+                if (score > best_score) {
+                    second_score = best_score;
+                    best_score = score;
+                    best_disp = disp;
+                    best_dy = dy;
+                } else if (score > second_score) {
+                    second_score = score;
+                }
+            }
+        }
+        if (best_disp < 0 || best_score < min_score) continue;
+
+        float sub_disp = static_cast<float>(best_disp);
+        if (best_disp > d_start && best_disp < d_end) {
+            const float s_minus = score_at(p, best_disp - 1, best_dy);
+            const float s_plus = score_at(p, best_disp + 1, best_dy);
+            const float denom = s_minus - 2.0f * best_score + s_plus;
+            if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
+                sub_disp += std::clamp(
+                    0.5f * (s_minus - s_plus) / denom,
+                    -1.0f, 1.0f);
+            }
+        }
+
+        const float uniqueness =
+            second_score > -1.5f ? best_score - second_score : 1.0f;
+        if ((uniqueness < 0.01f && best_score < 0.75f) ||
+            std::abs(sub_disp - initial_disp) > max_delta ||
+            sub_disp <= 0.5f ||
+            sub_disp > static_cast<float>(max_disparity)) {
+            continue;
+        }
+
+        disparities.push_back(sub_disp);
+        scores.push_back(best_score);
+        if (source_left) {
+            anchors_x.push_back(static_cast<float>(p.x));
+            anchors_y.push_back(static_cast<float>(p.y));
+        } else {
+            anchors_x.push_back(static_cast<float>(p.x) + sub_disp);
+            anchors_y.push_back(static_cast<float>(p.y + best_dy));
+        }
+    }
+
+    if (static_cast<int>(disparities.size()) < min_points) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    std::vector<float> sorted = disparities;
+    std::sort(sorted.begin(), sorted.end());
+    const float median = medianOfSortedCPU(sorted);
+
+    std::vector<float> abs_dev;
+    abs_dev.reserve(disparities.size());
+    for (float d : disparities) abs_dev.push_back(std::abs(d - median));
+    std::sort(abs_dev.begin(), abs_dev.end());
+    const float mad = medianOfSortedCPU(abs_dev);
+    const float inlier_gate = std::max(0.60f, mad * 2.5f);
+
+    double sum_disp = 0.0;
+    double sum_score = 0.0;
+    double sum_anchor_x = 0.0;
+    double sum_anchor_y = 0.0;
+    int inliers = 0;
+    for (size_t i = 0; i < disparities.size(); ++i) {
+        if (std::abs(disparities[i] - median) > inlier_gate) continue;
+        const double w = std::max(0.05f, scores[i]);
+        sum_disp += w * static_cast<double>(disparities[i]);
+        sum_anchor_x += w * static_cast<double>(anchors_x[i]);
+        sum_anchor_y += w * static_cast<double>(anchors_y[i]);
+        sum_score += w;
+        ++inliers;
+    }
+    if (inliers < min_points || sum_score <= 0.0) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    result.disparity = static_cast<float>(sum_disp / sum_score);
+    result.anchor_cx = static_cast<float>(sum_anchor_x / sum_score);
+    result.anchor_cy = static_cast<float>(sum_anchor_y / sum_score);
+    result.support = inliers;
+    double var = 0.0;
+    for (size_t i = 0; i < disparities.size(); ++i) {
+        if (std::abs(disparities[i] - median) > inlier_gate) continue;
+        const double diff = static_cast<double>(disparities[i] - result.disparity);
+        var += diff * diff;
+    }
+    result.stddev = static_cast<float>(
+        std::sqrt(var / std::max(1.0, static_cast<double>(inliers))));
+    if (result.stddev > max_stddev ||
+        std::abs(result.disparity - initial_disp) > max_delta ||
+        result.disparity <= 0.5f ||
+        result.disparity > static_cast<float>(max_disparity)) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const float support_ratio = static_cast<float>(inliers) /
+                                static_cast<float>(std::max(1, max_points));
+    const float mean_score = static_cast<float>(sum_score / static_cast<double>(inliers));
+    const float score_conf = std::clamp((mean_score - min_score) /
+                                        std::max(0.01f, 1.0f - min_score),
+                                        0.0f, 1.0f);
+    const float consistency = std::clamp(1.0f / (1.0f + result.stddev),
+                                         0.0f, 1.0f);
+    const float delta_conf = 1.0f -
+        std::min(1.0f, std::abs(result.disparity - initial_disp) / max_delta);
+    result.confidence = std::clamp(0.30f * support_ratio +
+                                   0.35f * score_conf +
+                                   0.25f * consistency +
+                                   0.10f * delta_conf,
+                                   0.0f, 1.0f);
+    if (result.confidence < dual_cfg.subpixel_min_confidence) {
+        result.low_confidence = true;
+        return result;
+    }
+    result.valid = true;
+    return result;
+}
+
+const char* openCVFeatureModeName(OpenCVFeatureMode mode)
+{
+    switch (mode) {
+    case OpenCVFeatureMode::ORB: return "ORB";
+    case OpenCVFeatureMode::BRISK: return "BRISK";
+    case OpenCVFeatureMode::AKAZE: return "AKAZE";
+    }
+    return "UNKNOWN";
+}
+
+cv::Rect featureROIFromDetectionCPU(
+    const Detection& det,
+    int img_w,
+    int img_h,
+    int border,
+    float scale,
+    int extra_margin)
+{
+    if (img_w <= 0 || img_h <= 0 || det.width < 6.0f || det.height < 6.0f) {
+        return {};
+    }
+    int x1 = static_cast<int>(std::floor(det.cx - det.width * scale)) - extra_margin;
+    int y1 = static_cast<int>(std::floor(det.cy - det.height * scale)) - extra_margin;
+    int x2 = static_cast<int>(std::ceil(det.cx + det.width * scale)) + extra_margin;
+    int y2 = static_cast<int>(std::ceil(det.cy + det.height * scale)) + extra_margin;
+    x1 = std::max(border, x1);
+    y1 = std::max(border, y1);
+    x2 = std::min(img_w - 1 - border, x2);
+    y2 = std::min(img_h - 1 - border, y2);
+    if (x2 <= x1 || y2 <= y1) return {};
+    return cv::Rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1);
+}
+
+cv::Ptr<cv::Feature2D> createOpenCVFeatureExtractorCPU(
+    OpenCVFeatureMode mode,
+    int max_features,
+    int patch_radius)
+{
+    max_features = std::clamp(max_features, 16, 256);
+    patch_radius = std::clamp(patch_radius, 2, 12);
+    const int patch_size = std::max(9, patch_radius * 2 + 1);
+    const int edge_threshold = std::clamp(patch_radius + 3, 5, 16);
+
+    switch (mode) {
+    case OpenCVFeatureMode::ORB:
+        return cv::ORB::create(max_features, 1.2f, 3, edge_threshold, 0, 2,
+                               cv::ORB::HARRIS_SCORE, patch_size, 12);
+    case OpenCVFeatureMode::BRISK:
+        return cv::BRISK::create(18, 2, 1.0f);
+    case OpenCVFeatureMode::AKAZE: {
+        auto akaze = cv::AKAZE::create();
+        akaze->setDescriptorType(cv::AKAZE::DESCRIPTOR_MLDB);
+        akaze->setThreshold(0.0015);
+        akaze->setNOctaves(2);
+        akaze->setNOctaveLayers(2);
+        return akaze;
+    }
+    }
+    return {};
+}
+
+void detectAndDescribeOpenCVFeatureCPU(
+    cv::Feature2D& extractor,
+    const cv::Mat& image,
+    int max_points,
+    std::vector<cv::KeyPoint>& keypoints,
+    cv::Mat& descriptors)
+{
+    keypoints.clear();
+    descriptors.release();
+    extractor.detect(image, keypoints);
+    if (keypoints.empty()) return;
+
+    std::sort(keypoints.begin(), keypoints.end(),
+              [](const cv::KeyPoint& a, const cv::KeyPoint& b) {
+                  return a.response > b.response;
+              });
+    if (static_cast<int>(keypoints.size()) > max_points) {
+        keypoints.resize(static_cast<size_t>(max_points));
+    }
+    extractor.compute(image, keypoints, descriptors);
+}
+
+SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
+    const uint8_t* left_img, int left_pitch,
+    const uint8_t* right_img, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    bool source_left,
+    float initial_disp,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    OpenCVFeatureMode mode)
+{
+    SparseFeatureDisparityResult result;
+    if (!left_img || !right_img || left_pitch <= 0 || right_pitch <= 0 ||
+        img_w <= 0 || img_h <= 0 ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        initial_disp > static_cast<float>(max_disparity)) {
+        return result;
+    }
+
+    const int patch_radius = std::clamp(dual_cfg.subpixel_patch_radius, 2, 10);
+    const int max_points = std::clamp(std::max(dual_cfg.subpixel_max_points * 4, 48),
+                                      16, 160);
+    const int min_points = std::clamp(std::max(3, dual_cfg.subpixel_min_points),
+                                      3, max_points);
+    const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
+    const int y_radius = std::clamp(
+        static_cast<int>(std::lround(dual_cfg.epipolar_y_tolerance * 0.30f)),
+        1, 5);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    const float max_stddev = std::max(0.05f, dual_cfg.subpixel_max_stddev_px);
+    const int extra_margin = search_radius + static_cast<int>(std::ceil(max_delta)) + 2;
+    const int border = std::max(2, patch_radius);
+
+    const Detection& source_det = source_left ? left_det : right_det;
+    const Detection& target_det = source_left ? right_det : left_det;
+    const cv::Rect source_roi = featureROIFromDetectionCPU(
+        source_det, img_w, img_h, border, 0.56f, 2);
+    const cv::Rect target_roi = featureROIFromDetectionCPU(
+        target_det, img_w, img_h, border, 0.62f, extra_margin);
+    if (source_roi.empty() || target_roi.empty()) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    try {
+        cv::Mat left_full(img_h, img_w, CV_8UC1,
+                          const_cast<uint8_t*>(left_img),
+                          static_cast<size_t>(left_pitch));
+        cv::Mat right_full(img_h, img_w, CV_8UC1,
+                           const_cast<uint8_t*>(right_img),
+                           static_cast<size_t>(right_pitch));
+        const cv::Mat source_view = source_left
+            ? left_full(source_roi)
+            : right_full(source_roi);
+        const cv::Mat target_view = source_left
+            ? right_full(target_roi)
+            : left_full(target_roi);
+
+        cv::Mat source_proc = source_view;
+        cv::Mat target_proc = target_view;
+        cv::Mat source_denoised;
+        cv::Mat target_denoised;
+        if (dual_cfg.roi_denoise) {
+            cv::medianBlur(source_view, source_denoised, 3);
+            cv::medianBlur(target_view, target_denoised, 3);
+            source_proc = source_denoised;
+            target_proc = target_denoised;
+        }
+
+        auto extractor = createOpenCVFeatureExtractorCPU(mode, max_points, patch_radius);
+        if (!extractor) return result;
+
+        std::vector<cv::KeyPoint> source_keypoints;
+        std::vector<cv::KeyPoint> target_keypoints;
+        cv::Mat source_descriptors;
+        cv::Mat target_descriptors;
+        detectAndDescribeOpenCVFeatureCPU(
+            *extractor, source_proc, max_points, source_keypoints, source_descriptors);
+        detectAndDescribeOpenCVFeatureCPU(
+            *extractor, target_proc, max_points, target_keypoints, target_descriptors);
+        if (source_keypoints.size() < static_cast<size_t>(min_points) ||
+            target_keypoints.size() < static_cast<size_t>(min_points) ||
+            source_descriptors.empty() || target_descriptors.empty() ||
+            source_descriptors.depth() != CV_8U ||
+            target_descriptors.depth() != CV_8U) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        cv::BFMatcher matcher(cv::NORM_HAMMING, false);
+        std::vector<std::vector<cv::DMatch>> knn_matches;
+        matcher.knnMatch(source_descriptors, target_descriptors, knn_matches, 2);
+        result.attempted = static_cast<int>(knn_matches.size());
+        if (result.attempted < min_points) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        const float ratio_thresh = 0.78f;
+        const float max_hamming = static_cast<float>(
+            std::max(1, source_descriptors.cols * 8));
+        const float min_score = std::max(0.45f,
+            0.35f + dual_cfg.subpixel_min_confidence * 0.45f);
+        std::vector<float> disparities;
+        std::vector<float> scores;
+        std::vector<float> anchors_x;
+        std::vector<float> anchors_y;
+        disparities.reserve(knn_matches.size());
+        scores.reserve(knn_matches.size());
+        anchors_x.reserve(knn_matches.size());
+        anchors_y.reserve(knn_matches.size());
+
+        for (const auto& pair : knn_matches) {
+            if (pair.empty()) continue;
+            const cv::DMatch& best = pair[0];
+            if (best.queryIdx < 0 || best.trainIdx < 0 ||
+                best.queryIdx >= static_cast<int>(source_keypoints.size()) ||
+                best.trainIdx >= static_cast<int>(target_keypoints.size())) {
+                continue;
+            }
+            if (pair.size() > 1 && pair[1].distance > 0.0f &&
+                best.distance > ratio_thresh * pair[1].distance) {
+                continue;
+            }
+
+            const cv::KeyPoint& ks = source_keypoints[best.queryIdx];
+            const cv::KeyPoint& kt = target_keypoints[best.trainIdx];
+            const float source_x = static_cast<float>(source_roi.x) + ks.pt.x;
+            const float source_y = static_cast<float>(source_roi.y) + ks.pt.y;
+            const float target_x = static_cast<float>(target_roi.x) + kt.pt.x;
+            const float target_y = static_cast<float>(target_roi.y) + kt.pt.y;
+            const float disparity = source_left
+                ? (source_x - target_x)
+                : (target_x - source_x);
+            if (std::abs(source_y - target_y) > static_cast<float>(y_radius) ||
+                disparity <= 0.5f ||
+                disparity > static_cast<float>(max_disparity) ||
+                std::abs(disparity - initial_disp) > max_delta) {
+                continue;
+            }
+
+            const float score = 1.0f - std::min(1.0f, best.distance / max_hamming);
+            if (score < min_score) continue;
+
+            disparities.push_back(disparity);
+            scores.push_back(score);
+            if (source_left) {
+                anchors_x.push_back(source_x);
+                anchors_y.push_back(source_y);
+            } else {
+                anchors_x.push_back(target_x);
+                anchors_y.push_back(target_y);
+            }
+        }
+
+        if (static_cast<int>(disparities.size()) < min_points) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        std::vector<float> sorted = disparities;
+        std::sort(sorted.begin(), sorted.end());
+        const float median = medianOfSortedCPU(sorted);
+
+        std::vector<float> abs_dev;
+        abs_dev.reserve(disparities.size());
+        for (float d : disparities) abs_dev.push_back(std::abs(d - median));
+        std::sort(abs_dev.begin(), abs_dev.end());
+        const float mad = medianOfSortedCPU(abs_dev);
+        const float inlier_gate = std::max(0.60f, mad * 2.5f);
+
+        double sum_disp = 0.0;
+        double sum_score = 0.0;
+        double sum_anchor_x = 0.0;
+        double sum_anchor_y = 0.0;
+        int inliers = 0;
+        for (size_t i = 0; i < disparities.size(); ++i) {
+            if (std::abs(disparities[i] - median) > inlier_gate) continue;
+            const double w = std::max(0.05f, scores[i]);
+            sum_disp += w * static_cast<double>(disparities[i]);
+            sum_anchor_x += w * static_cast<double>(anchors_x[i]);
+            sum_anchor_y += w * static_cast<double>(anchors_y[i]);
+            sum_score += w;
+            ++inliers;
+        }
+        if (inliers < min_points || sum_score <= 0.0) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        result.disparity = static_cast<float>(sum_disp / sum_score);
+        result.anchor_cx = static_cast<float>(sum_anchor_x / sum_score);
+        result.anchor_cy = static_cast<float>(sum_anchor_y / sum_score);
+        result.support = inliers;
+
+        double var = 0.0;
+        for (size_t i = 0; i < disparities.size(); ++i) {
+            if (std::abs(disparities[i] - median) > inlier_gate) continue;
+            const double diff = static_cast<double>(disparities[i] - result.disparity);
+            var += diff * diff;
+        }
+        result.stddev = static_cast<float>(
+            std::sqrt(var / std::max(1.0, static_cast<double>(inliers))));
+        if (result.stddev > max_stddev ||
+            std::abs(result.disparity - initial_disp) > max_delta ||
+            result.disparity <= 0.5f ||
+            result.disparity > static_cast<float>(max_disparity)) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        const float support_ratio = static_cast<float>(inliers) /
+                                    static_cast<float>(std::max(1, max_points));
+        const float mean_score = static_cast<float>(sum_score / static_cast<double>(inliers));
+        const float score_conf = std::clamp((mean_score - min_score) /
+                                            std::max(0.01f, 1.0f - min_score),
+                                            0.0f, 1.0f);
+        const float consistency = std::clamp(1.0f / (1.0f + result.stddev),
+                                             0.0f, 1.0f);
+        const float delta_conf = 1.0f -
+            std::min(1.0f, std::abs(result.disparity - initial_disp) / max_delta);
+        result.confidence = std::clamp(0.30f * support_ratio +
+                                       0.35f * score_conf +
+                                       0.25f * consistency +
+                                       0.10f * delta_conf,
+                                       0.0f, 1.0f);
+        if (result.confidence < dual_cfg.subpixel_min_confidence) {
+            result.low_confidence = true;
+            return result;
+        }
+        result.valid = true;
+        return result;
+    } catch (const cv::Exception& e) {
+        LOG_WARN("OpenCV %s ROI feature match failed: %s",
+                 openCVFeatureModeName(mode), e.what());
+        return result;
+    }
+}
+
+SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
+    const uint8_t* left_img, int left_pitch,
+    const uint8_t* right_img, int right_pitch,
+    int img_w, int img_h,
+    const CircleFit2D& left_circle,
+    const CircleFit2D& right_circle,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline)
+{
+    SubpixelDisparityResult result;
+    if (!left_img || !right_img || left_pitch <= 0 || right_pitch <= 0 ||
+        !left_circle.valid || !right_circle.valid || max_disparity <= 0) {
+        return result;
+    }
+
+    const float initial_disp = left_circle.cx - right_circle.cx;
+    if (!std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        initial_disp > static_cast<float>(max_disparity)) {
+        return result;
+    }
+
+    const int patch_radius = std::clamp(dual_cfg.subpixel_patch_radius, 2, 12);
+    const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    result.delta_gate_px = max_delta;
+
+    const int x_left = static_cast<int>(std::lround(left_circle.cx));
+    const int y_left = static_cast<int>(std::lround(left_circle.cy));
+    const int y_right = y_left;
+    if (!patchInsideCPU(img_w, img_h, x_left, y_left,
+                        patch_radius, dual_cfg.roi_denoise)) {
+        return result;
+    }
+
+    const int d_start = std::max(1, static_cast<int>(std::floor(initial_disp)) - search_radius);
+    const int d_end = std::min(max_disparity,
+                               static_cast<int>(std::ceil(initial_disp)) + search_radius);
+    if (d_start >= d_end) return result;
+
+    auto score_at = [&](int disparity) -> float {
+        const int x_right = static_cast<int>(std::lround(
+            static_cast<float>(x_left) - static_cast<float>(disparity)));
+        if (!patchInsideCPU(img_w, img_h, x_right, y_right,
+                            patch_radius, dual_cfg.roi_denoise)) {
+            return -2.0f;
+        }
+        return znccPatchCPU(left_img, left_pitch, right_img, right_pitch,
+                            x_left, y_left, x_right, y_right,
+                            patch_radius, dual_cfg.roi_denoise);
+    };
+
+    float best_score = -2.0f;
+    float second_score = -2.0f;
+    int best_disp = -1;
+    for (int disp = d_start; disp <= d_end; ++disp) {
+        ++result.attempted;
+        const float score = score_at(disp);
+        if (score > best_score) {
+            second_score = best_score;
+            best_score = score;
+            best_disp = disp;
+        } else if (score > second_score) {
+            second_score = score;
+        }
+    }
+    const float min_score = std::max(0.10f, dual_cfg.subpixel_min_confidence * 0.60f);
+    if (best_disp < 0 || best_score < min_score) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    float sub_disp = static_cast<float>(best_disp);
+    if (best_disp > d_start && best_disp < d_end) {
+        const float s_minus = score_at(best_disp - 1);
+        const float s_plus = score_at(best_disp + 1);
+        const float denom = s_minus - 2.0f * best_score + s_plus;
+        if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
+            const float delta = std::clamp(
+                0.5f * (s_minus - s_plus) / denom,
+                -1.0f, 1.0f);
+            sub_disp += delta;
+        }
+    }
+
+    const float uniqueness_margin =
+        second_score > -1.5f ? best_score - second_score : 1.0f;
+    if ((uniqueness_margin < 0.01f && best_score < 0.75f) ||
+        std::abs(sub_disp - initial_disp) > max_delta ||
+        sub_disp <= 0.5f ||
+        sub_disp > static_cast<float>(max_disparity)) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    result.valid = true;
+    result.disparity = sub_disp;
+    result.support = 1;
+    result.stddev = 0.0f;
+    result.confidence = std::clamp((best_score - 0.10f) / 0.80f, 0.0f, 1.0f);
+    if (result.confidence < dual_cfg.subpixel_min_confidence) {
+        result.valid = false;
+        result.low_confidence = true;
+    }
+    return result;
 }
 
 SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
@@ -1544,6 +3060,32 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     result.valid = true;
     return result;
 }
+
+void stampFrameMetadata(FrameSlot& slot)
+{
+    const int64_t frame_counter_delta =
+        static_cast<int64_t>(slot.left_frame_counter) -
+        static_cast<int64_t>(slot.right_frame_counter);
+    const int64_t frame_number_delta =
+        static_cast<int64_t>(slot.left_frame_number) -
+        static_cast<int64_t>(slot.right_frame_number);
+    const int64_t timestamp_delta_raw =
+        static_cast<int64_t>(slot.left_timestamp_us) -
+        static_cast<int64_t>(slot.right_timestamp_us);
+    for (auto& obj : slot.results) {
+        obj.left_timestamp_us = slot.left_timestamp_us;
+        obj.right_timestamp_us = slot.right_timestamp_us;
+        obj.left_frame_number = slot.left_frame_number;
+        obj.right_frame_number = slot.right_frame_number;
+        obj.left_frame_counter = slot.left_frame_counter;
+        obj.right_frame_counter = slot.right_frame_counter;
+        obj.left_trigger_index = slot.left_trigger_index;
+        obj.right_trigger_index = slot.right_trigger_index;
+        obj.frame_counter_delta = frame_counter_delta;
+        obj.frame_number_delta = frame_number_delta;
+        obj.timestamp_delta_us = timestamp_delta_raw / 1000;
+    }
+}
 }  // namespace
 
 bool Pipeline::leftDetectorUsesBGR() const {
@@ -1628,14 +3170,75 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     const bool image_available = left_cpu && right_cpu &&
                                  left_pitch > 0 && right_pitch > 0;
+    const bool bbox_depth_enabled =
+        dualYoloBBoxDepthEnabled(config_.dual_yolo);
+    const bool bbox_edges_depth_enabled =
+        dualYoloBBoxEdgesDepthEnabled(config_.dual_yolo);
+    const bool circle_depth_enabled =
+        dualYoloCircleDepthEnabled(config_.dual_yolo);
+    const bool circle_edges_depth_enabled =
+        dualYoloCircleEdgesDepthEnabled(config_.dual_yolo);
+    const bool roi_edge_centroid_depth_enabled =
+        dualYoloROIEdgeCentroidDepthEnabled(config_.dual_yolo);
+    const bool roi_radial_center_depth_enabled =
+        dualYoloROIRadialCenterDepthEnabled(config_.dual_yolo);
+    const bool roi_edge_pair_center_depth_enabled =
+        dualYoloROIEdgePairCenterDepthEnabled(config_.dual_yolo);
+    const bool roi_corner_points_depth_enabled =
+        dualYoloROICornerPointsDepthEnabled(config_.dual_yolo);
+    const bool roi_texture_points_depth_enabled =
+        dualYoloROITexturePointsDepthEnabled(config_.dual_yolo);
+    const bool roi_binary_points_depth_enabled =
+        dualYoloROIBinaryPointsDepthEnabled(config_.dual_yolo);
+    const bool roi_orb_points_depth_enabled =
+        dualYoloROIORBPointsDepthEnabled(config_.dual_yolo);
+    const bool roi_brisk_points_depth_enabled =
+        dualYoloROIBRISKPointsDepthEnabled(config_.dual_yolo);
+    const bool roi_akaze_points_depth_enabled =
+        dualYoloROIAKAZEPointsDepthEnabled(config_.dual_yolo);
+    const bool roi_center_patch_depth_enabled =
+        dualYoloROICenterPatchDepthEnabled(config_.dual_yolo);
     const bool subpixel_depth_enabled =
-        config_.dual_yolo.subpixel_enabled &&
-        isROISubpixelDepthSolver(config_.dual_yolo.depth_solver);
+        dualYoloSubpixelDepthEnabled(config_.dual_yolo);
+    const bool epipolar_fallback_enabled =
+        dualYoloEpipolarFallbackEnabled(config_.dual_yolo);
+    const bool fallback_template_enabled =
+        dualYoloFallbackTemplateEnabled(config_.dual_yolo);
+    const bool fallback_feature_points_enabled =
+        dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
     const bool use_subpixel_depth =
         subpixel_depth_enabled && image_available;
+    const bool direct_depth_without_circle_enabled =
+        bbox_depth_enabled ||
+        bbox_edges_depth_enabled ||
+        roi_edge_centroid_depth_enabled ||
+        roi_radial_center_depth_enabled ||
+        roi_edge_pair_center_depth_enabled ||
+        roi_corner_points_depth_enabled ||
+        roi_texture_points_depth_enabled ||
+        roi_binary_points_depth_enabled ||
+        roi_orb_points_depth_enabled ||
+        roi_brisk_points_depth_enabled ||
+        roi_akaze_points_depth_enabled ||
+        roi_center_patch_depth_enabled ||
+        use_subpixel_depth;
+    const bool circle_seed_refine_enabled =
+        dualYoloNeedsCircleSeedRefine(config_.dual_yolo);
+    const bool use_circle_refine =
+        circle_seed_refine_enabled && image_available;
     if (!image_available &&
-        (config_.dual_yolo.center_refine ||
-         config_.dual_yolo.fallback_epipolar_search ||
+        (circle_seed_refine_enabled ||
+         epipolar_fallback_enabled ||
+         fallback_template_enabled ||
+         fallback_feature_points_enabled ||
+         roi_radial_center_depth_enabled ||
+         roi_edge_pair_center_depth_enabled ||
+         roi_corner_points_depth_enabled ||
+         roi_texture_points_depth_enabled ||
+         roi_binary_points_depth_enabled ||
+         roi_orb_points_depth_enabled ||
+         roi_brisk_points_depth_enabled ||
+         roi_akaze_points_depth_enabled ||
          subpixel_depth_enabled)) {
         local_stats.image_lock_fail =
             static_cast<int>(left_detections.size() + right_detections.size());
@@ -1655,7 +3258,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     auto refine_detection = [&](const uint8_t* img, int pitch,
                                 const Detection& det) -> CircleFit2D {
-        if (!config_.dual_yolo.center_refine) {
+        if (!use_circle_refine) {
             return circleFromDetectionCPU(det);
         }
         return fitCircleInBBoxCPU(img, pitch, img_width, img_height, det,
@@ -1663,41 +3266,521 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                   config_.dual_yolo.circle_max_roi_pixels);
     };
 
+    auto edge_centroid = [&](const uint8_t* img, int pitch,
+                             const Detection& det) -> PointMeasure2D {
+        return edgeCentroidInBBoxCPU(img, pitch, img_width, img_height, det,
+                                     config_.dual_yolo.roi_denoise,
+                                     config_.dual_yolo.circle_max_roi_pixels);
+    };
+
+    auto radial_center = [&](const uint8_t* img, int pitch,
+                             const Detection& det) -> PointMeasure2D {
+        return radialCenterInBBoxCPU(img, pitch, img_width, img_height, det,
+                                     config_.dual_yolo.roi_denoise,
+                                     config_.dual_yolo.circle_max_roi_pixels);
+    };
+
+    auto edge_pair_center = [&](const uint8_t* img, int pitch,
+                                const Detection& det) -> PointMeasure2D {
+        return edgePairCenterInBBoxCPU(img, pitch, img_width, img_height, det,
+                                       config_.dual_yolo.roi_denoise,
+                                       config_.dual_yolo.circle_max_roi_pixels);
+    };
+
     auto build_object = [&](const Detection& left_det,
                             const CircleFit2D& left_circle,
                             const CircleFit2D& right_circle,
                             float semantic_conf,
+                            int match_source,
+                            float yolo_disparity,
+                            const Detection* right_det,
                             Object3D& obj) -> bool {
+        const float fb = focal * baseline;
+        auto depth_from_disparity = [&](float disp) -> float {
+            if (!std::isfinite(disp) || disp <= 0.0f ||
+                disp > static_cast<float>(config_.max_disparity)) {
+                return -1.0f;
+            }
+            const float z_candidate = fb / disp;
+            if (z_candidate < config_.depth.min_depth ||
+                z_candidate > config_.depth.max_depth) {
+                return -1.0f;
+            }
+            return z_candidate;
+        };
+
+        const bool direct_yolo_match = match_source == 1;
+        const bool is_fallback_match = (match_source == 2 || match_source == 3);
+        const float z_yolo =
+            (bbox_depth_enabled && direct_yolo_match)
+                ? depth_from_disparity(yolo_disparity)
+                : -1.0f;
+        float z_bbox_left_edge = -1.0f;
+        float z_bbox_right_edge = -1.0f;
+        float disparity_bbox_left_edge = -1.0f;
+        float disparity_bbox_right_edge = -1.0f;
+        if (bbox_edges_depth_enabled && direct_yolo_match && right_det) {
+            disparity_bbox_left_edge =
+                (left_det.cx - left_det.width * 0.5f) -
+                (right_det->cx - right_det->width * 0.5f);
+            disparity_bbox_right_edge =
+                (left_det.cx + left_det.width * 0.5f) -
+                (right_det->cx + right_det->width * 0.5f);
+            z_bbox_left_edge = depth_from_disparity(disparity_bbox_left_edge);
+            z_bbox_right_edge = depth_from_disparity(disparity_bbox_right_edge);
+        }
+        float disparity_bbox_edge_final = -1.0f;
+        float z_bbox_edge_final = -1.0f;
+        if (z_bbox_left_edge > 0.0f && z_bbox_right_edge > 0.0f) {
+            disparity_bbox_edge_final =
+                0.5f * (disparity_bbox_left_edge + disparity_bbox_right_edge);
+            z_bbox_edge_final = depth_from_disparity(disparity_bbox_edge_final);
+        } else if (z_bbox_left_edge > 0.0f) {
+            disparity_bbox_edge_final = disparity_bbox_left_edge;
+            z_bbox_edge_final = z_bbox_left_edge;
+        } else if (z_bbox_right_edge > 0.0f) {
+            disparity_bbox_edge_final = disparity_bbox_right_edge;
+            z_bbox_edge_final = z_bbox_right_edge;
+        }
+
+        PointMeasure2D left_edge_centroid_measure;
+        PointMeasure2D right_edge_centroid_measure;
+        float disparity_roi_edge_centroid = -1.0f;
+        float z_roi_edge_centroid = -1.0f;
+        if (roi_edge_centroid_depth_enabled && direct_yolo_match &&
+            image_available && right_det) {
+            left_edge_centroid_measure =
+                edge_centroid(left_cpu, left_pitch, left_det);
+            right_edge_centroid_measure =
+                edge_centroid(right_cpu, right_pitch, *right_det);
+            if (left_edge_centroid_measure.valid && right_edge_centroid_measure.valid &&
+                std::abs(left_edge_centroid_measure.cy -
+                         right_edge_centroid_measure.cy) <= y_tol) {
+                disparity_roi_edge_centroid =
+                    left_edge_centroid_measure.cx - right_edge_centroid_measure.cx;
+                z_roi_edge_centroid = depth_from_disparity(disparity_roi_edge_centroid);
+            }
+        }
+
+        PointMeasure2D left_radial_measure;
+        PointMeasure2D right_radial_measure;
+        float disparity_roi_radial_center = -1.0f;
+        float z_roi_radial_center = -1.0f;
+        if (roi_radial_center_depth_enabled && direct_yolo_match &&
+            image_available && right_det) {
+            left_radial_measure =
+                radial_center(left_cpu, left_pitch, left_det);
+            right_radial_measure =
+                radial_center(right_cpu, right_pitch, *right_det);
+            if (left_radial_measure.valid && right_radial_measure.valid &&
+                std::abs(left_radial_measure.cy - right_radial_measure.cy) <= y_tol) {
+                disparity_roi_radial_center =
+                    left_radial_measure.cx - right_radial_measure.cx;
+                z_roi_radial_center = depth_from_disparity(disparity_roi_radial_center);
+            }
+        }
+
+        PointMeasure2D left_edge_pair_measure;
+        PointMeasure2D right_edge_pair_measure;
+        float disparity_roi_edge_pair_center = -1.0f;
+        float z_roi_edge_pair_center = -1.0f;
+        if (roi_edge_pair_center_depth_enabled && direct_yolo_match &&
+            image_available && right_det) {
+            left_edge_pair_measure =
+                edge_pair_center(left_cpu, left_pitch, left_det);
+            right_edge_pair_measure =
+                edge_pair_center(right_cpu, right_pitch, *right_det);
+            if (left_edge_pair_measure.valid && right_edge_pair_measure.valid &&
+                std::abs(left_edge_pair_measure.cy - right_edge_pair_measure.cy) <= y_tol) {
+                disparity_roi_edge_pair_center =
+                    left_edge_pair_measure.cx - right_edge_pair_measure.cx;
+                z_roi_edge_pair_center = depth_from_disparity(disparity_roi_edge_pair_center);
+            }
+        }
+
         const float refined_dy = std::abs(left_circle.cy - right_circle.cy);
+        bool circle_geometry_valid = true;
+        bool epipolar_bad = false;
+        bool size_bad = false;
+        bool nonpositive_disp_bad = false;
+        bool over_max_disp_bad = false;
         if (refined_dy > y_tol) {
-            ++local_stats.epipolar_reject;
-            return false;
+            epipolar_bad = true;
+            circle_geometry_valid = false;
         }
 
         const float radius_ratio = std::max(left_circle.radius / right_circle.radius,
                                             right_circle.radius / left_circle.radius);
         if (radius_ratio > max_ratio) {
-            ++local_stats.size_reject;
+            size_bad = true;
+            circle_geometry_valid = false;
+        }
+
+        const float circle_disparity = left_circle.cx - right_circle.cx;
+        const bool circle_disp_positive =
+            circle_disparity > 0.0f &&
+            circle_disparity <= static_cast<float>(config_.max_disparity);
+        const bool has_feature_proxy_circle =
+            left_circle.source == kCircleSourceFeatureProxy ||
+            right_circle.source == kCircleSourceFeatureProxy;
+        const float feature_initial_disparity =
+            (right_det && yolo_disparity > 0.0f &&
+             yolo_disparity <= static_cast<float>(config_.max_disparity))
+                ? yolo_disparity
+                : (circle_disp_positive ? circle_disparity : -1.0f);
+
+        SparseFeatureDisparityResult corner_points_result;
+        float z_roi_corner_points = -1.0f;
+        if (roi_corner_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            corner_points_result = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::CORNER);
+            if (corner_points_result.valid) {
+                z_roi_corner_points =
+                    depth_from_disparity(corner_points_result.disparity);
+                corner_points_result.valid = z_roi_corner_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult texture_points_result;
+        float z_roi_texture_points = -1.0f;
+        if (roi_texture_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            texture_points_result = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::TEXTURE);
+            if (texture_points_result.valid) {
+                z_roi_texture_points =
+                    depth_from_disparity(texture_points_result.disparity);
+                texture_points_result.valid = z_roi_texture_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult binary_points_result;
+        float z_roi_binary_points = -1.0f;
+        if (roi_binary_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            binary_points_result = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::BINARY);
+            if (binary_points_result.valid) {
+                z_roi_binary_points =
+                    depth_from_disparity(binary_points_result.disparity);
+                binary_points_result.valid = z_roi_binary_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult orb_points_result;
+        float z_roi_orb_points = -1.0f;
+        if (roi_orb_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            orb_points_result = matchOpenCVFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                OpenCVFeatureMode::ORB);
+            if (orb_points_result.valid) {
+                z_roi_orb_points =
+                    depth_from_disparity(orb_points_result.disparity);
+                orb_points_result.valid = z_roi_orb_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult brisk_points_result;
+        float z_roi_brisk_points = -1.0f;
+        if (roi_brisk_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            brisk_points_result = matchOpenCVFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                OpenCVFeatureMode::BRISK);
+            if (brisk_points_result.valid) {
+                z_roi_brisk_points =
+                    depth_from_disparity(brisk_points_result.disparity);
+                brisk_points_result.valid = z_roi_brisk_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult akaze_points_result;
+        float z_roi_akaze_points = -1.0f;
+        if (roi_akaze_points_depth_enabled && direct_yolo_match &&
+            image_available && right_det && feature_initial_disparity > 0.0f) {
+            akaze_points_result = matchOpenCVFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                true,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                OpenCVFeatureMode::AKAZE);
+            if (akaze_points_result.valid) {
+                z_roi_akaze_points =
+                    depth_from_disparity(akaze_points_result.disparity);
+                akaze_points_result.valid = z_roi_akaze_points > 0.0f;
+            }
+        }
+
+        SparseFeatureDisparityResult fallback_feature_result;
+        float z_fallback_feature_points = -1.0f;
+        if (fallback_feature_points_enabled && image_available &&
+            is_fallback_match && feature_initial_disparity > 0.0f) {
+            const bool source_left = match_source == 2;
+            const Detection right_proxy =
+                right_det ? *right_det : detectionFromCircleCPU(right_circle, left_det);
+            const Detection& right_for_feature = right_det ? *right_det : right_proxy;
+            SparseFeatureDisparityResult corner_fb = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, right_for_feature,
+                source_left,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::CORNER);
+            SparseFeatureDisparityResult texture_fb = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, right_for_feature,
+                source_left,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::TEXTURE);
+            SparseFeatureDisparityResult binary_fb = matchSparseFeatureDisparityCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_det, right_for_feature,
+                source_left,
+                feature_initial_disparity,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline,
+                SparseFeatureMode::BINARY);
+            fallback_feature_result = corner_fb;
+            if (!fallback_feature_result.valid ||
+                (texture_fb.valid &&
+                 texture_fb.confidence > fallback_feature_result.confidence)) {
+                fallback_feature_result = texture_fb;
+            }
+            if (!fallback_feature_result.valid ||
+                (binary_fb.valid &&
+                 binary_fb.confidence > fallback_feature_result.confidence)) {
+                fallback_feature_result = binary_fb;
+            }
+            if (roi_orb_points_depth_enabled) {
+                SparseFeatureDisparityResult orb_fb = matchOpenCVFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, right_for_feature,
+                    source_left,
+                    feature_initial_disparity,
+                    config_.dual_yolo,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    OpenCVFeatureMode::ORB);
+                if (!fallback_feature_result.valid ||
+                    (orb_fb.valid &&
+                     orb_fb.confidence > fallback_feature_result.confidence)) {
+                    fallback_feature_result = orb_fb;
+                }
+            }
+            if (roi_brisk_points_depth_enabled) {
+                SparseFeatureDisparityResult brisk_fb = matchOpenCVFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, right_for_feature,
+                    source_left,
+                    feature_initial_disparity,
+                    config_.dual_yolo,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    OpenCVFeatureMode::BRISK);
+                if (!fallback_feature_result.valid ||
+                    (brisk_fb.valid &&
+                     brisk_fb.confidence > fallback_feature_result.confidence)) {
+                    fallback_feature_result = brisk_fb;
+                }
+            }
+            if (roi_akaze_points_depth_enabled) {
+                SparseFeatureDisparityResult akaze_fb = matchOpenCVFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, right_for_feature,
+                    source_left,
+                    feature_initial_disparity,
+                    config_.dual_yolo,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    OpenCVFeatureMode::AKAZE);
+                if (!fallback_feature_result.valid ||
+                    (akaze_fb.valid &&
+                     akaze_fb.confidence > fallback_feature_result.confidence)) {
+                    fallback_feature_result = akaze_fb;
+                }
+            }
+            if (fallback_feature_result.valid) {
+                z_fallback_feature_points =
+                    depth_from_disparity(fallback_feature_result.disparity);
+                fallback_feature_result.valid = z_fallback_feature_points > 0.0f;
+            }
+        }
+
+        if (circle_disparity <= 0.0f) {
+            nonpositive_disp_bad = true;
+            circle_geometry_valid = false;
+        }
+        if (circle_disparity > config_.max_disparity) {
+            over_max_disp_bad = true;
+            circle_geometry_valid = false;
+        }
+        if (!circle_geometry_valid && z_yolo <= 0.0f &&
+            z_bbox_edge_final <= 0.0f &&
+            z_roi_edge_centroid <= 0.0f &&
+            z_roi_radial_center <= 0.0f &&
+            z_roi_edge_pair_center <= 0.0f &&
+            z_roi_corner_points <= 0.0f &&
+            z_roi_texture_points <= 0.0f &&
+            z_roi_binary_points <= 0.0f &&
+            z_roi_orb_points <= 0.0f &&
+            z_roi_brisk_points <= 0.0f &&
+            z_roi_akaze_points <= 0.0f &&
+            z_fallback_feature_points <= 0.0f) {
+            if (epipolar_bad) ++local_stats.epipolar_reject;
+            if (size_bad) ++local_stats.size_reject;
+            if (nonpositive_disp_bad) ++local_stats.nonpositive_disparity;
+            if (over_max_disp_bad) ++local_stats.over_max_disparity;
             return false;
         }
 
-        float disparity = left_circle.cx - right_circle.cx;
-        if (disparity <= 0.0f) {
-            ++local_stats.nonpositive_disparity;
-            return false;
-        }
-        if (disparity > config_.max_disparity) {
-            ++local_stats.over_max_disparity;
-            return false;
+        const bool measured_circle_geometry_valid =
+            circle_geometry_valid && !has_feature_proxy_circle;
+        const float z_circle_raw =
+            measured_circle_geometry_valid ? (fb / circle_disparity) : -1.0f;
+        const bool circle_depth_valid =
+            z_circle_raw >= config_.depth.min_depth &&
+            z_circle_raw <= config_.depth.max_depth;
+        const bool circle_candidate_valid =
+            circle_depth_enabled &&
+            left_circle.source == kCircleSourceRoiFit &&
+            right_circle.source == kCircleSourceRoiFit &&
+            circle_depth_valid;
+        const bool epipolar_fallback_depth_valid =
+            is_fallback_match &&
+            epipolar_fallback_enabled &&
+            circle_depth_valid &&
+            (left_circle.source == kCircleSourceEpipolarSearch ||
+             right_circle.source == kCircleSourceEpipolarSearch);
+        const bool fallback_template_depth_valid =
+            is_fallback_match &&
+            fallback_template_enabled &&
+            circle_depth_valid &&
+            (left_circle.source == kCircleSourceTemplateSearch ||
+             right_circle.source == kCircleSourceTemplateSearch);
+        const bool any_fallback_depth_valid =
+            epipolar_fallback_depth_valid || fallback_template_depth_valid;
+
+        float disparity_circle_left_edge = -1.0f;
+        float disparity_circle_right_edge = -1.0f;
+        float z_circle_left_edge = -1.0f;
+        float z_circle_right_edge = -1.0f;
+        if (circle_edges_depth_enabled &&
+            measured_circle_geometry_valid &&
+            left_circle.source == kCircleSourceRoiFit &&
+            right_circle.source == kCircleSourceRoiFit) {
+            disparity_circle_left_edge =
+                (left_circle.cx - left_circle.radius) -
+                (right_circle.cx - right_circle.radius);
+            disparity_circle_right_edge =
+                (left_circle.cx + left_circle.radius) -
+                (right_circle.cx + right_circle.radius);
+            z_circle_left_edge = depth_from_disparity(disparity_circle_left_edge);
+            z_circle_right_edge = depth_from_disparity(disparity_circle_right_edge);
         }
 
+        SubpixelDisparityResult center_patch_result;
+        bool center_patch_valid_for_obj = false;
+        if (roi_center_patch_depth_enabled &&
+            image_available &&
+            measured_circle_geometry_valid) {
+            center_patch_result = refineDisparityByROICenterPatchCPU(
+                left_cpu, left_pitch, right_cpu, right_pitch,
+                img_width, img_height,
+                left_circle, right_circle,
+                config_.dual_yolo,
+                config_.max_disparity,
+                focal,
+                baseline);
+            center_patch_valid_for_obj = center_patch_result.valid;
+        }
+        const float z_roi_center_patch =
+            center_patch_valid_for_obj
+                ? depth_from_disparity(center_patch_result.disparity)
+                : -1.0f;
+        center_patch_valid_for_obj = z_roi_center_patch > 0.0f;
+
+        float disparity = -1.0f;
+        int depth_source = 0;
         float disparity_conf = 1.0f;
+        bool subpixel_attempted_for_obj = false;
+        bool subpixel_valid_for_obj = false;
+        SubpixelDisparityResult subpixel_result;
         const float subpixel_budget_ms =
             std::max(0.0f, config_.dual_yolo.subpixel_time_budget_ms);
         if (use_subpixel_depth &&
+            measured_circle_geometry_valid &&
             (subpixel_budget_ms <= 0.0f ||
              local_stats.subpixel_time_ms < static_cast<double>(subpixel_budget_ms))) {
             ++local_stats.subpixel_attempted;
+            subpixel_attempted_for_obj = true;
             const auto subpixel_start = Clock::now();
             const SubpixelDisparityResult refined =
                 refineDisparityByROIMultiPointCPU(
@@ -1723,8 +3806,10 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                              refined.delta_gate_px);
             }
             globalPerf().record("Stage2_SubpixelMatch", subpixel_ms);
+            subpixel_result = refined;
             if (refined.valid) {
                 disparity = refined.disparity;
+                subpixel_valid_for_obj = true;
                 disparity_conf = std::clamp(0.70f + 0.30f * refined.confidence,
                                             0.0f, 1.0f);
                 local_stats.subpixel_support_sum += refined.support;
@@ -1737,23 +3822,269 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     ++local_stats.subpixel_low_conf;
                 }
             }
-        } else if (use_subpixel_depth) {
+        } else if (use_subpixel_depth && measured_circle_geometry_valid) {
             ++local_stats.subpixel_budget_skip;
         }
 
-        const float z = focal * baseline / disparity;
+        const float z_subpixel =
+            subpixel_valid_for_obj ? fb / subpixel_result.disparity : -1.0f;
+        if (subpixel_valid_for_obj) {
+            disparity = subpixel_result.disparity;
+            depth_source = 2;
+        } else if (fallback_feature_result.valid) {
+            disparity = fallback_feature_result.disparity;
+            depth_source = 12;
+            disparity_conf = std::clamp(0.55f + 0.30f * fallback_feature_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (fallback_template_depth_valid) {
+            disparity = circle_disparity;
+            depth_source = 7;
+            disparity_conf = std::max(0.45f,
+                std::min(left_circle.confidence, right_circle.confidence));
+        } else if (any_fallback_depth_valid || circle_candidate_valid) {
+            disparity = circle_disparity;
+            depth_source = 1;
+        } else if (z_roi_center_patch > 0.0f) {
+            disparity = center_patch_result.disparity;
+            depth_source = 4;
+            disparity_conf = std::clamp(0.60f + 0.25f * center_patch_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (corner_points_result.valid) {
+            disparity = corner_points_result.disparity;
+            depth_source = 10;
+            disparity_conf = std::clamp(0.55f + 0.30f * corner_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (texture_points_result.valid) {
+            disparity = texture_points_result.disparity;
+            depth_source = 11;
+            disparity_conf = std::clamp(0.52f + 0.28f * texture_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (binary_points_result.valid) {
+            disparity = binary_points_result.disparity;
+            depth_source = 13;
+            disparity_conf = std::clamp(0.55f + 0.30f * binary_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (orb_points_result.valid) {
+            disparity = orb_points_result.disparity;
+            depth_source = 14;
+            disparity_conf = std::clamp(0.54f + 0.30f * orb_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (brisk_points_result.valid) {
+            disparity = brisk_points_result.disparity;
+            depth_source = 15;
+            disparity_conf = std::clamp(0.53f + 0.30f * brisk_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (akaze_points_result.valid) {
+            disparity = akaze_points_result.disparity;
+            depth_source = 16;
+            disparity_conf = std::clamp(0.52f + 0.30f * akaze_points_result.confidence,
+                                        0.0f, 1.0f);
+        } else if (z_roi_radial_center > 0.0f) {
+            disparity = disparity_roi_radial_center;
+            depth_source = 8;
+            disparity_conf = 0.62f;
+        } else if (z_roi_edge_pair_center > 0.0f) {
+            disparity = disparity_roi_edge_pair_center;
+            depth_source = 9;
+            disparity_conf = 0.58f;
+        } else if (z_roi_edge_centroid > 0.0f) {
+            disparity = disparity_roi_edge_centroid;
+            depth_source = 5;
+            disparity_conf = 0.60f;
+        } else if (z_yolo > 0.0f) {
+            disparity = yolo_disparity;
+            depth_source = 3;
+            disparity_conf = 0.65f;
+        } else if (z_bbox_edge_final > 0.0f) {
+            disparity = disparity_bbox_edge_final;
+            depth_source = 6;
+            disparity_conf = 0.55f;
+        } else {
+            ++local_stats.depth_reject;
+            return false;
+        }
+
+        const float z = fb / disparity;
         if (z < config_.depth.min_depth || z > config_.depth.max_depth) {
             ++local_stats.depth_reject;
             return false;
         }
 
         const float dy_norm = std::min(1.0f, refined_dy / y_tol);
-        const float geom_conf = std::max(0.2f, 1.0f - 0.5f * dy_norm);
-        // ROI 亚像素匹配只稳定视差; X/Y 仍按左目圆心投影, 球心半径修正需单独建模。
-        obj.x = (left_circle.cx - cx0) * z / focal;
-        obj.y = (left_circle.cy - cy0) * z / focal;
+        const float geom_conf = circle_geometry_valid
+            ? std::max(0.2f, 1.0f - 0.5f * dy_norm)
+            : 0.45f;
+        // 亚像素/圆心/fallback 用圆心投影; bbox 深度保留检测框中心, 避免 ROI 拟合抖动污染该候选。
+        const bool use_bbox_anchor = depth_source == 3 || depth_source == 6;
+        float anchor_cx = use_bbox_anchor ? left_det.cx : left_circle.cx;
+        float anchor_cy = use_bbox_anchor ? left_det.cy : left_circle.cy;
+        if (depth_source == 5 && left_edge_centroid_measure.valid) {
+            anchor_cx = left_edge_centroid_measure.cx;
+            anchor_cy = left_edge_centroid_measure.cy;
+        } else if (depth_source == 8 && left_radial_measure.valid) {
+            anchor_cx = left_radial_measure.cx;
+            anchor_cy = left_radial_measure.cy;
+        } else if (depth_source == 9 && left_edge_pair_measure.valid) {
+            anchor_cx = left_edge_pair_measure.cx;
+            anchor_cy = left_edge_pair_measure.cy;
+        } else if (depth_source == 10 && corner_points_result.valid) {
+            anchor_cx = corner_points_result.anchor_cx;
+            anchor_cy = corner_points_result.anchor_cy;
+        } else if (depth_source == 11 && texture_points_result.valid) {
+            anchor_cx = texture_points_result.anchor_cx;
+            anchor_cy = texture_points_result.anchor_cy;
+        } else if (depth_source == 13 && binary_points_result.valid) {
+            anchor_cx = binary_points_result.anchor_cx;
+            anchor_cy = binary_points_result.anchor_cy;
+        } else if (depth_source == 14 && orb_points_result.valid) {
+            anchor_cx = orb_points_result.anchor_cx;
+            anchor_cy = orb_points_result.anchor_cy;
+        } else if (depth_source == 15 && brisk_points_result.valid) {
+            anchor_cx = brisk_points_result.anchor_cx;
+            anchor_cy = brisk_points_result.anchor_cy;
+        } else if (depth_source == 16 && akaze_points_result.valid) {
+            anchor_cx = akaze_points_result.anchor_cx;
+            anchor_cy = akaze_points_result.anchor_cy;
+        } else if (depth_source == 12 && fallback_feature_result.valid) {
+            anchor_cx = fallback_feature_result.anchor_cx;
+            anchor_cy = fallback_feature_result.anchor_cy;
+        }
+        obj.x = (anchor_cx - cx0) * z / focal;
+        obj.y = (anchor_cy - cy0) * z / focal;
         obj.z = z;
+        obj.raw_x = obj.x;
+        obj.raw_y = obj.y;
+        obj.raw_z = obj.z;
+        obj.raw_observation_valid = 1;
         obj.z_stereo = z;
+        obj.z_bbox_center = z_yolo;
+        obj.z_bbox_left_edge = z_bbox_left_edge;
+        obj.z_bbox_right_edge = z_bbox_right_edge;
+        obj.z_circle_center = circle_candidate_valid ? z_circle_raw : -1.0f;
+        obj.z_circle_left_edge = z_circle_left_edge;
+        obj.z_circle_right_edge = z_circle_right_edge;
+        obj.z_roi_edge_centroid = z_roi_edge_centroid;
+        obj.z_roi_radial_center = z_roi_radial_center;
+        obj.z_roi_edge_pair_center = z_roi_edge_pair_center;
+        obj.z_roi_corner_points = z_roi_corner_points;
+        obj.z_roi_texture_points = z_roi_texture_points;
+        obj.z_roi_binary_points = z_roi_binary_points;
+        obj.z_roi_orb_points = z_roi_orb_points;
+        obj.z_roi_brisk_points = z_roi_brisk_points;
+        obj.z_roi_akaze_points = z_roi_akaze_points;
+        obj.z_roi_center_patch = z_roi_center_patch;
+        obj.z_roi_multi_point = z_subpixel;
+        obj.z_yolo_bbox_pair = z_yolo;
+        obj.z_circle = circle_candidate_valid ? z_circle_raw : -1.0f;
+        obj.z_subpixel = z_subpixel;
+        obj.z_fallback = z_fallback_feature_points > 0.0f
+            ? z_fallback_feature_points
+            : (any_fallback_depth_valid ? z_circle_raw : -1.0f);
+        obj.z_fallback_template = fallback_template_depth_valid ? z_circle_raw : -1.0f;
+        obj.z_fallback_feature_points = z_fallback_feature_points;
+        obj.disparity_bbox_center = (z_yolo > 0.0f) ? yolo_disparity : -1.0f;
+        obj.disparity_bbox_left_edge =
+            (z_bbox_left_edge > 0.0f) ? disparity_bbox_left_edge : -1.0f;
+        obj.disparity_bbox_right_edge =
+            (z_bbox_right_edge > 0.0f) ? disparity_bbox_right_edge : -1.0f;
+        obj.disparity_circle_center =
+            circle_candidate_valid ? circle_disparity : -1.0f;
+        obj.disparity_circle_left_edge =
+            (z_circle_left_edge > 0.0f) ? disparity_circle_left_edge : -1.0f;
+        obj.disparity_circle_right_edge =
+            (z_circle_right_edge > 0.0f) ? disparity_circle_right_edge : -1.0f;
+        obj.disparity_roi_edge_centroid =
+            (z_roi_edge_centroid > 0.0f) ? disparity_roi_edge_centroid : -1.0f;
+        obj.disparity_roi_radial_center =
+            (z_roi_radial_center > 0.0f) ? disparity_roi_radial_center : -1.0f;
+        obj.disparity_roi_edge_pair_center =
+            (z_roi_edge_pair_center > 0.0f) ? disparity_roi_edge_pair_center : -1.0f;
+        obj.disparity_roi_corner_points =
+            corner_points_result.valid ? corner_points_result.disparity : -1.0f;
+        obj.disparity_roi_texture_points =
+            texture_points_result.valid ? texture_points_result.disparity : -1.0f;
+        obj.disparity_roi_binary_points =
+            binary_points_result.valid ? binary_points_result.disparity : -1.0f;
+        obj.disparity_roi_orb_points =
+            orb_points_result.valid ? orb_points_result.disparity : -1.0f;
+        obj.disparity_roi_brisk_points =
+            brisk_points_result.valid ? brisk_points_result.disparity : -1.0f;
+        obj.disparity_roi_akaze_points =
+            akaze_points_result.valid ? akaze_points_result.disparity : -1.0f;
+        obj.disparity_roi_center_patch =
+            center_patch_valid_for_obj ? center_patch_result.disparity : -1.0f;
+        obj.disparity_roi_multi_point =
+            subpixel_valid_for_obj ? subpixel_result.disparity : -1.0f;
+        obj.disparity_fallback_template =
+            fallback_template_depth_valid ? circle_disparity : -1.0f;
+        obj.disparity_fallback_feature_points =
+            fallback_feature_result.valid ? fallback_feature_result.disparity : -1.0f;
+        obj.disparity_yolo = (z_yolo > 0.0f) ? yolo_disparity : -1.0f;
+        obj.disparity_circle =
+            circle_candidate_valid ? circle_disparity : -1.0f;
+        obj.disparity_subpixel =
+            subpixel_valid_for_obj ? subpixel_result.disparity : -1.0f;
+        obj.left_bbox_cx = left_det.cx;
+        obj.left_bbox_cy = left_det.cy;
+        obj.left_bbox_w = left_det.width;
+        obj.left_bbox_h = left_det.height;
+        obj.left_bbox_conf = left_det.confidence;
+        if (right_det) {
+            obj.right_bbox_cx = right_det->cx;
+            obj.right_bbox_cy = right_det->cy;
+            obj.right_bbox_w = right_det->width;
+            obj.right_bbox_h = right_det->height;
+            obj.right_bbox_conf = right_det->confidence;
+        }
+        obj.left_circle_cx = left_circle.cx;
+        obj.left_circle_cy = left_circle.cy;
+        obj.left_circle_r = left_circle.radius;
+        obj.right_circle_cx = right_circle.cx;
+        obj.right_circle_cy = right_circle.cy;
+        obj.right_circle_r = right_circle.radius;
+        obj.left_circle_source = left_circle.source;
+        obj.right_circle_source = right_circle.source;
+        obj.epipolar_dy = refined_dy;
+        obj.size_ratio = radius_ratio;
+        obj.left_circle_conf = left_circle.confidence;
+        obj.right_circle_conf = right_circle.confidence;
+        obj.subpixel_valid = subpixel_valid_for_obj ? 1 : 0;
+        obj.subpixel_attempted = subpixel_attempted_for_obj ? 1 : 0;
+        obj.subpixel_support = subpixel_result.support;
+        obj.subpixel_std_px =
+            subpixel_attempted_for_obj ? subpixel_result.stddev : -1.0f;
+        obj.subpixel_confidence = subpixel_result.confidence;
+        obj.subpixel_gate_px = subpixel_result.delta_gate_px;
+        obj.roi_corner_points_support = corner_points_result.support;
+        obj.roi_corner_points_std_px =
+            corner_points_result.valid ? corner_points_result.stddev : -1.0f;
+        obj.roi_corner_points_confidence = corner_points_result.confidence;
+        obj.roi_texture_points_support = texture_points_result.support;
+        obj.roi_texture_points_std_px =
+            texture_points_result.valid ? texture_points_result.stddev : -1.0f;
+        obj.roi_texture_points_confidence = texture_points_result.confidence;
+        obj.roi_binary_points_support = binary_points_result.support;
+        obj.roi_binary_points_std_px =
+            binary_points_result.valid ? binary_points_result.stddev : -1.0f;
+        obj.roi_binary_points_confidence = binary_points_result.confidence;
+        obj.roi_orb_points_support = orb_points_result.support;
+        obj.roi_orb_points_std_px =
+            orb_points_result.valid ? orb_points_result.stddev : -1.0f;
+        obj.roi_orb_points_confidence = orb_points_result.confidence;
+        obj.roi_brisk_points_support = brisk_points_result.support;
+        obj.roi_brisk_points_std_px =
+            brisk_points_result.valid ? brisk_points_result.stddev : -1.0f;
+        obj.roi_brisk_points_confidence = brisk_points_result.confidence;
+        obj.roi_akaze_points_support = akaze_points_result.support;
+        obj.roi_akaze_points_std_px =
+            akaze_points_result.valid ? akaze_points_result.stddev : -1.0f;
+        obj.roi_akaze_points_confidence = akaze_points_result.confidence;
+        obj.fallback_feature_points_support = fallback_feature_result.support;
+        obj.fallback_feature_points_std_px =
+            fallback_feature_result.valid ? fallback_feature_result.stddev : -1.0f;
+        obj.fallback_feature_points_confidence = fallback_feature_result.confidence;
+        obj.stereo_match_source = match_source;
+        obj.stereo_depth_source = depth_source;
         obj.confidence = semantic_conf *
                          std::sqrt(left_circle.confidence * right_circle.confidence) *
                          geom_conf *
@@ -1764,7 +4095,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     };
 
     auto mark_right_detection_near = [&](const CircleFit2D& right_circle,
-                                         int class_id) {
+                                         int class_id) -> int {
+        int best_idx = -1;
+        float best_dist2 = std::numeric_limits<float>::max();
         for (size_t ri = 0; ri < right_detections.size(); ++ri) {
             if (right_used[ri]) continue;
             const Detection& right = right_detections[ri];
@@ -1776,8 +4109,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             if (dx <= x_tol && dy <= y_tol) {
                 right_used[ri] = true;
                 right_blocked_by_left[ri] = true;
+                const float dist2 = dx * dx + dy * dy;
+                if (dist2 < best_dist2) {
+                    best_dist2 = dist2;
+                    best_idx = static_cast<int>(ri);
+                }
             }
         }
+        return best_idx;
     };
 
     auto find_left_detection_near = [&](const CircleFit2D& left_circle,
@@ -1890,23 +4229,38 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         CircleFit2D right_circle = refine_detection(right_cpu, right_pitch, right);
         if (!left_circle.valid || !right_circle.valid) {
             ++local_stats.circle_fit_fail;
-            continue;
+            if (!direct_depth_without_circle_enabled) {
+                continue;
+            }
+            left_circle = circleFromDetectionCPU(left);
+            right_circle = circleFromDetectionCPU(right);
+            if (!left_circle.valid || !right_circle.valid) {
+                continue;
+            }
         }
 
         Object3D obj;
         const float semantic_conf = std::sqrt(left.confidence * right.confidence);
-        if (!build_object(left, left_circle, right_circle, semantic_conf, obj)) {
+        const float bbox_disparity = left.cx - right.cx;
+        if (!build_object(left, left_circle, right_circle, semantic_conf,
+                          1, bbox_disparity, &right, obj)) {
             continue;
         }
 
-        output.detections[li] = detectionWithCircleCenterCPU(left_circle, left);
+        output.detections[li] = (obj.stereo_depth_source == 3 ||
+                                 obj.stereo_depth_source == 6)
+            ? left
+            : detectionWithCircleCenterCPU(left_circle, left);
         output.results[li] = obj;
         right_used[best_idx] = true;
         left_has_stereo[li] = true;
         ++local_stats.matched;
     }
 
-    if (config_.dual_yolo.fallback_epipolar_search && image_available) {
+    if ((epipolar_fallback_enabled ||
+         fallback_template_enabled ||
+         fallback_feature_points_enabled) &&
+        image_available) {
         for (size_t li = 0; li < left_detections.size(); ++li) {
             if (left_has_stereo[li]) continue;
 
@@ -1917,8 +4271,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             CircleFit2D left_circle = refine_detection(left_cpu, left_pitch, left);
             if (!left_circle.valid) {
                 ++local_stats.circle_fit_fail;
-                ++local_stats.fallback_failed;
-                continue;
+                left_circle = circleFromDetectionCPU(left);
+                if (!left_circle.valid) {
+                    ++local_stats.fallback_failed;
+                    continue;
+                }
             }
 
             const float expected_disp = estimate_fallback_disparity(left, true);
@@ -1928,28 +4285,64 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 continue;
             }
 
-            CircleFit2D right_circle = searchCircleOnEpipolarCPU(
-                right_cpu, right_pitch, img_width, img_height,
-                left_circle,
-                left_circle.cx - expected_disp,
-                left_circle.cy,
-                y_tol,
-                config_.dual_yolo);
+            const float predicted_right_cx = left_circle.cx - expected_disp;
+            CircleFit2D right_circle;
+            if (epipolar_fallback_enabled) {
+                right_circle = searchCircleOnEpipolarCPU(
+                    right_cpu, right_pitch, img_width, img_height,
+                    left_circle,
+                    predicted_right_cx,
+                    left_circle.cy,
+                    y_tol,
+                    config_.dual_yolo);
+            }
+            if (fallback_template_enabled) {
+                const CircleFit2D template_circle = searchTemplateOnEpipolarCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_circle,
+                    predicted_right_cx,
+                    left_circle.cy,
+                    y_tol,
+                    config_.dual_yolo);
+                if (template_circle.valid &&
+                    (!right_circle.valid ||
+                     template_circle.confidence >= right_circle.confidence)) {
+                    right_circle = template_circle;
+                }
+            }
+            if (!right_circle.valid && fallback_feature_points_enabled) {
+                right_circle = left_circle;
+                right_circle.cx = predicted_right_cx;
+                right_circle.cy = left_circle.cy;
+                right_circle.confidence = std::max(0.2f, left_circle.confidence * 0.6f);
+                right_circle.source = kCircleSourceFeatureProxy;
+                right_circle.valid = true;
+            }
             if (!right_circle.valid) {
                 ++local_stats.fallback_failed;
                 continue;
             }
 
             Object3D obj;
-            if (!build_object(left, left_circle, right_circle, left.confidence, obj)) {
+            if (!build_object(left, left_circle, right_circle, left.confidence,
+                              2, -1.0f, nullptr, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
 
+            const int right_idx = mark_right_detection_near(right_circle, left.class_id);
+            if (right_idx >= 0) {
+                const Detection& right_source = right_detections[right_idx];
+                obj.right_bbox_cx = right_source.cx;
+                obj.right_bbox_cy = right_source.cy;
+                obj.right_bbox_w = right_source.width;
+                obj.right_bbox_h = right_source.height;
+                obj.right_bbox_conf = right_source.confidence;
+            }
             output.detections[li] = detectionWithCircleCenterCPU(left_circle, left);
             output.results[li] = obj;
             left_has_stereo[li] = true;
-            mark_right_detection_near(right_circle, left.class_id);
             ++local_stats.matched;
             ++local_stats.fallback_matched;
         }
@@ -1964,8 +4357,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             CircleFit2D right_circle = refine_detection(right_cpu, right_pitch, right);
             if (!right_circle.valid) {
                 ++local_stats.circle_fit_fail;
-                ++local_stats.fallback_failed;
-                continue;
+                right_circle = circleFromDetectionCPU(right);
+                if (!right_circle.valid) {
+                    ++local_stats.fallback_failed;
+                    continue;
+                }
             }
 
             const float expected_disp = estimate_fallback_disparity(right, false);
@@ -1975,13 +4371,40 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 continue;
             }
 
-            CircleFit2D left_circle = searchCircleOnEpipolarCPU(
-                left_cpu, left_pitch, img_width, img_height,
-                right_circle,
-                right_circle.cx + expected_disp,
-                right_circle.cy,
-                y_tol,
-                config_.dual_yolo);
+            const float predicted_left_cx = right_circle.cx + expected_disp;
+            CircleFit2D left_circle;
+            if (epipolar_fallback_enabled) {
+                left_circle = searchCircleOnEpipolarCPU(
+                    left_cpu, left_pitch, img_width, img_height,
+                    right_circle,
+                    predicted_left_cx,
+                    right_circle.cy,
+                    y_tol,
+                    config_.dual_yolo);
+            }
+            if (fallback_template_enabled) {
+                const CircleFit2D template_circle = searchTemplateOnEpipolarCPU(
+                    right_cpu, right_pitch, left_cpu, left_pitch,
+                    img_width, img_height,
+                    right_circle,
+                    predicted_left_cx,
+                    right_circle.cy,
+                    y_tol,
+                    config_.dual_yolo);
+                if (template_circle.valid &&
+                    (!left_circle.valid ||
+                     template_circle.confidence >= left_circle.confidence)) {
+                    left_circle = template_circle;
+                }
+            }
+            if (!left_circle.valid && fallback_feature_points_enabled) {
+                left_circle = right_circle;
+                left_circle.cx = predicted_left_cx;
+                left_circle.cy = right_circle.cy;
+                left_circle.confidence = std::max(0.2f, right_circle.confidence * 0.6f);
+                left_circle.source = kCircleSourceFeatureProxy;
+                left_circle.valid = true;
+            }
             if (!left_circle.valid) {
                 ++local_stats.fallback_failed;
                 continue;
@@ -1990,7 +4413,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             Detection left_proxy = detectionFromCircleCPU(left_circle, right);
             Object3D obj;
             if (!build_object(left_proxy, left_circle, right_circle,
-                              right.confidence, obj)) {
+                              right.confidence, 3, -1.0f, &right, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
@@ -2000,6 +4423,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 const Detection& left_source = left_detections[left_idx];
                 output.detections[left_idx] =
                     detectionWithCircleCenterCPU(left_circle, left_source);
+                obj.left_bbox_cx = left_source.cx;
+                obj.left_bbox_cy = left_source.cy;
+                obj.left_bbox_w = left_source.width;
+                obj.left_bbox_h = left_source.height;
+                obj.left_bbox_conf = left_source.confidence;
                 output.results[left_idx] = obj;
                 left_has_stereo[left_idx] = true;
             } else if (!left_detections.empty()) {
@@ -2155,6 +4583,7 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     slot.results = fusion_->computeBatch(slot.detections, disp_ptr, disp_pitch,
                                          config_.rect_width, config_.rect_height,
                                          streams_.cudaStreamFuse, dispScale);
+    stampFrameMetadata(slot);
 
     vpiImageUnlock(slot.disparityMap);
     NVTX_RANGE_POP();
@@ -2179,13 +4608,19 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     }
     collectRightDetections(slot, slot_index);
 
+    const bool use_dual_yolo_depth =
+        dualYoloEnabled() &&
+        config_.dual_yolo.use_for_depth &&
+        dualYoloAnyDepthModeEnabled(config_.dual_yolo);
     const bool can_try_right_only =
-        dualYoloEnabled() && !slot.detections_right.empty() &&
-        config_.dual_yolo.fallback_epipolar_search;
+        use_dual_yolo_depth &&
+        !slot.detections_right.empty() &&
+        dualYoloEpipolarFallbackEnabled(config_.dual_yolo);
     if (slot.detections.empty() && !can_try_right_only) {
         // 无检测: 仅 Kalman 预测
         if (hybrid_depth_) {
             slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
         return;
@@ -2207,16 +4642,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     std::vector<Detection> fusion_detections = slot.detections;
     bool need_roi_texture_match = true;
 
-    if (dualYoloEnabled()) {
+    if (use_dual_yolo_depth) {
         ScopedTimer tdual("Stage2_DualYoloMatch");
         DualYoloMatchStats match_stats;
         DualYoloMatchOutput semantic_match;
 
         const bool need_host_images =
-            config_.dual_yolo.center_refine ||
-            config_.dual_yolo.fallback_epipolar_search ||
-            (config_.dual_yolo.subpixel_enabled &&
-             isROISubpixelDepthSolver(config_.dual_yolo.depth_solver));
+            dualYoloNeedsHostImages(config_.dual_yolo);
         if (need_host_images) {
             VPIImageData hostDataL, hostDataR;
             VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
@@ -2306,36 +4738,37 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                      match_stats.image_lock_fail);
         }
 
-        if (config_.dual_yolo.use_for_depth) {
-            fusion_detections = std::move(semantic_match.detections);
-            roi_results = std::move(semantic_match.results);
-            need_roi_texture_match =
-                config_.dual_yolo.fallback_to_roi_match &&
-                semantic_valid < static_cast<int>(fusion_detections.size());
+        fusion_detections = std::move(semantic_match.detections);
+        roi_results = std::move(semantic_match.results);
+        need_roi_texture_match =
+            config_.dual_yolo.fallback_to_roi_match &&
+            semantic_valid < static_cast<int>(fusion_detections.size());
 
-            if (!config_.dual_yolo.fallback_to_roi_match &&
-                semantic_valid < static_cast<int>(fusion_detections.size())) {
-                // 双路 YOLO/极线 fallback 找不到可靠视差时，只输出预测，不用单目 bbox 更新深度。
-                std::vector<Detection> valid_detections;
-                std::vector<Object3D> valid_results;
-                const size_t n = std::min(fusion_detections.size(), roi_results.size());
-                valid_detections.reserve(n);
-                valid_results.reserve(n);
-                for (size_t i = 0; i < n; ++i) {
-                    if (!has_valid_stereo(roi_results[i])) continue;
-                    valid_detections.push_back(fusion_detections[i]);
-                    valid_results.push_back(roi_results[i]);
-                }
-                fusion_detections = std::move(valid_detections);
-                roi_results = std::move(valid_results);
+        if (!config_.dual_yolo.fallback_to_roi_match &&
+            semantic_valid < static_cast<int>(fusion_detections.size())) {
+            // 双路 YOLO/极线 fallback 找不到可靠视差时，只输出预测，不用单目 bbox 更新深度。
+            std::vector<Detection> valid_detections;
+            std::vector<Object3D> valid_results;
+            const size_t n = std::min(fusion_detections.size(), roi_results.size());
+            valid_detections.reserve(n);
+            valid_results.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                if (!has_valid_stereo(roi_results[i])) continue;
+                valid_detections.push_back(fusion_detections[i]);
+                valid_results.push_back(roi_results[i]);
             }
+            fusion_detections = std::move(valid_detections);
+            roi_results = std::move(valid_results);
         }
     }
 
     if (need_roi_texture_match) {
         if (!roi_matcher_) {
             LOG_ERROR("ROI texture match requested but ROIStereoMatcher is not initialized");
-            if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+            if (hybrid_depth_) {
+                slot.results = hybrid_depth_->predictOnly();
+                stampFrameMetadata(slot);
+            }
             NVTX_RANGE_POP();
             return;
         }
@@ -2354,7 +4787,10 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
             if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
             if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
-            if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+            if (hybrid_depth_) {
+                slot.results = hybrid_depth_->predictOnly();
+                stampFrameMetadata(slot);
+            }
             NVTX_RANGE_POP();
             return;
         }
@@ -2377,7 +4813,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         vpiImageUnlock(slot.rectGray_vpiL);
         vpiImageUnlock(slot.rectGray_vpiR);
 
-        if (config_.dual_yolo.use_for_depth && !roi_results.empty()) {
+        if (use_dual_yolo_depth && !roi_results.empty()) {
             const size_t n = std::min(roi_results.size(), texture_results.size());
             for (size_t i = 0; i < n; ++i) {
                 if ((roi_results[i].z <= 0.0f ||
@@ -2396,6 +4832,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     if (slot.detections.empty()) {
         if (hybrid_depth_) {
             slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
         return;
@@ -2412,9 +4849,11 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         last_fuse_time_ = now;
         ScopedTimer thd("Stage2_HybridDepth");
         slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
+        stampFrameMetadata(slot);
         globalPerf().record("Stage2_HybridDepth", thd.elapsedMs());
     } else {
         slot.results = std::move(roi_results);
+        stampFrameMetadata(slot);
     }
 
     NVTX_RANGE_POP();
@@ -2513,6 +4952,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         // 无有效 tracker 结果: 仅 Kalman 预测
         if (hybrid_depth_) {
             slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
         return;
@@ -2531,7 +4971,10 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
 
     if (!roi_matcher_) {
         LOG_ERROR("Tracker ROI fuse requested but ROIStereoMatcher is not initialized");
-        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+        if (hybrid_depth_) {
+            slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
+        }
         NVTX_RANGE_POP();
         return;
     }
@@ -2545,7 +4988,10 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
         if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
         if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
-        if (hybrid_depth_) slot.results = hybrid_depth_->predictOnly();
+        if (hybrid_depth_) {
+            slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
+        }
         NVTX_RANGE_POP();
         return;
     }
@@ -2579,8 +5025,10 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         }
         last_fuse_time_ = now;
         slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
+        stampFrameMetadata(slot);
     } else {
         slot.results = std::move(roi_results);
+        stampFrameMetadata(slot);
     }
 
     NVTX_RANGE_POP();

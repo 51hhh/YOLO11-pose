@@ -178,6 +178,10 @@ std::vector<Object3D> ROIStereoMatcher::match(
             output[i].x = X;
             output[i].y = Y;
             output[i].z = Z;
+            output[i].raw_x = X;
+            output[i].raw_y = Y;
+            output[i].raw_z = Z;
+            output[i].raw_observation_valid = 1;
             output[i].confidence = conf * detections[i].confidence;
         } else {
             output[i].x = 0;

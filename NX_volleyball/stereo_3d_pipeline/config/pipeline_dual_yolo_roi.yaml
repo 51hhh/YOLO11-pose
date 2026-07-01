@@ -52,6 +52,25 @@ detector:
     right_use_dla: false
     right_dla_core: 1
     use_for_depth: true
+    depth_modes:
+      bbox_pair: true          # cheap left/right YOLO bbox-center disparity candidate
+      bbox_edges: true         # bbox left/right edge disparity candidates
+      circle_center: true      # actual ROI circle-fit triangulation candidate (needs center_refine)
+      circle_edges: true       # circle left/right edge disparity candidates
+      roi_edge_centroid: true  # gradient-weighted ROI edge centroid disparity candidate
+      roi_radial_center: true  # radial-gradient center disparity candidate
+      roi_edge_pair_center: true # paired left/right ROI edge center disparity candidate
+      roi_corner_points: true  # Shi-Tomasi-like ROI corner feature point disparity candidate
+      roi_texture_points: true # high-gradient ROI texture feature point disparity candidate
+      roi_binary_points: true  # Census/BRIEF-like binary descriptor feature disparity candidate
+      roi_orb_points: false    # OpenCV ORB ROI descriptor matching candidate; CPU cost, enable for A/B test
+      roi_brisk_points: false  # OpenCV BRISK ROI descriptor matching candidate; CPU cost, enable for A/B test
+      roi_akaze_points: false  # OpenCV AKAZE ROI descriptor matching candidate; heavier, enable for A/B test
+      roi_center_patch: true   # center patch ZNCC subpixel disparity candidate
+      roi_subpixel: true       # CPU ROI multi-point ZNCC subpixel candidate
+      epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
+      fallback_template: true  # single-side miss -> bounded ZNCC template search candidate
+      fallback_feature_points: true # single-side miss -> bounded ROI feature point search candidate
     fallback_to_roi_match: false       # legacy full ROI texture match, keep off for dual-YOLO test
     fallback_epipolar_search: true     # left/right single-side miss -> bounded epipolar search
     center_refine: true                # CPU circle fit inside bbox/search ROI
@@ -149,4 +168,7 @@ ros2:
 recording:
   enabled: true
   output_path: "dual_yolo_observation_data.csv"
+  # legacy: old CSV columns only; depth_candidates: add depth candidates;
+  # extended: add sync watermark + bbox/circle geometry for model training.
+  detail_level: "extended"
   raw_mode: true

@@ -139,6 +139,10 @@ std::vector<Object3D> Coordinate3D::computeBatch(
         obj.x = (dets[i].cx - cx_) * Z / focal_;
         obj.y = (dets[i].cy - cy_) * Z / focal_;
         obj.z = Z;
+        obj.raw_x = obj.x;
+        obj.raw_y = obj.y;
+        obj.raw_z = obj.z;
+        obj.raw_observation_valid = 1;
         obj.confidence = dets[i].confidence;
         obj.class_id   = dets[i].class_id;
         results.push_back(obj);

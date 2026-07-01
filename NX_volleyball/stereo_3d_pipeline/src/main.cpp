@@ -165,8 +165,10 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.use_for_depth = dual["use_for_depth"].as<bool>();
             if (dual["fallback_to_roi_match"])
                 cfg.dual_yolo.fallback_to_roi_match = dual["fallback_to_roi_match"].as<bool>();
-            if (dual["fallback_epipolar_search"])
+            if (dual["fallback_epipolar_search"]) {
                 cfg.dual_yolo.fallback_epipolar_search = dual["fallback_epipolar_search"].as<bool>();
+                cfg.dual_yolo.depth_epipolar_fallback = cfg.dual_yolo.fallback_epipolar_search;
+            }
             if (dual["center_refine"])
                 cfg.dual_yolo.center_refine = dual["center_refine"].as<bool>();
             if (dual["roi_denoise"])
@@ -175,8 +177,48 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.log_matches = dual["log_matches"].as<bool>();
             if (dual["depth_solver"])
                 cfg.dual_yolo.depth_solver = dual["depth_solver"].as<std::string>();
-            if (dual["subpixel_enabled"])
+            if (dual["subpixel_enabled"]) {
                 cfg.dual_yolo.subpixel_enabled = dual["subpixel_enabled"].as<bool>();
+                cfg.dual_yolo.depth_roi_subpixel = cfg.dual_yolo.subpixel_enabled;
+            }
+            if (auto modes = dual["depth_modes"]) {
+                if (modes["bbox_pair"])
+                    cfg.dual_yolo.depth_bbox_pair = modes["bbox_pair"].as<bool>();
+                if (modes["bbox_edges"])
+                    cfg.dual_yolo.depth_bbox_edges = modes["bbox_edges"].as<bool>();
+                if (modes["circle_center"])
+                    cfg.dual_yolo.depth_circle_center = modes["circle_center"].as<bool>();
+                if (modes["circle_edges"])
+                    cfg.dual_yolo.depth_circle_edges = modes["circle_edges"].as<bool>();
+                if (modes["roi_edge_centroid"])
+                    cfg.dual_yolo.depth_roi_edge_centroid = modes["roi_edge_centroid"].as<bool>();
+                if (modes["roi_radial_center"])
+                    cfg.dual_yolo.depth_roi_radial_center = modes["roi_radial_center"].as<bool>();
+                if (modes["roi_edge_pair_center"])
+                    cfg.dual_yolo.depth_roi_edge_pair_center = modes["roi_edge_pair_center"].as<bool>();
+                if (modes["roi_corner_points"])
+                    cfg.dual_yolo.depth_roi_corner_points = modes["roi_corner_points"].as<bool>();
+                if (modes["roi_texture_points"])
+                    cfg.dual_yolo.depth_roi_texture_points = modes["roi_texture_points"].as<bool>();
+                if (modes["roi_binary_points"])
+                    cfg.dual_yolo.depth_roi_binary_points = modes["roi_binary_points"].as<bool>();
+                if (modes["roi_orb_points"])
+                    cfg.dual_yolo.depth_roi_orb_points = modes["roi_orb_points"].as<bool>();
+                if (modes["roi_brisk_points"])
+                    cfg.dual_yolo.depth_roi_brisk_points = modes["roi_brisk_points"].as<bool>();
+                if (modes["roi_akaze_points"])
+                    cfg.dual_yolo.depth_roi_akaze_points = modes["roi_akaze_points"].as<bool>();
+                if (modes["roi_center_patch"])
+                    cfg.dual_yolo.depth_roi_center_patch = modes["roi_center_patch"].as<bool>();
+                if (modes["roi_subpixel"])
+                    cfg.dual_yolo.depth_roi_subpixel = modes["roi_subpixel"].as<bool>();
+                if (modes["epipolar_fallback"])
+                    cfg.dual_yolo.depth_epipolar_fallback = modes["epipolar_fallback"].as<bool>();
+                if (modes["fallback_template"])
+                    cfg.dual_yolo.depth_fallback_template = modes["fallback_template"].as<bool>();
+                if (modes["fallback_feature_points"])
+                    cfg.dual_yolo.depth_fallback_feature_points = modes["fallback_feature_points"].as<bool>();
+            }
             if (dual["subpixel_patch_radius"])
                 cfg.dual_yolo.subpixel_patch_radius = dual["subpixel_patch_radius"].as<int>();
             if (dual["subpixel_search_radius_px"])
@@ -302,6 +344,26 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
         if (auto rec = root["recording"]) {
             if (rec["enabled"])     rcfg.enabled     = rec["enabled"].as<bool>();
             if (rec["output_path"]) rcfg.output_path = rec["output_path"].as<std::string>();
+            if (rec["raw_mode"])    rcfg.raw_mode    = rec["raw_mode"].as<bool>();
+            if (rec["detail_level"]) {
+                std::string level = rec["detail_level"].as<std::string>();
+                std::transform(level.begin(), level.end(), level.begin(),
+                               [](unsigned char c) {
+                                   return static_cast<char>(std::tolower(c));
+                               });
+                if (level == "legacy" || level == "basic") {
+                    rcfg.detail_level = stereo3d::TrajectoryRecordDetail::LEGACY;
+                } else if (level == "depth_candidates" || level == "candidates" ||
+                           level == "depth") {
+                    rcfg.detail_level =
+                        stereo3d::TrajectoryRecordDetail::DEPTH_CANDIDATES;
+                } else if (level == "extended" || level == "full") {
+                    rcfg.detail_level = stereo3d::TrajectoryRecordDetail::EXTENDED;
+                } else {
+                    LOG_WARN("recording.detail_level=%s unknown, using legacy",
+                             level.c_str());
+                }
+            }
         }
     } catch (const std::exception& e) {
         LOG_WARN("recording config: %s, using defaults", e.what());

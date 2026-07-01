@@ -45,7 +45,9 @@ find_package(vpi REQUIRED)
 message(STATUS "VPI found")
 
 # OpenCV (标定加载 + 可视化 + 标定工具 + CUDA 立体匹配)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d highgui imgcodecs cudastereo cudaimgproc cudafilters)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d highgui imgcodecs cudastereo cudaimgproc cudafilters)
+set(STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+set(STEREO_OPENCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
 
 # TensorRT
@@ -119,6 +121,8 @@ endif()
 find_package(OpenCV QUIET COMPONENTS ximgproc)
 if(OpenCV_ximgproc_FOUND)
   set(XIMGPROC_FOUND ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
   message(STATUS "OpenCV ximgproc: found (WLS filter enabled)")
 else()
   set(XIMGPROC_FOUND OFF)
@@ -128,7 +132,7 @@ endif()
 # ==================== 包含目录 ====================
 include_directories(
   ${CMAKE_SOURCE_DIR}/src
-  ${OpenCV_INCLUDE_DIRS}
+  ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}
 )
@@ -201,7 +205,7 @@ target_link_libraries(stereo_pipeline
   CUDA::cudart
   CUDA::cuda_driver
   # OpenCV
-  ${OpenCV_LIBS}
+  ${STEREO_OPENCV_LIBS}
   # yaml-cpp
   yaml-cpp
   # 系统
@@ -232,7 +236,7 @@ add_executable(stereo_calibrate
   src/calibration/stereo_calibrate.cpp
 )
 set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
-target_link_libraries(stereo_calibrate ${OpenCV_LIBS} pthread stdc++fs)
+target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
 
 # capture_chessboard (需要海康 SDK; libgpiod 可选)
 if(HIK_FOUND)
@@ -243,7 +247,7 @@ if(HIK_FOUND)
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_link_libraries(capture_chessboard
-    ${OpenCV_LIBS}
+    ${STEREO_OPENCV_LIBS}
     MvCameraControl
     pthread
     stdc++fs
@@ -298,7 +302,7 @@ if(HIK_FOUND)
   target_link_libraries(stereo_depth_viewer
     vpi
     CUDA::cudart
-    ${OpenCV_LIBS}
+    ${STEREO_OPENCV_LIBS}
     MvCameraControl
     pthread
   )
