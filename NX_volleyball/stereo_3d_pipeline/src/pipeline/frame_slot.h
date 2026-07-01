@@ -9,6 +9,8 @@
 #ifndef STEREO_3D_PIPELINE_FRAME_SLOT_H_
 #define STEREO_3D_PIPELINE_FRAME_SLOT_H_
 
+#include "detection_types.h"
+
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
 #include <vector>
@@ -16,18 +18,6 @@
 #include <cstdint>
 
 namespace stereo3d {
-
-/**
- * @brief 单个检测结果
- */
-struct Detection {
-    float cx, cy;          ///< 检测框中心 (像素坐标)
-    float width, height;   ///< 检测框尺寸
-    float confidence;      ///< 置信度
-    int class_id;          ///< 类别 ID
-
-    Detection() : cx(0), cy(0), width(0), height(0), confidence(0), class_id(0) {}
-};
 
 /**
  * @brief SOT 跟踪结果
