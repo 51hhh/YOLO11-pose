@@ -7,8 +7,8 @@
 camera:
   left_index: 0
   right_index: 1
-  serial_left: "00219471413"
-  serial_right: "00D39342665"
+  serial_left: "00D39342665"
+  serial_right: "00219471413"
   exposure_us: 9867.0
   gain_db: 11.9906
   auto_exposure: false
