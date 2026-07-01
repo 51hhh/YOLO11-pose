@@ -9,7 +9,35 @@ import io
 import math
 from pathlib import Path
 from statistics import mean, pstdev
+from collections import Counter
 from typing import Dict, List
+
+
+DEPTH_KEYS = [
+    "z_mono",
+    "z_bbox_center",
+    "z_bbox_left_edge",
+    "z_bbox_right_edge",
+    "z_circle_center",
+    "z_circle_left_edge",
+    "z_circle_right_edge",
+    "z_roi_edge_centroid",
+    "z_roi_radial_center",
+    "z_roi_edge_pair_center",
+    "z_roi_corner_points",
+    "z_roi_texture_points",
+    "z_roi_binary_points",
+    "z_roi_orb_points",
+    "z_roi_brisk_points",
+    "z_roi_akaze_points",
+    "z_roi_center_patch",
+    "z_roi_multi_point",
+    "z_fallback",
+    "z_fallback_template",
+    "z_fallback_feature_points",
+    "z_stereo",
+    "z",
+]
 
 
 def _read(path: str) -> List[Dict[str, str]]:
@@ -27,6 +55,10 @@ def _f(row: Dict[str, str], key: str, default: float = 0.0) -> float:
 
 def _series(rows: List[Dict[str, str]], key: str) -> List[float]:
     return [_f(row, key) for row in rows if _f(row, key) > -1e20]
+
+
+def _valid_depth_series(rows: List[Dict[str, str]], key: str) -> List[float]:
+    return [_f(row, key) for row in rows if key in row and _f(row, key, -1.0) > 0.1]
 
 
 def _diff(values: List[float]) -> List[float]:
@@ -83,6 +115,50 @@ def _print_metrics(name: str, metrics: Dict[str, float]) -> None:
     )
 
 
+def _print_depth_candidate_metrics(track_id: str, rows: List[Dict[str, str]]) -> None:
+    for key in DEPTH_KEYS:
+        if not rows or key not in rows[0]:
+            continue
+        values = _valid_depth_series(rows, key)
+        if not values:
+            continue
+        hit_rate = len(values) / max(1, len(rows))
+        print(
+            f"track={track_id} {key}: valid={len(values)}/{len(rows)} "
+            f"hit={hit_rate * 100:.1f}% mean={mean(values):.4f} "
+            f"std={pstdev(values) if len(values) > 1 else 0.0:.4f} "
+            f"p2p={(max(values) - min(values)) if values else 0.0:.4f}"
+        )
+
+
+def _print_sync_and_source_metrics(track_id: str, rows: List[Dict[str, str]]) -> None:
+    if rows and "stereo_match_source" in rows[0]:
+        sources = Counter(str(int(_f(row, "stereo_match_source", 0))) for row in rows)
+        depth_sources = Counter(str(int(_f(row, "stereo_depth_source", 0))) for row in rows)
+        print(
+            f"track={track_id} source: match={dict(sources)} "
+            f"depth={dict(depth_sources)}"
+        )
+    if rows and "left_circle_source" in rows[0]:
+        left_sources = Counter(str(int(_f(row, "left_circle_source", 0))) for row in rows)
+        right_sources = Counter(str(int(_f(row, "right_circle_source", 0))) for row in rows)
+        print(
+            f"track={track_id} circle_source: left={dict(left_sources)} "
+            f"right={dict(right_sources)}"
+        )
+    for key in ("frame_counter_delta", "frame_number_delta", "timestamp_delta_us"):
+        if not rows or key not in rows[0]:
+            continue
+        values = [_f(row, key) for row in rows]
+        if not values:
+            continue
+        print(
+            f"track={track_id} {key}: mean={mean(values):.3f} "
+            f"std={pstdev(values) if len(values) > 1 else 0.0:.3f} "
+            f"min={min(values):.0f} max={max(values):.0f}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="Raw or smoothed CSV")
@@ -94,6 +170,8 @@ def main() -> int:
     for track_id, track_rows in grouped.items():
         raw = _metrics(track_rows)
         _print_metrics(f"track={track_id} raw", raw)
+        _print_depth_candidate_metrics(track_id, track_rows)
+        _print_sync_and_source_metrics(track_id, track_rows)
         if has_smooth:
             smooth = _metrics(track_rows, prefix="smooth_")
             ratio = smooth["z_std"] / raw["z_std"] if raw["z_std"] > 1e-9 else 0.0

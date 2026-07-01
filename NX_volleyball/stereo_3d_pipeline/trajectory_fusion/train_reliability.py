@@ -45,7 +45,7 @@ def main() -> int:
         from models import MeasurementReliabilityNet, weighted_depth_consensus
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", help="Legacy TrajectoryRecorder CSV")
+    parser.add_argument("input", help="TrajectoryRecorder CSV, legacy or extended")
     parser.add_argument("-o", "--output", default="reliability_net.pt")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--lr", type=float, default=1e-3)
