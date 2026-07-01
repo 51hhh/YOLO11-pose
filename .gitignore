@@ -53,6 +53,7 @@ nx_check.txt
 # Python cache
 __pycache__/
 *.pyc
+.venv-stereo-neural/
 
 # Local model artifacts
 NX_volleyball/stereo_3d_pipeline/models/

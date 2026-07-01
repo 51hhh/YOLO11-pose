@@ -1,0 +1,46 @@
+# Neural ROI Feature Matching
+
+目标是只在排球 IoU/ROI 小图上提取少量可靠点，用于双目三角测距。Python 只用于本地离线验证；NX 实时路径必须使用 TensorRT engine。
+
+## 本地 CPU 验证
+
+环境:
+
+```bash
+NX_volleyball/stereo_3d_pipeline/scripts/setup_neural_feature_env.sh
+```
+
+推荐测试:
+
+```bash
+.venv-stereo-neural/bin/python NX_volleyball/stereo_3d_pipeline/tools/neural_feature_probe.py \
+  --xfeat-repo ~/.local/share/stereo_3d_pipeline/neural_repos/accelerated_features \
+  --out NX_volleyball/stereo_3d_pipeline/test_logs/neural_feature_probe_recommended \
+  --roi-size 224 \
+  --top-k 128 \
+  --max-y-error-px 2.0 \
+  --max-disp-delta-px 32.0 \
+  --final-disp-gate-px 2.0
+```
+
+当前单张排球 stereo pair 结果:
+
+| backend | matches | valid points | depth | status |
+| --- | ---: | ---: | ---: | --- |
+| XFeat + descriptor NN | 11 | 8 | 3.399 m | pass |
+| ALIKED + descriptor NN | 28 | 28 | 3.379 m | pass |
+| SuperPoint + LightGlue | 20 | 9 | 3.400 m | pass |
+
+注意: CPU 耗时不能代表 NX。该脚本用于验证匹配点是否几何正确，不用于评估实时性能。
+
+## NX 实时推理方式
+
+配置入口是 `config/pipeline_roi.yaml` 的 `neural_feature_matching`，默认关闭。
+
+实时路径原则:
+
+- 固定 ROI 输入尺寸，当前推荐 `224x224`，`top_k=128`。
+- XFeat/ALIKED 优先使用 extractor TensorRT engine，输出 keypoints/descriptors/scores，再做 descriptor mutual NN + 极线/视差/最终簇剔除。
+- SuperPoint+LightGlue 使用 extractor+matcher 或 fused TensorRT engine；只在 descriptor NN 不稳定时进入主线。
+- 后处理必须保留 `max_y_error_px`、`max_disp_delta_px`、`final_disp_gate_px`，不能直接相信网络匹配。
+- 目标 10ms 内时，优先评估 XFeat TensorRT；ALIKED 和 SuperPoint+LightGlue 作为质量对照。
