@@ -166,6 +166,8 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.use_for_depth = dual["use_for_depth"].as<bool>();
             if (dual["fallback_to_roi_match"])
                 cfg.dual_yolo.fallback_to_roi_match = dual["fallback_to_roi_match"].as<bool>();
+            if (dual["gpu_candidate_refine"])
+                cfg.dual_yolo.gpu_candidate_refine = dual["gpu_candidate_refine"].as<bool>();
             if (dual["fallback_epipolar_search"]) {
                 cfg.dual_yolo.fallback_epipolar_search = dual["fallback_epipolar_search"].as<bool>();
                 cfg.dual_yolo.depth_epipolar_fallback = cfg.dual_yolo.fallback_epipolar_search;

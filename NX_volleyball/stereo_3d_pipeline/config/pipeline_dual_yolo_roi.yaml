@@ -67,13 +67,14 @@ detector:
       roi_brisk_points: false  # OpenCV BRISK ROI descriptor matching candidate; CPU cost, enable for A/B test
       roi_akaze_points: false  # OpenCV AKAZE ROI descriptor matching candidate; heavier, enable for A/B test
       roi_center_patch: true   # center patch ZNCC subpixel disparity candidate
-      roi_subpixel: true       # CPU ROI multi-point ZNCC subpixel candidate
+      roi_subpixel: true       # ROI multi-point ZNCC subpixel candidate
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
       fallback_template: true  # single-side miss -> bounded ZNCC template search candidate
       fallback_feature_points: true # single-side miss -> bounded ROI feature point search candidate
     fallback_to_roi_match: false       # legacy full ROI texture match, keep off for dual-YOLO test
+    gpu_candidate_refine: true         # direct dual-YOLO ROI candidates run in one CUDA batch
     fallback_epipolar_search: true     # left/right single-side miss -> bounded epipolar search
-    center_refine: true                # CPU circle fit inside bbox/search ROI
+    center_refine: true                # circle fit inside bbox/search ROI; GPU for direct pairs, CPU for fallback
     roi_denoise: true                  # local 3x3 denoise only inside ROI
     log_matches: true
     depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match

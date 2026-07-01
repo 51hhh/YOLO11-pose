@@ -31,6 +31,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../detect/trt_detector.h"
 #include "../stereo/vpi_stereo.h"
 #include "../stereo/roi_stereo_matcher.h"
+#include "../stereo/dual_yolo_depth_gpu.h"
 #include "../stereo/neural_feature_config.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
@@ -144,6 +145,7 @@ struct PipelineConfig {
         bool depth_fallback_feature_points = false; ///< 单目漏检时启用极线特征点搜索候选
         bool fallback_to_roi_match = true; ///< 旧 ROI 纹理匹配回退, 双 YOLO 测试默认关闭
         bool fallback_epipolar_search = true; ///< 单目漏检时在另一目极线附近做有界搜索
+        bool gpu_candidate_refine = true;  ///< 双 YOLO 直接匹配候选优先使用 GPU 批处理
         bool center_refine = true;         ///< 在 bbox/搜索 ROI 内做圆心拟合细化
         bool roi_denoise = true;           ///< 圆心拟合前做局部 3x3 读数降噪
         bool log_matches = true;           ///< 按 stats_interval 打印匹配统计
@@ -356,8 +358,11 @@ private:
         const std::vector<Detection>& right_detections,
         const uint8_t* left_cpu, int left_pitch,
         const uint8_t* right_cpu, int right_pitch,
+        const uint8_t* left_gpu, int left_gpu_pitch,
+        const uint8_t* right_gpu, int right_gpu_pitch,
         int img_width, int img_height,
-        DualYoloMatchStats* stats) const;
+        cudaStream_t stream,
+        DualYoloMatchStats* stats);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -390,6 +395,7 @@ private:
     std::unique_ptr<TRTDetector> detector_right_;
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
+    std::unique_ptr<DualYoloDepthGpuMatcher> dual_yolo_depth_gpu_; ///< 双 YOLO 多候选 GPU 批处理
     std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)

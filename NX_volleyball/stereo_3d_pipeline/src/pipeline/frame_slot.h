@@ -287,7 +287,8 @@ struct FrameSlot {
     };
     CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
     CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
-    CachedGPU rectGray_L_gpu;                  ///< 校正灰度左图 CUDA 指针 (SOT tracker 用)
+    CachedGPU rectGray_L_gpu;                  ///< 校正灰度左图 CUDA 指针
+    CachedGPU rectGray_R_gpu;                  ///< 校正灰度右图 CUDA 指针
 
     // =========== 生命周期 ===========
 

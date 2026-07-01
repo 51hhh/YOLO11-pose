@@ -197,6 +197,36 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
+    // 双目 ROI/GPU 热路径直接使用校正灰度 CUDA 指针，避免 Stage2 每帧 VPI lock/unlock。
+    LOG_INFO("Caching CUDA pointers for rectified gray images...");
+    for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
+        auto cachePtr = [i](const char* name, VPIImage img,
+                            FrameSlot::CachedGPU& out) -> bool {
+            VPIImageData d;
+            VPIStatus st = vpiImageLockData(
+                img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
+            if (st != VPI_SUCCESS) {
+                LOG_ERROR("Failed to cache %s CUDA pointer for slot %d (err=%d)",
+                          name, i, (int)st);
+                return false;
+            }
+            out.data = d.buffer.pitch.planes[0].data;
+            out.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
+            vpiImageUnlock(img);
+            if (!out.data || out.pitchBytes <= 0) {
+                LOG_ERROR("Invalid %s CUDA pointer for slot %d", name, i);
+                return false;
+            }
+            return true;
+        };
+        if (!cachePtr("rectGray_vpiL", slots_[i].rectGray_vpiL,
+                      slots_[i].rectGray_L_gpu) ||
+            !cachePtr("rectGray_vpiR", slots_[i].rectGray_vpiR,
+                      slots_[i].rectGray_R_gpu)) {
+            return false;
+        }
+    }
+
     // 6. 初始化 VPI TNR (时域降噪, 在校正前降噪)
     if (config_.tnr_enabled) {
         LOG_INFO("Initializing VPI TNR (preset=%d, strength=%.2f)...",
@@ -287,7 +317,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                  "radial=%d edgePair=%d cornerPts=%d texturePts=%d binaryPts=%d "
                  "orbPts=%d briskPts=%d akazePts=%d centerPatch=%d "
                  "subpx=%d fallback=%d tmpl=%d featFb=%d], "
-                 "epipolar_fallback=%d, center_refine=%d, roi_denoise=%d, "
+                 "epipolar_fallback=%d, gpu=%d, center_refine=%d, roi_denoise=%d, "
                  "depth_solver=%s, subpx=%d patch=%d search=%d pts=%d "
                  "delta=%.2fpx ratio=%.3f depthJump=%.2fm budget=%.2fms",
                  right_engine.c_str(),
@@ -312,6 +342,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.dual_yolo.depth_fallback_template,
                  config_.dual_yolo.depth_fallback_feature_points,
                  config_.dual_yolo.fallback_epipolar_search,
+                 config_.dual_yolo.gpu_candidate_refine,
                  config_.dual_yolo.center_refine,
                  config_.dual_yolo.roi_denoise,
                  config_.dual_yolo.depth_solver.c_str(),
@@ -375,29 +406,6 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_INFO("SOT Tracker initialized: %s (interval=%d, lost_thr=%d)",
                  tcfg.type.c_str(), tcfg.detect_interval, tcfg.lost_threshold);
 
-        // 缓存 rectGray_vpiL 的 CUDA 指针 (Tegra 统一内存: 指针固定)
-        // 避免 tracker 路径每帧 VPI lock/unlock (~0.6ms)
-        for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
-            if (slots_[i].rectGray_vpiL) {
-                VPIImageData d;
-                VPIStatus st = vpiImageLockData(
-                    slots_[i].rectGray_vpiL, VPI_LOCK_READ,
-                    VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
-                if (st != VPI_SUCCESS) {
-                    LOG_ERROR("Failed to cache rectGray_vpiL CUDA pointer for slot %d (err=%d)",
-                              i, (int)st);
-                    return false;
-                }
-                slots_[i].rectGray_L_gpu.data = d.buffer.pitch.planes[0].data;
-                slots_[i].rectGray_L_gpu.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
-                vpiImageUnlock(slots_[i].rectGray_vpiL);
-                if (!slots_[i].rectGray_L_gpu.data ||
-                    slots_[i].rectGray_L_gpu.pitchBytes <= 0) {
-                    LOG_ERROR("Invalid rectGray_vpiL CUDA pointer for slot %d", i);
-                    return false;
-                }
-            }
-        }
     }
 
     // 9. 初始化立体匹配 (根据策略选择)
@@ -447,6 +455,68 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.dual_yolo.use_for_depth &&
             dual_yolo_depth_modes_enabled &&
             !config_.dual_yolo.fallback_to_roi_match;
+        if (config_.dual_yolo.enabled &&
+            config_.dual_yolo.use_for_depth &&
+            dual_yolo_depth_modes_enabled &&
+            config_.dual_yolo.gpu_candidate_refine) {
+            DualYoloDepthGpuConfig gpu_cfg;
+            gpu_cfg.max_disparity = config_.max_disparity;
+            gpu_cfg.patch_radius = config_.dual_yolo.subpixel_patch_radius;
+            gpu_cfg.search_radius_px = config_.dual_yolo.subpixel_search_radius_px;
+            gpu_cfg.max_points = config_.dual_yolo.subpixel_max_points;
+            gpu_cfg.min_points = config_.dual_yolo.subpixel_min_points;
+            gpu_cfg.circle_max_roi_pixels = config_.dual_yolo.circle_max_roi_pixels;
+            gpu_cfg.min_confidence = config_.dual_yolo.subpixel_min_confidence;
+            gpu_cfg.max_disp_delta_px = config_.dual_yolo.subpixel_max_disp_delta_px;
+            gpu_cfg.max_disp_delta_ratio = config_.dual_yolo.subpixel_max_disp_delta_ratio;
+            gpu_cfg.max_depth_delta_m = config_.dual_yolo.subpixel_max_depth_delta_m;
+            gpu_cfg.max_stddev_px = config_.dual_yolo.subpixel_max_stddev_px;
+            gpu_cfg.epipolar_y_tolerance = config_.dual_yolo.epipolar_y_tolerance;
+            gpu_cfg.min_depth = config_.depth.min_depth;
+            gpu_cfg.max_depth = config_.depth.max_depth;
+            gpu_cfg.compute_center_patch =
+                config_.dual_yolo.depth_roi_center_patch &&
+                config_.dual_yolo.center_refine;
+            gpu_cfg.compute_multi_point =
+                config_.dual_yolo.depth_roi_subpixel &&
+                config_.dual_yolo.subpixel_enabled &&
+                is_subpixel_solver(config_.dual_yolo.depth_solver);
+            gpu_cfg.compute_corner_points = config_.dual_yolo.depth_roi_corner_points;
+            gpu_cfg.compute_texture_points = config_.dual_yolo.depth_roi_texture_points;
+            gpu_cfg.compute_binary_points = config_.dual_yolo.depth_roi_binary_points;
+            gpu_cfg.compute_geometry =
+                (config_.dual_yolo.center_refine &&
+                 (config_.dual_yolo.depth_circle_center ||
+                  config_.dual_yolo.depth_circle_edges ||
+                  config_.dual_yolo.depth_roi_edge_centroid ||
+                  gpu_cfg.compute_center_patch ||
+                  gpu_cfg.compute_multi_point)) ||
+                config_.dual_yolo.depth_roi_radial_center ||
+                config_.dual_yolo.depth_roi_edge_pair_center ||
+                gpu_cfg.compute_corner_points ||
+                gpu_cfg.compute_texture_points ||
+                gpu_cfg.compute_binary_points;
+            const bool gpu_any_mode =
+                gpu_cfg.compute_geometry ||
+                gpu_cfg.compute_center_patch ||
+                gpu_cfg.compute_multi_point ||
+                gpu_cfg.compute_corner_points ||
+                gpu_cfg.compute_texture_points ||
+                gpu_cfg.compute_binary_points;
+            if (!gpu_any_mode) {
+                LOG_INFO("Skipping dual YOLO GPU depth candidates: no direct GPU mode enabled");
+            } else {
+                const int max_pairs = std::clamp(
+                    config_.max_detections * config_.max_detections,
+                    16, 128);
+                dual_yolo_depth_gpu_ = std::make_unique<DualYoloDepthGpuMatcher>();
+                if (!dual_yolo_depth_gpu_->init(focal, calibration_->getBaseline(),
+                                                 cx, cy, gpu_cfg, max_pairs)) {
+                    LOG_ERROR("Failed to initialize dual YOLO GPU depth candidates");
+                    return false;
+                }
+            }
+        }
         const bool need_roi_matcher =
             config_.tracker.enabled || !dual_yolo_depth_only;
         if (need_roi_matcher) {
@@ -1181,6 +1251,11 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
 }
 
 bool dualYoloNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
+    if (cfg.gpu_candidate_refine) {
+        return dualYoloROIORBPointsDepthEnabled(cfg) ||
+               dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+               dualYoloROIAKAZEPointsDepthEnabled(cfg);
+    }
     return dualYoloNeedsCircleSeedRefine(cfg) ||
            dualYoloROIRadialCenterDepthEnabled(cfg) ||
            dualYoloROIEdgePairCenterDepthEnabled(cfg) ||
@@ -1222,6 +1297,43 @@ ROICircleSearchConfig makeROICircleSearchConfig(const PipelineConfig::DualYoloCo
     return out;
 }
 
+CircleFit2D circleFromGpuCandidate(const DualYoloGpuCircle& in,
+                                   const Detection& fallback) {
+    if (in.valid) {
+        CircleFit2D out;
+        out.cx = in.cx;
+        out.cy = in.cy;
+        out.radius = in.radius;
+        out.confidence = in.confidence;
+        out.source = in.source;
+        out.valid = true;
+        return out;
+    }
+    return circleFromDetectionCPU(fallback);
+}
+
+PointMeasure2D pointFromGpuCandidate(const DualYoloGpuPointMeasure& in) {
+    PointMeasure2D out;
+    if (in.valid) {
+        out.cx = in.cx;
+        out.cy = in.cy;
+        out.confidence = in.confidence;
+        out.valid = true;
+    }
+    return out;
+}
+
+DualYoloGpuDetection makeGpuDetection(const Detection& det) {
+    DualYoloGpuDetection out;
+    out.cx = det.cx;
+    out.cy = det.cy;
+    out.width = det.width;
+    out.height = det.height;
+    out.confidence = det.confidence;
+    out.class_id = det.class_id;
+    return out;
+}
+
 struct SubpixelSampleOffset {
     float dx = 0.0f;
     float dy = 0.0f;
@@ -1237,6 +1349,33 @@ struct SubpixelDisparityResult {
     int support = 0;
     int attempted = 0;
 };
+
+SubpixelDisparityResult subpixelFromGpuCandidate(const DualYoloGpuDisparity& in) {
+    SubpixelDisparityResult out;
+    out.valid = in.valid != 0;
+    out.low_confidence = in.low_confidence != 0;
+    out.disparity = in.disparity;
+    out.confidence = in.confidence;
+    out.stddev = in.stddev;
+    out.delta_gate_px = in.delta_gate_px;
+    out.support = in.support;
+    out.attempted = in.attempted;
+    return out;
+}
+
+SparseFeatureDisparityResult sparseFromGpuCandidate(const DualYoloGpuDisparity& in) {
+    SparseFeatureDisparityResult out;
+    out.valid = in.valid != 0;
+    out.low_confidence = in.low_confidence != 0;
+    out.disparity = in.disparity;
+    out.confidence = in.confidence;
+    out.stddev = in.stddev;
+    out.anchor_cx = in.anchor_cx;
+    out.anchor_cy = in.anchor_cy;
+    out.support = in.support;
+    out.attempted = in.attempted;
+    return out;
+}
 
 float estimateDisparityFromBBoxCPU(
     const Detection& det, float baseline,
@@ -2252,8 +2391,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const std::vector<Detection>& right_detections,
     const uint8_t* left_cpu, int left_pitch,
     const uint8_t* right_cpu, int right_pitch,
+    const uint8_t* left_gpu, int left_gpu_pitch,
+    const uint8_t* right_gpu, int right_gpu_pitch,
     int img_width, int img_height,
-    DualYoloMatchStats* stats) const
+    cudaStream_t stream,
+    DualYoloMatchStats* stats)
 {
     DualYoloMatchStats local_stats;
     local_stats.left_count = static_cast<int>(left_detections.size());
@@ -2284,6 +2426,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     const bool image_available = left_cpu && right_cpu &&
                                  left_pitch > 0 && right_pitch > 0;
+    const bool gpu_image_available = left_gpu && right_gpu &&
+                                     left_gpu_pitch > 0 && right_gpu_pitch > 0;
+    const bool gpu_candidate_refine_requested =
+        config_.dual_yolo.gpu_candidate_refine &&
+        dual_yolo_depth_gpu_ &&
+        dual_yolo_depth_gpu_->ready() &&
+        gpu_image_available &&
+        stream != nullptr;
     const bool bbox_depth_enabled =
         dualYoloBBoxDepthEnabled(config_.dual_yolo);
     const bool bbox_edges_depth_enabled =
@@ -2320,8 +2470,30 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         dualYoloFallbackTemplateEnabled(config_.dual_yolo);
     const bool fallback_feature_points_enabled =
         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
+    const bool circle_seed_refine_enabled =
+        dualYoloNeedsCircleSeedRefine(config_.dual_yolo);
+    const bool direct_circle_seed_refine_enabled =
+        config_.dual_yolo.center_refine &&
+        (circle_depth_enabled ||
+         circle_edges_depth_enabled ||
+         roi_edge_centroid_depth_enabled ||
+         roi_center_patch_depth_enabled ||
+         subpixel_depth_enabled);
+    const bool direct_pixel_modes_enabled =
+        direct_circle_seed_refine_enabled ||
+        roi_radial_center_depth_enabled ||
+        roi_edge_pair_center_depth_enabled ||
+        roi_corner_points_depth_enabled ||
+        roi_texture_points_depth_enabled ||
+        roi_binary_points_depth_enabled ||
+        roi_center_patch_depth_enabled ||
+        subpixel_depth_enabled;
+    const bool gpu_candidate_refine_enabled =
+        gpu_candidate_refine_requested && direct_pixel_modes_enabled;
     const bool use_subpixel_depth =
-        subpixel_depth_enabled && image_available;
+        subpixel_depth_enabled && (image_available || gpu_candidate_refine_enabled);
+    const bool use_circle_refine =
+        circle_seed_refine_enabled && (image_available || gpu_candidate_refine_enabled);
     const bool direct_depth_without_circle_enabled =
         bbox_depth_enabled ||
         bbox_edges_depth_enabled ||
@@ -2336,24 +2508,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         roi_akaze_points_depth_enabled ||
         roi_center_patch_depth_enabled ||
         use_subpixel_depth;
-    const bool circle_seed_refine_enabled =
-        dualYoloNeedsCircleSeedRefine(config_.dual_yolo);
-    const bool use_circle_refine =
-        circle_seed_refine_enabled && image_available;
-    if (!image_available &&
-        (circle_seed_refine_enabled ||
-         epipolar_fallback_enabled ||
+    const bool fallback_cpu_modes_enabled =
+        (epipolar_fallback_enabled ||
          fallback_template_enabled ||
-         fallback_feature_points_enabled ||
-         roi_radial_center_depth_enabled ||
-         roi_edge_pair_center_depth_enabled ||
-         roi_corner_points_depth_enabled ||
-         roi_texture_points_depth_enabled ||
-         roi_binary_points_depth_enabled ||
-         roi_orb_points_depth_enabled ||
-         roi_brisk_points_depth_enabled ||
-         roi_akaze_points_depth_enabled ||
-         subpixel_depth_enabled)) {
+         fallback_feature_points_enabled) &&
+        (!config_.dual_yolo.gpu_candidate_refine ||
+         left_detections.empty() ||
+         right_detections.empty());
+    const bool cpu_pixel_modes_enabled =
+        (!gpu_candidate_refine_enabled && direct_pixel_modes_enabled) ||
+        roi_orb_points_depth_enabled ||
+        roi_brisk_points_depth_enabled ||
+        roi_akaze_points_depth_enabled ||
+        fallback_cpu_modes_enabled;
+    if (!image_available && cpu_pixel_modes_enabled) {
         local_stats.image_lock_fail =
             static_cast<int>(left_detections.size() + right_detections.size());
     }
@@ -2374,9 +2542,84 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     std::vector<bool> right_blocked_by_left(right_detections.size(), false);
     std::vector<bool> left_has_stereo(left_detections.size(), false);
 
+    std::vector<DualYoloGpuCandidate> gpu_candidates;
+    if (gpu_candidate_refine_enabled &&
+        !left_detections.empty() &&
+        !right_detections.empty()) {
+        std::vector<DualYoloGpuDetectionPair> gpu_pairs;
+        gpu_pairs.reserve(std::min(
+            dual_yolo_depth_gpu_->maxPairs(),
+            static_cast<int>(left_detections.size() * right_detections.size())));
+        for (size_t li = 0; li < left_detections.size(); ++li) {
+            const auto& left = left_detections[li];
+            for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+                const auto& right = right_detections[ri];
+                if (left.class_id != right.class_id ||
+                    left.width <= 1.0f || left.height <= 1.0f ||
+                    right.width <= 1.0f || right.height <= 1.0f) {
+                    continue;
+                }
+                const float disparity = left.cx - right.cx;
+                if (disparity <= 0.0f ||
+                    disparity > static_cast<float>(config_.max_disparity)) {
+                    continue;
+                }
+                const float candidate_y_tol =
+                    std::max(y_tol, 0.35f * std::max(left.height, right.height));
+                if (std::abs(left.cy - right.cy) > candidate_y_tol) {
+                    continue;
+                }
+                const float w_ratio = std::max(left.width / right.width,
+                                               right.width / left.width);
+                const float h_ratio = std::max(left.height / right.height,
+                                               right.height / left.height);
+                if (w_ratio > max_ratio || h_ratio > max_ratio) {
+                    continue;
+                }
+                DualYoloGpuDetectionPair pair;
+                pair.left = makeGpuDetection(left);
+                pair.right = makeGpuDetection(right);
+                pair.left_index = static_cast<int>(li);
+                pair.right_index = static_cast<int>(ri);
+                gpu_pairs.push_back(pair);
+                if (static_cast<int>(gpu_pairs.size()) >=
+                    dual_yolo_depth_gpu_->maxPairs()) {
+                    break;
+                }
+            }
+            if (static_cast<int>(gpu_pairs.size()) >=
+                dual_yolo_depth_gpu_->maxPairs()) {
+                break;
+            }
+        }
+        if (!gpu_pairs.empty()) {
+            const auto gpu_start = Clock::now();
+            gpu_candidates = dual_yolo_depth_gpu_->matchPairs(
+                left_gpu, left_gpu_pitch,
+                right_gpu, right_gpu_pitch,
+                img_width, img_height,
+                gpu_pairs,
+                stream);
+            const double gpu_ms = std::chrono::duration<double, std::milli>(
+                Clock::now() - gpu_start).count();
+            globalPerf().record("Stage2_DualYoloGpuCandidates", gpu_ms);
+        }
+    }
+
+    auto find_gpu_candidate = [&](int left_index,
+                                  int right_index) -> const DualYoloGpuCandidate* {
+        for (const auto& candidate : gpu_candidates) {
+            if (candidate.left_index == left_index &&
+                candidate.right_index == right_index) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+
     auto refine_detection = [&](const uint8_t* img, int pitch,
                                 const Detection& det) -> CircleFit2D {
-        if (!use_circle_refine) {
+        if (!use_circle_refine || !img || pitch <= 0) {
             return circleFromDetectionCPU(det);
         }
         return fitCircleInBBoxCPU(img, pitch, img_width, img_height, det,
@@ -2412,6 +2655,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                             int match_source,
                             float yolo_disparity,
                             const Detection* right_det,
+                            const DualYoloGpuCandidate* gpu_candidate,
                             Object3D& obj) -> bool {
         const float fb = focal * baseline;
         auto depth_from_disparity = [&](float disp) -> float {
@@ -2466,11 +2710,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float disparity_roi_edge_centroid = -1.0f;
         float z_roi_edge_centroid = -1.0f;
         if (roi_edge_centroid_depth_enabled && direct_yolo_match &&
-            image_available && right_det) {
-            left_edge_centroid_measure =
-                edge_centroid(left_cpu, left_pitch, left_det);
-            right_edge_centroid_measure =
-                edge_centroid(right_cpu, right_pitch, *right_det);
+            right_det) {
+            if (gpu_candidate) {
+                left_edge_centroid_measure =
+                    pointFromGpuCandidate(gpu_candidate->left_edge_centroid);
+                right_edge_centroid_measure =
+                    pointFromGpuCandidate(gpu_candidate->right_edge_centroid);
+            } else if (image_available) {
+                left_edge_centroid_measure =
+                    edge_centroid(left_cpu, left_pitch, left_det);
+                right_edge_centroid_measure =
+                    edge_centroid(right_cpu, right_pitch, *right_det);
+            }
             if (left_edge_centroid_measure.valid && right_edge_centroid_measure.valid &&
                 std::abs(left_edge_centroid_measure.cy -
                          right_edge_centroid_measure.cy) <= y_tol) {
@@ -2485,11 +2736,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float disparity_roi_radial_center = -1.0f;
         float z_roi_radial_center = -1.0f;
         if (roi_radial_center_depth_enabled && direct_yolo_match &&
-            image_available && right_det) {
-            left_radial_measure =
-                radial_center(left_cpu, left_pitch, left_det);
-            right_radial_measure =
-                radial_center(right_cpu, right_pitch, *right_det);
+            right_det) {
+            if (gpu_candidate) {
+                left_radial_measure =
+                    pointFromGpuCandidate(gpu_candidate->left_radial_center);
+                right_radial_measure =
+                    pointFromGpuCandidate(gpu_candidate->right_radial_center);
+            } else if (image_available) {
+                left_radial_measure =
+                    radial_center(left_cpu, left_pitch, left_det);
+                right_radial_measure =
+                    radial_center(right_cpu, right_pitch, *right_det);
+            }
             if (left_radial_measure.valid && right_radial_measure.valid &&
                 std::abs(left_radial_measure.cy - right_radial_measure.cy) <= y_tol) {
                 disparity_roi_radial_center =
@@ -2503,11 +2761,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float disparity_roi_edge_pair_center = -1.0f;
         float z_roi_edge_pair_center = -1.0f;
         if (roi_edge_pair_center_depth_enabled && direct_yolo_match &&
-            image_available && right_det) {
-            left_edge_pair_measure =
-                edge_pair_center(left_cpu, left_pitch, left_det);
-            right_edge_pair_measure =
-                edge_pair_center(right_cpu, right_pitch, *right_det);
+            right_det) {
+            if (gpu_candidate) {
+                left_edge_pair_measure =
+                    pointFromGpuCandidate(gpu_candidate->left_edge_pair_center);
+                right_edge_pair_measure =
+                    pointFromGpuCandidate(gpu_candidate->right_edge_pair_center);
+            } else if (image_available) {
+                left_edge_pair_measure =
+                    edge_pair_center(left_cpu, left_pitch, left_det);
+                right_edge_pair_measure =
+                    edge_pair_center(right_cpu, right_pitch, *right_det);
+            }
             if (left_edge_pair_measure.valid && right_edge_pair_measure.valid &&
                 std::abs(left_edge_pair_measure.cy - right_edge_pair_measure.cy) <= y_tol) {
                 disparity_roi_edge_pair_center =
@@ -2550,18 +2815,23 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SparseFeatureDisparityResult corner_points_result;
         float z_roi_corner_points = -1.0f;
         if (roi_corner_points_depth_enabled && direct_yolo_match &&
-            image_available && right_det && feature_initial_disparity > 0.0f) {
-            corner_points_result = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, *right_det,
-                true,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::CORNER);
+            right_det && feature_initial_disparity > 0.0f) {
+            if (gpu_candidate) {
+                corner_points_result =
+                    sparseFromGpuCandidate(gpu_candidate->corner_points);
+            } else if (image_available) {
+                corner_points_result = matchSparseFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    true,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    SparseFeatureMode::CORNER);
+            }
             if (corner_points_result.valid) {
                 z_roi_corner_points =
                     depth_from_disparity(corner_points_result.disparity);
@@ -2572,18 +2842,23 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SparseFeatureDisparityResult texture_points_result;
         float z_roi_texture_points = -1.0f;
         if (roi_texture_points_depth_enabled && direct_yolo_match &&
-            image_available && right_det && feature_initial_disparity > 0.0f) {
-            texture_points_result = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, *right_det,
-                true,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::TEXTURE);
+            right_det && feature_initial_disparity > 0.0f) {
+            if (gpu_candidate) {
+                texture_points_result =
+                    sparseFromGpuCandidate(gpu_candidate->texture_points);
+            } else if (image_available) {
+                texture_points_result = matchSparseFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    true,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    SparseFeatureMode::TEXTURE);
+            }
             if (texture_points_result.valid) {
                 z_roi_texture_points =
                     depth_from_disparity(texture_points_result.disparity);
@@ -2594,18 +2869,23 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SparseFeatureDisparityResult binary_points_result;
         float z_roi_binary_points = -1.0f;
         if (roi_binary_points_depth_enabled && direct_yolo_match &&
-            image_available && right_det && feature_initial_disparity > 0.0f) {
-            binary_points_result = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, *right_det,
-                true,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::BINARY);
+            right_det && feature_initial_disparity > 0.0f) {
+            if (gpu_candidate) {
+                binary_points_result =
+                    sparseFromGpuCandidate(gpu_candidate->binary_points);
+            } else if (image_available) {
+                binary_points_result = matchSparseFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    true,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    SparseFeatureMode::BINARY);
+            }
             if (binary_points_result.valid) {
                 z_roi_binary_points =
                     depth_from_disparity(binary_points_result.disparity);
@@ -2867,16 +3147,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SubpixelDisparityResult center_patch_result;
         bool center_patch_valid_for_obj = false;
         if (roi_center_patch_depth_enabled &&
-            image_available &&
             measured_circle_geometry_valid) {
-            center_patch_result = refineDisparityByROICenterPatchCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_circle, right_circle,
-                config_.dual_yolo,
-                config_.max_disparity,
-                focal,
-                baseline);
+            if (gpu_candidate) {
+                center_patch_result =
+                    subpixelFromGpuCandidate(gpu_candidate->center_patch);
+            } else if (image_available) {
+                center_patch_result = refineDisparityByROICenterPatchCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_circle, right_circle,
+                    config_.dual_yolo,
+                    config_.max_disparity,
+                    focal,
+                    baseline);
+            }
             center_patch_valid_for_obj = center_patch_result.valid;
         }
         const float z_roi_center_patch =
@@ -2900,15 +3184,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             ++local_stats.subpixel_attempted;
             subpixel_attempted_for_obj = true;
             const auto subpixel_start = Clock::now();
-            const SubpixelDisparityResult refined =
-                refineDisparityByROIMultiPointCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_circle, right_circle,
-                    config_.dual_yolo,
-                    config_.max_disparity,
-                    focal,
-                    baseline);
+            const SubpixelDisparityResult refined = gpu_candidate
+                ? subpixelFromGpuCandidate(gpu_candidate->multi_point)
+                : refineDisparityByROIMultiPointCPU(
+                      left_cpu, left_pitch, right_cpu, right_pitch,
+                      img_width, img_height,
+                      left_circle, right_circle,
+                      config_.dual_yolo,
+                      config_.max_disparity,
+                      focal,
+                      baseline);
             const double subpixel_ms = std::chrono::duration<double, std::milli>(
                 Clock::now() - subpixel_start).count();
             local_stats.subpixel_time_ms += subpixel_ms;
@@ -3343,8 +3628,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             continue;
         }
         const auto& right = right_detections[best_idx];
-        CircleFit2D left_circle = refine_detection(left_cpu, left_pitch, left);
-        CircleFit2D right_circle = refine_detection(right_cpu, right_pitch, right);
+        const DualYoloGpuCandidate* gpu_candidate =
+            find_gpu_candidate(static_cast<int>(li), best_idx);
+        CircleFit2D left_circle = gpu_candidate
+            ? circleFromGpuCandidate(gpu_candidate->left_circle, left)
+            : refine_detection(left_cpu, left_pitch, left);
+        CircleFit2D right_circle = gpu_candidate
+            ? circleFromGpuCandidate(gpu_candidate->right_circle, right)
+            : refine_detection(right_cpu, right_pitch, right);
         if (!left_circle.valid || !right_circle.valid) {
             ++local_stats.circle_fit_fail;
             if (!direct_depth_without_circle_enabled) {
@@ -3361,7 +3652,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const float semantic_conf = std::sqrt(left.confidence * right.confidence);
         const float bbox_disparity = left.cx - right.cx;
         if (!build_object(left, left_circle, right_circle, semantic_conf,
-                          1, bbox_disparity, &right, obj)) {
+                          1, bbox_disparity, &right, gpu_candidate, obj)) {
             continue;
         }
 
@@ -3444,7 +3735,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
             Object3D obj;
             if (!build_object(left, left_circle, right_circle, left.confidence,
-                              2, -1.0f, nullptr, obj)) {
+                              2, -1.0f, nullptr, nullptr, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
@@ -3531,7 +3822,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             Detection left_proxy = detectionFromCircleCPU(left_circle, right);
             Object3D obj;
             if (!build_object(left_proxy, left_circle, right_circle,
-                              right.confidence, 3, -1.0f, &right, obj)) {
+                              right.confidence, 3, -1.0f, &right, nullptr, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
@@ -3765,8 +4056,19 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         DualYoloMatchStats match_stats;
         DualYoloMatchOutput semantic_match;
 
+        const uint8_t* leftGPU = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+        const uint8_t* rightGPU = static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
+        const int leftGpuPitch = slot.rectGray_L_gpu.pitchBytes;
+        const int rightGpuPitch = slot.rectGray_R_gpu.pitchBytes;
+        const bool fallback_host_needed_now =
+            config_.dual_yolo.gpu_candidate_refine &&
+            (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
+             dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
+             dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo)) &&
+            (slot.detections.empty() || slot.detections_right.empty());
         const bool need_host_images =
-            dualYoloNeedsHostImages(config_.dual_yolo);
+            dualYoloNeedsHostImages(config_.dual_yolo) ||
+            fallback_host_needed_now;
         if (need_host_images) {
             VPIImageData hostDataL, hostDataR;
             VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
@@ -3785,13 +4087,17 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                 semantic_match = matchDualYoloDetections(
                     slot.detections, slot.detections_right,
                     leftCPU, leftPitch, rightCPU, rightPitch,
+                    leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
                     config_.rect_width, config_.rect_height,
+                    streams_.cudaStreamFuse,
                     &match_stats);
             } else {
                 semantic_match = matchDualYoloDetections(
                     slot.detections, slot.detections_right,
                     nullptr, 0, nullptr, 0,
+                    leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
                     config_.rect_width, config_.rect_height,
+                    streams_.cudaStreamFuse,
                     &match_stats);
             }
             if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
@@ -3800,7 +4106,9 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             semantic_match = matchDualYoloDetections(
                 slot.detections, slot.detections_right,
                 nullptr, 0, nullptr, 0,
+                leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
                 config_.rect_width, config_.rect_height,
+                streams_.cudaStreamFuse,
                 &match_stats);
         }
 
@@ -3891,20 +4199,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             return;
         }
 
-        // 获取校正后灰度左右图 GPU 指针 (color pipeline → rectGray)
-        VPIImageData imgDataL, imgDataR;
-        VPIStatus stL, stR;
-        {
-            ScopedTimer tvl("Stage2_VPILock");
-            stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
-                                   VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-            stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
-                                   VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
-            globalPerf().record("Stage2_VPILock", tvl.elapsedMs());
-        }
-        if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
-            if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
-            if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+        const uint8_t* leftPtr =
+            static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+        const uint8_t* rightPtr =
+            static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
+        const int leftPitch = slot.rectGray_L_gpu.pitchBytes;
+        const int rightPitch = slot.rectGray_R_gpu.pitchBytes;
+        if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
             if (hybrid_depth_) {
                 slot.results = hybrid_depth_->predictOnly();
                 stampFrameMetadata(slot);
@@ -3912,11 +4213,6 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             NVTX_RANGE_POP();
             return;
         }
-
-        const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
-        int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
-        const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
-        int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
 
         std::vector<stereo3d::Object3D> texture_results;
         {
@@ -3927,9 +4223,6 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                 fusion_detections, streams_.cudaStreamFuse);
             globalPerf().record("Stage2_ROIMatch", troi.elapsedMs());
         }
-
-        vpiImageUnlock(slot.rectGray_vpiL);
-        vpiImageUnlock(slot.rectGray_vpiR);
 
         if (use_dual_yolo_depth && !roi_results.empty()) {
             const size_t n = std::min(roi_results.size(), texture_results.size());
@@ -4097,15 +4390,13 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         return;
     }
 
-    // 2. 获取校正后灰度左右图 GPU 指针
-    VPIImageData imgDataL, imgDataR;
-    VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
-                                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataL);
-    VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
-                                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgDataR);
-    if (stL != VPI_SUCCESS || stR != VPI_SUCCESS) {
-        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
-        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
+    const uint8_t* leftPtr =
+        static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+    const uint8_t* rightPtr =
+        static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
+    const int leftPitch = slot.rectGray_L_gpu.pitchBytes;
+    const int rightPitch = slot.rectGray_R_gpu.pitchBytes;
+    if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
         if (hybrid_depth_) {
             slot.results = hybrid_depth_->predictOnly();
             stampFrameMetadata(slot);
@@ -4113,11 +4404,6 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         NVTX_RANGE_POP();
         return;
     }
-
-    const uint8_t* leftPtr  = static_cast<const uint8_t*>(imgDataL.buffer.pitch.planes[0].data);
-    int leftPitch  = imgDataL.buffer.pitch.planes[0].pitchBytes;
-    const uint8_t* rightPtr = static_cast<const uint8_t*>(imgDataR.buffer.pitch.planes[0].data);
-    int rightPitch = imgDataR.buffer.pitch.planes[0].pitchBytes;
 
     // 3. ROI 多点立体匹配
     std::vector<stereo3d::Object3D> roi_results;
@@ -4129,9 +4415,6 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
             slot.detections, streams_.cudaStreamFuse);
         globalPerf().record("Stage2_ROIMatchTracker", troi.elapsedMs());
     }
-
-    vpiImageUnlock(slot.rectGray_vpiL);
-    vpiImageUnlock(slot.rectGray_vpiR);
 
     // 4. 混合深度估计
     if (hybrid_depth_) {
