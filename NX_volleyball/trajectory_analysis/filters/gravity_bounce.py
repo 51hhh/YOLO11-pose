@@ -8,7 +8,7 @@ from .base import FilterState
 
 class GravityBounce(GravityEKF6D):
     """6-state gravity EKF with two-stage bounce detection.
-    
+
     Inherits from GravityEKF6D and adds bounce handling:
     - Stage 1 (candidate): vy_pred > threshold AND obs_y < pred_y - obs_threshold
                            AND |obs_z - pred_z| < 0.5
@@ -40,11 +40,11 @@ class GravityBounce(GravityEKF6D):
                                 obs_z: float, pred_z: float) -> bool:
         """Stage 1: Check if current frame is a bounce candidate."""
         vy_pred = self.x[4]  # predicted vy (positive = downward)
-        
+
         cond_vy = vy_pred > self.bounce_vy_threshold
         cond_y = obs_y < (pred_y - self.bounce_obs_threshold)
         cond_z = abs(obs_z - pred_z) < 0.5
-        
+
         return cond_vy and cond_y and cond_z
 
     def _apply_bounce(self):

@@ -294,4 +294,3 @@ git commit -m "test: NX GPU load balancing verification passed"
 - **detect_interval=3的含义** 每3帧推理一次YOLO，其余帧由tracker补帧。在100fps总帧率下，YOLO运行 ~33fps。
 - **为何时间 10-11ms** 单帧总预算是 10ms (100fps), 但cache warm-up和同步的开销可能使其接近11ms，仍在16.7ms缓冲内。
 - **GPU功耗监控** 使用 `nvidia-smi` 或 `jtop` 持续监控GPU功耗。如超过12W持续，需进一步降低detect_interval或模型精度。
-

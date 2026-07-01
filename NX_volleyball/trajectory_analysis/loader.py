@@ -96,7 +96,7 @@ def load_csv(filepath: str) -> List[Frame]:
 def segment_frames(frames: List[Frame], gap_threshold: int = 5,
                    min_length: int = 10) -> List[List[Frame]]:
     """Split frames into continuous segments.
-    
+
     A new segment starts when frame_id gap > gap_threshold.
     Only segments with >= min_length frames are kept.
     """
@@ -123,18 +123,18 @@ def segment_frames(frames: List[Frame], gap_threshold: int = 5,
 
 def load_dataset(data_dir: str, prefix: str = "") -> List[Segment]:
     """Load all CSV files matching prefix from data_dir.
-    
+
     Args:
         data_dir: Path to directory containing CSV files.
         prefix: Filter files containing this group prefix (e.g., "0", "1", "2").
                 Matches pattern "_{prefix}_" in filename.
                 Empty string means load all CSV files.
-    
+
     Returns:
         List of Segment objects from all matching files.
     """
     all_segments = []
-    
+
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
@@ -162,19 +162,19 @@ def load_dataset(data_dir: str, prefix: str = "") -> List[Segment]:
 
 def load_all_datasets(data_dir: str) -> dict:
     """Load datasets grouped by prefix (0, 1, 2).
-    
+
     Returns dict with keys '0', '1', '2' and 'all'.
     """
     result = {}
     all_segments = []
-    
+
     for prefix in ['0', '1', '2']:
         segs = load_dataset(data_dir, prefix)
         result[prefix] = segs
         all_segments.extend(segs)
-    
+
     # Also load any files not starting with 0/1/2
     remaining = load_dataset(data_dir, "")
     result['all'] = remaining if remaining else all_segments
-    
+
     return result

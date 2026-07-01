@@ -6,14 +6,14 @@ from typing import List
 
 def compute_nis(innovations: List[np.ndarray], S_matrices: List[np.ndarray]) -> dict:
     """Compute Normalized Innovation Squared (NIS) statistics.
-    
+
     NIS = innovation^T @ S^{-1} @ innovation
     For a well-tuned 3D filter, E[NIS] ≈ 3 (dimension of measurement).
-    
+
     Args:
         innovations: List of (3,) innovation vectors.
         S_matrices: List of (3,3) innovation covariance matrices.
-    
+
     Returns:
         Dict with NIS statistics.
     """
@@ -35,7 +35,7 @@ def compute_nis(innovations: List[np.ndarray], S_matrices: List[np.ndarray]) -> 
         return {'mean_nis': 0.0, 'std_nis': 0.0, 'pct_above_95': 0.0}
 
     nis_arr = np.array(nis_values)
-    
+
     # Chi-squared 95% threshold for 3 DOF ≈ 7.815
     chi2_95 = 7.815
 
@@ -51,13 +51,13 @@ def compute_nis(innovations: List[np.ndarray], S_matrices: List[np.ndarray]) -> 
 
 def compute_innovation_acf(innovations: List[np.ndarray], max_lag: int = 20) -> dict:
     """Compute autocorrelation of innovation sequence.
-    
+
     For a well-tuned filter, innovations should be white (zero ACF at lag > 0).
-    
+
     Args:
         innovations: List of (3,) innovation vectors.
         max_lag: Maximum lag to compute.
-    
+
     Returns:
         Dict with ACF values and whiteness test result.
     """
@@ -77,7 +77,7 @@ def compute_innovation_acf(innovations: List[np.ndarray], max_lag: int = 20) -> 
         if var < 1e-12:
             acf_dims.append(np.zeros(max_lag))
             continue
-        
+
         acf = np.zeros(max_lag)
         for lag in range(max_lag):
             if lag == 0:
@@ -102,10 +102,10 @@ def compute_innovation_acf(innovations: List[np.ndarray], max_lag: int = 20) -> 
 
 def compute_P_boundedness(P_history: List[np.ndarray]) -> dict:
     """Check that covariance matrix P remains bounded and positive definite.
-    
+
     Args:
         P_history: List of P diagonal arrays (from get_diagnostics).
-    
+
     Returns:
         Dict with boundedness metrics.
     """
@@ -113,10 +113,10 @@ def compute_P_boundedness(P_history: List[np.ndarray]) -> dict:
         return {'is_bounded': True, 'max_P': 0.0, 'min_P': 0.0, 'diverged': False}
 
     P_arr = np.array(P_history)  # (N, state_dim)
-    
+
     max_P = float(P_arr.max())
     min_P = float(P_arr.min())
-    
+
     # Check for divergence (P growing unbounded)
     n = len(P_arr)
     diverged = False

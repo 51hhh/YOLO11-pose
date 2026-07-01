@@ -49,7 +49,7 @@ FILTER_REGISTRY = {
 
 def create_filter(name: str, **kwargs) -> FilterBase:
     """Create a filter instance by name.
-    
+
     Supports 'robust_<name>' prefix to auto-wrap any filter with RobustWrapper.
     Robust wrapper params can be passed via 'robust_' prefixed kwargs.
     """
@@ -61,10 +61,10 @@ def create_filter(name: str, **kwargs) -> FilterBase:
                        'init_frames', 'physics_init', 'gravity_vec'}
         robust_params = {k: v for k, v in kwargs.items() if k in robust_keys}
         inner_params = {k: v for k, v in kwargs.items() if k not in robust_keys}
-        
+
         inner_filter = FILTER_REGISTRY[inner_name](**inner_params)
         return RobustWrapper(inner_filter=inner_filter, **robust_params)
-    
+
     if name not in FILTER_REGISTRY:
         raise ValueError(f"Unknown filter: {name}. Available: {list(FILTER_REGISTRY.keys())}")
     return FILTER_REGISTRY[name](**kwargs)

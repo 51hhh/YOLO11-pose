@@ -152,10 +152,10 @@ def analyze_variance_by_distance(segments: List[Segment], config: dict, results_
     all_obs = []
     for seg in segments:
         all_obs.append(seg.obs_xyz)
-    
+
     if not all_obs:
         return
-    
+
     obs_all = np.vstack(all_obs)
     obs_z = obs_all[:, 2]
 
@@ -178,7 +178,7 @@ def analyze_variance_by_distance(segments: List[Segment], config: dict, results_
         window = min(5, count // 2)
         if window < 2:
             continue
-        
+
         residuals = np.zeros_like(subset)
         for j in range(len(subset)):
             lo_j = max(0, j - window)
@@ -192,7 +192,7 @@ def analyze_variance_by_distance(segments: List[Segment], config: dict, results_
         variances_z.append(residuals[:, 2].std())
 
     x_pos = range(len(labels_list))
-    
+
     axes[0].bar(x_pos, variances_x, alpha=0.7)
     axes[0].set_xticks(x_pos)
     axes[0].set_xticklabels(labels_list, fontsize=8)
@@ -235,20 +235,20 @@ def analyze_acf(segments: List[Segment], results_dir: str):
     # Detrend with polynomial
     t = np.arange(n)
     labels = ['X', 'Y', 'Z']
-    
+
     for dim in range(3):
         signal = obs[:, dim]
         # Remove trend (3rd order poly)
         coeffs = np.polyfit(t, signal, 3)
         trend = np.polyval(coeffs, t)
         residual = signal - trend
-        
+
         # Compute ACF
         res_centered = residual - residual.mean()
         var = res_centered.var()
         if var < 1e-12:
             continue
-        
+
         acf = np.zeros(max_lag)
         for lag in range(max_lag):
             if lag == 0:
@@ -274,9 +274,9 @@ def analyze_acf(segments: List[Segment], results_dir: str):
 def analyze_bounce_detection(segments: List[Segment], config: dict, results_dir: str):
     """Annotate potential bounce points in trajectories."""
     gravity = config['physics']['gravity']
-    
+
     fig, axes = plt.subplots(2, 1, figsize=(14, 8))
-    
+
     # Find segments with potential bounces (y reversal)
     bounce_segments = []
     for seg in segments:
@@ -301,7 +301,7 @@ def analyze_bounce_detection(segments: List[Segment], config: dict, results_dir:
         for seg, peaks in bounce_segments[:3]:
             t = seg.timestamps - seg.timestamps[0]
             obs_y = seg.obs_xyz[:, 1]
-            
+
             axes[0].plot(t, obs_y, alpha=0.7, label=seg.source_file[:20])
             axes[0].scatter(t[peaks], obs_y[peaks], color='red', zorder=5, s=50, marker='v')
 
@@ -328,32 +328,32 @@ def analyze_bounce_detection(segments: List[Segment], config: dict, results_dir:
 def analyze_gravity_calibration(segments: List[Segment], config: dict, results_dir: str):
     """Estimate gravity from parabolic segments (prefix '1' = toss/throw)."""
     gravity_true = config['physics']['gravity']
-    
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     gravity_estimates = []
-    
+
     for seg in segments:
         obs = seg.obs_xyz
         t = seg.timestamps - seg.timestamps[0]
         n = len(t)
-        
+
         if n < 15:
             continue
 
         # Fit quadratic to y: y = y0 + vy0*t + 0.5*g*t²
         coeffs = np.polyfit(t, obs[:, 1], 2)
         g_est = 2.0 * coeffs[0]
-        
+
         # Only consider reasonable estimates
         if 5.0 < g_est < 15.0:
             gravity_estimates.append(g_est)
-            
+
             # Plot first few fits
             if len(gravity_estimates) <= 4:
                 ax_idx = len(gravity_estimates) - 1
                 ax = axes[ax_idx // 2, ax_idx % 2]
-                
+
                 y_fit = np.polyval(coeffs, t)
                 ax.plot(t, obs[:, 1], 'b.', markersize=2, label='Observed')
                 ax.plot(t, y_fit, 'r-', linewidth=2, label=f'Fit (g={g_est:.2f})')
@@ -379,7 +379,7 @@ def analyze_gravity_calibration(segments: List[Segment], config: dict, results_d
     plt.savefig(os.path.join(results_dir, 'gravity_calibration.png'), dpi=150)
     plt.close()
     print(f"  Saved: gravity_calibration.png (N={len(gravity_estimates)} estimates)")
-    
+
     if gravity_estimates:
         g_arr = np.array(gravity_estimates)
         print(f"    Gravity estimate: {g_arr.mean():.3f} ± {g_arr.std():.3f} m/s² "
@@ -392,7 +392,7 @@ def analyze_3d_trajectories(segments: List[Segment], results_dir: str):
     ax = fig.add_subplot(111, projection='3d')
 
     colors = plt.cm.tab10(np.linspace(0, 1, min(10, len(segments))))
-    
+
     for i, seg in enumerate(segments[:10]):
         obs = seg.obs_xyz
         color = colors[i % len(colors)]

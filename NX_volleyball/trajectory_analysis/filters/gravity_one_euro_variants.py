@@ -11,7 +11,7 @@ from .base import FilterBase, FilterState
 
 class GravityOneEuroV2(FilterBase):
     """Variant A: Use EKF estimated velocity to drive One-Euro cutoff.
-    
+
     Instead of computing dx/dt from position changes (lagged),
     use EKF's internal velocity estimate (instant, physics-informed).
     """
@@ -107,7 +107,7 @@ class GravityOneEuroV2(FilterBase):
 
 class GravityOneEuroAdaptive(FilterBase):
     """Variant B: Innovation-adaptive min_cutoff.
-    
+
     When Mahalanobis distance is large, increase cutoff for faster response.
     When innovation is small (steady state), use low cutoff for smoothing.
     """

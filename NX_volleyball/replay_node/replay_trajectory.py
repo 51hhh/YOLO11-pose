@@ -363,7 +363,7 @@ class ReplayNode(Node):
 
     def _physics_init(self):
         """Physics-guided initialization: fit parabola to first observations.
-        
+
         Given ≥3 observations with known gravity, solve for initial velocity:
           obs[i] = obs[0] + v0 * dt_i + 0.5 * g * dt_i^2
         Rearranging:

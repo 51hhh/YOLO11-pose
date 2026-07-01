@@ -114,7 +114,7 @@ class FallbackV2(FilterBase):
 
 class AdaptiveQOneEuro(FilterBase):
     """Gravity EKF with Q-adaptive estimation + One-Euro post-smoothing.
-    
+
     Key difference from adaptive_ekf: estimates Q scaling factor (not R),
     then applies One-Euro on output for final polish.
     """
@@ -256,7 +256,7 @@ class AdaptiveQOneEuro(FilterBase):
 
 class ConfidenceEKF(FilterBase):
     """Gravity EKF with detection confidence modulating R.
-    
+
     R_effective = R_base / (confidence + eps)^gamma
     Low confidence → large R → trust model more.
     + One-Euro post-smoothing.
@@ -412,7 +412,7 @@ class ConfidenceEKF(FilterBase):
 
 class IMM2Model(FilterBase):
     """Simplified 2-model IMM: Static + Gravity flight.
-    
+
     Removes the high-maneuver model which adds noise.
     Transition probabilities tuned for volleyball.
     """
@@ -545,9 +545,9 @@ class IMM2Model(FilterBase):
 
 class RobustBounceEKF(FilterBase):
     """Outlier-robust gravity EKF with bounce state machine.
-    
+
     States: TRACKING → OUTLIER → BOUNCE_DETECT → REACQUIRE
-    
+
     - Normal: standard EKF update
     - Outlier (maha² > gate): skip update, inflate P
     - If vy reverses direction for N consecutive frames after outlier: bounce detected
@@ -688,7 +688,7 @@ class RobustBounceEKF(FilterBase):
 
 class ConfidenceV2(FilterBase):
     """Confidence-modulated R + Velocity-driven One-Euro (V2 architecture).
-    
+
     Combines:
     - det_confidence scales R (low confidence → trust physics more)
     - EKF velocity directly drives One-Euro cutoff (not position derivative)
@@ -832,7 +832,7 @@ class ConfidenceV2(FilterBase):
 
 class AdaptiveQV2(FilterBase):
     """Q-adaptive EKF + Velocity-driven One-Euro (V2 architecture).
-    
+
     Combines:
     - Innovation-based Q scaling (adapts process noise online)
     - EKF velocity drives One-Euro cutoff

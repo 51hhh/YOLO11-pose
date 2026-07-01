@@ -7,20 +7,20 @@ from typing import List, Tuple
 def compute_sigma_pos_by_distance(filtered_xyz: np.ndarray, obs_z: np.ndarray,
                                   z_bins: List[float]) -> dict:
     """Compute position standard deviation binned by depth distance.
-    
+
     Uses local detrending (high-pass) to isolate jitter from signal.
-    
+
     Args:
         filtered_xyz: (N, 3) filtered positions.
         obs_z: (N,) depth values for binning.
         z_bins: Bin edges for distance grouping.
-    
+
     Returns:
         Dict with bin labels as keys and sigma_xyz arrays as values.
     """
     results = {}
     n = len(filtered_xyz)
-    
+
     if n < 5:
         return results
 
@@ -28,7 +28,7 @@ def compute_sigma_pos_by_distance(filtered_xyz: np.ndarray, obs_z: np.ndarray,
     window = min(5, n // 2)
     if window < 2:
         window = 2
-    
+
     # Compute residuals from local linear trend
     residuals = np.zeros_like(filtered_xyz)
     for i in range(n):
@@ -43,7 +43,7 @@ def compute_sigma_pos_by_distance(filtered_xyz: np.ndarray, obs_z: np.ndarray,
         lo_z, hi_z = bin_edges[j], bin_edges[j + 1]
         mask = (obs_z >= lo_z) & (obs_z < hi_z)
         count = mask.sum()
-        
+
         if count >= 3:
             bin_residuals = residuals[mask]
             sigma = bin_residuals.std(axis=0)
@@ -59,16 +59,16 @@ def compute_sigma_pos_by_distance(filtered_xyz: np.ndarray, obs_z: np.ndarray,
 
 def compute_sigma_vel(filtered_results: np.ndarray) -> dict:
     """Compute velocity jitter statistics.
-    
+
     Args:
         filtered_results: (N, 9) array [x,y,z,vx,vy,vz,ax,ay,az].
-    
+
     Returns:
         Dict with velocity statistics.
     """
     velocities = filtered_results[:, 3:6]
     n = len(velocities)
-    
+
     if n < 5:
         return {'sigma_vel': np.zeros(3), 'sigma_total': 0.0}
 
@@ -87,12 +87,12 @@ def compute_sigma_vel(filtered_results: np.ndarray) -> dict:
 def compute_drift_rate(filtered_xyz: np.ndarray, timestamps: np.ndarray,
                        window: int = 60) -> dict:
     """Compute position drift rate using windowed linear regression.
-    
+
     Args:
         filtered_xyz: (N, 3) filtered positions.
         timestamps: (N,) timestamps.
         window: Window size for smoothing.
-    
+
     Returns:
         Dict with drift metrics.
     """

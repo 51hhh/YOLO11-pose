@@ -6,7 +6,7 @@ from .base import FilterBase, FilterState
 
 class GravityEKF6D(FilterBase):
     """6-state EKF with gravity prior.
-    
+
     State: [x, y, z, vx, vy, vz]
     Model: px' = px + vx*dt
            py' = py + vy*dt + 0.5*g*dt²
@@ -14,7 +14,7 @@ class GravityEKF6D(FilterBase):
            vx' = vx
            vy' = vy + g*dt
            vz' = vz
-    
+
     Gravity is along +y (downward in camera frame).
     """
 
@@ -67,7 +67,7 @@ class GravityEKF6D(FilterBase):
 
     def _build_Q(self, dt: float) -> np.ndarray:
         """Process noise covariance.
-        
+
         Q = sigma_a² * [[dt⁴/4*I₃, dt³/2*I₃], [dt³/2*I₃, dt²*I₃]]
         """
         I3 = np.eye(3)

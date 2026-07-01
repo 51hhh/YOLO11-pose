@@ -6,7 +6,7 @@ from .base import FilterBase, FilterState
 
 class ConstAccel9D(FilterBase):
     """9-state constant acceleration Kalman filter.
-    
+
     State: [x, y, z, vx, vy, vz, ax, ay, az]
     Model: position += velocity*dt + 0.5*accel*dt²
            velocity += accel*dt
@@ -46,7 +46,7 @@ class ConstAccel9D(FilterBase):
 
     def _build_Q(self, dt: float) -> np.ndarray:
         """Process noise covariance.
-        
+
         Q = sigma_a² * G @ G.T
         G = [0.5*dt²*I₃; dt*I₃; I₃]
         """
@@ -60,7 +60,7 @@ class ConstAccel9D(FilterBase):
 
     def _build_R(self, z_depth: float) -> np.ndarray:
         """Measurement noise covariance (depth-dependent).
-        
+
         Rz = R_base * max(1, z)^exponent
         Rxy = Rz * z²/f² + 0.001
         """

@@ -5,7 +5,7 @@ sys.path.insert(0, '.')
 from filters import create_filter
 
 gravity_vec = np.array([0.0, 9.81, 0.0])
-csvs = sorted(glob.glob('../data/raw_observation_data_1_*.csv') + 
+csvs = sorted(glob.glob('../data/raw_observation_data_1_*.csv') +
               glob.glob('../data/raw_observation_data_2_*.csv'))
 print(f'Testing on {len(csvs)} CSV files')
 
@@ -27,7 +27,7 @@ def test_config(all_frames_list, filter_name, outlier_gate, init_frames, gap_thr
     total_rej_outlier = 0
     total_segments = 0
     pred_errors = {0.1: [], 0.2: [], 0.3: []}
-    
+
     for frames in all_frames_list:
         filt = create_filter(filter_name, **fkw)
         filt.reset()
@@ -35,7 +35,7 @@ def test_config(all_frames_list, filter_name, outlier_gate, init_frames, gap_thr
         filter_init = False
         last_ts = None
         positions = []
-        
+
         for frame in frames:
             if not frame['det']:
                 continue
@@ -92,7 +92,7 @@ def test_config(all_frames_list, filter_name, outlier_gate, init_frames, gap_thr
             pos = np.array([state.x, state.y, state.z])
             vel = np.array([state.vx, state.vy, state.vz])
             positions.append((frame['ts'], pos, vel, obs))
-        
+
         # Evaluate prediction error
         for i in range(len(positions)):
             ts_i, pos_i, vel_i, obs_i = positions[i]
@@ -109,7 +109,7 @@ def test_config(all_frames_list, filter_name, outlier_gate, init_frames, gap_thr
                     pred_errors[0.2].append(err)
                 elif 0.28 <= dt <= 0.32:
                     pred_errors[0.3].append(err)
-    
+
     r01 = np.sqrt(np.mean(np.array(pred_errors[0.1])**2)) if pred_errors[0.1] else float('nan')
     r02 = np.sqrt(np.mean(np.array(pred_errors[0.2])**2)) if pred_errors[0.2] else float('nan')
     r03 = np.sqrt(np.mean(np.array(pred_errors[0.3])**2)) if pred_errors[0.3] else float('nan')

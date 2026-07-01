@@ -95,7 +95,7 @@ gravity_ekf_6d 在 Throw seg2 (4.43s, 264帧):
 
 **原因**: 接球瞬间球静止但重力持续注入 → vy累积 → 超过innovation_gate → 永久失锁
 
-**修复方案**: 
+**修复方案**:
 - 方案A: 速度限幅(|vel|>15m/s时reset)
 - 方案B: IMM模型(静止+飞行切换), 当前数据中imm得分最高
 
@@ -152,7 +152,7 @@ const float R_BASE = 0.003f;       // 观测噪声基数(极小=高信任)
 const float NOISE_EXP = 2.85f;     // R(z)指数
 const float INNOVATION_GATE = 25.0f;
 const float SIGMA_STATIC = 0.5f;   // 静止模型过程噪声
-const float SIGMA_FLIGHT = 10.0f;  // 飞行模型过程噪声  
+const float SIGMA_FLIGHT = 10.0f;  // 飞行模型过程噪声
 const float SIGMA_MANEUVER = 80.0f; // 突变模型过程噪声
 const float GRAVITY_Y = 9.81f;     // y轴向下
 
@@ -216,12 +216,12 @@ float pred_z = pos_z + vel_z * dt_to_ground;
 Phase 0: INIT (frame 0-4)
   收集5帧观测 → 最小二乘拟合初速度 v0
   gravity模型: obs(t) = p0 + v0*t + 0.5*g*t²
-  
+
 Phase 1: BOOST (frame 5-14)
   R_base = 0.005 (极信任观测)
   sigma_a = 50 (大Q → P_vel保持高 → K_vel大)
   线性插值过渡到稳态参数
-  
+
 Phase 2: STEADY (frame 15+)
   与标准gravity_ekf_6d一致
   R_base=0.015, sigma_a=5, gate=25
@@ -256,7 +256,7 @@ Phase 2: STEADY (frame 15+)
 1. **FastGravityEKF 的快启动有效但优势极小**:
    - warmup=0 时赢 IMM 4.5% (0.544 vs 0.570)
    - 优势窗口仅 ~5帧 (0.08s)，之后 IMM 迅速超越
-   
+
 2. **IMM 长期精度远优于单模型 EKF**:
    - warmup=20: IMM=0.198m vs fast=0.439m（2.2倍差距）
    - 多模型切换天然适应抛接转换

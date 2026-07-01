@@ -5,13 +5,13 @@ import numpy as np
 
 def compute_jerk_energy(filtered_xyz: np.ndarray, timestamps: np.ndarray) -> dict:
     """Compute jerk (derivative of acceleration) energy.
-    
+
     Lower jerk energy = smoother trajectory.
-    
+
     Args:
         filtered_xyz: (N, 3) filtered positions.
         timestamps: (N,) timestamps.
-    
+
     Returns:
         Dict with jerk energy metrics.
     """
@@ -61,11 +61,11 @@ def compute_jerk_energy(filtered_xyz: np.ndarray, timestamps: np.ndarray) -> dic
 
 def compute_continuity(filtered_xyz: np.ndarray, jump_threshold: float = 0.3) -> dict:
     """Compute trajectory continuity (detect position jumps).
-    
+
     Args:
         filtered_xyz: (N, 3) filtered positions.
         jump_threshold: Distance threshold for declaring a jump.
-    
+
     Returns:
         Dict with continuity metrics.
     """
@@ -75,7 +75,7 @@ def compute_continuity(filtered_xyz: np.ndarray, jump_threshold: float = 0.3) ->
 
     # Frame-to-frame distances
     deltas = np.linalg.norm(np.diff(filtered_xyz, axis=0), axis=1)
-    
+
     jumps = deltas > jump_threshold
     jump_count = int(jumps.sum())
 
@@ -91,15 +91,15 @@ def compute_continuity(filtered_xyz: np.ndarray, jump_threshold: float = 0.3) ->
 def compute_physics_r2(filtered_xyz: np.ndarray, timestamps: np.ndarray,
                        gravity: float = 9.81) -> dict:
     """Compute R² of filtered trajectory against parabolic (gravity) model.
-    
+
     Fits a parabolic model y(t) = y0 + vy0*t + 0.5*g*t² to the y-component
     and computes goodness of fit.
-    
+
     Args:
         filtered_xyz: (N, 3) filtered positions.
         timestamps: (N,) timestamps.
         gravity: Expected gravity value (positive, y-down).
-    
+
     Returns:
         Dict with R² values.
     """

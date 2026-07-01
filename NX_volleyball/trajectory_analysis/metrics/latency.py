@@ -6,11 +6,11 @@ from scipy import signal
 
 def compute_phase_lag(obs_signal: np.ndarray, filtered_signal: np.ndarray) -> dict:
     """Compute phase lag between observation and filtered signal using cross-correlation.
-    
+
     Args:
         obs_signal: (N,) observation signal (1D).
         filtered_signal: (N,) filtered signal (1D).
-    
+
     Returns:
         Dict with lag in samples and estimated time lag.
     """
@@ -24,7 +24,7 @@ def compute_phase_lag(obs_signal: np.ndarray, filtered_signal: np.ndarray) -> di
 
     obs_std = obs_norm.std()
     filt_std = filt_norm.std()
-    
+
     if obs_std < 1e-10 or filt_std < 1e-10:
         return {'lag_samples': 0, 'lag_seconds': 0.0}
 
@@ -55,12 +55,12 @@ def compute_phase_lag(obs_signal: np.ndarray, filtered_signal: np.ndarray) -> di
 def compute_direction_change_delay(obs_y: np.ndarray, filtered_y: np.ndarray,
                                    timestamps: np.ndarray) -> dict:
     """Compute delay in detecting direction changes (peaks/troughs in y).
-    
+
     Args:
         obs_y: (N,) observed y positions.
         filtered_y: (N,) filtered y positions.
         timestamps: (N,) timestamps.
-    
+
     Returns:
         Dict with direction change delay statistics.
     """
@@ -99,15 +99,15 @@ def compute_direction_change_delay(obs_y: np.ndarray, filtered_y: np.ndarray,
 def compute_settle_time(obs_xyz: np.ndarray, filtered_xyz: np.ndarray,
                         timestamps: np.ndarray, event_frames: list = None) -> dict:
     """Compute settle time after disturbances (first frames, jumps).
-    
+
     Settle time = time until |filtered - obs| < threshold for consecutive frames.
-    
+
     Args:
         obs_xyz: (N, 3) observed positions.
         filtered_xyz: (N, 3) filtered positions.
         timestamps: (N,) timestamps.
         event_frames: List of frame indices where events occur (default: [0]).
-    
+
     Returns:
         Dict with settle time statistics.
     """
@@ -120,7 +120,7 @@ def compute_settle_time(obs_xyz: np.ndarray, filtered_xyz: np.ndarray,
 
     # Compute error magnitude
     error = np.linalg.norm(filtered_xyz - obs_xyz, axis=1)
-    
+
     # Threshold: 2 sigma of steady-state error (last half of segment)
     half = n // 2
     if half > 5:

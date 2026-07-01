@@ -71,19 +71,19 @@ class FilterBase(ABC):
 
     def process_segment(self, frames) -> np.ndarray:
         """Process a segment of frames, handling dropped frames.
-        
+
         For frame_id gaps > 1, intermediate predict-only steps are inserted.
-        
+
         Args:
             frames: List of Frame objects (from loader.py).
-            
+
         Returns:
             (N, 9) array of [x,y,z,vx,vy,vz,ax,ay,az] for each frame.
         """
         self.reset()
         n = len(frames)
         results = np.zeros((n, 9))
-        
+
         # Initialize with first observation
         first = frames[0]
         self.update(first.obs_x, first.obs_y, first.obs_z)
@@ -92,10 +92,10 @@ class FilterBase(ABC):
         for i in range(1, n):
             prev_frame = frames[i - 1]
             curr_frame = frames[i]
-            
+
             frame_gap = curr_frame.frame_id - prev_frame.frame_id
             total_dt = curr_frame.timestamp - prev_frame.timestamp
-            
+
             if total_dt <= 0 or frame_gap <= 0:
                 # Duplicate timestamp/frame_id: skip predict, just update
                 state = self.update(curr_frame.obs_x, curr_frame.obs_y, curr_frame.obs_z)

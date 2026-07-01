@@ -33,10 +33,10 @@ class RawPassthrough(FilterBase):
             # Estimate dt from history or use a default
             dt = self._prev_dt if self._prev_dt and self._prev_dt > 0 else 1.0 / 60.0
             self._vel = (new_pos - self._prev_pos) / dt
-            
+
             if self._prev_vel is not None:
                 self._acc = (self._vel - self._prev_vel) / dt
-        
+
         self._prev_vel = self._vel.copy()
         self._prev_pos = self._pos.copy()
         self._pos = new_pos

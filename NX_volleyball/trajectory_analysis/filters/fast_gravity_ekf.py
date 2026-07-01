@@ -13,7 +13,7 @@ from .base import FilterBase, FilterState
 
 class FastGravityEKF(FilterBase):
     """6-state gravity EKF with fast-start two-phase parameter scheduling.
-    
+
     State: [x, y, z, vx, vy, vz]
     """
 
@@ -42,29 +42,29 @@ class FastGravityEKF(FilterBase):
                  **kwargs):
         super().__init__(**kwargs)
         self.name = "FastGravityEKF"
-        
+
         # Steady params
         self.sigma_a = sigma_a
         self.R_base = R_base
         self.noise_exponent = noise_exponent
         self.innovation_gate = innovation_gate
-        
+
         # Boost params
         self.boost_R_base = boost_R_base
         self.boost_sigma_a = boost_sigma_a
         self.boost_gate = boost_gate
         self.boost_frames = boost_frames
-        
+
         # Init
         self.init_frames = init_frames
         self.max_speed = max_speed
         self.focal = focal
-        
+
         if gravity_vec is not None:
             self.g_vec = np.array(gravity_vec, dtype=float)
         else:
             self.g_vec = np.array([0.0, 9.81, 0.0])
-        
+
         self.reset()
 
     def reset(self):
@@ -91,18 +91,18 @@ class FastGravityEKF(FilterBase):
         """Estimate initial velocity from init_buffer using least-squares parabola fit."""
         if len(self.init_buffer) < 2:
             return np.zeros(3)
-        
+
         # Fit: obs(t) = p0 + v0*t + 0.5*g*t^2
         # Rearrange: obs(t) - 0.5*g*t^2 = p0 + v0*t
         # Least squares for [p0, v0] per axis
         times = np.array([b[0] for b in self.init_buffer])
         positions = np.array([b[1] for b in self.init_buffer])
-        
+
         t_ref = times[-1]  # Reference to last frame
         dts = times - t_ref  # All negative or zero
-        
+
         A = np.column_stack([np.ones(len(dts)), dts])
-        
+
         pos0 = np.zeros(3)
         vel0 = np.zeros(3)
         for axis in range(3):
@@ -110,7 +110,7 @@ class FastGravityEKF(FilterBase):
             result = np.linalg.lstsq(A, b, rcond=None)
             pos0[axis] = result[0][0]
             vel0[axis] = result[0][1]
-        
+
         return vel0
 
     def _build_Q(self, dt: float, sigma_a: float) -> np.ndarray:
@@ -145,26 +145,26 @@ class FastGravityEKF(FilterBase):
             return
         self._last_dt = dt
         self._cumulative_dt += dt
-        
+
         if self.phase == self.PHASE_INIT:
             return  # Don't predict during init collection
-        
+
         _, sigma_a, _ = self._get_params()
         F = np.eye(6)
         F[0, 3] = dt; F[1, 4] = dt; F[2, 5] = dt
         Q = self._build_Q(dt, sigma_a)
-        
+
         self.x = self._predict_state(dt)
         self.P = F @ self.P @ F.T + Q
 
     def update(self, obs_x: float, obs_y: float, obs_z: float) -> FilterState:
         obs = np.array([obs_x, obs_y, obs_z])
         self.frame_count += 1
-        
+
         # Phase: INIT — collect observations for velocity estimation
         if self.phase == self.PHASE_INIT:
             self.init_buffer.append((self._cumulative_dt, obs.copy()))
-            
+
             if len(self.init_buffer) >= self.init_frames:
                 # Initialize EKF with fitted velocity
                 vel0 = self._init_velocity()
@@ -179,35 +179,35 @@ class FastGravityEKF(FilterBase):
             else:
                 # Not enough frames yet, just store
                 self.x[0:3] = obs
-                
+
             self._diagnostics['innovation'] = np.zeros(3)
             self._diagnostics['S'] = np.eye(3)
             self._diagnostics['P_diag'] = np.concatenate([np.diag(self.P), np.zeros(3)])
             return self.get_state()
-        
+
         # Phase: BOOST or STEADY — standard EKF update
         r_base, _, gate = self._get_params()
-        
+
         # Transition from BOOST to STEADY
         if self.phase == self.PHASE_BOOST:
             if self.frame_count - self.init_frames >= self.boost_frames:
                 self.phase = self.PHASE_STEADY
-        
+
         H = np.zeros((3, 6))
         H[0:3, 0:3] = np.eye(3)
-        
+
         R = self._build_R(obs_z, r_base)
         y = obs - H @ self.x
         S = H @ self.P @ H.T + R
         S_inv = np.linalg.inv(S)
         maha2 = y @ S_inv @ y
-        
+
         if maha2 <= gate:
             K = self.P @ H.T @ S_inv
             self.x = self.x + K @ y
             I_KH = np.eye(6) - K @ H
             self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
-        
+
         # Divergence protection: speed limit
         speed = np.linalg.norm(self.x[3:6])
         if speed > self.max_speed:
@@ -217,11 +217,11 @@ class FastGravityEKF(FilterBase):
             self.P[3:6, 3:6] = np.eye(3) * 25.0
             self.phase = self.PHASE_BOOST
             self.frame_count = self.init_frames  # restart boost countdown
-        
+
         self._diagnostics['innovation'] = y.copy()
         self._diagnostics['S'] = S.copy()
         self._diagnostics['P_diag'] = np.concatenate([np.diag(self.P), np.zeros(3)])
-        
+
         return self.get_state()
 
     def get_state(self) -> FilterState:

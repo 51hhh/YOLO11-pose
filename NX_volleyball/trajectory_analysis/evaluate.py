@@ -26,18 +26,18 @@ def compute_prediction_error(filtered_xyz: np.ndarray, filtered_vel: np.ndarray,
                               obs_xyz: np.ndarray, timestamps: np.ndarray,
                               gravity_vec: np.ndarray, horizon_sec: float) -> dict:
     """Compute prediction error at a given time horizon.
-    
+
     At each frame t, use filter's position + velocity to extrapolate forward
     by horizon_sec using ballistic model (gravity), then compare with actual
     observation at the future frame.
-    
+
     Only evaluates on ballistic arcs: checks that the midpoint between start
     and target lies on the parabola (rejects predictions spanning bounces/catches).
     Also requires minimum displacement (rejects static periods).
     """
     n = len(timestamps)
     errors = []
-    
+
     for i in range(n - 3):
         # Find the future frame closest to timestamps[i] + horizon_sec
         target_time = timestamps[i] + horizon_sec
@@ -49,12 +49,12 @@ def compute_prediction_error(filtered_xyz: np.ndarray, filtered_vel: np.ndarray,
         actual_dt = timestamps[j] - timestamps[i]
         if actual_dt < horizon_sec * 0.5:
             continue
-        
+
         # Minimum displacement check (ball must be moving)
         actual_displacement = np.linalg.norm(obs_xyz[j] - obs_xyz[i])
         if actual_displacement < 0.10:
             continue
-        
+
         # Ballistic consistency check: verify midpoint lies on parabola
         # If a bounce/catch happened between i and j, midpoint won't fit
         if j - i > 2:
@@ -67,26 +67,26 @@ def compute_prediction_error(filtered_xyz: np.ndarray, filtered_vel: np.ndarray,
                 mid_error = np.linalg.norm(obs_xyz[mid] - expected_mid)
                 if mid_error > 0.20:  # midpoint deviates > 20cm from parabola → non-ballistic
                     continue
-        
+
         # Filter must be tracking (position within 1m of observation)
         # Excludes diverged states where prediction is meaningless
         filter_tracking_err = np.linalg.norm(filtered_xyz[i] - obs_xyz[i])
         if filter_tracking_err > 1.0:
             continue
-        
+
         # Ballistic prediction: pos + vel*dt + 0.5*g*dt²
         pos = filtered_xyz[i]
         vel = filtered_vel[i]
         pred = pos + vel * actual_dt + 0.5 * gravity_vec * actual_dt**2
-        
+
         # Compare with actual observation at future frame
         actual = obs_xyz[j]
         err = np.linalg.norm(pred - actual)
         errors.append(err)
-    
+
     if not errors:
         return {'rmse': 0.0, 'median': 0.0, 'p90': 0.0, 'n_samples': 0}
-    
+
     errors = np.array(errors)
     return {
         'rmse': float(np.sqrt(np.mean(errors**2))),
@@ -100,28 +100,28 @@ def compute_prediction_jitter(filtered_xyz: np.ndarray, filtered_vel: np.ndarray
                                timestamps: np.ndarray, gravity_vec: np.ndarray,
                                horizon_sec: float) -> dict:
     """Compute frame-to-frame jitter in predicted future position.
-    
+
     Measures how stable the predicted landing point is across consecutive frames.
     Low jitter = robot gets consistent target, high jitter = robot oscillates.
     """
     n = len(timestamps)
     predicted_points = []
-    
+
     for i in range(n):
         pos = filtered_xyz[i]
         vel = filtered_vel[i]
         pred = pos + vel * horizon_sec + 0.5 * gravity_vec * horizon_sec**2
         predicted_points.append(pred)
-    
+
     predicted_points = np.array(predicted_points)
-    
+
     # Frame-to-frame change in predicted future point
     diffs = np.diff(predicted_points, axis=0)
     jitters = np.linalg.norm(diffs, axis=1)
-    
+
     if len(jitters) == 0:
         return {'mean_jitter': 1.0, 'max_jitter': 2.0, 'std_jitter': 1.0}
-    
+
     return {
         'mean_jitter': float(np.mean(jitters)),
         'max_jitter': float(np.max(jitters)),
@@ -142,7 +142,7 @@ def run_filter_on_segment(filter_name: str, segment: Segment, config: dict) -> d
     else:
         filter_params = config.get('filters', {}).get(filter_name, {}).copy()
     filter_params['focal'] = config['camera']['focal']
-    
+
     # All gravity-based filters need physics params
     if filter_name not in ('raw_passthrough', 'const_accel_9d'):
         filter_params['gravity'] = config['physics']['gravity']
@@ -184,7 +184,7 @@ def run_filter_on_segment(filter_name: str, segment: Segment, config: dict) -> d
                 filt.predict(step_dt)
         else:
             filt.predict(total_dt)
-        
+
         filt.update(curr_frame.obs_x, curr_frame.obs_y, curr_frame.obs_z)
         diag = filt.get_diagnostics()
         innovations.append(diag['innovation'].copy())
@@ -291,10 +291,10 @@ def normalize_score(value: float, best: float, worst: float) -> float:
 
 def compute_composite_score(metrics: dict) -> dict:
     """Compute weighted composite score from metrics.
-    
+
     New scoring focused on prediction accuracy for ball catching:
     Score = 0.35*Prediction@0.5s + 0.30*Prediction@1.0s + 0.20*Smoothness + 0.15*Tracking
-    
+
     Prediction: how well filter's velocity enables future position extrapolation.
     Smoothness: output jitter (for stable predictions, not wild swings).
     Tracking: position accuracy relative to observation (penalizes lag).
@@ -305,11 +305,11 @@ def compute_composite_score(metrics: dict) -> dict:
     pred_jitter = metrics['prediction']['pred_jitter'].get('mean_jitter', 1.0)
     pred_05_n = metrics['prediction']['error_05s'].get('n_samples', 0)
     pred_10_n = metrics['prediction']['error_10s'].get('n_samples', 0)
-    
+
     # Normalize prediction errors: 0 error → 1.0, 1m error → ~0.5, 2m → ~0.33
     pred_05_score = 1.0 / (1.0 + pred_05_rmse / 0.3) if pred_05_n > 0 else None
     pred_10_score = 1.0 / (1.0 + pred_10_rmse / 0.8) if pred_10_n > 0 else None
-    
+
     # Prediction jitter: lower is better
     pred_jitter_score = 1.0 / (1.0 + pred_jitter / 0.2)
 
@@ -323,20 +323,20 @@ def compute_composite_score(metrics: dict) -> dict:
 
     # Weighted composite - adapt weights based on whether prediction data is available
     has_prediction = pred_05_score is not None or pred_10_score is not None
-    
+
     if has_prediction:
         # Dynamic segment: prediction-focused scoring
         p05 = pred_05_score if pred_05_score is not None else 0.5
         p10 = pred_10_score if pred_10_score is not None else 0.5
-        composite = (0.30 * p05 + 
-                     0.25 * p10 + 
+        composite = (0.30 * p05 +
+                     0.25 * p10 +
                      0.20 * pred_jitter_score +
-                     0.15 * smoothness_score + 
+                     0.15 * smoothness_score +
                      0.10 * tracking_score)
     else:
         # Static segment: no prediction available, use smoothness + tracking
         composite = (0.40 * pred_jitter_score +
-                     0.35 * smoothness_score + 
+                     0.35 * smoothness_score +
                      0.25 * tracking_score)
 
     return {
@@ -369,7 +369,7 @@ def evaluate_all(config: dict) -> dict:
         if not segments:
             print(f"  No segments found for prefix '{prefix}', trying without prefix...")
             continue
-        
+
         print(f"  Prefix '{prefix}': {len(segments)} segments "
               f"({sum(s.length for s in segments)} total frames)")
 
@@ -381,7 +381,7 @@ def evaluate_all(config: dict) -> dict:
                 output = run_filter_on_segment(filt_name, segment, config)
                 metrics = compute_all_metrics(output, segment, config)
                 score = compute_composite_score(metrics)
-                
+
                 seg_results.append({
                     'segment_idx': seg_idx,
                     'source_file': segment.source_file,
@@ -453,7 +453,7 @@ def print_summary(all_results: dict):
 def main():
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     config = load_config(config_path)
-    
+
     print("Trajectory Analysis Evaluation Framework")
     print("=" * 50)
     print(f"Filters: {list_filters()}")
@@ -466,7 +466,7 @@ def main():
     # Save results
     results_dir = os.path.join(os.path.dirname(__file__), "results")
     os.makedirs(results_dir, exist_ok=True)
-    
+
     # Save scores to CSV
     scores_path = os.path.join(results_dir, "scores.csv")
     with open(scores_path, 'w') as f:
