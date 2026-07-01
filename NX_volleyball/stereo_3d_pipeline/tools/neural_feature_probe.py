@@ -9,10 +9,8 @@ and visualization helpers from offline_volleyball_keypoint_probe.py.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
@@ -26,61 +24,18 @@ from stereo_feature_matching import (
     match_descriptors,
 )
 from stereo_feature_matching.common import RawMatch
-from stereo_feature_matching.geometry import (
-    FilteredMatch,
-    filter_feature_set_by_mask,
-    filter_stereo_matches,
-)
+from stereo_feature_matching.geometry import filter_feature_set_by_mask, filter_stereo_matches
 from stereo_feature_matching.neural_backends import BackendConfig, create_backend
+from stereo_feature_matching.probe_utils import (
+    crop_square,
+    filter_matches_by_roi_masks,
+    write_csv_rows,
+)
 from stereo_feature_matching.visualization import (
     cv_keypoints_from_global,
     cv_matches_from_filtered,
     draw_crop_debug,
 )
-
-
-@dataclass
-class CropTransform:
-    x1: int
-    y1: int
-    width: int
-    height: int
-    output_size: int
-
-    def to_global(self, x: float, y: float) -> Tuple[float, float]:
-        return (
-            self.x1 + x * (self.width / float(self.output_size)),
-            self.y1 + y * (self.height / float(self.output_size)),
-        )
-
-
-def _crop_square(
-    image: np.ndarray,
-    mask: np.ndarray,
-    roi: probe.BallROI,
-    *,
-    pad: int,
-    output_size: int,
-) -> Tuple[np.ndarray, np.ndarray, CropTransform]:
-    h, w = image.shape[:2]
-    x, y, bw, bh = roi.bbox
-    cx = x + bw * 0.5
-    cy = y + bh * 0.5
-    side = int(round(max(bw, bh) + 2 * pad))
-    side = max(side, 16)
-    x1 = int(round(cx - side * 0.5))
-    y1 = int(round(cy - side * 0.5))
-    x1 = max(0, min(x1, max(0, w - side)))
-    y1 = max(0, min(y1, max(0, h - side)))
-    x2 = min(w, x1 + side)
-    y2 = min(h, y1 + side)
-    crop = image[y1:y2, x1:x2]
-    crop_mask = mask[y1:y2, x1:x2]
-    if crop.shape[0] == 0 or crop.shape[1] == 0:
-        raise RuntimeError("empty ROI crop")
-    resized = cv2.resize(crop, (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-    resized_mask = cv2.resize(crop_mask, (output_size, output_size), interpolation=cv2.INTER_NEAREST)
-    return resized, resized_mask, CropTransform(x1, y1, x2 - x1, y2 - y1, output_size)
 
 
 def _build_match_result(
@@ -117,40 +72,6 @@ def _build_match_result(
         confidence=confidence,
         notes=notes,
     )
-
-
-def _write_rows(path: Path, rows: List[Dict[str, object]]) -> None:
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    fields: List[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _inside_mask(mask: np.ndarray, x: float, y: float) -> bool:
-    h, w = mask.shape[:2]
-    ix = int(round(x))
-    iy = int(round(y))
-    return 0 <= ix < w and 0 <= iy < h and mask[iy, ix] > 0
-
-
-def _filter_matches_by_roi_masks(
-    matches: List[FilteredMatch],
-    left_mask: np.ndarray,
-    right_mask: np.ndarray,
-) -> List[FilteredMatch]:
-    return [
-        m for m in matches
-        if _inside_mask(left_mask, m.left_xy[0], m.left_xy[1]) and
-           _inside_mask(right_mask, m.right_xy[0], m.right_xy[1])
-    ]
 
 
 def main() -> int:
@@ -197,11 +118,11 @@ def main() -> int:
     initial_depth = probe.depth_from_disparity(initial_disp, focal_px, baseline_m)
     cv2.imwrite(str(out_dir / "rectified_roi_debug.png"), probe.draw_roi_debug(left_rect, right_rect, lroi, rroi))
 
-    left_crop, left_crop_mask, lt = _crop_square(
-        left_rect, lroi.mask, lroi, pad=args.crop_pad, output_size=args.roi_size
+    left_crop, left_crop_mask, lt = crop_square(
+        left_rect, lroi.mask, lroi.bbox, pad=args.crop_pad, output_size=args.roi_size
     )
-    right_crop, right_crop_mask, rt = _crop_square(
-        right_rect, rroi.mask, rroi, pad=args.crop_pad, output_size=args.roi_size
+    right_crop, right_crop_mask, rt = crop_square(
+        right_rect, rroi.mask, rroi.bbox, pad=args.crop_pad, output_size=args.roi_size
     )
     draw_crop_debug(left_crop, right_crop, out_dir / "neural_roi_crops.png")
 
@@ -274,7 +195,7 @@ def main() -> int:
                 min_score=args.min_score,
             ),
         )
-        filtered = _filter_matches_by_roi_masks(filtered, lroi.mask, rroi.mask)
+        filtered = filter_matches_by_roi_masks(filtered, lroi.mask, rroi.mask)
 
         disparity = float(np.median([m.disparity for m in filtered])) if filtered else -1.0
         depth_m = probe.depth_from_disparity(disparity, focal_px, baseline_m)
@@ -326,7 +247,7 @@ def main() -> int:
             **tri_stats,
         })
 
-    _write_rows(out_dir / "summary.csv", rows)
+    write_csv_rows(out_dir / "summary.csv", rows)
     summary = {
         "left_image": args.left,
         "right_image": args.right,
