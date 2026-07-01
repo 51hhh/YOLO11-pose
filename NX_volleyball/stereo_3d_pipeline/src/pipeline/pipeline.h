@@ -31,7 +31,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../detect/trt_detector.h"
 #include "../stereo/vpi_stereo.h"
 #include "../stereo/roi_stereo_matcher.h"
-#include "../stereo/neural_feature_matcher.h"
+#include "../stereo/neural_feature_config.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
 #include "../track/sot_tracker.h"
@@ -52,6 +52,8 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include <vector>
 
 namespace stereo3d {
+
+class NeuralFeatureMatcher;
 
 /**
  * @brief 视差策略

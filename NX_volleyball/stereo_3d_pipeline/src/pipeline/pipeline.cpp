@@ -18,6 +18,7 @@
  */
 
 #include "pipeline.h"
+#include "../stereo/neural_feature_matcher.h"
 #include "../stereo/roi_feature_match_cpu.h"
 #include "../stereo/roi_patch_match_cpu.h"
 #include "../track/nanotrack_trt.h"

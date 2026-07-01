@@ -6,6 +6,7 @@
  */
 
 #include "pipeline/pipeline.h"
+#include "stereo/neural_feature_config.h"
 #include "fusion/trajectory_predictor.h"
 #include "utils/trajectory_recorder.h"
 #include "utils/logger.h"
