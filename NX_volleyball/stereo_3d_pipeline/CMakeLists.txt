@@ -150,6 +150,7 @@ set(PIPELINE_SOURCES
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
+  src/stereo/dual_yolo_depth_gpu.cpp
   src/stereo/roi_patch_match_cpu.cpp
   src/stereo/roi_geometry_cpu.cpp
   src/stereo/roi_feature_match_cpu.cpp
@@ -170,6 +171,7 @@ set(CUDA_SOURCES
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
+  src/stereo/dual_yolo_depth_gpu.cu
   src/track/crop_resize.cu
 )
 
