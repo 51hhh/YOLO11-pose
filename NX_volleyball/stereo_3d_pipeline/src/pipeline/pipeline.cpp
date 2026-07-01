@@ -23,13 +23,18 @@
 #include "../utils/logger.h"
 #include <vpi/algo/ConvertImageFormat.h>
 #include <opencv2/features2d.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <limits>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 // 自定义 CUDA Bayer→BGR8 kernel (bilinear 插值, 在 detect_preprocess.cu 中)
 extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
@@ -1245,6 +1250,17 @@ struct SparseFeatureDisparityResult {
     float anchor_cy = 0.0f;
     int support = 0;
     int attempted = 0;
+};
+
+struct DebugFeatureMatchResult {
+    std::string name;
+    std::vector<cv::KeyPoint> left_keypoints;
+    std::vector<cv::KeyPoint> right_keypoints;
+    std::vector<cv::DMatch> matches;
+    int attempted_matches = 0;
+    float disparity = -1.0f;
+    float stddev = -1.0f;
+    float confidence = 0.0f;
 };
 
 inline float sampleGrayCPU(const uint8_t* img, int pitch, int x, int y, bool denoise)
@@ -2765,6 +2781,397 @@ SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
     }
 }
 
+std::string sparseFeatureModeName(SparseFeatureMode mode)
+{
+    switch (mode) {
+    case SparseFeatureMode::CORNER: return "corner";
+    case SparseFeatureMode::TEXTURE: return "texture";
+    case SparseFeatureMode::BINARY: return "binary";
+    }
+    return "unknown";
+}
+
+DebugFeatureMatchResult makeDebugSparseFeatureMatchesCPU(
+    const cv::Mat& left_gray,
+    const cv::Mat& right_gray,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    SparseFeatureMode mode)
+{
+    DebugFeatureMatchResult out;
+    out.name = sparseFeatureModeName(mode);
+    if (left_gray.empty() || right_gray.empty() ||
+        left_gray.type() != CV_8UC1 || right_gray.type() != CV_8UC1 ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f) {
+        return out;
+    }
+
+    const int patch_radius = std::clamp(dual_cfg.subpixel_patch_radius, 2, 8);
+    const int max_points = std::clamp(std::max(dual_cfg.subpixel_max_points, 16), 4, 48);
+    const int min_points = std::clamp(std::max(3, dual_cfg.subpixel_min_points),
+                                      3, max_points);
+    const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
+    const int y_radius = std::clamp(
+        static_cast<int>(std::lround(dual_cfg.epipolar_y_tolerance * 0.20f)),
+        1, 3);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    const float max_stddev = std::max(0.05f, dual_cfg.subpixel_max_stddev_px);
+    const bool binary_mode = mode == SparseFeatureMode::BINARY;
+    const float min_score = binary_mode
+        ? std::max(0.58f, 0.50f + dual_cfg.subpixel_min_confidence * 0.35f)
+        : std::max(0.12f, dual_cfg.subpixel_min_confidence * 0.60f);
+
+    const auto points = detectSparseFeaturePointsInBBoxCPU(
+        left_gray.data, static_cast<int>(left_gray.step[0]),
+        left_gray.cols, left_gray.rows, left_det, mode, patch_radius, max_points,
+        dual_cfg.roi_denoise, dual_cfg.circle_max_roi_pixels);
+    out.left_keypoints.reserve(points.size());
+    for (const auto& p : points) {
+        out.left_keypoints.emplace_back(cv::Point2f(static_cast<float>(p.x),
+                                                    static_cast<float>(p.y)),
+                                        static_cast<float>(patch_radius * 2 + 1));
+    }
+    if (static_cast<int>(points.size()) < min_points) return out;
+
+    out.right_keypoints.reserve(points.size());
+    std::vector<float> disparities;
+    std::vector<float> scores;
+    std::vector<cv::DMatch> candidates;
+    disparities.reserve(points.size());
+    scores.reserve(points.size());
+    candidates.reserve(points.size());
+
+    const int d_start = std::max(1, static_cast<int>(std::floor(initial_disp)) - search_radius);
+    const int d_end = std::min(max_disparity,
+                               static_cast<int>(std::ceil(initial_disp)) + search_radius);
+    if (d_start >= d_end) return out;
+
+    auto score_at = [&](const SparseFeaturePoint& p, int disp, int dy) -> float {
+        const int xr = p.x - disp;
+        const int yr = p.y + dy;
+        if (!patchInsideCPU(left_gray.cols, left_gray.rows, xr, yr,
+                            patch_radius, dual_cfg.roi_denoise)) {
+            return -2.0f;
+        }
+        if (binary_mode) {
+            return censusPatchSimilarityCPU(left_gray.data, static_cast<int>(left_gray.step[0]),
+                                            right_gray.data, static_cast<int>(right_gray.step[0]),
+                                            p.x, p.y, xr, yr,
+                                            patch_radius, dual_cfg.roi_denoise);
+        }
+        return znccPatchCPU(left_gray.data, static_cast<int>(left_gray.step[0]),
+                            right_gray.data, static_cast<int>(right_gray.step[0]),
+                            p.x, p.y, xr, yr, patch_radius, dual_cfg.roi_denoise);
+    };
+
+    for (size_t point_idx = 0; point_idx < points.size(); ++point_idx) {
+        const auto& p = points[point_idx];
+        if (!patchInsideCPU(left_gray.cols, left_gray.rows, p.x, p.y,
+                            patch_radius, dual_cfg.roi_denoise)) {
+            continue;
+        }
+        float best_score = -2.0f;
+        float second_score = -2.0f;
+        int best_disp = -1;
+        int best_dy = 0;
+        for (int dy = -y_radius; dy <= y_radius; ++dy) {
+            for (int disp = d_start; disp <= d_end; ++disp) {
+                const float score = score_at(p, disp, dy);
+                if (score > best_score) {
+                    second_score = best_score;
+                    best_score = score;
+                    best_disp = disp;
+                    best_dy = dy;
+                } else if (score > second_score) {
+                    second_score = score;
+                }
+            }
+        }
+        if (best_disp < 0 || best_score < min_score) continue;
+
+        float sub_disp = static_cast<float>(best_disp);
+        if (best_disp > d_start && best_disp < d_end) {
+            const float s_minus = score_at(p, best_disp - 1, best_dy);
+            const float s_plus = score_at(p, best_disp + 1, best_dy);
+            const float denom = s_minus - 2.0f * best_score + s_plus;
+            if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
+                sub_disp += std::clamp(
+                    0.5f * (s_minus - s_plus) / denom,
+                    -1.0f, 1.0f);
+            }
+        }
+
+        const float uniqueness =
+            second_score > -1.5f ? best_score - second_score : 1.0f;
+        if ((uniqueness < 0.01f && best_score < 0.75f) ||
+            std::abs(sub_disp - initial_disp) > max_delta ||
+            sub_disp <= 0.5f ||
+            sub_disp > static_cast<float>(max_disparity)) {
+            continue;
+        }
+
+        const int t = static_cast<int>(out.right_keypoints.size());
+        const float xr = static_cast<float>(p.x) - sub_disp;
+        const float yr = static_cast<float>(p.y + best_dy);
+        out.right_keypoints.emplace_back(cv::Point2f(xr, yr),
+                                         static_cast<float>(patch_radius * 2 + 1));
+        candidates.emplace_back(static_cast<int>(point_idx), t, 1.0f - best_score);
+        disparities.push_back(sub_disp);
+        scores.push_back(best_score);
+    }
+    out.attempted_matches = static_cast<int>(candidates.size());
+
+    if (static_cast<int>(disparities.size()) < min_points) return out;
+
+    std::vector<float> sorted = disparities;
+    std::sort(sorted.begin(), sorted.end());
+    const float median = medianOfSortedCPU(sorted);
+    std::vector<float> abs_dev;
+    abs_dev.reserve(disparities.size());
+    for (float d : disparities) abs_dev.push_back(std::abs(d - median));
+    std::sort(abs_dev.begin(), abs_dev.end());
+    const float mad = medianOfSortedCPU(abs_dev);
+    const float inlier_gate = std::max(0.60f, mad * 2.5f);
+
+    double sum_disp = 0.0;
+    double sum_score = 0.0;
+    int inliers = 0;
+    for (size_t i = 0; i < disparities.size(); ++i) {
+        if (std::abs(disparities[i] - median) > inlier_gate) continue;
+        const double w = std::max(0.05f, scores[i]);
+        sum_disp += w * static_cast<double>(disparities[i]);
+        sum_score += w;
+        ++inliers;
+        out.matches.push_back(candidates[i]);
+    }
+    if (inliers < min_points || sum_score <= 0.0) {
+        out.matches.clear();
+        return out;
+    }
+
+    out.disparity = static_cast<float>(sum_disp / sum_score);
+    double var = 0.0;
+    for (float d : disparities) {
+        if (std::abs(d - median) > inlier_gate) continue;
+        const double diff = static_cast<double>(d - out.disparity);
+        var += diff * diff;
+    }
+    out.stddev = static_cast<float>(
+        std::sqrt(var / std::max(1.0, static_cast<double>(inliers))));
+    if (out.stddev > max_stddev ||
+        std::abs(out.disparity - initial_disp) > max_delta) {
+        out.matches.clear();
+        return out;
+    }
+    out.confidence = std::clamp(
+        0.35f * (static_cast<float>(inliers) / static_cast<float>(std::max(1, max_points))) +
+        0.35f * (static_cast<float>(sum_score / static_cast<double>(inliers)) - min_score) /
+            std::max(0.01f, 1.0f - min_score) +
+        0.20f * std::clamp(1.0f / (1.0f + out.stddev), 0.0f, 1.0f),
+        0.0f, 1.0f);
+    return out;
+}
+
+DebugFeatureMatchResult makeDebugOpenCVFeatureMatchesCPU(
+    const cv::Mat& left_gray,
+    const cv::Mat& right_gray,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    OpenCVFeatureMode mode)
+{
+    DebugFeatureMatchResult out;
+    out.name = openCVFeatureModeName(mode);
+    std::transform(out.name.begin(), out.name.end(), out.name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (left_gray.empty() || right_gray.empty() ||
+        left_gray.type() != CV_8UC1 || right_gray.type() != CV_8UC1 ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f) {
+        return out;
+    }
+
+    const int patch_radius = std::clamp(dual_cfg.subpixel_patch_radius, 2, 10);
+    const int max_points = std::clamp(std::max(dual_cfg.subpixel_max_points * 4, 48),
+                                      16, 160);
+    const int min_points = std::clamp(std::max(3, dual_cfg.subpixel_min_points),
+                                      3, max_points);
+    const int search_radius = std::max(1, dual_cfg.subpixel_search_radius_px);
+    const int y_radius = std::clamp(
+        static_cast<int>(std::lround(dual_cfg.epipolar_y_tolerance * 0.30f)),
+        1, 5);
+    const float max_delta = computeSubpixelDispDeltaGateCPU(
+        initial_disp, focal, baseline, dual_cfg);
+    const float max_stddev = std::max(0.05f, dual_cfg.subpixel_max_stddev_px);
+    const int extra_margin = search_radius + static_cast<int>(std::ceil(max_delta)) + 2;
+    const int border = std::max(2, patch_radius);
+
+    const cv::Rect left_roi = featureROIFromDetectionCPU(
+        left_det, left_gray.cols, left_gray.rows, border, 0.56f, 2);
+    const cv::Rect right_roi = featureROIFromDetectionCPU(
+        right_det, right_gray.cols, right_gray.rows, border, 0.62f, extra_margin);
+    if (left_roi.empty() || right_roi.empty()) return out;
+
+    try {
+        cv::Mat left_view = left_gray(left_roi);
+        cv::Mat right_view = right_gray(right_roi);
+        cv::Mat left_proc = left_view;
+        cv::Mat right_proc = right_view;
+        cv::Mat left_denoised;
+        cv::Mat right_denoised;
+        if (dual_cfg.roi_denoise) {
+            cv::medianBlur(left_view, left_denoised, 3);
+            cv::medianBlur(right_view, right_denoised, 3);
+            left_proc = left_denoised;
+            right_proc = right_denoised;
+        }
+
+        auto extractor = createOpenCVFeatureExtractorCPU(mode, max_points, patch_radius);
+        if (!extractor) return out;
+
+        std::vector<cv::KeyPoint> left_local;
+        std::vector<cv::KeyPoint> right_local;
+        cv::Mat left_desc;
+        cv::Mat right_desc;
+        detectAndDescribeOpenCVFeatureCPU(*extractor, left_proc, max_points,
+                                          left_local, left_desc);
+        detectAndDescribeOpenCVFeatureCPU(*extractor, right_proc, max_points,
+                                          right_local, right_desc);
+        out.left_keypoints.reserve(left_local.size());
+        for (const auto& kp : left_local) {
+            cv::KeyPoint global_kp = kp;
+            global_kp.pt.x += static_cast<float>(left_roi.x);
+            global_kp.pt.y += static_cast<float>(left_roi.y);
+            out.left_keypoints.push_back(global_kp);
+        }
+        out.right_keypoints.reserve(right_local.size());
+        for (const auto& kp : right_local) {
+            cv::KeyPoint global_kp = kp;
+            global_kp.pt.x += static_cast<float>(right_roi.x);
+            global_kp.pt.y += static_cast<float>(right_roi.y);
+            out.right_keypoints.push_back(global_kp);
+        }
+        if (left_local.size() < static_cast<size_t>(min_points) ||
+            right_local.size() < static_cast<size_t>(min_points) ||
+            left_desc.empty() || right_desc.empty() ||
+            left_desc.depth() != CV_8U || right_desc.depth() != CV_8U) {
+            return out;
+        }
+
+        cv::BFMatcher matcher(cv::NORM_HAMMING, false);
+        std::vector<std::vector<cv::DMatch>> knn_matches;
+        matcher.knnMatch(left_desc, right_desc, knn_matches, 2);
+        const float ratio_thresh = 0.78f;
+        const float max_hamming = static_cast<float>(std::max(1, left_desc.cols * 8));
+        const float min_score = std::max(0.45f,
+            0.35f + dual_cfg.subpixel_min_confidence * 0.45f);
+
+        std::vector<float> disparities;
+        std::vector<float> scores;
+        std::vector<cv::DMatch> candidates;
+        disparities.reserve(knn_matches.size());
+        scores.reserve(knn_matches.size());
+        candidates.reserve(knn_matches.size());
+
+        for (const auto& pair : knn_matches) {
+            if (pair.empty()) continue;
+            const cv::DMatch& best = pair[0];
+            if (best.queryIdx < 0 || best.trainIdx < 0 ||
+                best.queryIdx >= static_cast<int>(left_local.size()) ||
+                best.trainIdx >= static_cast<int>(right_local.size())) {
+                continue;
+            }
+            if (pair.size() > 1 && pair[1].distance > 0.0f &&
+                best.distance > ratio_thresh * pair[1].distance) {
+                continue;
+            }
+
+            const cv::KeyPoint& kl = left_local[best.queryIdx];
+            const cv::KeyPoint& kr = right_local[best.trainIdx];
+            const float lx = static_cast<float>(left_roi.x) + kl.pt.x;
+            const float ly = static_cast<float>(left_roi.y) + kl.pt.y;
+            const float rx = static_cast<float>(right_roi.x) + kr.pt.x;
+            const float ry = static_cast<float>(right_roi.y) + kr.pt.y;
+            const float disparity = lx - rx;
+            if (std::abs(ly - ry) > static_cast<float>(y_radius) ||
+                disparity <= 0.5f ||
+                disparity > static_cast<float>(max_disparity) ||
+                std::abs(disparity - initial_disp) > max_delta) {
+                continue;
+            }
+
+            const float score = 1.0f - std::min(1.0f, best.distance / max_hamming);
+            if (score < min_score) continue;
+
+            candidates.emplace_back(best.queryIdx, best.trainIdx, best.distance);
+            disparities.push_back(disparity);
+            scores.push_back(score);
+        }
+        out.attempted_matches = static_cast<int>(candidates.size());
+
+        if (static_cast<int>(disparities.size()) < min_points) return out;
+        std::vector<float> sorted = disparities;
+        std::sort(sorted.begin(), sorted.end());
+        const float median = medianOfSortedCPU(sorted);
+        std::vector<float> abs_dev;
+        abs_dev.reserve(disparities.size());
+        for (float d : disparities) abs_dev.push_back(std::abs(d - median));
+        std::sort(abs_dev.begin(), abs_dev.end());
+        const float mad = medianOfSortedCPU(abs_dev);
+        const float inlier_gate = std::max(0.60f, mad * 2.5f);
+
+        double sum_disp = 0.0;
+        double sum_score = 0.0;
+        int inliers = 0;
+        for (size_t i = 0; i < disparities.size(); ++i) {
+            if (std::abs(disparities[i] - median) > inlier_gate) continue;
+            const double w = std::max(0.05f, scores[i]);
+            sum_disp += w * static_cast<double>(disparities[i]);
+            sum_score += w;
+            ++inliers;
+            out.matches.push_back(candidates[i]);
+        }
+        if (inliers < min_points || sum_score <= 0.0) {
+            out.matches.clear();
+            return out;
+        }
+        out.disparity = static_cast<float>(sum_disp / sum_score);
+        double var = 0.0;
+        for (float d : disparities) {
+            if (std::abs(d - median) > inlier_gate) continue;
+            const double diff = static_cast<double>(d - out.disparity);
+            var += diff * diff;
+        }
+        out.stddev = static_cast<float>(
+            std::sqrt(var / std::max(1.0, static_cast<double>(inliers))));
+        if (out.stddev > max_stddev ||
+            std::abs(out.disparity - initial_disp) > max_delta) {
+            out.matches.clear();
+            return out;
+        }
+        out.confidence = std::clamp(
+            0.30f * (static_cast<float>(inliers) / static_cast<float>(std::max(1, max_points))) +
+            0.35f * (static_cast<float>(sum_score / static_cast<double>(inliers)) - min_score) /
+                std::max(0.01f, 1.0f - min_score) +
+            0.25f * std::clamp(1.0f / (1.0f + out.stddev), 0.0f, 1.0f),
+            0.0f, 1.0f);
+        return out;
+    } catch (const cv::Exception& e) {
+        LOG_WARN("Debug OpenCV %s match failed: %s",
+                 openCVFeatureModeName(mode), e.what());
+        return out;
+    }
+}
+
 SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
@@ -3101,6 +3508,479 @@ bool Pipeline::rightDetectorUsesBGR() const {
 bool Pipeline::colorPipelineEnabled() const {
     return leftDetectorUsesBGR() ||
            (config_.dual_yolo.enabled && rightDetectorUsesBGR());
+}
+
+bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
+#ifndef HIK_CAMERA_ENABLED
+    (void)output_dir;
+    LOG_ERROR("Feature match debug capture requires Hikvision camera support");
+    return false;
+#else
+    if (running_.load()) {
+        LOG_ERROR("Feature match debug capture must run before Pipeline::start()");
+        return false;
+    }
+    if (!camera_) {
+        LOG_ERROR("Feature match debug capture requires initialized cameras");
+        return false;
+    }
+    if (!dualYoloEnabled()) {
+        LOG_ERROR("Feature match debug capture requires dual_yolo.enabled=true");
+        return false;
+    }
+    if (!calibration_) {
+        LOG_ERROR("Feature match debug capture requires stereo calibration");
+        return false;
+    }
+
+    namespace fs = std::filesystem;
+    const fs::path output_path(output_dir);
+    if (output_path.empty()) {
+        LOG_ERROR("Feature match debug output dir is empty");
+        return false;
+    }
+    std::error_code ec;
+    fs::create_directories(output_path, ec);
+    if (ec) {
+        LOG_ERROR("Failed to create debug output dir %s: %s",
+                  output_dir.c_str(), ec.message().c_str());
+        return false;
+    }
+    ec.clear();
+    if (!fs::exists(output_path, ec) || ec) {
+        LOG_ERROR("Feature match debug output dir does not exist: %s",
+                  output_dir.c_str());
+        return false;
+    }
+    ec.clear();
+    if (!fs::is_directory(output_path, ec) || ec) {
+        LOG_ERROR("Feature match debug output path is not a directory: %s",
+                  output_dir.c_str());
+        return false;
+    }
+
+    bool output_ok = true;
+    auto write_debug_image = [&](const std::string& filename,
+                                 const cv::Mat& image) {
+        const fs::path image_path = output_path / filename;
+        if (image.empty()) {
+            LOG_ERROR("Feature match debug: refusing to write empty image %s",
+                      image_path.string().c_str());
+            output_ok = false;
+            return;
+        }
+        try {
+            if (!cv::imwrite(image_path.string(), image)) {
+                LOG_ERROR("Feature match debug: failed to write %s",
+                          image_path.string().c_str());
+                output_ok = false;
+            }
+        } catch (const cv::Exception& e) {
+            LOG_ERROR("Feature match debug: failed to write %s: %s",
+                      image_path.string().c_str(), e.what());
+            output_ok = false;
+        }
+    };
+
+    bool grabbing_started = false;
+    bool pwm_started = false;
+    auto cleanup = [&]() {
+        streams_.syncAll();
+        if (pwm_started && pwm_trigger_) pwm_trigger_->stop();
+        if (grabbing_started && camera_) camera_->stopGrabbing();
+    };
+
+    if (!camera_->startGrabbing()) {
+        LOG_ERROR("Feature match debug: failed to start camera grabbing");
+        return false;
+    }
+    grabbing_started = true;
+    if (pwm_trigger_) {
+        pwm_started = pwm_trigger_->start();
+        if (!pwm_started) {
+            LOG_WARN("Feature match debug: PWM trigger did not start; external trigger may be active");
+        }
+    }
+
+    FrameSlot& slot = slots_[0];
+    bool captured = false;
+    constexpr int kMaxWarmupFrames = 12;
+    for (int attempt = 0; attempt < kMaxWarmupFrames; ++attempt) {
+        slot.reset();
+        slot.frame_id = attempt;
+        slot.is_detect_frame = true;
+
+        stage0_grab_and_rectify(slot, false);
+        VPIStatus vst = vpiStreamSync(streams_.vpiStreamPVA);
+        if (vst != VPI_SUCCESS) {
+            LOG_ERROR("Feature match debug: rectification sync failed: %d", (int)vst);
+            cleanup();
+            return false;
+        }
+        if (!slot.grab_failed) {
+            captured = true;
+            break;
+        }
+        LOG_WARN("Feature match debug: warmup/sync frame %d skipped", attempt);
+    }
+    if (!captured) {
+        LOG_ERROR("Feature match debug: grab/rectify failed after %d attempts",
+                  kMaxWarmupFrames);
+        cleanup();
+        return false;
+    }
+    cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+
+    stage1_detect(slot, 0);
+    recordDetectDoneEvents(slot);
+    cudaStreamSynchronize(getDLAStream(slot.frame_id));
+    if (slot.right_detection_submitted) {
+        cudaStreamSynchronize(getRightDLAStream(slot.frame_id));
+    }
+
+    if (slot.detection_submitted) {
+        slot.detections = getDetector(slot.frame_id)->collect(
+            0, config_.rect_width, config_.rect_height);
+    }
+    collectRightDetections(slot, 0);
+
+    auto lock_gray_copy = [](VPIImage img, cv::Mat& out) -> bool {
+        VPIImageData data;
+        VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
+                                        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                                        &data);
+        if (st != VPI_SUCCESS) return false;
+        try {
+            const int w = data.buffer.pitch.planes[0].width;
+            const int h = data.buffer.pitch.planes[0].height;
+            const int pitch = data.buffer.pitch.planes[0].pitchBytes;
+            cv::Mat view(h, w, CV_8UC1, data.buffer.pitch.planes[0].data, pitch);
+            view.copyTo(out);
+        } catch (const cv::Exception&) {
+            vpiImageUnlock(img);
+            return false;
+        }
+        vpiImageUnlock(img);
+        return true;
+    };
+    auto lock_bgr_copy = [](VPIImage img, cv::Mat& out) -> bool {
+        VPIImageData data;
+        VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
+                                        VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR,
+                                        &data);
+        if (st != VPI_SUCCESS) return false;
+        const int plane_width = data.buffer.pitch.planes[0].width;
+        const int h = data.buffer.pitch.planes[0].height;
+        const int pitch = data.buffer.pitch.planes[0].pitchBytes;
+        const void* src = data.buffer.pitch.planes[0].data;
+        if (plane_width <= 0 || h <= 0 || pitch <= 0 || !src) {
+            vpiImageUnlock(img);
+            return false;
+        }
+        int pixel_width = plane_width;
+        size_t row_bytes = static_cast<size_t>(pixel_width) * 3U;
+        if (row_bytes > static_cast<size_t>(pitch)) {
+            if (plane_width % 3 == 0 &&
+                static_cast<size_t>(plane_width) <= static_cast<size_t>(pitch)) {
+                pixel_width = plane_width / 3;
+                row_bytes = static_cast<size_t>(plane_width);
+            } else {
+                vpiImageUnlock(img);
+                return false;
+            }
+        }
+        out.create(h, pixel_width, CV_8UC3);
+        const cudaError_t err = cudaMemcpy2D(out.data, out.step[0],
+                                             src, static_cast<size_t>(pitch),
+                                             row_bytes, static_cast<size_t>(h),
+                                             cudaMemcpyDeviceToHost);
+        vpiImageUnlock(img);
+        if (err != cudaSuccess) {
+            out.release();
+            return false;
+        }
+        return true;
+    };
+
+    cv::Mat left_gray;
+    cv::Mat right_gray;
+    if (!lock_gray_copy(slot.rectGray_vpiL, left_gray) ||
+        !lock_gray_copy(slot.rectGray_vpiR, right_gray)) {
+        LOG_ERROR("Feature match debug: failed to copy rectified gray images");
+        cleanup();
+        return false;
+    }
+    cv::Mat left_viz;
+    cv::Mat right_viz;
+    if (colorPipelineEnabled() &&
+        lock_bgr_copy(slot.rectBGR_vpiL, left_viz) &&
+        lock_bgr_copy(slot.rectBGR_vpiR, right_viz)) {
+        write_debug_image("left_rect_bgr.png", left_viz);
+        write_debug_image("right_rect_bgr.png", right_viz);
+    } else {
+        cv::cvtColor(left_gray, left_viz, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(right_gray, right_viz, cv::COLOR_GRAY2BGR);
+    }
+
+    auto draw_detection_overlay = [](const cv::Mat& image,
+                                     const std::vector<Detection>& detections,
+                                     const std::string& title) {
+        cv::Mat out;
+        if (image.channels() == 1) {
+            cv::cvtColor(image, out, cv::COLOR_GRAY2BGR);
+        } else {
+            image.copyTo(out);
+        }
+        for (size_t i = 0; i < detections.size(); ++i) {
+            const auto& d = detections[i];
+            const int x = static_cast<int>(std::round(d.cx - d.width * 0.5f));
+            const int y = static_cast<int>(std::round(d.cy - d.height * 0.5f));
+            const int w = static_cast<int>(std::round(d.width));
+            const int h = static_cast<int>(std::round(d.height));
+            cv::rectangle(out, cv::Rect(x, y, w, h) &
+                                cv::Rect(0, 0, out.cols, out.rows),
+                          cv::Scalar(0, 255, 0), 2);
+            char label[96];
+            std::snprintf(label, sizeof(label), "#%zu c%d %.2f",
+                          i, d.class_id, d.confidence);
+            cv::putText(out, label, cv::Point(std::max(0, x), std::max(18, y - 6)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                        cv::Scalar(0, 255, 255), 2);
+        }
+        cv::putText(out, title, cv::Point(12, 28), cv::FONT_HERSHEY_SIMPLEX,
+                    0.8, cv::Scalar(0, 180, 255), 2);
+        return out;
+    };
+
+    write_debug_image("left_rect_gray.png", left_gray);
+    write_debug_image("right_rect_gray.png", right_gray);
+    write_debug_image("left_detections.png",
+                      draw_detection_overlay(left_viz, slot.detections, "left"));
+    write_debug_image("right_detections.png",
+                      draw_detection_overlay(right_viz, slot.detections_right, "right"));
+
+    int best_left = -1;
+    int best_right = -1;
+    float best_score = std::numeric_limits<float>::max();
+    const float y_tol = std::max(1.0f, config_.dual_yolo.epipolar_y_tolerance);
+    const float size_ratio_gate = std::max(1.0f, config_.dual_yolo.max_size_ratio);
+    for (size_t li = 0; li < slot.detections.size(); ++li) {
+        const auto& l = slot.detections[li];
+        for (size_t ri = 0; ri < slot.detections_right.size(); ++ri) {
+            const auto& r = slot.detections_right[ri];
+            if (l.class_id != r.class_id) continue;
+            const float disp = l.cx - r.cx;
+            if (disp <= 0.5f || disp > static_cast<float>(config_.max_disparity)) continue;
+            const float dy = std::abs(l.cy - r.cy);
+            const float candidate_y_tol =
+                std::max(y_tol, 0.35f * std::max(l.height, r.height));
+            if (dy > candidate_y_tol) continue;
+            const float wr = std::max(l.width, r.width) /
+                             std::max(1.0f, std::min(l.width, r.width));
+            const float hr = std::max(l.height, r.height) /
+                             std::max(1.0f, std::min(l.height, r.height));
+            const float sr = std::max(wr, hr);
+            if (sr > size_ratio_gate) continue;
+            const float score = dy / candidate_y_tol + std::abs(wr - 1.0f) +
+                                std::abs(hr - 1.0f) -
+                                0.1f * (l.confidence + r.confidence);
+            if (score < best_score) {
+                best_score = score;
+                best_left = static_cast<int>(li);
+                best_right = static_cast<int>(ri);
+            }
+        }
+    }
+
+    if (best_left < 0 || best_right < 0) {
+        LOG_ERROR("Feature match debug: no valid left/right YOLO pair (left=%zu right=%zu)",
+                  slot.detections.size(), slot.detections_right.size());
+        cleanup();
+        return false;
+    }
+
+    const Detection& left_det = slot.detections[best_left];
+    const Detection& right_det = slot.detections_right[best_right];
+    const float initial_disp = left_det.cx - right_det.cx;
+    const auto& P1 = calibration_->getProjectionLeft();
+    const float focal = static_cast<float>(P1.at<double>(0, 0));
+    const float baseline = calibration_->getBaseline();
+
+    std::vector<DebugFeatureMatchResult> results;
+    results.push_back(makeDebugSparseFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        SparseFeatureMode::CORNER));
+    results.push_back(makeDebugSparseFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        SparseFeatureMode::TEXTURE));
+    results.push_back(makeDebugSparseFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        SparseFeatureMode::BINARY));
+    results.push_back(makeDebugOpenCVFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        OpenCVFeatureMode::ORB));
+    results.push_back(makeDebugOpenCVFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        OpenCVFeatureMode::BRISK));
+    results.push_back(makeDebugOpenCVFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        config_.dual_yolo, config_.max_disparity, focal, baseline,
+        OpenCVFeatureMode::AKAZE));
+
+    cv::Mat left_color = left_viz.clone();
+    cv::Mat right_color = right_viz.clone();
+    auto draw_selected_bbox = [](cv::Mat& img, const Detection& d,
+                                 const cv::Scalar& color) {
+        const int x = static_cast<int>(std::round(d.cx - d.width * 0.5f));
+        const int y = static_cast<int>(std::round(d.cy - d.height * 0.5f));
+        const int w = static_cast<int>(std::round(d.width));
+        const int h = static_cast<int>(std::round(d.height));
+        cv::rectangle(img, cv::Rect(x, y, w, h) & cv::Rect(0, 0, img.cols, img.rows),
+                      color, 2);
+    };
+    draw_selected_bbox(left_color, left_det, cv::Scalar(0, 255, 0));
+    draw_selected_bbox(right_color, right_det, cv::Scalar(0, 255, 0));
+    auto draw_feature_debug_panel = [](const cv::Mat& left_base,
+                                       const cv::Mat& right_base,
+                                       const DebugFeatureMatchResult& r) {
+        cv::Mat left_panel = left_base.clone();
+        cv::Mat right_panel = right_base.clone();
+        std::vector<cv::Mat> side_by_side{left_panel, right_panel};
+        cv::Mat canvas;
+        cv::hconcat(side_by_side, canvas);
+        const int x_offset = left_panel.cols;
+
+        for (const auto& kp : r.left_keypoints) {
+            cv::circle(canvas, kp.pt, 4, cv::Scalar(255, 255, 0), 1, cv::LINE_AA);
+        }
+        for (const auto& kp : r.right_keypoints) {
+            cv::Point2f p(kp.pt.x + static_cast<float>(x_offset), kp.pt.y);
+            cv::circle(canvas, p, 4, cv::Scalar(255, 0, 255), 1, cv::LINE_AA);
+        }
+        for (const auto& m : r.matches) {
+            if (m.queryIdx < 0 || m.trainIdx < 0 ||
+                m.queryIdx >= static_cast<int>(r.left_keypoints.size()) ||
+                m.trainIdx >= static_cast<int>(r.right_keypoints.size())) {
+                continue;
+            }
+            const cv::Point2f p1 = r.left_keypoints[m.queryIdx].pt;
+            const cv::Point2f p2(
+                r.right_keypoints[m.trainIdx].pt.x + static_cast<float>(x_offset),
+                r.right_keypoints[m.trainIdx].pt.y);
+            cv::line(canvas, p1, p2, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+            cv::circle(canvas, p1, 5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+            cv::circle(canvas, p2, 5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        }
+
+        char title[224];
+        std::snprintf(title, sizeof(title),
+                      "%s Lkp=%zu Rkp=%zu cand=%d matches=%zu disp=%.2f std=%.2f conf=%.2f",
+                      r.name.c_str(), r.left_keypoints.size(), r.right_keypoints.size(),
+                      r.attempted_matches, r.matches.size(), r.disparity,
+                      r.stddev, r.confidence);
+        cv::putText(canvas, title, cv::Point(16, 30),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.68,
+                    cv::Scalar(0, 180, 255), 2);
+        cv::putText(canvas, "left keypoints", cv::Point(16, 58),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                    cv::Scalar(255, 255, 0), 1);
+        cv::putText(canvas, "right candidates", cv::Point(x_offset + 16, 58),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.55,
+                    cv::Scalar(255, 0, 255), 1);
+        return canvas;
+    };
+    cv::Mat selected_pair;
+    {
+        std::vector<cv::Mat> side_by_side{left_color, right_color};
+        cv::hconcat(side_by_side, selected_pair);
+    }
+    write_debug_image("selected_pair.png", selected_pair);
+
+    std::vector<cv::Mat> panels;
+    std::ofstream summary((output_path / "summary.txt").string());
+    if (!summary.is_open()) {
+        LOG_ERROR("Feature match debug: failed to open %s",
+                  (output_path / "summary.txt").string().c_str());
+        output_ok = false;
+    } else {
+        summary << "left_count=" << slot.detections.size()
+                << " right_count=" << slot.detections_right.size() << "\n";
+        summary << "selected_left=" << best_left << " selected_right=" << best_right
+                << " initial_disp=" << initial_disp
+                << " dy=" << std::abs(left_det.cy - right_det.cy)
+                << " baseline_m=" << baseline
+                << " focal_px=" << focal << "\n";
+        summary << "frame_counter_delta="
+                << (static_cast<int64_t>(slot.left_frame_counter) -
+                    static_cast<int64_t>(slot.right_frame_counter))
+                << " frame_number_delta="
+                << (static_cast<int64_t>(slot.left_frame_number) -
+                    static_cast<int64_t>(slot.right_frame_number))
+                << " trigger_delta="
+                << (static_cast<int64_t>(slot.left_trigger_index) -
+                    static_cast<int64_t>(slot.right_trigger_index))
+                << "\n";
+    }
+
+    for (const auto& r : results) {
+        cv::Mat canvas = draw_feature_debug_panel(left_color, right_color, r);
+        write_debug_image(r.name + "_matches.png", canvas);
+        panels.push_back(canvas);
+        if (summary.is_open()) {
+            summary << r.name
+                    << " left_keypoints=" << r.left_keypoints.size()
+                    << " right_keypoints=" << r.right_keypoints.size()
+                    << " candidates=" << r.attempted_matches
+                    << " matches=" << r.matches.size()
+                    << " disparity=" << r.disparity
+                    << " std=" << r.stddev
+                    << " confidence=" << r.confidence << "\n";
+        }
+    }
+
+    if (!panels.empty()) {
+        const int target_w = panels.front().cols;
+        std::vector<cv::Mat> resized;
+        resized.reserve(panels.size());
+        for (const auto& p : panels) {
+            if (p.cols == target_w) {
+                resized.push_back(p);
+            } else {
+                cv::Mat tmp;
+                const double scale = static_cast<double>(target_w) /
+                                     static_cast<double>(std::max(1, p.cols));
+                cv::resize(p, tmp, cv::Size(target_w,
+                    std::max(1, static_cast<int>(std::round(p.rows * scale)))));
+                resized.push_back(tmp);
+            }
+        }
+        cv::Mat contact;
+        cv::vconcat(resized, contact);
+        write_debug_image("feature_match_contact_sheet.png", contact);
+    }
+
+    if (summary.is_open()) {
+        summary.flush();
+        if (!summary.good()) {
+            LOG_ERROR("Feature match debug: failed while writing %s",
+                      (output_path / "summary.txt").string().c_str());
+            output_ok = false;
+        }
+    }
+    if (!output_ok) {
+        cleanup();
+        return false;
+    }
+
+    LOG_INFO("Feature match debug saved to %s", output_dir.c_str());
+    cleanup();
+    return true;
+#endif
 }
 
 void Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {

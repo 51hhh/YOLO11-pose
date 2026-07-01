@@ -210,6 +210,7 @@ target_link_libraries(stereo_pipeline
   yaml-cpp
   # 系统
   pthread
+  stdc++fs
 )
 
 if(HIK_FOUND)

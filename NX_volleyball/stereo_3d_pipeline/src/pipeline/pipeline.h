@@ -272,6 +272,11 @@ public:
      */
     void printPerfReport() const;
 
+    /**
+     * @brief 抓取一对校正图并输出 ROI 特征匹配调试图
+     */
+    bool debugFeatureMatchesOnce(const std::string& output_dir);
+
 private:
     // ===== Pipeline 主循环 =====
     void pipelineLoop();

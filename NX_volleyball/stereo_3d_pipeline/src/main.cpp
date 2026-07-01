@@ -410,27 +410,44 @@ int main(int argc, char* argv[]) {
     // 解析命令行
     std::string config_path = "config/pipeline.yaml";
     bool enable_display = false;
+    bool debug_feature_matches = false;
+    std::string debug_feature_matches_dir = "test_logs/feature_match_debug";
     std::vector<std::string> unknown_args;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
+        if ((arg == "--config" || arg == "-c") &&
+            i + 1 < argc && argv[i + 1][0] != '-') {
             config_path = argv[++i];
         } else if (arg == "--config" || arg == "-c") {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, "Usage: %s [--config <path>] [--visualize]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
             return 1;
         } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
             enable_display = true;
+        } else if (arg == "--debug-feature-matches") {
+            debug_feature_matches = true;
+        } else if (arg == "--debug-feature-matches-dir" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            debug_feature_matches = true;
+            debug_feature_matches_dir = argv[++i];
+        } else if (arg == "--debug-feature-matches-dir") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, "Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
+            return 1;
         } else if (arg == "--visualizels") {
             // 兼容常见拼写误写，避免静默关闭可视化
             fprintf(stderr, "Warning: unknown option '--visualizels', treating as '--visualize'.\n");
             enable_display = true;
         } else if (arg == "--help" || arg == "-h") {
-            printf("Usage: %s [--config <path>] [--visualize]\n", argv[0]);
-            printf("  --config, -c    Pipeline configuration YAML\n");
-            printf("  --visualize, -v Show detection + distance overlay window\n");
+            printf("Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
+            printf("  --config, -c                  Pipeline configuration YAML\n");
+            printf("  --visualize, -v               Show detection + distance overlay window\n");
+            printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
+            printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
             return 0;
         } else if (!arg.empty() && arg[0] == '-') {
+            unknown_args.push_back(arg);
+        } else {
             unknown_args.push_back(arg);
         }
     }
@@ -463,6 +480,17 @@ int main(int argc, char* argv[]) {
 
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
+
+    if (debug_feature_matches) {
+        LOG_INFO("Feature match debug output: %s", debug_feature_matches_dir.c_str());
+        if (!pipeline.init(cfg)) {
+            LOG_ERROR("Pipeline init failed");
+            return 1;
+        }
+        const bool ok = pipeline.debugFeatureMatchesOnce(debug_feature_matches_dir);
+        pipeline.printPerfReport();
+        return ok ? 0 : 1;
+    }
 
     // 初始化落点预测 + 轨迹记录
     stereo3d::TrajectoryPredictor predictor;
