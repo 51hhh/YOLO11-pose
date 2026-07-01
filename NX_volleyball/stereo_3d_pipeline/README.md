@@ -164,22 +164,17 @@ cd build_standalone
 
 ### 1. 采集棋盘格图像
 
-使用 C++ 采集工具（与主程序使用相同的海康 SDK、FrameSpecInfo 水印同步和 PWM 触发）：
+正式采集统一使用 C++ `capture_chessboard`。它与主程序使用同一套海康 SDK、
+FrameSpecInfo 水印同步和 PWM 触发路径；Python 采集脚本已删除。
+
+在 `build_standalone` 下执行：
 
 ```bash
-# GUI 预览采集：适合人工摆棋盘，按空格保存
 ./capture_chessboard \
   -o calibration_images \
+  -g 17.0 \
   --serial-left 00D39342665 \
   --serial-right 00219471413
-
-# SSH/headless 自动采集：每秒保存一对，共 40 对
-./capture_chessboard --headless -n 40 -o calibration_images \
-  --serial-left 00D39342665 \
-  --serial-right 00219471413
-
-# 仅排查画面时使用，自由运行不用于正式标定
-./capture_chessboard --free-run -o calibration_images
 ```
 
 操作方式：
@@ -188,27 +183,34 @@ cd build_standalone
 - **c** — 清空已采集图像
 
 说明：
-- 相机触发频率仍是 `100Hz`，GUI 显示限到约 `60fps`。
-- 采集端不做棋盘/质量检测，只显示保存数量和同步状态，避免影响预览和触发采集。
-- 棋盘内角点规格在 `stereo_calibrate` 阶段通过 `--board-w/--board-h` 指定。
+- 相机触发频率保持 `100Hz`，GUI 显示限到约 `60fps`。
+- 采集端不做棋盘/质量检测，只显示保存数量和同步状态，避免影响预览和触发。
+- 正式标定只使用硬触发同步；`--free-run` 只用于排查相机画面。
+- 棋盘内角点规格在求解阶段通过 `--board-w/--board-h` 指定。
 
-建议采集 30-50 对图像，覆盖不同角度和位置。正式采集后检查 `calibration_images/capture_metadata.csv`，`frame_counter_delta` 应稳定为 0。
+建议采集 30-50 对图像，覆盖不同角度、画面位置和距离。正式采集后检查
+`calibration_images/capture_metadata.csv`，`frame_counter_delta` 应稳定为 0。
 
 ### 2. 执行标定
 
+路径 A：在 NX 上直接用 C++ 求解：
+
 ```bash
-# 方格边长 30mm
-./stereo_calibrate -s 30.0 -d calibration_images -o calibration/stereo_calib.yaml
-
-# 自定义棋盘格尺寸
-./stereo_calibrate -s 25.0 --board-w 11 --board-h 8 -d calibration_images
-
-# SSH 跳过可视化，可选 CUDA 预处理
-./stereo_calibrate -s 30.0 --no-vis --gpu-preprocess
-
-# 指定角点检测并发数；CPU 预处理默认使用 CPU 核数，--gpu-preprocess 默认 1
-./stereo_calibrate -s 30.0 --jobs 4
+./stereo_calibrate -s 26.0 --board-w 5 --board-h 8
 ```
+
+路径 B：把采集图下载到本机，用 Python 离线求解：
+
+```bash
+scp -r nvidia@10.42.0.148:~/NX_volleyball/stereo_3d_pipeline/build_standalone/calibration_images ./NX_volleyball/calibration
+cd ./NX_volleyball/calibration
+python3 stereo_calibration.py -s 26.0
+```
+
+如需 SSH 跳过可视化，追加 `--no-vis`。C++ 求解可用 `--gpu-preprocess` 做
+Bayer/BGR 转灰预处理；角点检测和非线性求解仍由 OpenCV CPU 完成。
+两条求解路径默认都固定单目标定内参求双目外参；如需联合优化内参，显式追加
+`--optimize-intrinsics`。
 
 标定工具自动完成：
 1. 并行棋盘检测 + 多级经典检测兜底（`--sb/--exhaustive` 可显式启用慢速 SB 兜底）
@@ -220,9 +222,8 @@ cd build_standalone
 7. 深度精度报告
 8. 校正效果可视化预览
 
-输出文件 `stereo_calib.yaml` 与 `StereoCalibration::load()` 完全兼容。
-
-旧目录 `NX_volleyball/calibration/*.py` 保留为 legacy 参考，不再作为正式标定入口；等 C++ 工具完成一次新基线标定并验证后再考虑移除。
+输出文件 `stereo_calib.yaml` 与 `StereoCalibration::load()` 完全兼容。Python 目录只保留
+`stereo_calibration.py`、`stereo_depth_test.py` 和算法对比脚本，不再包含采集入口。
 
 ### 3. 配置使用
 

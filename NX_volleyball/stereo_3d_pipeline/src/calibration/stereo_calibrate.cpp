@@ -7,8 +7,8 @@
  * compatible with StereoCalibration::load().
  *
  * Usage:
- *   ./stereo_calibrate -s 30.0                       # square size in mm
- *   ./stereo_calibrate -s 25.0 -d images/ -o calib.yaml
+ *   ./stereo_calibrate -s 26.0 --board-w 5 --board-h 8
+ *   ./stereo_calibrate -s 26.0 --board-w 5 --board-h 8 -d images/ -o calib.yaml
  */
 
 #include <opencv2/opencv.hpp>
@@ -536,6 +536,10 @@ int main(int argc, char* argv[]) {
         printf("[WARN] %zu input pairs were not usable. For formal calibration, recapture them with capture-time quality checks instead of relying on post-processing selection.\n",
                n - objPoints.size());
     }
+    if (objPoints.size() < 20) {
+        printf("[WARN] Only %zu valid pairs. Formal long-baseline calibration should use at least 20 well-distributed pairs.\n",
+               objPoints.size());
+    }
     if (objPoints.size() < 5) {
         fprintf(stderr, "[ERROR] Need at least 5 valid pairs, got %zu\n", objPoints.size());
         return 1;
@@ -609,6 +613,22 @@ int main(int argc, char* argv[]) {
     printf("  ROI Left:  [%d, %d, %d, %d]\n", roiL.x, roiL.y, roiL.width, roiL.height);
     printf("  ROI Right: [%d, %d, %d, %d]\n", roiR.x, roiR.y, roiR.width, roiR.height);
 
+    const double focal = P1.at<double>(0, 0);
+    if (rmsS > 1.0) {
+        fprintf(stderr, "[ERROR] Stereo RMS %.4f px > 1.0 px; refusing to save calibration\n",
+                rmsS);
+        return 1;
+    }
+    if (roiL.empty() || roiR.empty()) {
+        fprintf(stderr, "[ERROR] Rectification ROI is empty; refusing to save calibration\n");
+        return 1;
+    }
+    if (!std::isfinite(focal) || focal <= 0.0 ||
+        !std::isfinite(baseline) || baseline <= 0.0) {
+        fprintf(stderr, "[ERROR] Invalid focal/baseline; refusing to save calibration\n");
+        return 1;
+    }
+
     // ---- Save calibration ----
     // Output format compatible with StereoCalibration::load()
     {
@@ -617,9 +637,10 @@ int main(int argc, char* argv[]) {
         if (!parent.empty()) {
             std::error_code ec;
             fs::create_directories(parent, ec);
-            if (ec) {
+            if (ec || !fs::is_directory(parent)) {
                 fprintf(stderr, "[ERROR] Failed to create output directory %s: %s\n",
-                        parent.string().c_str(), ec.message().c_str());
+                        parent.string().c_str(),
+                        ec ? ec.message().c_str() : "path exists but is not a directory");
                 return 1;
             }
         }
@@ -656,7 +677,6 @@ int main(int argc, char* argv[]) {
 
     // ---- Depth accuracy report ----
     {
-        double focal = P1.at<double>(0, 0);
         printf("\nBaseline = %.2f mm, Focal = %.2f px\n", baseline, focal);
         printf("Depth accuracy (disparity precision 0.5 px):\n");
         for (double d_mm : {3000.0, 5000.0, 9000.0, 15000.0}) {

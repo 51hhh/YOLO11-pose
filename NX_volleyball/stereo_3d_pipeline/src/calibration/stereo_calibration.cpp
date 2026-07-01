@@ -16,7 +16,7 @@ bool StereoCalibration::load(const std::string& filepath) {
         return false;
     }
 
-    // 读取标定参数 (键名与 stereo_calibration.py 输出一致)
+    // 读取标定参数 (键名与 C++/Python 标定工具输出一致)
     fs["camera_matrix_left"]  >> K1_;
     fs["distortion_coefficients_left"]  >> D1_;
     fs["camera_matrix_right"] >> K2_;

@@ -6,8 +6,8 @@
  * positioning.
  *
  * Usage:
- *   ./capture_chessboard -o calibration_images      # HW trigger (default)
- *   ./capture_chessboard --free-run -o images        # free-run mode
+ *   ./capture_chessboard -o calibration_images -g 17.0 \
+ *     --serial-left 00D39342665 --serial-right 00219471413
  *
  * Keys:
  *   SPACE  - save current frame pair
@@ -301,16 +301,19 @@ int main(int argc, char* argv[]) {
     if (!validateArgs(args)) return 1;
 
     std::error_code ec;
-    fs::create_directories(fs::path(args.output_dir) / "left", ec);
-    if (ec) {
+    const fs::path left_dir = fs::path(args.output_dir) / "left";
+    const fs::path right_dir = fs::path(args.output_dir) / "right";
+    fs::create_directories(left_dir, ec);
+    if (ec || !fs::is_directory(left_dir)) {
         fprintf(stderr, "[ERROR] Failed to create left output directory: %s\n",
-                ec.message().c_str());
+                ec ? ec.message().c_str() : left_dir.string().c_str());
         return 1;
     }
-    fs::create_directories(fs::path(args.output_dir) / "right", ec);
-    if (ec) {
+    ec.clear();
+    fs::create_directories(right_dir, ec);
+    if (ec || !fs::is_directory(right_dir)) {
         fprintf(stderr, "[ERROR] Failed to create right output directory: %s\n",
-                ec.message().c_str());
+                ec ? ec.message().c_str() : right_dir.string().c_str());
         return 1;
     }
 
@@ -537,7 +540,7 @@ int main(int argc, char* argv[]) {
 
     printf("\nTotal: %d pairs in %s/\n", captureCount, args.output_dir.c_str());
     if (captureCount > 0) {
-        printf("Next step: ./stereo_calibrate -s <square_mm> -d %s\n",
+        printf("Next step: ./stereo_calibrate -s 26.0 --board-w 5 --board-h 8 -d %s\n",
                args.output_dir.c_str());
     }
 

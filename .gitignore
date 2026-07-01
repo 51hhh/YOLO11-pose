@@ -55,3 +55,8 @@ __pycache__/
 
 # Local model artifacts
 NX_volleyball/stereo_3d_pipeline/models/
+
+# Calibration runtime data
+NX_volleyball/calibration/calibration_images*/
+NX_volleyball/calibration/stereo_calib.npz
+NX_volleyball/stereo_3d_pipeline/raw_observation_data.csv

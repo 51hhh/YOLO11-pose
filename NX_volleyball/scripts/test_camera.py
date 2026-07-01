@@ -312,9 +312,9 @@ def main():
     print("\n下一步:")
     print("  1. 检查同步误差是否 <1ms")
     print("  2. 查看保存的图像")
-    print("  3. 开始相机标定:")
-    print("     cd ../calibration")
-    print("     python3 capture_chessboard.py")
+    print("  3. 正式标定采集请使用 stereo_3d_pipeline C++ 工具:")
+    print("     cd ../stereo_3d_pipeline/build_standalone")
+    print("     ./capture_chessboard -o calibration_images -g 17.0 --serial-left 00D39342665 --serial-right 00219471413")
     print()
 
 if __name__ == "__main__":

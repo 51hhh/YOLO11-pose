@@ -54,7 +54,7 @@ YOLO11-pose/
 │   └── models/                        # 模型目录说明
 └── NX_volleyball/                     # Jetson Orin NX 双目高速部署系统
     ├── README.md
-    ├── calibration/                   # 双目标定工具与标定文件
+    ├── calibration/                   # 离线标定求解、验证脚本与标定文件
     ├── scripts/                       # 测试/优化/模型转换脚本
     └── ros2_ws/src/volleyball_stereo_driver/
         ├── CMakeLists.txt
