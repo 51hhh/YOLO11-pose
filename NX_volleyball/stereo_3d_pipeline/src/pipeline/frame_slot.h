@@ -221,6 +221,25 @@ struct Object3D {
 };
 
 /**
+ * @brief Per-frame stereo sync metadata exposed to callbacks and recorders.
+ */
+struct FrameMetadata {
+    uint64_t left_timestamp_us = 0;
+    uint64_t right_timestamp_us = 0;
+    uint32_t left_frame_number = 0;
+    uint32_t right_frame_number = 0;
+    uint32_t left_frame_counter = 0;
+    uint32_t right_frame_counter = 0;
+    uint32_t left_trigger_index = 0;
+    uint32_t right_trigger_index = 0;
+    int64_t frame_counter_delta = 0;
+    int64_t frame_number_delta = 0;
+    int64_t timestamp_delta_us = 0;
+    bool grab_failed = false;
+    bool is_detect_frame = true;
+};
+
+/**
  * @brief 一帧数据的完整生命周期容器
  *
  * Pipeline 每一帧在此结构中流转:
@@ -383,6 +402,30 @@ struct FrameSlot {
         left_trigger_index = right_trigger_index = 0;
     }
 };
+
+inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
+    FrameMetadata meta;
+    meta.left_timestamp_us = slot.left_timestamp_us;
+    meta.right_timestamp_us = slot.right_timestamp_us;
+    meta.left_frame_number = slot.left_frame_number;
+    meta.right_frame_number = slot.right_frame_number;
+    meta.left_frame_counter = slot.left_frame_counter;
+    meta.right_frame_counter = slot.right_frame_counter;
+    meta.left_trigger_index = slot.left_trigger_index;
+    meta.right_trigger_index = slot.right_trigger_index;
+    meta.frame_counter_delta =
+        static_cast<int64_t>(slot.left_frame_counter) -
+        static_cast<int64_t>(slot.right_frame_counter);
+    meta.frame_number_delta =
+        static_cast<int64_t>(slot.left_frame_number) -
+        static_cast<int64_t>(slot.right_frame_number);
+    meta.timestamp_delta_us =
+        (static_cast<int64_t>(slot.left_timestamp_us) -
+         static_cast<int64_t>(slot.right_timestamp_us)) / 1000;
+    meta.grab_failed = slot.grab_failed;
+    meta.is_detect_frame = slot.is_detect_frame;
+    return meta;
+}
 
 /**
  * @brief 三缓冲 Ring Buffer

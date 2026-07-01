@@ -162,6 +162,20 @@ struct PipelineConfig {
         float subpixel_max_stddev_px = 1.0f; ///< 多点视差最大标准差
         float subpixel_time_budget_ms = 1.5f; ///< 每帧亚像素 CPU 预算, 0 表示不限制
         float epipolar_y_tolerance = 12.0f;///< 左右中心 y 允许差值 (px)
+        float feature_y_tolerance_px = 2.0f; ///< ROI 特征点严格 y 残差门限
+        float feature_y_slope = 0.0f;        ///< 可选 epipolar y 线性补偿斜率
+        float feature_y_offset_px = 0.0f;    ///< 可选 epipolar y 固定补偿
+        float feature_reverse_check_px = 1.0f; ///< 左右反查最大误差
+        float feature_overlap_scale = 0.55f; ///< 左右 bbox 投影 overlap 椭圆尺度
+        float feature_mad_scale = 2.5f;      ///< MAD 离群剔除倍数
+        float feature_ransac_gate_px = 0.75f; ///< 1D disparity RANSAC 最小门限
+        float feature_sphere_radius_scale = 1.8f; ///< 三角点离球心最大半径倍数
+        float feature_sphere_margin_m = 0.02f; ///< 物理半径门限冗余
+        bool feature_normalize_large_roi = true; ///< 大 ROI 降采样到固定球直径后匹配
+        int feature_normalized_diameter_px = 96; ///< 大 ROI 归一化目标球直径
+        float feature_normalize_min_diameter_px = 128.0f; ///< 超过该直径才归一化
+        float feature_normalize_margin_scale = 0.62f; ///< 归一化 ROI 半径相对 bbox 尺寸
+        bool feature_precompute_roi_maps = true; ///< ROI 内预计算 label/edge 供匹配使用
         float max_size_ratio = 2.0f;       ///< 左右 bbox 尺寸比例上限
         int fallback_search_margin_px = 48;///< 期望视差两侧搜索半宽 (px)
         int fallback_max_width_px = 220;   ///< 极线 fallback 搜索窗口最大宽度
@@ -194,6 +208,7 @@ struct PipelineConfig {
 
     // 性能
     int stats_interval = 100;      ///< 每 N 帧打印统计
+    bool detection_only = false;   ///< 仅运行采集/校正/检测/回调, 跳过 stereo/depth
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR
@@ -208,15 +223,26 @@ struct PipelineConfig {
 using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
 
 /**
- * @brief 帧回调 (可视化用: 校正后左图 + 原始左图 + 检测 + 3D结果)
- * rectL: 校正后左图 (VPIImage U8, 灰度)
- * rawL:  原始左图 (VPIImage U8, BayerRG8 原始数据) — 用于彩色可视化
+ * @brief 帧回调视图。
+ *
+ * 回调同步执行, 这些 VPIImage 和 vector 引用只在回调期间有效。
  */
-using FrameCallback = std::function<void(
-     int frame_id, VPIImage rectL, VPIImage rawL,
-    const std::vector<Detection>& detections,
-    const std::vector<Object3D>& results,
-    float fps)>;
+struct FrameCallbackData {
+    int frame_id;
+    VPIImage rect_gray_left;
+    VPIImage rect_gray_right;
+    VPIImage rect_bgr_left;
+    VPIImage rect_bgr_right;
+    VPIImage raw_left;
+    VPIImage raw_right;
+    const std::vector<Detection>& detections_left;
+    const std::vector<Detection>& detections_right;
+    const std::vector<Object3D>& results;
+    FrameMetadata metadata;
+    float fps;
+};
+
+using FrameCallback = std::function<void(const FrameCallbackData& frame)>;
 
 /**
  * @brief 诊断回调 (深度图 + 检测框 + 3D结果)

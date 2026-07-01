@@ -160,6 +160,7 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth.cpp
   src/fusion/trajectory_predictor.cpp
   src/utils/trajectory_recorder.cpp
+  src/utils/baseline_clip_recorder.cpp
   src/track/nanotrack_trt.cpp
   src/track/mixformer_trt.cpp
 )

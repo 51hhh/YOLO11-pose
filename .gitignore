@@ -23,6 +23,7 @@ NX_volleyball/model/*.engine
 
 # NX 本地测试输出
 NX_volleyball/stereo_3d_pipeline/test_logs/
+NX_volleyball/stereo_3d_pipeline/baseline_clips/
 NX_volleyball/stereo_3d_pipeline/benchmark_results/
 NX_volleyball/stereo_3d_pipeline/diagnose_output/*.png
 NX_volleyball/stereo_3d_pipeline/diagnose_output/*.npy

@@ -247,6 +247,312 @@ __device__ float disparityDeltaGate(
     return fmaxf(gate, 0.5f);
 }
 
+__device__ __forceinline__ float sampleWeight(float score) {
+    return fmaxf(0.05f, score);
+}
+
+__device__ float medianSortedValues(const float* values, int n) {
+    if (n <= 0) return 0.0f;
+    return (n & 1) ? values[n / 2]
+                   : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+}
+
+__device__ void sortSamplesByDisparity(
+    float* sample_disp,
+    float* sample_score,
+    float* sample_x,
+    float* sample_y,
+    int n) {
+    for (int i = 0; i < n - 1; ++i) {
+        for (int j = 0; j < n - i - 1; ++j) {
+            if (sample_disp[j] <= sample_disp[j + 1]) continue;
+            const float td = sample_disp[j];
+            const float ts = sample_score[j];
+            const float tx = sample_x[j];
+            const float ty = sample_y[j];
+            sample_disp[j] = sample_disp[j + 1];
+            sample_score[j] = sample_score[j + 1];
+            sample_x[j] = sample_x[j + 1];
+            sample_y[j] = sample_y[j + 1];
+            sample_disp[j + 1] = td;
+            sample_score[j + 1] = ts;
+            sample_x[j + 1] = tx;
+            sample_y[j + 1] = ty;
+        }
+    }
+}
+
+__device__ void sortValues(float* values, int n) {
+    for (int i = 0; i < n - 1; ++i) {
+        for (int j = 0; j < n - i - 1; ++j) {
+            if (values[j] <= values[j + 1]) continue;
+            const float tmp = values[j];
+            values[j] = values[j + 1];
+            values[j + 1] = tmp;
+        }
+    }
+}
+
+__device__ bool robustAggregateSamples(
+    int n,
+    int min_points,
+    float initial_disp,
+    float max_delta,
+    float max_stddev,
+    float feature_mad_scale,
+    float feature_ransac_gate_px,
+    float* sample_disp,
+    float* sample_score,
+    float* sample_x,
+    float* sample_y,
+    float* scratch,
+    float* out_disp,
+    float* out_anchor_x,
+    float* out_anchor_y,
+    float* out_stddev,
+    float* out_avg_score,
+    int* out_support) {
+    if (n < min_points) return false;
+
+    sortSamplesByDisparity(sample_disp, sample_score, sample_x, sample_y, n);
+    const float median = medianSortedValues(sample_disp, n);
+
+    for (int i = 0; i < n; ++i) {
+        scratch[i] = fabsf(sample_disp[i] - median);
+    }
+    sortValues(scratch, n);
+    const float mad = medianSortedValues(scratch, n);
+    const float robust_sigma = 1.4826f * mad;
+    const float min_gate = clampFloat(feature_ransac_gate_px, 0.25f, 3.0f);
+    const float mad_gate =
+        fmaxf(min_gate, robust_sigma * fmaxf(1.0f, feature_mad_scale));
+    const float gate = fminf(fmaxf(0.35f, max_delta), mad_gate);
+
+    float best_center = median;
+    float best_weight = -1.0f;
+    int best_support = 0;
+    for (int i = 0; i < n; ++i) {
+        float support_weight = 0.0f;
+        int support = 0;
+        for (int j = 0; j < n; ++j) {
+            if (fabsf(sample_disp[j] - sample_disp[i]) > gate) continue;
+            support_weight += sampleWeight(sample_score[j]);
+            ++support;
+        }
+        if (support > best_support ||
+            (support == best_support && support_weight > best_weight)) {
+            best_support = support;
+            best_weight = support_weight;
+            best_center = sample_disp[i];
+        }
+    }
+
+    const float median_gate = fmaxf(gate, min_gate * 1.5f);
+    int inliers = 0;
+    float total_w = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        const bool keep =
+            fabsf(sample_disp[i] - best_center) <= gate &&
+            fabsf(sample_disp[i] - median) <= median_gate;
+        scratch[i] = keep ? 1.0f : 0.0f;
+        if (!keep) continue;
+        total_w += sampleWeight(sample_score[i]);
+        ++inliers;
+    }
+    if (inliers < min_points || total_w <= 0.0f) return false;
+
+    const float half_w = total_w * 0.5f;
+    float accum_w = 0.0f;
+    float weighted_median = best_center;
+    for (int i = 0; i < n; ++i) {
+        if (scratch[i] <= 0.0f) continue;
+        accum_w += sampleWeight(sample_score[i]);
+        if (accum_w >= half_w) {
+            weighted_median = sample_disp[i];
+            break;
+        }
+    }
+    if (weighted_median <= 0.5f ||
+        fabsf(weighted_median - initial_disp) > max_delta) {
+        return false;
+    }
+
+    float sum_w = 0.0f;
+    float sum_x = 0.0f;
+    float sum_y = 0.0f;
+    float sum_score = 0.0f;
+    float var = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        if (scratch[i] <= 0.0f) continue;
+        const float w = sampleWeight(sample_score[i]);
+        const float diff = sample_disp[i] - weighted_median;
+        sum_w += w;
+        sum_x += w * sample_x[i];
+        sum_y += w * sample_y[i];
+        sum_score += w;
+        var += w * diff * diff;
+    }
+    if (sum_w <= 0.0f) return false;
+
+    const float stddev = sqrtf(var / sum_w);
+    if (stddev > max_stddev) return false;
+
+    *out_disp = weighted_median;
+    *out_anchor_x = sum_x / sum_w;
+    *out_anchor_y = sum_y / sum_w;
+    *out_stddev = stddev;
+    *out_avg_score = sum_score / static_cast<float>(max(1, inliers));
+    *out_support = inliers;
+    return true;
+}
+
+__device__ bool pointInsideDetectionEllipse(
+    const stereo3d::DualYoloGpuDetection& det,
+    float x,
+    float y,
+    float scale) {
+    if (det.width <= 1.0f || det.height <= 1.0f) return false;
+    const float rx = fmaxf(1.0f, det.width * scale);
+    const float ry = fmaxf(1.0f, det.height * scale);
+    const float nx = (x - det.cx) / rx;
+    const float ny = (y - det.cy) / ry;
+    return nx * nx + ny * ny <= 1.0f;
+}
+
+__device__ __forceinline__ float expectedFeatureYDelta(
+    float left_x,
+    const stereo3d::DualYoloGpuDetection& left_det,
+    float feature_y_slope,
+    float feature_y_offset_px) {
+    return feature_y_offset_px + feature_y_slope * (left_x - left_det.cx);
+}
+
+__device__ __forceinline__ bool passesFeatureYGate(
+    float left_x,
+    float left_y,
+    float right_y,
+    const stereo3d::DualYoloGpuDetection& left_det,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px) {
+    const float expected = expectedFeatureYDelta(
+        left_x, left_det, feature_y_slope, feature_y_offset_px);
+    const float residual = (left_y - right_y) - expected;
+    return fabsf(residual) <= clampFloat(feature_y_tolerance_px, 0.5f, 8.0f);
+}
+
+__device__ float reverseSparseMatchError(
+    const uint8_t* left_img,
+    int left_pitch,
+    const uint8_t* right_img,
+    int right_pitch,
+    int img_w,
+    int img_h,
+    float left_x,
+    float left_y,
+    float right_x,
+    float right_y,
+    int patch_radius,
+    int d_start,
+    int d_end,
+    int y_radius,
+    int mode,
+    const stereo3d::DualYoloGpuDetection& left_det,
+    float feature_y_slope,
+    float feature_y_offset_px) {
+    const int rx = static_cast<int>(rintf(right_x));
+    const int ry = static_cast<int>(rintf(right_y));
+    if (!patchInside(img_w, img_h, rx, ry, patch_radius)) return FLT_MAX;
+
+    float best_score = -2.0f;
+    int best_lx = -1;
+    int best_ly = -1;
+    for (int d = d_start; d <= d_end; ++d) {
+        const int lx = rx + d;
+        const float expected_y = expectedFeatureYDelta(
+            static_cast<float>(lx), left_det,
+            feature_y_slope, feature_y_offset_px);
+        const int dy_center = static_cast<int>(rintf(expected_y));
+        for (int dy = dy_center - y_radius; dy <= dy_center + y_radius; ++dy) {
+            const int ly = ry + dy;
+            if (!patchInside(img_w, img_h, lx, ly, patch_radius)) continue;
+            const float score = mode == 2
+                ? binaryPatchScore(right_img, right_pitch, left_img, left_pitch,
+                                   rx, ry, lx, ly, patch_radius)
+                : znccScore(right_img, right_pitch, left_img, left_pitch,
+                            rx, ry, lx, ly, patch_radius);
+            if (score > best_score) {
+                best_score = score;
+                best_lx = lx;
+                best_ly = ly;
+            }
+        }
+    }
+    if (best_lx < 0) return FLT_MAX;
+    const float dx = static_cast<float>(best_lx) - left_x;
+    const float dy = static_cast<float>(best_ly) - left_y;
+    return sqrtf(dx * dx + dy * dy);
+}
+
+__device__ bool passesFeatureOverlapGate(
+    const stereo3d::DualYoloGpuDetection& left_det,
+    const stereo3d::DualYoloGpuDetection& right_det,
+    float left_x,
+    float left_y,
+    float right_x,
+    float right_y,
+    float initial_disp,
+    float feature_overlap_scale) {
+    const float scale = clampFloat(feature_overlap_scale, 0.35f, 0.90f);
+    const float projection_scale = fminf(0.98f, scale + 0.12f);
+    if (!pointInsideDetectionEllipse(left_det, left_x, left_y, scale) ||
+        !pointInsideDetectionEllipse(right_det, right_x, right_y, scale)) {
+        return false;
+    }
+    if (!pointInsideDetectionEllipse(right_det,
+                                     left_x - initial_disp,
+                                     left_y,
+                                     projection_scale)) {
+        return false;
+    }
+    if (!pointInsideDetectionEllipse(left_det,
+                                     right_x + initial_disp,
+                                     right_y,
+                                     projection_scale)) {
+        return false;
+    }
+    return true;
+}
+
+__device__ bool passesSphereRadiusGate(
+    float left_x,
+    float left_y,
+    float ball_cx,
+    float ball_cy,
+    float disparity,
+    float initial_disp,
+    float focal,
+    float baseline,
+    float radius_m,
+    float radius_scale,
+    float margin_m) {
+    if (radius_m <= 0.0f || focal <= 1e-3f || baseline <= 1e-6f ||
+        initial_disp <= 0.5f || disparity <= 0.5f) {
+        return true;
+    }
+    const float fb = focal * baseline;
+    const float center_z = fb / initial_disp;
+    const float z = fb / disparity;
+    if (!isfinite(center_z) || !isfinite(z)) return false;
+    const float dx = (left_x - ball_cx) * z / focal;
+    const float dy = (left_y - ball_cy) * z / focal;
+    const float dz = z - center_z;
+    const float distance = sqrtf(dx * dx + dy * dy + dz * dz);
+    const float max_distance =
+        radius_m * fmaxf(1.0f, radius_scale) + fmaxf(0.0f, margin_m);
+    return distance <= max_distance;
+}
+
 __device__ void fitGeometryInBBox(
     const uint8_t* img, int pitch, int img_w, int img_h,
     const stereo3d::DualYoloGpuDetection& det,
@@ -565,6 +871,7 @@ __device__ void matchSparsePoints(
     const uint8_t* right_img, int right_pitch,
     int img_w, int img_h,
     const stereo3d::DualYoloGpuDetection& left_det,
+    const stereo3d::DualYoloGpuDetection& right_det,
     float center_x, float center_y, float radius,
     float initial_disp,
     int mode,
@@ -580,6 +887,16 @@ __device__ void matchSparsePoints(
     float baseline,
     float min_depth,
     float max_depth,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px,
+    float feature_reverse_check_px,
+    float feature_overlap_scale,
+    float feature_mad_scale,
+    float feature_ransac_gate_px,
+    float feature_sphere_radius_m,
+    float feature_sphere_radius_scale,
+    float feature_sphere_margin_m,
     float* sample_disp,
     float* sample_score,
     float* sample_x,
@@ -588,6 +905,7 @@ __device__ void matchSparsePoints(
     float* point_y,
     float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint],
     float best_disp_parts[kMaxFeaturePoints][kThreadsPerPoint],
+    float best_dy_parts[kMaxFeaturePoints][kThreadsPerPoint],
     int* valid_count,
     stereo3d::DualYoloGpuDisparity* out) {
     const int tid = threadIdx.x;
@@ -605,6 +923,7 @@ __device__ void matchSparsePoints(
         for (int j = 0; j < kThreadsPerPoint; ++j) {
             best_score_parts[i][j] = -2.0f;
             best_disp_parts[i][j] = -1.0f;
+            best_dy_parts[i][j] = 0.0f;
         }
     }
     __syncthreads();
@@ -641,23 +960,38 @@ __device__ void matchSparsePoints(
                     const int per = (range + kThreadsPerPoint - 1) / kThreadsPerPoint;
                     const int begin = d_start + sub_idx * per;
                     const int end = min(d_end, begin + per - 1);
+                    const float expected_y = expectedFeatureYDelta(
+                        static_cast<float>(x), left_det,
+                        feature_y_slope, feature_y_offset_px);
+                    const int y_radius = clampInt(
+                        static_cast<int>(ceilf(
+                            clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                        1, 3);
+                    const int dy_center = static_cast<int>(rintf(-expected_y));
                     float best_score = -2.0f;
                     float best_disp = -1.0f;
+                    float best_dy = 0.0f;
                     for (int d = begin; d <= end; ++d) {
                         const int xr = x - d;
-                        if (!patchInside(img_w, img_h, xr, y, patch_radius)) continue;
-                        const float score = mode == 2
-                            ? binaryPatchScore(left_img, left_pitch, right_img, right_pitch,
-                                               x, y, xr, y, patch_radius)
-                            : znccScore(left_img, left_pitch, right_img, right_pitch,
-                                        x, y, xr, y, patch_radius);
-                        if (score > best_score) {
-                            best_score = score;
-                            best_disp = static_cast<float>(d);
+                        for (int dy = dy_center - y_radius;
+                             dy <= dy_center + y_radius; ++dy) {
+                            const int yr = y + dy;
+                            if (!patchInside(img_w, img_h, xr, yr, patch_radius)) continue;
+                            const float score = mode == 2
+                                ? binaryPatchScore(left_img, left_pitch, right_img, right_pitch,
+                                                   x, y, xr, yr, patch_radius)
+                                : znccScore(left_img, left_pitch, right_img, right_pitch,
+                                            x, y, xr, yr, patch_radius);
+                            if (score > best_score) {
+                                best_score = score;
+                                best_disp = static_cast<float>(d);
+                                best_dy = static_cast<float>(dy);
+                            }
                         }
                     }
                     best_score_parts[point_idx][sub_idx] = best_score;
                     best_disp_parts[point_idx][sub_idx] = best_disp;
+                    best_dy_parts[point_idx][sub_idx] = best_dy;
                     if (sub_idx == 0) {
                         point_x[point_idx] = static_cast<float>(x);
                         point_y[point_idx] = static_cast<float>(y);
@@ -671,10 +1005,12 @@ __device__ void matchSparsePoints(
     if (point_idx < max_points && sub_idx == 0) {
         float best_score = best_score_parts[point_idx][0];
         float best_disp = best_disp_parts[point_idx][0];
+        float best_dy = best_dy_parts[point_idx][0];
         for (int i = 1; i < kThreadsPerPoint; ++i) {
             if (best_score_parts[point_idx][i] > best_score) {
                 best_score = best_score_parts[point_idx][i];
                 best_disp = best_disp_parts[point_idx][i];
+                best_dy = best_dy_parts[point_idx][i];
             }
         }
         const float min_score = mode == 2
@@ -683,13 +1019,57 @@ __device__ void matchSparsePoints(
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
             const float z = focal * baseline / best_disp;
-            if (z >= min_depth && z <= max_depth) {
-                const int idx = atomicAdd(valid_count, 1);
-                if (idx < kMaxFeaturePoints) {
-                    sample_disp[idx] = best_disp;
-                    sample_score[idx] = best_score;
-                    sample_x[idx] = point_x[point_idx];
-                    sample_y[idx] = point_y[point_idx];
+            const float left_x = point_x[point_idx];
+            const float left_y = point_y[point_idx];
+            const float right_x = left_x - best_disp;
+            const float right_y = left_y + best_dy;
+            const bool cheap_ok =
+                z >= min_depth && z <= max_depth &&
+                passesFeatureYGate(left_x, left_y, right_y, left_det,
+                                   feature_y_tolerance_px,
+                                   feature_y_slope,
+                                   feature_y_offset_px) &&
+                passesFeatureOverlapGate(left_det, right_det,
+                                         left_x, left_y, right_x, right_y,
+                                         initial_disp, feature_overlap_scale) &&
+                passesSphereRadiusGate(left_x, left_y,
+                                       center_x, center_y,
+                                       best_disp, initial_disp,
+                                       focal, baseline,
+                                       feature_sphere_radius_m,
+                                       feature_sphere_radius_scale,
+                                       feature_sphere_margin_m);
+            if (cheap_ok) {
+                const int d0 = static_cast<int>(rintf(initial_disp));
+                const int d_start = max(1, d0 - search_radius);
+                const int d_end = min(max_disparity, d0 + search_radius);
+                const int reverse_y_radius = clampInt(
+                    static_cast<int>(ceilf(
+                        clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                    1, 3);
+                const float reverse_err = feature_reverse_check_px >= 0.0f
+                    ? reverseSparseMatchError(left_img, left_pitch,
+                                              right_img, right_pitch,
+                                              img_w, img_h,
+                                              left_x, left_y,
+                                              right_x, right_y,
+                                              patch_radius,
+                                              d_start, d_end,
+                                              reverse_y_radius,
+                                              mode,
+                                              left_det,
+                                              feature_y_slope,
+                                              feature_y_offset_px)
+                    : 0.0f;
+                if (feature_reverse_check_px < 0.0f ||
+                    reverse_err <= fmaxf(0.25f, feature_reverse_check_px)) {
+                    const int idx = atomicAdd(valid_count, 1);
+                    if (idx < kMaxFeaturePoints) {
+                        sample_disp[idx] = best_disp;
+                        sample_score[idx] = best_score;
+                        sample_x[idx] = left_x;
+                        sample_y[idx] = left_y;
+                    }
                 }
             }
         }
@@ -702,69 +1082,51 @@ __device__ void matchSparsePoints(
         if (n < min_points) {
             out->low_confidence = 1;
         } else {
-            for (int i = 0; i < n - 1; ++i) {
-                for (int j = 0; j < n - i - 1; ++j) {
-                    if (sample_disp[j] > sample_disp[j + 1]) {
-                        const float td = sample_disp[j];
-                        const float ts = sample_score[j];
-                        const float tx = sample_x[j];
-                        const float ty = sample_y[j];
-                        sample_disp[j] = sample_disp[j + 1];
-                        sample_score[j] = sample_score[j + 1];
-                        sample_x[j] = sample_x[j + 1];
-                        sample_y[j] = sample_y[j + 1];
-                        sample_disp[j + 1] = td;
-                        sample_score[j + 1] = ts;
-                        sample_x[j + 1] = tx;
-                        sample_y[j + 1] = ty;
-                    }
-                }
-            }
-            int q1 = n / 4;
-            int q3 = (3 * n) / 4;
-            if (q1 == q3) {
-                q1 = 0;
-                q3 = n - 1;
-            }
-            float sum_d = 0.0f;
-            float sum_s = 0.0f;
-            float sum_x = 0.0f;
-            float sum_y = 0.0f;
-            int count = 0;
-            for (int i = q1; i <= q3; ++i) {
-                sum_d += sample_disp[i];
-                sum_s += sample_score[i];
-                sum_x += sample_x[i];
-                sum_y += sample_y[i];
-                ++count;
-            }
-            if (count <= 0) {
+            float disparity = 0.0f;
+            float anchor_x = 0.0f;
+            float anchor_y = 0.0f;
+            float stddev = 0.0f;
+            float avg_score = 0.0f;
+            int support = 0;
+            if (!robustAggregateSamples(n, min_points, initial_disp, max_delta,
+                                        max_stddev, feature_mad_scale,
+                                        feature_ransac_gate_px,
+                                        sample_disp, sample_score,
+                                        sample_x, sample_y, point_x,
+                                        &disparity, &anchor_x, &anchor_y,
+                                        &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
             } else {
-                const float mean = sum_d / static_cast<float>(count);
-                float var = 0.0f;
-                for (int i = q1; i <= q3; ++i) {
-                    const float e = sample_disp[i] - mean;
-                    var += e * e;
-                }
-                const float stddev = sqrtf(var / static_cast<float>(count));
-                const float z = focal * baseline / fmaxf(mean, 0.5f);
-                if (stddev > max_stddev ||
-                    fabsf(mean - initial_disp) > max_delta ||
-                    mean <= 0.5f || mean > static_cast<float>(max_disparity) ||
+                const float z = focal * baseline / fmaxf(disparity, 0.5f);
+                if (disparity > static_cast<float>(max_disparity) ||
                     z < min_depth || z > max_depth) {
                     out->low_confidence = 1;
                 } else {
-                    const float avg_score = sum_s / static_cast<float>(count);
-                    out->disparity = mean;
-                    out->confidence = mode == 2
-                        ? clampFloat((avg_score - 0.50f) / 0.45f, 0.0f, 1.0f)
-                        : clampFloat((avg_score - 0.10f) / 0.80f, 0.0f, 1.0f);
+                    const float min_score = mode == 2
+                        ? fmaxf(0.58f, 0.50f + min_confidence * 0.35f)
+                        : fmaxf(0.12f, min_confidence * 0.60f);
+                    const float score_conf =
+                        clampFloat((avg_score - min_score) /
+                                   fmaxf(0.01f, 1.0f - min_score),
+                                   0.0f, 1.0f);
+                    const float support_ratio =
+                        static_cast<float>(support) /
+                        static_cast<float>(max(1, max_points));
+                    const float consistency =
+                        clampFloat(1.0f / (1.0f + stddev), 0.0f, 1.0f);
+                    const float delta_conf =
+                        1.0f - fminf(1.0f, fabsf(disparity - initial_disp) / max_delta);
+                    out->disparity = disparity;
+                    out->confidence = clampFloat(0.30f * support_ratio +
+                                                 0.35f * score_conf +
+                                                 0.25f * consistency +
+                                                 0.10f * delta_conf,
+                                                 0.0f, 1.0f);
                     out->stddev = stddev;
                     out->delta_gate_px = max_delta;
-                    out->anchor_cx = sum_x / static_cast<float>(count);
-                    out->anchor_cy = sum_y / static_cast<float>(count);
-                    out->support = n;
+                    out->anchor_cx = anchor_x;
+                    out->anchor_cy = anchor_y;
+                    out->support = support;
                     out->valid = out->confidence >= min_confidence ? 1 : 0;
                     out->low_confidence = out->valid ? 0 : 1;
                 }
@@ -778,6 +1140,8 @@ __device__ void matchMultiPointPatch(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
     int img_w, int img_h,
+    const stereo3d::DualYoloGpuDetection& left_det,
+    const stereo3d::DualYoloGpuDetection& right_det,
     float center_x, float center_y, float radius,
     float initial_disp,
     int patch_radius,
@@ -792,6 +1156,16 @@ __device__ void matchMultiPointPatch(
     float baseline,
     float min_depth,
     float max_depth,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px,
+    float feature_reverse_check_px,
+    float feature_overlap_scale,
+    float feature_mad_scale,
+    float feature_ransac_gate_px,
+    float feature_sphere_radius_m,
+    float feature_sphere_radius_scale,
+    float feature_sphere_margin_m,
     float* sample_disp,
     float* sample_score,
     float* sample_x,
@@ -800,6 +1174,7 @@ __device__ void matchMultiPointPatch(
     float* point_y,
     float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint],
     float best_disp_parts[kMaxFeaturePoints][kThreadsPerPoint],
+    float best_dy_parts[kMaxFeaturePoints][kThreadsPerPoint],
     int* valid_count,
     stereo3d::DualYoloGpuDisparity* out) {
     const int tid = threadIdx.x;
@@ -817,6 +1192,7 @@ __device__ void matchMultiPointPatch(
         for (int j = 0; j < kThreadsPerPoint; ++j) {
             best_score_parts[i][j] = -2.0f;
             best_disp_parts[i][j] = -1.0f;
+            best_dy_parts[i][j] = 0.0f;
         }
     }
     __syncthreads();
@@ -850,20 +1226,36 @@ __device__ void matchMultiPointPatch(
                 const int per = (range + kThreadsPerPoint - 1) / kThreadsPerPoint;
                 const int begin = d_start + sub_idx * per;
                 const int end = min(d_end, begin + per - 1);
+                const float expected_y = expectedFeatureYDelta(
+                    static_cast<float>(x), left_det,
+                    feature_y_slope, feature_y_offset_px);
+                const int y_radius = clampInt(
+                    static_cast<int>(ceilf(
+                        clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                    1, 3);
+                const int dy_center = static_cast<int>(rintf(-expected_y));
                 float best_score = -2.0f;
                 float best_disp = -1.0f;
+                float best_dy = 0.0f;
                 for (int d = begin; d <= end; ++d) {
                     const int xr = x - d;
-                    if (!patchInside(img_w, img_h, xr, y, patch_radius)) continue;
-                    const float score = znccScore(left_img, left_pitch, right_img, right_pitch,
-                                                  x, y, xr, y, patch_radius);
-                    if (score > best_score) {
-                        best_score = score;
-                        best_disp = static_cast<float>(d);
+                    for (int dy = dy_center - y_radius;
+                         dy <= dy_center + y_radius; ++dy) {
+                        const int yr = y + dy;
+                        if (!patchInside(img_w, img_h, xr, yr, patch_radius)) continue;
+                        const float score = znccScore(left_img, left_pitch,
+                                                      right_img, right_pitch,
+                                                      x, y, xr, yr, patch_radius);
+                        if (score > best_score) {
+                            best_score = score;
+                            best_disp = static_cast<float>(d);
+                            best_dy = static_cast<float>(dy);
+                        }
                     }
                 }
                 best_score_parts[point_idx][sub_idx] = best_score;
                 best_disp_parts[point_idx][sub_idx] = best_disp;
+                best_dy_parts[point_idx][sub_idx] = best_dy;
                 if (sub_idx == 0) {
                     point_x[point_idx] = static_cast<float>(x);
                     point_y[point_idx] = static_cast<float>(y);
@@ -876,23 +1268,69 @@ __device__ void matchMultiPointPatch(
     if (point_idx < max_points && sub_idx == 0) {
         float best_score = best_score_parts[point_idx][0];
         float best_disp = best_disp_parts[point_idx][0];
+        float best_dy = best_dy_parts[point_idx][0];
         for (int i = 1; i < kThreadsPerPoint; ++i) {
             if (best_score_parts[point_idx][i] > best_score) {
                 best_score = best_score_parts[point_idx][i];
                 best_disp = best_disp_parts[point_idx][i];
+                best_dy = best_dy_parts[point_idx][i];
             }
         }
         const float min_score = fmaxf(0.10f, min_confidence * 0.60f);
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
             const float z = focal * baseline / best_disp;
-            if (z >= min_depth && z <= max_depth) {
-                const int idx = atomicAdd(valid_count, 1);
-                if (idx < kMaxFeaturePoints) {
-                    sample_disp[idx] = best_disp;
-                    sample_score[idx] = best_score;
-                    sample_x[idx] = point_x[point_idx];
-                    sample_y[idx] = point_y[point_idx];
+            const float left_x = point_x[point_idx];
+            const float left_y = point_y[point_idx];
+            const float right_x = left_x - best_disp;
+            const float right_y = left_y + best_dy;
+            const bool cheap_ok =
+                z >= min_depth && z <= max_depth &&
+                passesFeatureYGate(left_x, left_y, right_y, left_det,
+                                   feature_y_tolerance_px,
+                                   feature_y_slope,
+                                   feature_y_offset_px) &&
+                passesFeatureOverlapGate(left_det, right_det,
+                                         left_x, left_y, right_x, right_y,
+                                         initial_disp, feature_overlap_scale) &&
+                passesSphereRadiusGate(left_x, left_y,
+                                       center_x, center_y,
+                                       best_disp, initial_disp,
+                                       focal, baseline,
+                                       feature_sphere_radius_m,
+                                       feature_sphere_radius_scale,
+                                       feature_sphere_margin_m);
+            if (cheap_ok) {
+                const int d0 = static_cast<int>(rintf(initial_disp));
+                const int d_start = max(1, d0 - search_radius);
+                const int d_end = min(max_disparity, d0 + search_radius);
+                const int reverse_y_radius = clampInt(
+                    static_cast<int>(ceilf(
+                        clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                    1, 3);
+                const float reverse_err = feature_reverse_check_px >= 0.0f
+                    ? reverseSparseMatchError(left_img, left_pitch,
+                                              right_img, right_pitch,
+                                              img_w, img_h,
+                                              left_x, left_y,
+                                              right_x, right_y,
+                                              patch_radius,
+                                              d_start, d_end,
+                                              reverse_y_radius,
+                                              1,
+                                              left_det,
+                                              feature_y_slope,
+                                              feature_y_offset_px)
+                    : 0.0f;
+                if (feature_reverse_check_px < 0.0f ||
+                    reverse_err <= fmaxf(0.25f, feature_reverse_check_px)) {
+                    const int idx = atomicAdd(valid_count, 1);
+                    if (idx < kMaxFeaturePoints) {
+                        sample_disp[idx] = best_disp;
+                        sample_score[idx] = best_score;
+                        sample_x[idx] = left_x;
+                        sample_y[idx] = left_y;
+                    }
                 }
             }
         }
@@ -905,66 +1343,52 @@ __device__ void matchMultiPointPatch(
         if (n < min_points) {
             out->low_confidence = 1;
         } else {
-            for (int i = 0; i < n - 1; ++i) {
-                for (int j = 0; j < n - i - 1; ++j) {
-                    if (sample_disp[j] > sample_disp[j + 1]) {
-                        const float td = sample_disp[j];
-                        const float ts = sample_score[j];
-                        const float tx = sample_x[j];
-                        const float ty = sample_y[j];
-                        sample_disp[j] = sample_disp[j + 1];
-                        sample_score[j] = sample_score[j + 1];
-                        sample_x[j] = sample_x[j + 1];
-                        sample_y[j] = sample_y[j + 1];
-                        sample_disp[j + 1] = td;
-                        sample_score[j + 1] = ts;
-                        sample_x[j + 1] = tx;
-                        sample_y[j + 1] = ty;
-                    }
-                }
-            }
-            int q1 = n / 4;
-            int q3 = (3 * n) / 4;
-            if (q1 == q3) {
-                q1 = 0;
-                q3 = n - 1;
-            }
-            float sum_d = 0.0f;
-            float sum_s = 0.0f;
-            float sum_x = 0.0f;
-            float sum_y = 0.0f;
-            int count = 0;
-            for (int i = q1; i <= q3; ++i) {
-                sum_d += sample_disp[i];
-                sum_s += sample_score[i];
-                sum_x += sample_x[i];
-                sum_y += sample_y[i];
-                ++count;
-            }
-            const float mean = sum_d / static_cast<float>(max(1, count));
-            float var = 0.0f;
-            for (int i = q1; i <= q3; ++i) {
-                const float e = sample_disp[i] - mean;
-                var += e * e;
-            }
-            const float stddev = sqrtf(var / static_cast<float>(max(1, count)));
-            const float z = focal * baseline / fmaxf(mean, 0.5f);
-            if (stddev > max_stddev ||
-                fabsf(mean - initial_disp) > max_delta ||
-                mean <= 0.5f || mean > static_cast<float>(max_disparity) ||
-                z < min_depth || z > max_depth) {
+            float disparity = 0.0f;
+            float anchor_x = 0.0f;
+            float anchor_y = 0.0f;
+            float stddev = 0.0f;
+            float avg_score = 0.0f;
+            int support = 0;
+            if (!robustAggregateSamples(n, min_points, initial_disp, max_delta,
+                                        max_stddev, feature_mad_scale,
+                                        feature_ransac_gate_px,
+                                        sample_disp, sample_score,
+                                        sample_x, sample_y, point_x,
+                                        &disparity, &anchor_x, &anchor_y,
+                                        &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
             } else {
-                const float avg_score = sum_s / static_cast<float>(max(1, count));
-                out->disparity = mean;
-                out->confidence = clampFloat((avg_score - 0.10f) / 0.80f, 0.0f, 1.0f);
-                out->stddev = stddev;
-                out->delta_gate_px = max_delta;
-                out->anchor_cx = sum_x / static_cast<float>(max(1, count));
-                out->anchor_cy = sum_y / static_cast<float>(max(1, count));
-                out->support = n;
-                out->valid = out->confidence >= min_confidence ? 1 : 0;
-                out->low_confidence = out->valid ? 0 : 1;
+                const float z = focal * baseline / fmaxf(disparity, 0.5f);
+                if (disparity > static_cast<float>(max_disparity) ||
+                    z < min_depth || z > max_depth) {
+                    out->low_confidence = 1;
+                } else {
+                    const float min_score = fmaxf(0.10f, min_confidence * 0.60f);
+                    const float score_conf =
+                        clampFloat((avg_score - min_score) /
+                                   fmaxf(0.01f, 1.0f - min_score),
+                                   0.0f, 1.0f);
+                    const float support_ratio =
+                        static_cast<float>(support) /
+                        static_cast<float>(max(1, max_points));
+                    const float consistency =
+                        clampFloat(1.0f / (1.0f + stddev), 0.0f, 1.0f);
+                    const float delta_conf =
+                        1.0f - fminf(1.0f, fabsf(disparity - initial_disp) / max_delta);
+                    out->disparity = disparity;
+                    out->confidence = clampFloat(0.30f * support_ratio +
+                                                 0.35f * score_conf +
+                                                 0.25f * consistency +
+                                                 0.10f * delta_conf,
+                                                 0.0f, 1.0f);
+                    out->stddev = stddev;
+                    out->delta_gate_px = max_delta;
+                    out->anchor_cx = anchor_x;
+                    out->anchor_cy = anchor_y;
+                    out->support = support;
+                    out->valid = out->confidence >= min_confidence ? 1 : 0;
+                    out->low_confidence = out->valid ? 0 : 1;
+                }
             }
         }
     }
@@ -990,6 +1414,16 @@ __global__ void dualYoloDepthCandidatesKernel(
     float max_depth_delta_m,
     float max_stddev_px,
     float epipolar_y_tolerance,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px,
+    float feature_reverse_check_px,
+    float feature_overlap_scale,
+    float feature_mad_scale,
+    float feature_ransac_gate_px,
+    float feature_sphere_radius_m,
+    float feature_sphere_radius_scale,
+    float feature_sphere_margin_m,
     int compute_geometry,
     int compute_center_patch,
     int compute_multi_point,
@@ -1016,6 +1450,7 @@ __global__ void dualYoloDepthCandidatesKernel(
     __shared__ float point_y[kMaxFeaturePoints];
     __shared__ float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint];
     __shared__ float best_disp_parts[kMaxFeaturePoints][kThreadsPerPoint];
+    __shared__ float best_dy_parts[kMaxFeaturePoints][kThreadsPerPoint];
     __shared__ int valid_count;
 
     stereo3d::DualYoloGpuCandidate* out = &results[pair_idx];
@@ -1094,6 +1529,7 @@ __global__ void dualYoloDepthCandidatesKernel(
     if (compute_multi_point) {
         matchMultiPointPatch(left_img, left_pitch, right_img, right_pitch,
                              img_w, img_h,
+                             pair.left, pair.right,
                              left_cx, left_cy, left_r,
                              initial_disp,
                              patch_radius,
@@ -1108,15 +1544,26 @@ __global__ void dualYoloDepthCandidatesKernel(
                              baseline,
                              min_depth,
                              max_depth,
+                             feature_y_tolerance_px,
+                             feature_y_slope,
+                             feature_y_offset_px,
+                             feature_reverse_check_px,
+                             feature_overlap_scale,
+                             feature_mad_scale,
+                             feature_ransac_gate_px,
+                             feature_sphere_radius_m,
+                             feature_sphere_radius_scale,
+                             feature_sphere_margin_m,
                              sample_disp, sample_score, sample_x, sample_y,
                              point_x, point_y,
-                             best_score_parts, best_disp_parts, &valid_count,
+                             best_score_parts, best_disp_parts,
+                             best_dy_parts, &valid_count,
                              &out->multi_point);
     }
     if (compute_corner_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
                           img_w, img_h,
-                          pair.left,
+                          pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           0,
@@ -1132,15 +1579,26 @@ __global__ void dualYoloDepthCandidatesKernel(
                           baseline,
                           min_depth,
                           max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
                           point_x, point_y,
-                          best_score_parts, best_disp_parts, &valid_count,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
                           &out->corner_points);
     }
     if (compute_texture_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
                           img_w, img_h,
-                          pair.left,
+                          pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           1,
@@ -1156,15 +1614,26 @@ __global__ void dualYoloDepthCandidatesKernel(
                           baseline,
                           min_depth,
                           max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
                           point_x, point_y,
-                          best_score_parts, best_disp_parts, &valid_count,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
                           &out->texture_points);
     }
     if (compute_binary_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
                           img_w, img_h,
-                          pair.left,
+                          pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           2,
@@ -1180,9 +1649,20 @@ __global__ void dualYoloDepthCandidatesKernel(
                           baseline,
                           min_depth,
                           max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
                           point_x, point_y,
-                          best_score_parts, best_disp_parts, &valid_count,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
                           &out->binary_points);
     }
 }
@@ -1208,6 +1688,16 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     float max_depth_delta_m,
     float max_stddev_px,
     float epipolar_y_tolerance,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px,
+    float feature_reverse_check_px,
+    float feature_overlap_scale,
+    float feature_mad_scale,
+    float feature_ransac_gate_px,
+    float feature_sphere_radius_m,
+    float feature_sphere_radius_scale,
+    float feature_sphere_margin_m,
     int compute_geometry,
     int compute_center_patch,
     int compute_multi_point,
@@ -1240,6 +1730,16 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
         max_depth_delta_m,
         max_stddev_px,
         epipolar_y_tolerance,
+        feature_y_tolerance_px,
+        feature_y_slope,
+        feature_y_offset_px,
+        feature_reverse_check_px,
+        feature_overlap_scale,
+        feature_mad_scale,
+        feature_ransac_gate_px,
+        feature_sphere_radius_m,
+        feature_sphere_radius_scale,
+        feature_sphere_margin_m,
         compute_geometry,
         compute_center_patch,
         compute_multi_point,

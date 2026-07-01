@@ -9,6 +9,7 @@
 #include "stereo/neural_feature_config.h"
 #include "fusion/trajectory_predictor.h"
 #include "utils/trajectory_recorder.h"
+#include "utils/baseline_clip_recorder.h"
 #include "utils/logger.h"
 
 #include <vpi/Image.h>
@@ -244,6 +245,34 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.subpixel_time_budget_ms = dual["subpixel_time_budget_ms"].as<float>();
             if (dual["epipolar_y_tolerance"])
                 cfg.dual_yolo.epipolar_y_tolerance = dual["epipolar_y_tolerance"].as<float>();
+            if (dual["feature_y_tolerance_px"])
+                cfg.dual_yolo.feature_y_tolerance_px = dual["feature_y_tolerance_px"].as<float>();
+            if (dual["feature_y_slope"])
+                cfg.dual_yolo.feature_y_slope = dual["feature_y_slope"].as<float>();
+            if (dual["feature_y_offset_px"])
+                cfg.dual_yolo.feature_y_offset_px = dual["feature_y_offset_px"].as<float>();
+            if (dual["feature_reverse_check_px"])
+                cfg.dual_yolo.feature_reverse_check_px = dual["feature_reverse_check_px"].as<float>();
+            if (dual["feature_overlap_scale"])
+                cfg.dual_yolo.feature_overlap_scale = dual["feature_overlap_scale"].as<float>();
+            if (dual["feature_mad_scale"])
+                cfg.dual_yolo.feature_mad_scale = dual["feature_mad_scale"].as<float>();
+            if (dual["feature_ransac_gate_px"])
+                cfg.dual_yolo.feature_ransac_gate_px = dual["feature_ransac_gate_px"].as<float>();
+            if (dual["feature_sphere_radius_scale"])
+                cfg.dual_yolo.feature_sphere_radius_scale = dual["feature_sphere_radius_scale"].as<float>();
+            if (dual["feature_sphere_margin_m"])
+                cfg.dual_yolo.feature_sphere_margin_m = dual["feature_sphere_margin_m"].as<float>();
+            if (dual["feature_normalize_large_roi"])
+                cfg.dual_yolo.feature_normalize_large_roi = dual["feature_normalize_large_roi"].as<bool>();
+            if (dual["feature_normalized_diameter_px"])
+                cfg.dual_yolo.feature_normalized_diameter_px = dual["feature_normalized_diameter_px"].as<int>();
+            if (dual["feature_normalize_min_diameter_px"])
+                cfg.dual_yolo.feature_normalize_min_diameter_px = dual["feature_normalize_min_diameter_px"].as<float>();
+            if (dual["feature_normalize_margin_scale"])
+                cfg.dual_yolo.feature_normalize_margin_scale = dual["feature_normalize_margin_scale"].as<float>();
+            if (dual["feature_precompute_roi_maps"])
+                cfg.dual_yolo.feature_precompute_roi_maps = dual["feature_precompute_roi_maps"].as<bool>();
             if (dual["max_size_ratio"])
                 cfg.dual_yolo.max_size_ratio = dual["max_size_ratio"].as<float>();
             if (dual["fallback_search_margin_px"])
@@ -411,6 +440,45 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
     return rcfg;
 }
 
+static stereo3d::BaselineClipRecorderConfig loadBaselineClipRecorderConfig(
+    const std::string& path) {
+    stereo3d::BaselineClipRecorderConfig cfg;
+    try {
+        YAML::Node root = YAML::LoadFile(path);
+        auto rec = root["baseline_recording"];
+        if (!rec) rec = root["baseline_clip_recording"];
+        if (rec) {
+            if (rec["enabled"]) cfg.enabled = rec["enabled"].as<bool>();
+            if (rec["output_dir"]) cfg.output_dir = rec["output_dir"].as<std::string>();
+            if (rec["duration_sec"]) cfg.duration_sec = rec["duration_sec"].as<double>();
+            if (rec["frame_limit"]) cfg.frame_limit = rec["frame_limit"].as<int>();
+            if (rec["require_right_detection"])
+                cfg.require_right_detection = rec["require_right_detection"].as<bool>();
+            if (rec["require_pair_gate"])
+                cfg.require_pair_gate = rec["require_pair_gate"].as<bool>();
+            if (rec["min_confidence"]) cfg.min_confidence = rec["min_confidence"].as<float>();
+            if (rec["pair_y_tolerance_px"])
+                cfg.pair_y_tolerance_px = rec["pair_y_tolerance_px"].as<float>();
+            if (rec["pair_max_size_ratio"])
+                cfg.pair_max_size_ratio = rec["pair_max_size_ratio"].as<float>();
+            if (rec["pair_min_disparity_px"])
+                cfg.pair_min_disparity_px = rec["pair_min_disparity_px"].as<float>();
+            if (rec["image_format"]) cfg.image_format = rec["image_format"].as<std::string>();
+            if (rec["png_compression"])
+                cfg.png_compression = rec["png_compression"].as<int>();
+            if (rec["stop_after_clip"])
+                cfg.stop_after_clip = rec["stop_after_clip"].as<bool>();
+            if (rec["max_queue_frames"])
+                cfg.max_queue_frames = rec["max_queue_frames"].as<size_t>();
+        }
+    } catch (const std::exception& e) {
+        LOG_WARN("baseline_recording config: %s, using defaults", e.what());
+    } catch (...) {
+        LOG_WARN("baseline_recording config: unknown error, using defaults");
+    }
+    return cfg;
+}
+
 #ifdef HAS_ROS2
 static stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
     stereo3d::Ros2BridgeConfig cfg{};
@@ -452,7 +520,18 @@ int main(int argc, char* argv[]) {
     bool enable_display = false;
     bool debug_feature_matches = false;
     std::string debug_feature_matches_dir = "test_logs/feature_match_debug";
+    bool baseline_clip_cli = false;
+    std::string baseline_out_override;
+    double baseline_duration_override = -1.0;
+    int baseline_frames_override = 0;
+    std::string baseline_format_override;
     std::vector<std::string> unknown_args;
+    const char* usage =
+        "Usage: %s [--config <path>] [--visualize] "
+        "[--debug-feature-matches] [--debug-feature-matches-dir <dir>] "
+        "[--record-baseline-clip] [--baseline-out <dir>] "
+        "[--baseline-duration <sec>] [--baseline-frames <n>] "
+        "[--baseline-format <png|pgm>]\n";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") &&
@@ -460,7 +539,7 @@ int main(int argc, char* argv[]) {
             config_path = argv[++i];
         } else if (arg == "--config" || arg == "-c") {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, "Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
+            fprintf(stderr, usage, argv[0]);
             return 1;
         } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
             enable_display = true;
@@ -472,18 +551,56 @@ int main(int argc, char* argv[]) {
             debug_feature_matches_dir = argv[++i];
         } else if (arg == "--debug-feature-matches-dir") {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, "Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--record-baseline-clip") {
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-out" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_out_override = argv[++i];
+        } else if (arg == "--baseline-out") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--baseline-duration" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_duration_override = std::stod(argv[++i]);
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-duration") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--baseline-frames" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_frames_override = std::stoi(argv[++i]);
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-frames") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--baseline-format" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_format_override = argv[++i];
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-format") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
             return 1;
         } else if (arg == "--visualizels") {
             // 兼容常见拼写误写，避免静默关闭可视化
             fprintf(stderr, "Warning: unknown option '--visualizels', treating as '--visualize'.\n");
             enable_display = true;
         } else if (arg == "--help" || arg == "-h") {
-            printf("Usage: %s [--config <path>] [--visualize] [--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n", argv[0]);
+            printf(usage, argv[0]);
             printf("  --config, -c                  Pipeline configuration YAML\n");
             printf("  --visualize, -v               Show detection + distance overlay window\n");
             printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
             printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
+            printf("  --record-baseline-clip        Record one fixed-length left/right image sequence + CSV after ball detection\n");
+            printf("  --baseline-out                Output root directory for baseline clips\n");
+            printf("  --baseline-duration           Clip duration in seconds, converted by trigger frequency\n");
+            printf("  --baseline-frames             Exact number of frames to record\n");
+            printf("  --baseline-format             Lossless image format: png or pgm\n");
             return 0;
         } else if (!arg.empty() && arg[0] == '-') {
             unknown_args.push_back(arg);
@@ -517,6 +634,29 @@ int main(int argc, char* argv[]) {
         LOG_ERROR("Failed to load config: %s", e.what());
         return 1;
     }
+    stereo3d::BaselineClipRecorderConfig baseline_cfg =
+        loadBaselineClipRecorderConfig(config_path);
+    if (baseline_clip_cli) baseline_cfg.enabled = true;
+    if (!baseline_out_override.empty()) baseline_cfg.output_dir = baseline_out_override;
+    if (baseline_duration_override > 0.0) baseline_cfg.duration_sec = baseline_duration_override;
+    if (baseline_frames_override > 0) baseline_cfg.frame_limit = baseline_frames_override;
+    if (!baseline_format_override.empty()) baseline_cfg.image_format = baseline_format_override;
+    baseline_cfg.trigger_hz = cfg.trigger_freq_hz;
+    if (debug_feature_matches) baseline_cfg.enabled = false;
+
+    if (baseline_cfg.enabled) {
+        cfg.detection_only = true;
+        cfg.disparity_strategy = stereo3d::DisparityStrategy::ROI_ONLY;
+        cfg.tracker.enabled = false;
+        cfg.neural_features.enabled = false;
+        cfg.dual_yolo.use_for_depth = false;
+        cfg.dual_yolo.fallback_to_roi_match = false;
+        cfg.dual_yolo.log_matches = false;
+        LOG_INFO("Baseline clip mode enabled: detection-only, stereo/depth/tracker disabled");
+        if (!cfg.dual_yolo.enabled) {
+            LOG_WARN("Baseline clip mode has dual_yolo.enabled=false; right detections will be empty");
+        }
+    }
 
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
@@ -532,11 +672,16 @@ int main(int argc, char* argv[]) {
         return ok ? 0 : 1;
     }
 
-    // 初始化落点预测 + 轨迹记录
+    // 初始化落点预测 + 轨迹记录 / 基准片段录制
     stereo3d::TrajectoryPredictor predictor;
     stereo3d::TrajectoryRecorder recorder;
-    predictor.init(loadPredictorConfig(config_path));
-    recorder.init(loadRecorderConfig(config_path));
+    stereo3d::BaselineClipRecorder baseline_recorder;
+    if (baseline_cfg.enabled) {
+        baseline_recorder.init(baseline_cfg);
+    } else {
+        predictor.init(loadPredictorConfig(config_path));
+        recorder.init(loadRecorderConfig(config_path));
+    }
 
     // === ROS2 Bridge 初始化 ===
 #ifdef HAS_ROS2
@@ -550,6 +695,9 @@ int main(int argc, char* argv[]) {
         ros2_cfg = loadRos2Config(config_path);
     } catch (const std::exception& e) {
         LOG_WARN("ROS2 config load failed: %s, bridge disabled", e.what());
+        ros2_cfg.enabled = false;
+    }
+    if (baseline_cfg.enabled) {
         ros2_cfg.enabled = false;
     }
 
@@ -599,8 +747,9 @@ int main(int argc, char* argv[]) {
     std::mutex pred_mutex;
     std::vector<stereo3d::LandingPrediction> latest_preds;
 
-    pipeline.setResultCallback(
-        [&](int frame_id, const std::vector<stereo3d::Object3D>& results) {
+    if (!baseline_cfg.enabled) {
+        pipeline.setResultCallback(
+            [&](int frame_id, const std::vector<stereo3d::Object3D>& results) {
             // 计算 dt
             auto now = std::chrono::steady_clock::now();
             double dt = 0.01; // 默认 100fps
@@ -670,7 +819,8 @@ int main(int argc, char* argv[]) {
                              obj.confidence);
                 }
             }
-        });
+            });
+    }
 
     if (!pipeline.init(cfg)) {
         LOG_ERROR("Pipeline init failed");
@@ -738,15 +888,27 @@ int main(int argc, char* argv[]) {
     DisplayJob display_job;
     bool display_job_ready = false;
 
-    if (enable_display) {
+    if (baseline_cfg.enabled || enable_display) {
         pipeline.setFrameCallback(
-            [&, use_bgr](int frame_id, VPIImage rectL, VPIImage rawL,
-                const std::vector<stereo3d::Detection>& detections,
-                const std::vector<stereo3d::Object3D>& results,
-                float fps) {
+            [&, use_bgr](const stereo3d::FrameCallbackData& frame_data) {
+                if (baseline_cfg.enabled) {
+                    baseline_recorder.record(frame_data.frame_id,
+                                             frame_data.rect_gray_left,
+                                             frame_data.rect_gray_right,
+                                             frame_data.detections_left,
+                                             frame_data.detections_right,
+                                             frame_data.metadata,
+                                             frame_data.fps);
+                    if (baseline_recorder.shouldStop()) {
+                        g_shutdown.store(true);
+                    }
+                }
+
+                if (!enable_display) return;
+
                 // 降低显示帧率: 每 display_divisor 帧才处理一次 (~30fps @ 100Hz)
                 constexpr int display_divisor = 3;
-                if (frame_id % display_divisor != 0) return;
+                if (frame_data.frame_id % display_divisor != 0) return;
 
                 // 上一帧未消费时跳过 (管线线程零阻塞)
                 {
@@ -757,6 +919,7 @@ int main(int argc, char* argv[]) {
                 cv::Mat frame;
 
                 if (use_bgr) {
+                    VPIImage rectL = frame_data.rect_bgr_left;
                     VPIImageData imgData;
                     VPIStatus st = vpiImageLockData(rectL, VPI_LOCK_READ,
                         VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
@@ -776,6 +939,7 @@ int main(int argc, char* argv[]) {
 
                 // 灰度快速路径 (跳过 CPU debayer+remap, 避免 10ms 阻塞)
                 if (frame.empty()) {
+                    VPIImage rectL = frame_data.rect_gray_left;
                     VPIImageData imgData;
                     if (vpiImageLockData(rectL, VPI_LOCK_READ,
                         VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData) != VPI_SUCCESS)
@@ -792,11 +956,13 @@ int main(int argc, char* argv[]) {
                 // 仅存数据, 绘制交给主线程
                 std::lock_guard<std::mutex> lock(display_job_mutex);
                 display_job.frame = std::move(frame);
-                display_job.detections = detections;
-                display_job.results = results;
-                display_job.fps = fps;
-                display_job.frame_id = frame_id;
-                display_job.rec_frames = recorder.frameCount();
+                display_job.detections = frame_data.detections_left;
+                display_job.results = frame_data.results;
+                display_job.fps = frame_data.fps;
+                display_job.frame_id = frame_data.frame_id;
+                display_job.rec_frames = baseline_cfg.enabled
+                    ? baseline_recorder.frameCount()
+                    : recorder.frameCount();
                 {
                     std::lock_guard<std::mutex> plock(pred_mutex);
                     display_job.preds = latest_preds;
@@ -986,6 +1152,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     pipeline.stop();
+    baseline_recorder.close();
     recorder.close();
     pipeline.printPerfReport();
 

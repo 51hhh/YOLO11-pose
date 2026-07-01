@@ -89,7 +89,21 @@ detector:
     subpixel_max_depth_delta_m: 0.5
     subpixel_max_stddev_px: 1.0
     subpixel_time_budget_ms: 1.5
-    epipolar_y_tolerance: 12.0
+    epipolar_y_tolerance: 12.0       # bbox/circle semantic pair gate, not sparse feature y gate
+    feature_y_tolerance_px: 2.0      # sparse keypoint y residual gate after rectification
+    feature_y_slope: 0.0             # optional fixed epipolar tilt compensation dy = slope*(x-cx)+offset
+    feature_y_offset_px: 0.0
+    feature_reverse_check_px: 1.0    # left-right mutual check error
+    feature_overlap_scale: 0.55      # keypoint must lie in projected L/R ball overlap ellipses
+    feature_mad_scale: 2.5           # MAD outlier gate scale
+    feature_ransac_gate_px: 0.75     # 1D disparity RANSAC minimum gate
+    feature_sphere_radius_scale: 1.8 # triangulated point must stay near physical ball volume
+    feature_sphere_margin_m: 0.02
+    feature_normalize_large_roi: true      # downsample large ball ROIs before CPU feature matching
+    feature_normalized_diameter_px: 96     # target ball diameter after normalization
+    feature_normalize_min_diameter_px: 128 # keep small/far balls at native resolution
+    feature_normalize_margin_scale: 0.62   # crop half-size as bbox size scale
+    feature_precompute_roi_maps: true      # precompute gray label/edge maps inside normalized ROI
     max_size_ratio: 2.0
     fallback_search_margin_px: 48
     fallback_max_width_px: 220
@@ -173,3 +187,18 @@ recording:
   # extended: add sync watermark + bbox/circle geometry for model training.
   detail_level: "extended"
   raw_mode: true
+
+baseline_recording:
+  enabled: false
+  output_dir: "baseline_clips"
+  duration_sec: 3.0
+  frame_limit: 0
+  require_right_detection: true
+  require_pair_gate: false
+  min_confidence: 0.0
+  pair_y_tolerance_px: 30.0
+  pair_max_size_ratio: 2.5
+  pair_min_disparity_px: 0.0
+  image_format: "png"
+  png_compression: 1
+  stop_after_clip: true
