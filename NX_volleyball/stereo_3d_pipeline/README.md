@@ -171,8 +171,7 @@ cd build_standalone
 ./capture_chessboard \
   -o calibration_images \
   --serial-left 00D39342665 \
-  --serial-right 00219471413 \
-  --live-check
+  --serial-right 00219471413
 
 # SSH/headless 自动采集：每秒保存一对，共 40 对
 ./capture_chessboard --headless -n 40 -o calibration_images \
@@ -180,19 +179,18 @@ cd build_standalone
   --serial-right 00219471413
 
 # 仅排查画面时使用，自由运行不用于正式标定
-./capture_chessboard --free-run -o calibration_images --live-check
+./capture_chessboard --free-run -o calibration_images
 ```
 
 操作方式：
-- **空格** — 采集当前同步帧
+- **空格** — 保存当前同步帧
 - **q / ESC** — 退出
 - **c** — 清空已采集图像
-- **l** — 开关实时棋盘检测叠加
 
 说明：
-- 相机触发频率仍是 `100Hz`，GUI 只是把显示限到约 `30fps`，避免预览卡顿。
-- `--live-check` 只在 GUI 预览中每 10 个预览帧做一次轻量棋盘检测，左上角显示 `L/R: OK/MISS`。
-- 默认棋盘内角点按 `6x9` 处理，同时会自动尝试交换方向 `9x6` 以适配摆放方向。
+- 相机触发频率仍是 `100Hz`，GUI 显示限到约 `60fps`。
+- 采集端不做棋盘/质量检测，只显示保存数量和同步状态，避免影响预览和触发采集。
+- 棋盘内角点规格在 `stereo_calibrate` 阶段通过 `--board-w/--board-h` 指定。
 
 建议采集 30-50 对图像，覆盖不同角度和位置。正式采集后检查 `calibration_images/capture_metadata.csv`，`frame_counter_delta` 应稳定为 0。
 
@@ -207,13 +205,16 @@ cd build_standalone
 
 # SSH 跳过可视化，可选 CUDA 预处理
 ./stereo_calibrate -s 30.0 --no-vis --gpu-preprocess
+
+# 指定角点检测并发数；CPU 预处理默认使用 CPU 核数，--gpu-preprocess 默认 1
+./stereo_calibrate -s 30.0 --jobs 4
 ```
 
 标定工具自动完成：
-1. SB 棋盘检测 + 多级角点检测降级
+1. 并行棋盘检测 + 多级经典检测兜底（`--sb/--exhaustive` 可显式启用慢速 SB 兜底）
 2. 亚像素精化（`cornerSubPix`）
 3. 单目标定
-4. 2σ 异常图像剔除
+4. 逐图重投影误差报告（不做事后最佳帧筛选）
 5. 立体标定（默认 `CALIB_FIX_INTRINSIC`，可用 `--optimize-intrinsics` 联合优化）
 6. 立体校正（`stereoRectify`, `alpha=0`）
 7. 深度精度报告

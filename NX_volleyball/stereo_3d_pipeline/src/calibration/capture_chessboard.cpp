@@ -2,8 +2,8 @@
  * @file capture_chessboard.cpp
  * @brief Stereo image pair capture tool for calibration
  *
- * Pure image acquisition by default. Use --live-check to overlay a lightweight
- * chessboard detection preview while positioning the board.
+ * Hardware-synchronized acquisition with lightweight preview for manual
+ * positioning.
  *
  * Usage:
  *   ./capture_chessboard -o calibration_images      # HW trigger (default)
@@ -13,7 +13,6 @@
  *   SPACE  - save current frame pair
  *   q/ESC  - quit
  *   c      - clear all saved images
- *   l      - toggle live chessboard preview
  */
 
 #include "../capture/hikvision_camera.h"
@@ -31,6 +30,10 @@
 #include <fstream>
 #include <cstdint>
 #include <algorithm>
+#include <cerrno>
+#include <climits>
+#include <cmath>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -38,9 +41,9 @@ static constexpr int    EXPOSURE_US  = 9867;
 static constexpr float  GAIN_DB      = 11.9906f;
 static constexpr double PWM_FREQ     = 100.0;
 static constexpr double PWM_DUTY     = 50.0;
-static constexpr double GUI_PREVIEW_FPS = 30.0;
-static constexpr int    LIVE_CHECK_INTERVAL = 10;
-static constexpr int    LIVE_CHECK_MAX_WIDTH = 960;
+static constexpr double GUI_PREVIEW_FPS = 60.0;
+static constexpr unsigned int GUI_GRAB_TIMEOUT_MS = 40;
+static constexpr unsigned int HEADLESS_GRAB_TIMEOUT_MS = 1000;
 static const char*      GPIO_CHIP    = "gpiochip2";
 static constexpr unsigned GPIO_LINE  = 7;
 
@@ -60,34 +63,121 @@ struct Args {
     int         left_index   = 0;
     int         right_index  = 1;
     int         image_node_num = 3;
-    int         board_w = 6;
-    int         board_h = 9;
-    bool        live_check = false;
     std::string serial_left;
     std::string serial_right;
 };
 
-static Args parseArgs(int argc, char* argv[]) {
-    Args a;
+static bool parseIntValue(const char* text, int& out) {
+    if (!text || *text == '\0') return false;
+    errno = 0;
+    char* end = nullptr;
+    long value = std::strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' ||
+        value < INT_MIN || value > INT_MAX) {
+        return false;
+    }
+    out = static_cast<int>(value);
+    return true;
+}
+
+static bool parseFloatValue(const char* text, float& out) {
+    if (!text || *text == '\0') return false;
+    errno = 0;
+    char* end = nullptr;
+    float value = std::strtof(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || !std::isfinite(value)) {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+static bool requireValue(int& i, int argc, char* argv[],
+                         const std::string& arg, const char*& value) {
+    if (i + 1 >= argc) {
+        fprintf(stderr, "[ERROR] %s requires a value\n", arg.c_str());
+        return false;
+    }
+    value = argv[++i];
+    return true;
+}
+
+static bool parseArgs(int argc, char* argv[], Args& a) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        const char* value = nullptr;
         if      (arg == "--free-run")              a.free_run = true;
         else if (arg == "--no-pwm")                a.no_pwm   = true;
         else if (arg == "--headless")              a.headless = true;
-        else if (arg == "-n" && i+1 < argc)      { a.auto_count = std::atoi(argv[++i]); a.headless = true; }
-        else if (arg == "-o" && i+1 < argc)        a.output_dir = argv[++i];
-        else if (arg == "-e" && i+1 < argc)        a.exposure_us = std::atoi(argv[++i]);
-        else if (arg == "-g" && i+1 < argc)        a.gain_db = static_cast<float>(std::atof(argv[++i]));
-        else if (arg == "--width"  && i+1 < argc)  a.cam_width  = std::atoi(argv[++i]);
-        else if (arg == "--height" && i+1 < argc)  a.cam_height = std::atoi(argv[++i]);
-        else if (arg == "--left-index" && i+1 < argc)  a.left_index = std::atoi(argv[++i]);
-        else if (arg == "--right-index" && i+1 < argc) a.right_index = std::atoi(argv[++i]);
-        else if (arg == "--serial-left" && i+1 < argc) a.serial_left = argv[++i];
-        else if (arg == "--serial-right" && i+1 < argc) a.serial_right = argv[++i];
-        else if (arg == "--image-node-num" && i+1 < argc) a.image_node_num = std::atoi(argv[++i]);
-        else if (arg == "--board-w" && i+1 < argc) a.board_w = std::atoi(argv[++i]);
-        else if (arg == "--board-h" && i+1 < argc) a.board_h = std::atoi(argv[++i]);
-        else if (arg == "--live-check")             a.live_check = true;
+        else if (arg == "-n") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.auto_count)) {
+                fprintf(stderr, "[ERROR] Invalid -n value: %s\n", value ? value : "");
+                return false;
+            }
+            a.headless = true;
+        }
+        else if (arg == "-o") {
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.output_dir = value;
+        }
+        else if (arg == "-e") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.exposure_us)) {
+                fprintf(stderr, "[ERROR] Invalid -e value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "-g") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseFloatValue(value, a.gain_db)) {
+                fprintf(stderr, "[ERROR] Invalid -g value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "--width") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.cam_width)) {
+                fprintf(stderr, "[ERROR] Invalid --width value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "--height") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.cam_height)) {
+                fprintf(stderr, "[ERROR] Invalid --height value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "--left-index") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.left_index)) {
+                fprintf(stderr, "[ERROR] Invalid --left-index value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "--right-index") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.right_index)) {
+                fprintf(stderr, "[ERROR] Invalid --right-index value: %s\n", value ? value : "");
+                return false;
+            }
+        }
+        else if (arg == "--serial-left") {
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.serial_left = value;
+        }
+        else if (arg == "--serial-right") {
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.serial_right = value;
+        }
+        else if (arg == "--image-node-num") {
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.image_node_num)) {
+                fprintf(stderr, "[ERROR] Invalid --image-node-num value: %s\n", value ? value : "");
+                return false;
+            }
+        }
         else if (arg == "-h" || arg == "--help") {
             printf("Usage: %s [options]\n"
                    "  -o DIR          Output directory [calibration_images]\n"
@@ -104,15 +194,15 @@ static Args parseArgs(int argc, char* argv[]) {
                    "  --serial-left S Bind left camera by serial number\n"
                    "  --serial-right S Bind right camera by serial number\n"
                    "  --image-node-num N SDK FIFO depth [3]\n"
-                   "  --board-w N     Inner corners width for --live-check [6]\n"
-                   "  --board-h N     Inner corners height for --live-check [9]\n"
-                   "  --live-check    Overlay chessboard corner status in GUI preview\n"
                    "  -h, --help      Show this help\n",
                    argv[0]);
             std::exit(0);
+        } else {
+            fprintf(stderr, "[ERROR] Unknown or incomplete argument: %s\n", arg.c_str());
+            return false;
         }
     }
-    return a;
+    return true;
 }
 
 static bool validateArgs(const Args& a) {
@@ -122,11 +212,6 @@ static bool validateArgs(const Args& a) {
     }
     if (a.cam_width <= 0 || a.cam_height <= 0) {
         fprintf(stderr, "[ERROR] Invalid image size: %dx%d\n", a.cam_width, a.cam_height);
-        return false;
-    }
-    if (a.board_w < 2 || a.board_h < 2) {
-        fprintf(stderr, "[ERROR] Invalid chessboard inner corners: %dx%d\n",
-                a.board_w, a.board_h);
         return false;
     }
     if (a.auto_count < 0) {
@@ -148,10 +233,30 @@ static bool validateArgs(const Args& a) {
     return true;
 }
 
-struct LiveCheckState {
-    bool left_found = false;
-    bool right_found = false;
+struct SyncInfo {
+    int64_t frame_number_delta = 0;
+    int64_t frame_counter_delta = 0;
+    int64_t trigger_delta = 0;
+    int64_t timestamp_delta_ns = 0;
 };
+
+static SyncInfo makeSyncInfo(const stereo3d::GrabResult& resL,
+                             const stereo3d::GrabResult& resR) {
+    SyncInfo sync;
+    sync.frame_number_delta =
+        static_cast<int64_t>(resL.frame_number) -
+        static_cast<int64_t>(resR.frame_number);
+    sync.frame_counter_delta =
+        static_cast<int64_t>(resL.frame_counter) -
+        static_cast<int64_t>(resR.frame_counter);
+    sync.trigger_delta =
+        static_cast<int64_t>(resL.trigger_index) -
+        static_cast<int64_t>(resR.trigger_index);
+    sync.timestamp_delta_ns =
+        static_cast<int64_t>(resL.timestamp_us) -
+        static_cast<int64_t>(resR.timestamp_us);
+    return sync;
+}
 
 static void writeMetadataHeader(std::ofstream& metadata) {
     metadata << "pair,file,left_frame_number,right_frame_number,"
@@ -160,65 +265,54 @@ static void writeMetadataHeader(std::ofstream& metadata) {
              << "trigger_delta,timestamp_delta_ns\n";
 }
 
-static bool findPreviewCorners(const cv::Mat& bgr,
-                               const cv::Size& board_size) {
-    cv::Mat gray;
-    cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
-
-    if (gray.cols > LIVE_CHECK_MAX_WIDTH) {
-        const double scale = static_cast<double>(LIVE_CHECK_MAX_WIDTH) / gray.cols;
-        cv::resize(gray, gray, cv::Size(), scale, scale, cv::INTER_AREA);
-    }
-
-    std::vector<cv::Size> candidates{board_size};
-    const cv::Size swapped(board_size.height, board_size.width);
-    if (swapped != board_size) {
-        candidates.push_back(swapped);
-    }
-
-    const int fast_flags = cv::CALIB_CB_ADAPTIVE_THRESH |
-                           cv::CALIB_CB_NORMALIZE_IMAGE |
-                           cv::CALIB_CB_FAST_CHECK;
-    const int robust_flags = cv::CALIB_CB_ADAPTIVE_THRESH |
-                             cv::CALIB_CB_NORMALIZE_IMAGE |
-                             cv::CALIB_CB_FILTER_QUADS;
-    std::vector<cv::Point2f> corners;
-    for (const cv::Size& size : candidates) {
-        corners.clear();
-        if (cv::findChessboardCorners(gray, size, corners, fast_flags)) {
-            return true;
-        }
-        corners.clear();
-        if (cv::findChessboardCornersSB(gray, size, corners, cv::CALIB_CB_NORMALIZE_IMAGE)) {
-            return true;
-        }
-        corners.clear();
-        if (cv::findChessboardCorners(gray, size, corners, robust_flags)) {
-            return true;
-        }
-    }
-    return false;
+static void writeMetadataRow(std::ofstream& metadata,
+                             int pair_index,
+                             const std::string& file_name,
+                             const stereo3d::GrabResult& resL,
+                             const stereo3d::GrabResult& resR,
+                             const SyncInfo& sync) {
+    metadata << pair_index << "," << file_name << ","
+             << resL.frame_number << "," << resR.frame_number << ","
+             << resL.frame_counter << "," << resR.frame_counter << ","
+             << resL.trigger_index << "," << resR.trigger_index << ","
+             << resL.timestamp_us << "," << resR.timestamp_us << ","
+             << sync.frame_number_delta << "," << sync.frame_counter_delta << ","
+             << sync.trigger_delta << "," << sync.timestamp_delta_ns << "\n";
 }
 
-static void drawLiveCheck(cv::Mat& image,
-                          bool found,
-                          const char* side) {
-    const cv::Scalar color = found ? cv::Scalar(0, 220, 0) : cv::Scalar(0, 0, 255);
+static void drawStatus(cv::Mat& image,
+                       int capture_count,
+                       bool pair_ok) {
     char text[64];
-    snprintf(text, sizeof(text), "%s: %s", side, found ? "OK" : "MISS");
-    cv::putText(image, text, cv::Point(10, 32),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, color, 2);
+    snprintf(text, sizeof(text), "Captured: %d", capture_count);
+    cv::putText(image, text, cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+    cv::putText(image, pair_ok ? "SYNC: OK" : "SYNC: WAIT", cv::Point(10, 64),
+                cv::FONT_HERSHEY_SIMPLEX, 0.65,
+                pair_ok ? cv::Scalar(0, 220, 0) : cv::Scalar(0, 180, 255), 2);
 }
 
 int main(int argc, char* argv[]) {
     signal(SIGINT,  sigHandler);
     signal(SIGTERM, sigHandler);
 
-    Args args = parseArgs(argc, argv);
+    Args args;
+    if (!parseArgs(argc, argv, args)) return 1;
     if (!validateArgs(args)) return 1;
 
-    fs::create_directories(fs::path(args.output_dir) / "left");
-    fs::create_directories(fs::path(args.output_dir) / "right");
+    std::error_code ec;
+    fs::create_directories(fs::path(args.output_dir) / "left", ec);
+    if (ec) {
+        fprintf(stderr, "[ERROR] Failed to create left output directory: %s\n",
+                ec.message().c_str());
+        return 1;
+    }
+    fs::create_directories(fs::path(args.output_dir) / "right", ec);
+    if (ec) {
+        fprintf(stderr, "[ERROR] Failed to create right output directory: %s\n",
+                ec.message().c_str());
+        return 1;
+    }
 
     // PWM trigger is started after both cameras enter grabbing state.
     // Starting PWM earlier can give the two USB cameras different local
@@ -278,10 +372,6 @@ int main(int argc, char* argv[]) {
     int captureCount = 0;
     auto lastCapture = std::chrono::steady_clock::now() - std::chrono::seconds(2);
     auto lastPreview = std::chrono::steady_clock::now() - std::chrono::seconds(1);
-    bool live_check_enabled = args.live_check && !args.headless;
-    int preview_frame = 0;
-    LiveCheckState live_state;
-    const cv::Size board_size(args.board_w, args.board_h);
     const fs::path metadata_path = fs::path(args.output_dir) / "capture_metadata.csv";
     std::ofstream metadata(metadata_path.string(), std::ios::out | std::ios::trunc);
     if (!metadata.is_open()) {
@@ -309,30 +399,26 @@ int main(int argc, char* argv[]) {
                args.left_index, args.right_index);
     }
     if (!args.headless)
-        printf("Keys:   SPACE=save  q/ESC=quit  c=clear  l=live-check\n");
+        printf("Keys:   SPACE=save  q/ESC=quit  c=clear\n");
     printf("Trigger: %s\n",
            args.free_run ? "camera free-run" : "100.0 Hz PWM hardware trigger");
     if (!args.headless) {
-        printf("Preview: display capped at %.0f fps", GUI_PREVIEW_FPS);
-        if (live_check_enabled) {
-            printf(", live-check every %d preview frames (%dx%d, swapped tried)",
-                   LIVE_CHECK_INTERVAL, args.board_w, args.board_h);
-        }
-        printf("\n");
+        printf("Preview: display capped at %.0f fps\n", GUI_PREVIEW_FPS);
     }
     printf("==================================================\n");
 
     while (!g_quit.load()) {
         stereo3d::GrabResult resL, resR;
+        const unsigned int grab_timeout_ms =
+            args.headless ? HEADLESS_GRAB_TIMEOUT_MS : GUI_GRAB_TIMEOUT_MS;
         bool ok = camera.grabFramePair(
-            bufL.data(), bufR.data(), 0, 0, 1000, resL, resR);
+            bufL.data(), bufR.data(), 0, 0, grab_timeout_ms, resL, resR);
 
         if (!ok) {
             if (!args.headless) {
                 printf("\rWaiting for trigger...");
                 fflush(stdout);
             }
-            continue;
         }
 
         // Display is throttled independently from 100Hz capture/trigger.
@@ -340,29 +426,17 @@ int main(int argc, char* argv[]) {
             auto preview_now = std::chrono::steady_clock::now();
             const double preview_dt =
                 std::chrono::duration<double>(preview_now - lastPreview).count();
-            if (preview_dt >= 1.0 / GUI_PREVIEW_FPS) {
+            if (ok && preview_dt >= 1.0 / GUI_PREVIEW_FPS) {
                 lastPreview = preview_now;
-                ++preview_frame;
 
                 cv::Mat bayerL(H, W, CV_8UC1, bufL.data());
                 cv::Mat bayerR(H, W, CV_8UC1, bufR.data());
-                cv::Mat bgrL, bgrR;
+                cv::Mat bgrL;
+                cv::Mat bgrR;
                 cv::cvtColor(bayerL, bgrL, cv::COLOR_BayerBG2BGR);  // 海康BayerRG8 = OpenCV BayerBG
                 cv::cvtColor(bayerR, bgrR, cv::COLOR_BayerBG2BGR);
-
-                if (live_check_enabled && (preview_frame % LIVE_CHECK_INTERVAL == 1)) {
-                    live_state.left_found = findPreviewCorners(bgrL, board_size);
-                    live_state.right_found = findPreviewCorners(bgrR, board_size);
-                }
-                if (live_check_enabled) {
-                    drawLiveCheck(bgrL, live_state.left_found, "L");
-                    drawLiveCheck(bgrR, live_state.right_found, "R");
-                } else {
-                    char label[64];
-                    snprintf(label, sizeof(label), "Captured: %d", captureCount);
-                    cv::putText(bgrL, label, cv::Point(10, 30),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
-                }
+                drawStatus(bgrL, captureCount, ok);
+                drawStatus(bgrR, captureCount, ok);
 
                 cv::Mat display;
                 cv::hconcat(bgrL, bgrR, display);
@@ -375,6 +449,13 @@ int main(int argc, char* argv[]) {
         }
 
         int key = args.headless ? -1 : (cv::waitKey(1) & 0xFF);
+
+        if (!ok) {
+            if (key == 'q' || key == 27) {
+                break;
+            }
+            continue;
+        }
 
         // Auto-capture in headless mode
         bool doSave = false;
@@ -396,41 +477,33 @@ int main(int argc, char* argv[]) {
             snprintf(name, sizeof(name), "%04d.png", captureCount);
             std::string pathL = (fs::path(args.output_dir) / "left"  / name).string();
             std::string pathR = (fs::path(args.output_dir) / "right" / name).string();
+            const SyncInfo sync = makeSyncInfo(resL, resR);
 
-            cv::Mat rawL(H, W, CV_8UC1, bufL.data());
-            cv::Mat rawR(H, W, CV_8UC1, bufR.data());
-            cv::imwrite(pathL, rawL);
-            cv::imwrite(pathR, rawR);
+            cv::Mat bayerSaveL(H, W, CV_8UC1, bufL.data());
+            cv::Mat bayerSaveR(H, W, CV_8UC1, bufR.data());
+            cv::Mat saveBgrL, saveBgrR;
+            cv::cvtColor(bayerSaveL, saveBgrL, cv::COLOR_BayerBG2BGR);
+            cv::cvtColor(bayerSaveR, saveBgrR, cv::COLOR_BayerBG2BGR);
+            const bool wroteL = cv::imwrite(pathL, saveBgrL);
+            const bool wroteR = cv::imwrite(pathR, saveBgrR);
+            if (!wroteL || !wroteR) {
+                fprintf(stderr, "\n[ERROR] Failed to save pair %s (left=%d right=%d)\n",
+                        name, wroteL ? 1 : 0, wroteR ? 1 : 0);
+                lastCapture = now;
+                continue;
+            }
 
-            const int64_t frame_number_delta =
-                static_cast<int64_t>(resL.frame_number) -
-                static_cast<int64_t>(resR.frame_number);
-            const int64_t frame_counter_delta =
-                static_cast<int64_t>(resL.frame_counter) -
-                static_cast<int64_t>(resR.frame_counter);
-            const int64_t trigger_delta =
-                static_cast<int64_t>(resL.trigger_index) -
-                static_cast<int64_t>(resR.trigger_index);
-            const int64_t timestamp_delta =
-                static_cast<int64_t>(resL.timestamp_us) -
-                static_cast<int64_t>(resR.timestamp_us);
-            metadata << captureCount << "," << name << ","
-                     << resL.frame_number << "," << resR.frame_number << ","
-                     << resL.frame_counter << "," << resR.frame_counter << ","
-                     << resL.trigger_index << "," << resR.trigger_index << ","
-                     << resL.timestamp_us << "," << resR.timestamp_us << ","
-                     << frame_number_delta << "," << frame_counter_delta << ","
-                     << trigger_delta << "," << timestamp_delta << "\n";
+            writeMetadataRow(metadata, captureCount, name, resL, resR, sync);
             metadata.flush();
 
             captureCount++;
             lastCapture = now;
             printf("\r[Saved] Pair #%d  %s  fc_delta=%ld fn_delta=%ld trig_delta=%ld ts_delta=%ldns\n",
                    captureCount, name,
-                   static_cast<long>(frame_counter_delta),
-                   static_cast<long>(frame_number_delta),
-                   static_cast<long>(trigger_delta),
-                   static_cast<long>(timestamp_delta));
+                   static_cast<long>(sync.frame_counter_delta),
+                   static_cast<long>(sync.frame_number_delta),
+                   static_cast<long>(sync.trigger_delta),
+                   static_cast<long>(sync.timestamp_delta_ns));
 
             if (args.auto_count > 0 && captureCount >= args.auto_count) {
                 printf("[Auto] Reached %d pairs\n", args.auto_count);
@@ -454,9 +527,6 @@ int main(int argc, char* argv[]) {
             writeMetadataHeader(metadata);
             captureCount = 0;
             printf("\r[Cleared] All images\n");
-        } else if (key == 'l') {
-            live_check_enabled = !live_check_enabled;
-            printf("\r[LiveCheck] %s\n", live_check_enabled ? "ON" : "OFF");
         }
     }
 

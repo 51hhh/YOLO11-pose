@@ -3,8 +3,8 @@
  * @brief Stereo calibration tool using chessboard pattern
  *
  * Detects chessboard corners in left/right image pairs, performs
- * monocular + stereo calibration with outlier rejection, and outputs
- * an OpenCV YAML file compatible with StereoCalibration::load().
+ * monocular + stereo calibration, and outputs an OpenCV YAML file
+ * compatible with StereoCalibration::load().
  *
  * Usage:
  *   ./stereo_calibrate -s 30.0                       # square size in mm
@@ -22,12 +22,21 @@
 #include <numeric>
 #include <filesystem>
 #include <cmath>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <climits>
+#include <future>
+#include <limits>
+#include <map>
+#include <thread>
+#include <utility>
 
 namespace fs = std::filesystem;
 
 // ======================== Defaults ========================
-static constexpr int BOARD_W = 6;
-static constexpr int BOARD_H = 9;
+static constexpr int BOARD_W = 5;
+static constexpr int BOARD_H = 8;
 static const char* DEFAULT_DIR = "calibration_images";
 static const char* DEFAULT_OUT = "stereo_calib.yaml";
 
@@ -41,41 +50,107 @@ struct Args {
     bool        no_vis      = false;
     bool        use_gpu_preprocess = false;
     bool        fix_intrinsics = true;
+    bool        use_sb = false;
+    bool        use_exhaustive = false;
+    int         jobs        = 0;
 };
+
+static bool parseIntValue(const char* text, int& out) {
+    if (!text || *text == '\0') return false;
+    errno = 0;
+    char* end = nullptr;
+    long value = std::strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' ||
+        value < INT_MIN || value > INT_MAX) {
+        return false;
+    }
+    out = static_cast<int>(value);
+    return true;
+}
+
+static bool parseFloatValue(const char* text, float& out) {
+    if (!text || *text == '\0') return false;
+    errno = 0;
+    char* end = nullptr;
+    float value = std::strtof(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || !std::isfinite(value)) {
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+static const char* requireValue(int& i, int argc, char* argv[], const std::string& arg) {
+    if (i + 1 >= argc) {
+        fprintf(stderr, "[ERROR] %s requires a value\n", arg.c_str());
+        std::exit(1);
+    }
+    return argv[++i];
+}
 
 static Args parseArgs(int argc, char* argv[]) {
     Args a;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if ((arg == "-s" || arg == "--square-size") && i+1<argc)
-            a.square_size = std::stof(argv[++i]);
-        else if ((arg == "-d" || arg == "--images-dir") && i+1<argc)
-            a.images_dir = argv[++i];
-        else if ((arg == "-o" || arg == "--output") && i+1<argc)
-            a.output = argv[++i];
-        else if (arg == "--board-w" && i+1<argc)
-            a.board_w = std::atoi(argv[++i]);
-        else if (arg == "--board-h" && i+1<argc)
-            a.board_h = std::atoi(argv[++i]);
+        if (arg == "-s" || arg == "--square-size") {
+            const char* value = requireValue(i, argc, argv, arg);
+            if (!parseFloatValue(value, a.square_size)) {
+                fprintf(stderr, "[ERROR] Invalid square size: %s\n", value);
+                std::exit(1);
+            }
+        } else if (arg == "-d" || arg == "--images-dir") {
+            a.images_dir = requireValue(i, argc, argv, arg);
+        } else if (arg == "-o" || arg == "--output") {
+            a.output = requireValue(i, argc, argv, arg);
+        } else if (arg == "--board-w") {
+            const char* value = requireValue(i, argc, argv, arg);
+            if (!parseIntValue(value, a.board_w)) {
+                fprintf(stderr, "[ERROR] Invalid --board-w value: %s\n", value);
+                std::exit(1);
+            }
+        } else if (arg == "--board-h") {
+            const char* value = requireValue(i, argc, argv, arg);
+            if (!parseIntValue(value, a.board_h)) {
+                fprintf(stderr, "[ERROR] Invalid --board-h value: %s\n", value);
+                std::exit(1);
+            }
+        }
         else if (arg == "--no-vis")
             a.no_vis = true;
         else if (arg == "--gpu-preprocess")
             a.use_gpu_preprocess = true;
         else if (arg == "--optimize-intrinsics")
             a.fix_intrinsics = false;
+        else if (arg == "--sb")
+            a.use_sb = true;
+        else if (arg == "--exhaustive")
+            a.use_exhaustive = true;
+        else if (arg == "--jobs") {
+            const char* value = requireValue(i, argc, argv, arg);
+            if (!parseIntValue(value, a.jobs)) {
+                fprintf(stderr, "[ERROR] Invalid --jobs value: %s\n", value);
+                std::exit(1);
+            }
+        }
         else if (arg == "-h" || arg == "--help") {
             printf("Usage: %s -s SQUARE_SIZE [options]\n"
                    "  -s, --square-size MM   Square size in mm (required)\n"
                    "  -d, --images-dir DIR   Image directory (default: calibration_images)\n"
                    "  -o, --output FILE      Output YAML (default: stereo_calib.yaml)\n"
-                   "  --board-w N            Inner corners width (default: 6)\n"
-                   "  --board-h N            Inner corners height (default: 9)\n"
+                   "  --board-w N            Inner corners width (default: 5)\n"
+                   "  --board-h N            Inner corners height (default: 8)\n"
                    "  --no-vis               Skip visualization\n"
                    "  --gpu-preprocess       Use CUDA for Bayer/BGR to gray preprocessing when available\n"
                    "  --optimize-intrinsics  Let stereoCalibrate refine intrinsics (default: fix monocular intrinsics)\n"
+                   "  --sb                   Enable SB chessboard fallback after classic detectors\n"
+                   "  --exhaustive           Enable slow SB exhaustive fallback for difficult boards\n"
+                   "  --jobs N               Parallel image-pair detection jobs (default: CPU cores; 1 with --gpu-preprocess)\n"
                    "  -h, --help             Show help\n",
                    argv[0]);
             std::exit(0);
+        } else {
+            fprintf(stderr, "[ERROR] Unknown or incomplete argument: %s\n", arg.c_str());
+            std::exit(1);
         }
     }
     if (a.square_size <= 0.0f) {
@@ -86,6 +161,13 @@ static Args parseArgs(int argc, char* argv[]) {
         fprintf(stderr, "[ERROR] Invalid chessboard inner corners: %dx%d\n",
                 a.board_w, a.board_h);
         std::exit(1);
+    }
+    if (a.jobs < 0) {
+        fprintf(stderr, "[ERROR] --jobs must be >= 0, got %d\n", a.jobs);
+        std::exit(1);
+    }
+    if (a.use_exhaustive) {
+        a.use_sb = true;
     }
     return a;
 }
@@ -104,6 +186,46 @@ static std::vector<std::string> globImages(const fs::path& dir) {
     }
     std::sort(files.begin(), files.end());
     return files;
+}
+
+struct ImagePair {
+    std::string stem;
+    std::string left;
+    std::string right;
+};
+
+static std::vector<ImagePair> pairImagesByStem(const std::vector<std::string>& leftFiles,
+                                               const std::vector<std::string>& rightFiles) {
+    std::map<std::string, std::string> leftByStem;
+    std::map<std::string, std::string> rightByStem;
+    for (const auto& path : leftFiles) {
+        const std::string stem = fs::path(path).stem().string();
+        if (!leftByStem.emplace(stem, path).second) {
+            printf("[WARN] Duplicate left image stem ignored: %s\n", stem.c_str());
+        }
+    }
+    for (const auto& path : rightFiles) {
+        const std::string stem = fs::path(path).stem().string();
+        if (!rightByStem.emplace(stem, path).second) {
+            printf("[WARN] Duplicate right image stem ignored: %s\n", stem.c_str());
+        }
+    }
+
+    std::vector<ImagePair> pairs;
+    for (const auto& [stem, left] : leftByStem) {
+        auto it = rightByStem.find(stem);
+        if (it == rightByStem.end()) {
+            printf("[WARN] Missing right image for %s, skipping\n", stem.c_str());
+            continue;
+        }
+        pairs.push_back({stem, left, it->second});
+    }
+    for (const auto& [stem, right] : rightByStem) {
+        if (leftByStem.find(stem) == leftByStem.end()) {
+            printf("[WARN] Missing left image for %s, skipping\n", stem.c_str());
+        }
+    }
+    return pairs;
 }
 
 static cv::Mat toGrayCPU(const std::string& path) {
@@ -147,38 +269,113 @@ static cv::Mat toGray(const std::string& path, bool use_gpu_preprocess) {
     return use_gpu_preprocess ? toGrayGPU(path) : toGrayCPU(path);
 }
 
-// Chessboard detection flags (strict to relaxed)
-static const std::vector<int> CB_FLAGS_LIST = {
-    cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_FILTER_QUADS,
-    cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE,
-    cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK,
-    0,
+enum class ChessboardDetectorMode {
+    CLASSIC_FAST,
+    CLASSIC_FILTER_QUADS,
+    CLASSIC_NORMALIZED,
+    CLASSIC_PLAIN,
+    SB_NORMALIZED,
+    SB_EXHAUSTIVE,
 };
 
-static bool findCorners(const cv::Mat& gray, cv::Size boardSize,
-                        std::vector<cv::Point2f>& corners) {
+static bool findCornersWithMode(const cv::Mat& gray, cv::Size boardSize,
+                                ChessboardDetectorMode mode,
+                                std::vector<cv::Point2f>& corners) {
     static const cv::TermCriteria subpixCrit(
         cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER, 30, 0.001);
 
-    // SB detector is slower than FAST_CHECK but more robust for high-res,
-    // oblique boards. It still runs on CPU in OpenCV; GPU is used only for
-    // optional image preprocessing above.
-    int sb_flags = cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_EXHAUSTIVE;
-    if (cv::findChessboardCornersSB(gray, boardSize, corners, sb_flags)) {
+    corners.clear();
+    auto refine_if_found = [&](bool found) {
+        if (!found) return false;
         cv::cornerSubPix(gray, corners, cv::Size(11,11),
                          cv::Size(-1,-1), subpixCrit);
         return true;
-    }
+    };
 
-    for (int flags : CB_FLAGS_LIST) {
-        bool found = cv::findChessboardCorners(gray, boardSize, corners, flags);
-        if (found) {
-            cv::cornerSubPix(gray, corners, cv::Size(11,11),
-                             cv::Size(-1,-1), subpixCrit);
-            return true;
-        }
+    switch (mode) {
+    case ChessboardDetectorMode::CLASSIC_FAST:
+        return refine_if_found(cv::findChessboardCorners(
+            gray, boardSize, corners,
+            cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE |
+            cv::CALIB_CB_FAST_CHECK));
+    case ChessboardDetectorMode::CLASSIC_FILTER_QUADS:
+        return refine_if_found(cv::findChessboardCorners(
+            gray, boardSize, corners,
+            cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE |
+            cv::CALIB_CB_FILTER_QUADS));
+    case ChessboardDetectorMode::CLASSIC_NORMALIZED:
+        return refine_if_found(cv::findChessboardCorners(
+            gray, boardSize, corners,
+            cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE));
+    case ChessboardDetectorMode::CLASSIC_PLAIN:
+        return refine_if_found(cv::findChessboardCorners(
+            gray, boardSize, corners, 0));
+    case ChessboardDetectorMode::SB_NORMALIZED:
+        return refine_if_found(cv::findChessboardCornersSB(
+            gray, boardSize, corners, cv::CALIB_CB_NORMALIZE_IMAGE));
+    case ChessboardDetectorMode::SB_EXHAUSTIVE:
+        return refine_if_found(cv::findChessboardCornersSB(
+            gray, boardSize, corners,
+            cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_EXHAUSTIVE));
     }
     return false;
+}
+
+struct DetectionResult {
+    bool read_ok = false;
+    bool found_left = false;
+    bool found_right = false;
+    cv::Size left_size;
+    cv::Size right_size;
+    std::vector<cv::Point2f> corners_left;
+    std::vector<cv::Point2f> corners_right;
+};
+
+static DetectionResult detectPairCorners(const ImagePair& pair,
+                                         cv::Size boardSize,
+                                         bool use_gpu_preprocess,
+                                         bool use_sb,
+                                         bool use_exhaustive) {
+    DetectionResult result;
+    cv::Mat gL = toGray(pair.left, use_gpu_preprocess);
+    cv::Mat gR = toGray(pair.right, use_gpu_preprocess);
+    if (gL.empty() || gR.empty()) return result;
+    result.read_ok = true;
+    result.left_size = gL.size();
+    result.right_size = gR.size();
+    // Try each detector as a pair. Accepting left/right corners from different
+    // detector families risks inconsistent ordering on rotated or oblique boards.
+    std::vector<ChessboardDetectorMode> modes = {
+        ChessboardDetectorMode::CLASSIC_FAST,
+        ChessboardDetectorMode::CLASSIC_FILTER_QUADS,
+        ChessboardDetectorMode::CLASSIC_NORMALIZED,
+    };
+    if (use_sb) {
+        modes.push_back(ChessboardDetectorMode::SB_NORMALIZED);
+    }
+    if (use_exhaustive) {
+        modes.push_back(ChessboardDetectorMode::SB_EXHAUSTIVE);
+    }
+    for (ChessboardDetectorMode mode : modes) {
+        std::vector<cv::Point2f> cL;
+        const bool fL = findCornersWithMode(gL, boardSize, mode, cL);
+        if (!fL) continue;
+        std::vector<cv::Point2f> cR;
+        const bool fR = findCornersWithMode(gR, boardSize, mode, cR);
+        if (fL && fR) {
+            result.found_left = true;
+            result.found_right = true;
+            result.corners_left = std::move(cL);
+            result.corners_right = std::move(cR);
+            return result;
+        }
+    }
+    return result;
+}
+
+static int defaultJobCount() {
+    unsigned int hw = std::thread::hardware_concurrency();
+    return std::max(1, static_cast<int>(hw == 0 ? 1 : hw));
 }
 
 static std::vector<cv::Point3f> makeObjectPoints(cv::Size boardSize, float squareSize) {
@@ -207,6 +404,28 @@ static std::vector<double> perImageErrors(
     return errs;
 }
 
+static void printWorstPerImageErrors(const std::vector<std::string>& stems,
+                                     const std::vector<double>& errL,
+                                     const std::vector<double>& errR,
+                                     size_t limit) {
+    if (stems.empty()) return;
+
+    std::vector<size_t> order(stems.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return std::max(errL[a], errR[a]) > std::max(errL[b], errR[b]);
+    });
+
+    const size_t count = std::min(limit, order.size());
+    printf("\nWorst per-image reprojection errors (reported, not removed):\n");
+    for (size_t rank = 0; rank < count; ++rank) {
+        const size_t i = order[rank];
+        printf("  %zu. %s  L=%.3f px  R=%.3f px  max=%.3f px\n",
+               rank + 1, stems[i].c_str(), errL[i], errR[i],
+               std::max(errL[i], errR[i]));
+    }
+}
+
 // ======================== Main ========================
 
 int main(int argc, char* argv[]) {
@@ -223,51 +442,100 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    size_t n = std::min(leftFiles.size(), rightFiles.size());
-    if (leftFiles.size() != rightFiles.size())
-        printf("[WARN] L/R count mismatch: L=%zu R=%zu\n", leftFiles.size(), rightFiles.size());
+    auto pairs = pairImagesByStem(leftFiles, rightFiles);
+    if (leftFiles.size() != rightFiles.size() || pairs.size() != leftFiles.size()) {
+        printf("[WARN] L/R count or filename mismatch: L=%zu R=%zu paired=%zu\n",
+               leftFiles.size(), rightFiles.size(), pairs.size());
+    }
+    if (pairs.empty()) {
+        fprintf(stderr, "[ERROR] No left/right image pairs with matching names\n");
+        return 1;
+    }
 
     std::vector<std::vector<cv::Point3f>> objPoints;
     std::vector<std::vector<cv::Point2f>> imgPointsL, imgPointsR;
+    std::vector<std::string> acceptedStems;
     cv::Size imgSize;
 
-    printf("\n%zu image pairs, detecting corners...\n\n", n);
+    const size_t n = pairs.size();
+    const int default_jobs = args.use_gpu_preprocess ? 1 : defaultJobCount();
+    const int jobs = std::clamp(args.jobs > 0 ? args.jobs : default_jobs,
+                                1, static_cast<int>(n));
+    printf("\n%zu image pairs, detecting corners with %d worker(s)...\n\n", n, jobs);
+    if (args.use_gpu_preprocess && args.jobs <= 0) {
+        printf("[INFO] --gpu-preprocess enabled: defaulting to one detection worker\n");
+    }
+
+    std::vector<DetectionResult> results(n);
+    std::atomic<size_t> next{0};
+    std::atomic<size_t> completed{0};
+    std::vector<std::thread> workers;
+    workers.reserve(jobs);
+    for (int j = 0; j < jobs; ++j) {
+        workers.emplace_back([&]() {
+            while (true) {
+                const size_t i = next.fetch_add(1);
+                if (i >= n) break;
+                results[i] = detectPairCorners(pairs[i], boardSize,
+                                               args.use_gpu_preprocess,
+                                               args.use_sb,
+                                               args.use_exhaustive);
+                completed.fetch_add(1);
+            }
+        });
+    }
+    while (completed.load() < n) {
+        printf("\rDetecting corners: %zu/%zu", completed.load(), n);
+        fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    for (auto& worker : workers) worker.join();
+    printf("\rDetecting corners: %zu/%zu\n\n", n, n);
+
+    for (const auto& result : results) {
+        if (result.read_ok) {
+            imgSize = result.left_size;
+            break;
+        }
+    }
+    if (imgSize.width == 0 || imgSize.height == 0) {
+        fprintf(stderr, "[ERROR] Could not read any paired images\n");
+        return 1;
+    }
 
     for (size_t i = 0; i < n; ++i) {
-        cv::Mat gL = toGray(leftFiles[i], args.use_gpu_preprocess);
-        cv::Mat gR = toGray(rightFiles[i], args.use_gpu_preprocess);
-        if (gL.empty() || gR.empty()) {
-            printf("[%3zu/%zu] SKIP (cannot read)\n", i+1, n);
+        const auto& result = results[i];
+        if (!result.read_ok) {
+            printf("[%3zu/%zu] %s SKIP (cannot read)\n",
+                   i+1, n, pairs[i].stem.c_str());
             continue;
         }
-        if (imgSize.width == 0)
-            imgSize = gL.size();
-        if (gL.size() != imgSize || gR.size() != imgSize) {
-            printf("[%3zu/%zu] SKIP (image size mismatch L=%dx%d R=%dx%d expected=%dx%d)\n",
-                   i+1, n, gL.cols, gL.rows, gR.cols, gR.rows,
+        if (result.left_size != imgSize || result.right_size != imgSize) {
+            printf("[%3zu/%zu] %s SKIP (image size mismatch L=%dx%d R=%dx%d expected=%dx%d)\n",
+                   i+1, n, pairs[i].stem.c_str(),
+                   result.left_size.width, result.left_size.height,
+                   result.right_size.width, result.right_size.height,
                    imgSize.width, imgSize.height);
             continue;
         }
-
-        std::vector<cv::Point2f> cL, cR;
-        bool fL = findCorners(gL, boardSize, cL);
-        bool fR = findCorners(gR, boardSize, cR);
-
-        if (!fL || !fR) {
-            printf("[%3zu/%zu] %s -- %s not detected\n", i+1, n,
-                   fs::path(leftFiles[i]).stem().string().c_str(),
-                   !fL ? "LEFT" : "RIGHT");
+        if (!result.found_left || !result.found_right) {
+            printf("[%3zu/%zu] %s -- pair not detected with same detector mode\n",
+                   i+1, n, pairs[i].stem.c_str());
             continue;
         }
 
         objPoints.push_back(objTemplate);
-        imgPointsL.push_back(cL);
-        imgPointsR.push_back(cR);
-        printf("[%3zu/%zu] %s OK\n", i+1, n,
-               fs::path(leftFiles[i]).stem().string().c_str());
+        imgPointsL.push_back(result.corners_left);
+        imgPointsR.push_back(result.corners_right);
+        acceptedStems.push_back(pairs[i].stem);
+        printf("[%3zu/%zu] %s OK\n", i+1, n, pairs[i].stem.c_str());
     }
 
     printf("\nDetected: %zu / %zu pairs\n", objPoints.size(), n);
+    if (objPoints.size() != n) {
+        printf("[WARN] %zu input pairs were not usable. For formal calibration, recapture them with capture-time quality checks instead of relying on post-processing selection.\n",
+               n - objPoints.size());
+    }
     if (objPoints.size() < 5) {
         fprintf(stderr, "[ERROR] Need at least 5 valid pairs, got %zu\n", objPoints.size());
         return 1;
@@ -281,58 +549,27 @@ int main(int argc, char* argv[]) {
     cv::Mat K1, D1, K2, D2;
     std::vector<cv::Mat> rvecsL, tvecsL, rvecsR, tvecsR;
 
-    double rmsL = cv::calibrateCamera(objPoints, imgPointsL, imgSize,
-                                      K1, D1, rvecsL, tvecsL);
+    auto calibrate_left = std::async(std::launch::async, [&]() {
+        return cv::calibrateCamera(objPoints, imgPointsL, imgSize,
+                                   K1, D1, rvecsL, tvecsL);
+    });
+    double rmsR = cv::calibrateCamera(objPoints, imgPointsR, imgSize,
+                                      K2, D2, rvecsR, tvecsR);
+    double rmsL = calibrate_left.get();
     printf("\n  [LEFT]  RMS=%.4f  fx=%.1f fy=%.1f cx=%.1f cy=%.1f\n",
            rmsL, K1.at<double>(0,0), K1.at<double>(1,1),
            K1.at<double>(0,2), K1.at<double>(1,2));
 
-    double rmsR = cv::calibrateCamera(objPoints, imgPointsR, imgSize,
-                                      K2, D2, rvecsR, tvecsR);
     printf("  [RIGHT] RMS=%.4f  fx=%.1f fy=%.1f cx=%.1f cy=%.1f\n",
            rmsR, K2.at<double>(0,0), K2.at<double>(1,1),
            K2.at<double>(0,2), K2.at<double>(1,2));
 
-    // ---- Outlier rejection ----
+    // ---- Per-image diagnostics ----
     auto errL = perImageErrors(objPoints, imgPointsL, K1, D1, rvecsL, tvecsL);
     auto errR = perImageErrors(objPoints, imgPointsR, K2, D2, rvecsR, tvecsR);
-
-    std::vector<double> maxErr(objPoints.size());
-    for (size_t i = 0; i < maxErr.size(); ++i)
-        maxErr[i] = std::max(errL[i], errR[i]);
-
-    double mean = std::accumulate(maxErr.begin(), maxErr.end(), 0.0) / maxErr.size();
-    double sq_sum = 0.0;
-    for (double e : maxErr) sq_sum += (e - mean) * (e - mean);
-    double stddev = std::sqrt(sq_sum / maxErr.size());
-    double threshold = mean + 2.0 * stddev;
-
-    std::vector<size_t> keep;
-    for (size_t i = 0; i < maxErr.size(); ++i)
-        if (maxErr[i] < threshold) keep.push_back(i);
-
-    int nRemoved = static_cast<int>(maxErr.size()) - static_cast<int>(keep.size());
-    if (nRemoved > 0 && keep.size() >= 5) {
-        printf("\nOutlier rejection: removed %d pairs (threshold=%.3f), keeping %zu\n",
-               nRemoved, threshold, keep.size());
-
-        std::vector<std::vector<cv::Point3f>> filtObj;
-        std::vector<std::vector<cv::Point2f>> filtL, filtR;
-        for (size_t idx : keep) {
-            filtObj.push_back(objPoints[idx]);
-            filtL.push_back(imgPointsL[idx]);
-            filtR.push_back(imgPointsR[idx]);
-        }
-        objPoints  = filtObj;
-        imgPointsL = filtL;
-        imgPointsR = filtR;
-
-        // Re-calibrate monocular
-        rmsL = cv::calibrateCamera(objPoints, imgPointsL, imgSize,
-                                   K1, D1, rvecsL, tvecsL);
-        rmsR = cv::calibrateCamera(objPoints, imgPointsR, imgSize,
-                                   K2, D2, rvecsR, tvecsR);
-        printf("  Re-calibrated: L RMS=%.4f, R RMS=%.4f\n", rmsL, rmsR);
+    printWorstPerImageErrors(acceptedStems, errL, errR, 8);
+    if (rmsL > 0.5 || rmsR > 0.5) {
+        printf("[WARN] Monocular RMS is high for a controlled calibration set. Check focus, exposure, board coverage, corner ordering, and board rigidity before trusting stereo RMS.\n");
     }
 
     // ---- Stereo calibration ----
@@ -375,7 +612,23 @@ int main(int argc, char* argv[]) {
     // ---- Save calibration ----
     // Output format compatible with StereoCalibration::load()
     {
+        const fs::path output_path(args.output);
+        const fs::path parent = output_path.parent_path();
+        if (!parent.empty()) {
+            std::error_code ec;
+            fs::create_directories(parent, ec);
+            if (ec) {
+                fprintf(stderr, "[ERROR] Failed to create output directory %s: %s\n",
+                        parent.string().c_str(), ec.message().c_str());
+                return 1;
+            }
+        }
         cv::FileStorage fs(args.output, cv::FileStorage::WRITE);
+        if (!fs.isOpened()) {
+            fprintf(stderr, "[ERROR] Failed to open output calibration file: %s\n",
+                    args.output.c_str());
+            return 1;
+        }
         fs << "image_width"  << imgSize.width;
         fs << "image_height" << imgSize.height;
         fs << "baseline"     << baseline;
@@ -415,17 +668,17 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Visualization ----
-    if (!args.no_vis && !leftFiles.empty()) {
+    if (!args.no_vis && !pairs.empty()) {
         printf("\nRectification preview (press any key / ESC to skip)\n");
 
         cv::Mat mapLx, mapLy, mapRx, mapRy;
         cv::initUndistortRectifyMap(K1, D1, R1, P1, imgSize, CV_32FC1, mapLx, mapLy);
         cv::initUndistortRectifyMap(K2, D2, R2, P2, imgSize, CV_32FC1, mapRx, mapRy);
 
-        int nSample = std::min(3, (int)std::min(leftFiles.size(), rightFiles.size()));
+        int nSample = std::min(3, (int)pairs.size());
         for (int i = 0; i < nSample; ++i) {
-            cv::Mat imgL = cv::imread(leftFiles[i], cv::IMREAD_UNCHANGED);
-            cv::Mat imgR = cv::imread(rightFiles[i], cv::IMREAD_UNCHANGED);
+            cv::Mat imgL = cv::imread(pairs[i].left, cv::IMREAD_UNCHANGED);
+            cv::Mat imgR = cv::imread(pairs[i].right, cv::IMREAD_UNCHANGED);
             if (imgL.empty() || imgR.empty()) continue;
 
             // 海康 BayerRG8 sensor → OpenCV BayerBG convention

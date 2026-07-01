@@ -84,8 +84,8 @@ python3 stereo_depth_test.py -c stereo_calib.yaml --left l.png --right r.png
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `BOARD_WIDTH` | 6 | 棋盘格内角点列数 |
-| `BOARD_HEIGHT` | 9 | 棋盘格内角点行数 |
+| `BOARD_WIDTH` | 5 | 棋盘格内角点列数 |
+| `BOARD_HEIGHT` | 8 | 棋盘格内角点行数 |
 | `SQUARE_SIZE` | 30.0 | 方格边长 (mm) |
 | `EXPOSURE_TIME` | 2000 | 曝光时间 (μs) |
 | `GPIOCHIP` | gpiochip2 | GPIO芯片 (libgpiod) |
@@ -95,7 +95,7 @@ python3 stereo_depth_test.py -c stereo_calib.yaml --left l.png --right r.png
 
 1. **`CALIB_CB_FILTER_QUADS`** — 角点检测时过滤假四边形
 2. **`CALIB_USE_INTRINSIC_GUESS`** — 立体标定以单目结果为初值 (非 `flags=0`)
-3. **异常剔除** — 按重投影误差自动移除异常图像对 (mean + 2σ)
+3. **旧式重投影筛查** — Python 历史脚本包含重投影误差筛查逻辑；当前正式 C++ 采集工具保持纯采集，质量判断在标定和验收阶段完成
 4. **PNG无损** — 避免JPEG压缩伪影影响亚像素精度
 5. **视差÷16** — StereoSGBM返回定点数，需除以16再算深度
 

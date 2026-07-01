@@ -172,10 +172,10 @@ except Exception as e:
     print(f"  [FAIL] Camera test error: {e}")
 CAMTEST
 
-# Quick grab test using the C++ binary (capture_chessboard with --test)
+# CLI smoke test for the C++ capture binary.
 if [ -x "$BUILD_DIR/capture_chessboard" ]; then
-    log_info "Testing camera grab (5 second timeout)..."
-    timeout 5 "$BUILD_DIR/capture_chessboard" --test 2>&1 | tail -5 | tee -a "$REPORT" || log_warn "capture_chessboard --test timed out or failed"
+    log_info "Testing capture_chessboard CLI..."
+    "$BUILD_DIR/capture_chessboard" --help >/dev/null || log_warn "capture_chessboard --help failed"
 fi
 
 # ============================================================

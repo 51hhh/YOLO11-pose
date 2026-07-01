@@ -25,8 +25,8 @@ import cv2
 import numpy as np
 
 # ================== 默认配置 ==================
-BOARD_WIDTH = 9         # 内角点列数
-BOARD_HEIGHT = 6        # 内角点行数
+BOARD_WIDTH = 5         # 内角点列数
+BOARD_HEIGHT = 8        # 内角点行数
 IMAGES_DIR = "calibration_images"
 OUTPUT_FILE = "stereo_calib.yaml"
 # ==============================================
