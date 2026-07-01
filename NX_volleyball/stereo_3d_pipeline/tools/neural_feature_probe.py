@@ -26,7 +26,11 @@ from stereo_feature_matching import (
     match_descriptors,
 )
 from stereo_feature_matching.common import RawMatch
-from stereo_feature_matching.geometry import filter_feature_set_by_mask, filter_stereo_matches
+from stereo_feature_matching.geometry import (
+    FilteredMatch,
+    filter_feature_set_by_mask,
+    filter_stereo_matches,
+)
 from stereo_feature_matching.neural_backends import BackendConfig, create_backend
 from stereo_feature_matching.visualization import (
     cv_keypoints_from_global,
@@ -128,6 +132,25 @@ def _write_rows(path: Path, rows: List[Dict[str, object]]) -> None:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _inside_mask(mask: np.ndarray, x: float, y: float) -> bool:
+    h, w = mask.shape[:2]
+    ix = int(round(x))
+    iy = int(round(y))
+    return 0 <= ix < w and 0 <= iy < h and mask[iy, ix] > 0
+
+
+def _filter_matches_by_roi_masks(
+    matches: List[FilteredMatch],
+    left_mask: np.ndarray,
+    right_mask: np.ndarray,
+) -> List[FilteredMatch]:
+    return [
+        m for m in matches
+        if _inside_mask(left_mask, m.left_xy[0], m.left_xy[1]) and
+           _inside_mask(right_mask, m.right_xy[0], m.right_xy[1])
+    ]
 
 
 def main() -> int:
@@ -251,6 +274,7 @@ def main() -> int:
                 min_score=args.min_score,
             ),
         )
+        filtered = _filter_matches_by_roi_masks(filtered, lroi.mask, rroi.mask)
 
         disparity = float(np.median([m.disparity for m in filtered])) if filtered else -1.0
         depth_m = probe.depth_from_disparity(disparity, focal_px, baseline_m)
