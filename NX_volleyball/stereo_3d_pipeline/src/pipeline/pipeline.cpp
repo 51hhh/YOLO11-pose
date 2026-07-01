@@ -322,6 +322,23 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.dual_yolo.subpixel_time_budget_ms);
     }
 
+    if (config_.neural_features.enabled) {
+        const auto& P1 = calibration_->getProjectionLeft();
+        const float focal = static_cast<float>(P1.at<double>(0, 0));
+        LOG_INFO("Initializing neural ROI feature matcher: backend=%s roi=%d top_k=%d",
+                 config_.neural_features.backend_name.c_str(),
+                 config_.neural_features.roi_size,
+                 config_.neural_features.top_k);
+        neural_feature_matcher_ = std::make_unique<NeuralFeatureMatcher>();
+        if (!neural_feature_matcher_->init(config_.neural_features,
+                                           focal,
+                                           calibration_->getBaseline(),
+                                           config_.max_disparity)) {
+            LOG_ERROR("Failed to initialize neural ROI feature matcher");
+            return false;
+        }
+    }
+
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
     if (config_.tracker.enabled) {
         const auto& tcfg = config_.tracker;

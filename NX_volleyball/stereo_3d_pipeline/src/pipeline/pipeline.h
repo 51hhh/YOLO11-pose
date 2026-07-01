@@ -31,6 +31,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../detect/trt_detector.h"
 #include "../stereo/vpi_stereo.h"
 #include "../stereo/roi_stereo_matcher.h"
+#include "../stereo/neural_feature_matcher.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
 #include "../track/sot_tracker.h"
@@ -162,6 +163,8 @@ struct PipelineConfig {
         int fallback_max_width_px = 220;   ///< 极线 fallback 搜索窗口最大宽度
         int circle_max_roi_pixels = 18000; ///< CPU 圆拟合最大采样像素数, 超过后步进采样
     } dual_yolo;
+
+    NeuralFeatureConfig neural_features;
 
     // SOT Tracker 补帧 (YOLO 检测间隙帧)
     struct TrackerConfig {
@@ -385,6 +388,7 @@ private:
     std::unique_ptr<TRTDetector> detector_right_;
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
+    std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
 

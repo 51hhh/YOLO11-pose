@@ -272,6 +272,43 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         }
     }
 
+    // Learned ROI feature matching (TensorRT runtime, disabled by default)
+    if (auto nf = root["neural_feature_matching"]) {
+        if (nf["enabled"]) cfg.neural_features.enabled = nf["enabled"].as<bool>();
+        if (nf["backend"]) {
+            cfg.neural_features.backend_name = nf["backend"].as<std::string>();
+            cfg.neural_features.backend =
+                stereo3d::parseNeuralFeatureBackend(cfg.neural_features.backend_name);
+        }
+        if (nf["extractor_engine_path"])
+            cfg.neural_features.extractor_engine_path =
+                nf["extractor_engine_path"].as<std::string>();
+        if (nf["matcher_engine_path"])
+            cfg.neural_features.matcher_engine_path =
+                nf["matcher_engine_path"].as<std::string>();
+        if (nf["fused_engine_path"])
+            cfg.neural_features.fused_engine_path =
+                nf["fused_engine_path"].as<std::string>();
+        if (nf["roi_size"])
+            cfg.neural_features.roi_size = nf["roi_size"].as<int>();
+        if (nf["top_k"])
+            cfg.neural_features.top_k = nf["top_k"].as<int>();
+        if (nf["descriptor_dim"])
+            cfg.neural_features.descriptor_dim = nf["descriptor_dim"].as<int>();
+        if (nf["min_matches"])
+            cfg.neural_features.min_matches = nf["min_matches"].as<int>();
+        if (nf["max_y_error_px"])
+            cfg.neural_features.max_y_error_px = nf["max_y_error_px"].as<float>();
+        if (nf["max_disp_delta_px"])
+            cfg.neural_features.max_disp_delta_px = nf["max_disp_delta_px"].as<float>();
+        if (nf["final_disp_gate_px"])
+            cfg.neural_features.final_disp_gate_px = nf["final_disp_gate_px"].as<float>();
+        if (nf["min_score"])
+            cfg.neural_features.min_score = nf["min_score"].as<float>();
+        if (nf["use_lightglue"])
+            cfg.neural_features.use_lightglue = nf["use_lightglue"].as<bool>();
+    }
+
     // Fusion
     // Fusion → 直接写入内嵌 HybridDepthConfig
     if (auto fus = root["fusion"]) {

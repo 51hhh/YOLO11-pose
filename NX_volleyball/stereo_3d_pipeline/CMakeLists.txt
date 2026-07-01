@@ -150,6 +150,7 @@ set(PIPELINE_SOURCES
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
+  src/stereo/neural_feature_matcher.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
   src/fusion/hybrid_depth.cpp

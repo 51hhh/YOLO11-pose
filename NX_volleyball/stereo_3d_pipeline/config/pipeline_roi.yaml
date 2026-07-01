@@ -58,6 +58,32 @@ stereo:
   window_size: 5
   quality: 6
 
+# ========== Learned ROI Feature Matching (experimental, TensorRT only) ==========
+# Offline CPU validation:
+#   .venv-stereo-neural/bin/python tools/neural_feature_probe.py \
+#     --xfeat-repo ~/.local/share/stereo_3d_pipeline/neural_repos/accelerated_features \
+#     --roi-size 224 --top-k 128
+#
+# Realtime NX policy:
+#   - keep disabled until TensorRT engines are exported and benchmarked on NX
+#   - use fixed ROI shape, batch left/right ROI together where the exporter supports it
+#   - still apply epipolar/disparity/final-cluster gates before using depth
+neural_feature_matching:
+  enabled: false
+  backend: "xfeat"             # xfeat | aliked | superpoint_lightglue
+  extractor_engine_path: ""    # XFeat/ALIKED/SuperPoint extractor TensorRT engine
+  matcher_engine_path: ""      # optional LightGlue/LighterGlue TensorRT engine
+  fused_engine_path: ""        # optional full extractor+matcher TensorRT engine
+  roi_size: 224
+  top_k: 128
+  descriptor_dim: 64
+  min_matches: 8
+  max_y_error_px: 2.0
+  max_disp_delta_px: 32.0
+  final_disp_gate_px: 2.0
+  min_score: 0.0
+  use_lightglue: false
+
 # ========== 3D Fusion ==========
 fusion:
   min_depth: 0.3
