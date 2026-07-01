@@ -151,6 +151,7 @@ set(PIPELINE_SOURCES
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
   src/stereo/roi_patch_match_cpu.cpp
+  src/stereo/roi_geometry_cpu.cpp
   src/stereo/roi_feature_match_cpu.cpp
   src/stereo/neural_feature_matcher.cpp
   src/detect/trt_detector.cpp
