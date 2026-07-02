@@ -1375,6 +1375,20 @@ bool dualYoloFallbackFeaturePointsEnabled(const PipelineConfig::DualYoloConfig& 
     return cfg.depth_fallback_feature_points && cfg.fallback_epipolar_search;
 }
 
+bool dualYoloOpenCVCpuDescriptorDepthEnabled(
+    const PipelineConfig::DualYoloConfig& cfg) {
+    return dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+           dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
+           dualYoloROISIFTPointsDepthEnabled(cfg);
+}
+
+bool dualYoloCpuFallbackSearchEnabled(
+    const PipelineConfig::DualYoloConfig& cfg) {
+    return dualYoloEpipolarFallbackEnabled(cfg) ||
+           dualYoloFallbackTemplateEnabled(cfg) ||
+           dualYoloFallbackFeaturePointsEnabled(cfg);
+}
+
 bool dualYoloNeedsCircleSeedRefine(const PipelineConfig::DualYoloConfig& cfg) {
     return cfg.center_refine &&
            (cfg.depth_circle_center ||
@@ -1413,10 +1427,10 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
 
 bool dualYoloNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
     if (cfg.gpu_candidate_refine) {
-        // CUDA ORB uses gray GPU input; avoid full-frame D2H only for CPU ORB fallback.
-        return dualYoloROIBRISKPointsDepthEnabled(cfg) ||
-               dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
-               dualYoloROISIFTPointsDepthEnabled(cfg);
+        // CUDA ORB and TensorRT neural features use GPU input. Host gray is
+        // reserved for CPU-only OpenCV descriptors and CPU fallback search.
+        return dualYoloOpenCVCpuDescriptorDepthEnabled(cfg) ||
+               dualYoloCpuFallbackSearchEnabled(cfg);
     }
     return dualYoloNeedsCircleSeedRefine(cfg) ||
            dualYoloROIRadialCenterDepthEnabled(cfg) ||
@@ -2628,15 +2642,16 @@ bool Pipeline::roiStage2NeedsHostImages(
         return false;
     }
     const bool fallback_enabled =
-        dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
-        dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
-        dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
+        dualYoloCpuFallbackSearchEnabled(config_.dual_yolo);
 
     auto fallback_may_need_host = [&]() -> bool {
         if (!fallback_enabled) {
             return false;
         }
         if (left_detections.empty() || right_detections.empty()) {
+            return true;
+        }
+        if (left_detections.size() != 1 || right_detections.size() != 1) {
             return true;
         }
 
@@ -2682,9 +2697,7 @@ bool Pipeline::roiStage2NeedsHostImages(
     const bool has_stereo_detections =
         !left_detections.empty() && !right_detections.empty();
     const bool opencv_descriptor_cpu_possible =
-        dualYoloROIBRISKPointsDepthEnabled(config_.dual_yolo) ||
-        dualYoloROIAKAZEPointsDepthEnabled(config_.dual_yolo) ||
-        dualYoloROISIFTPointsDepthEnabled(config_.dual_yolo);
+        dualYoloOpenCVCpuDescriptorDepthEnabled(config_.dual_yolo);
 
     if (config_.dual_yolo.gpu_candidate_refine) {
         return (has_stereo_detections && opencv_descriptor_cpu_possible) ||
@@ -2766,14 +2779,8 @@ bool Pipeline::initAsyncRoiStage2() {
     const size_t rows = static_cast<size_t>(config_.rect_height);
     const bool neural_needs_bgr =
         neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
-    const bool fallback_host_possible =
-        config_.dual_yolo.gpu_candidate_refine &&
-        (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
-         dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
-         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo));
     const bool allocate_host_gray =
-        dualYoloNeedsHostImages(config_.dual_yolo) ||
-        fallback_host_possible;
+        dualYoloNeedsHostImages(config_.dual_yolo);
     const bool allocate_bgr =
         colorPipelineEnabled() &&
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
@@ -4948,13 +4955,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const auto& left = left_detections[li];
         output.results[li].class_id = left.class_id;
         output.results[li].z = -1.0f;
+    }
 
-        int best_idx = -1;
-        float best_score = 1e9f;
-        StereoRoiPair best_pair;
-
+    std::vector<bool> left_has_pair_candidate(left_detections.size(), false);
+    std::vector<StereoRoiPair> direct_pairs;
+    direct_pairs.reserve(left_detections.size() * right_detections.size());
+    for (size_t li = 0; li < left_detections.size(); ++li) {
+        const auto& left = left_detections[li];
         for (size_t ri = 0; ri < right_detections.size(); ++ri) {
-            if (right_used[ri]) continue;
             StereoRoiPair candidate_pair;
             StereoRoiPairRejectReason reject_reason =
                 StereoRoiPairRejectReason::NONE;
@@ -4968,33 +4976,40 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 record_pair_reject(reject_reason);
                 continue;
             }
+            left_has_pair_candidate[li] = true;
 
-            const float ranked_score =
-                candidate_pair.score +
-                bboxDisparityConsistencyPenaltyCPU(
-                    left,
-                    right_detections[ri],
-                    candidate_pair.initial_disparity,
-                    baseline,
-                    config_.depth,
-                    config_.dual_yolo,
-                    config_.max_disparity);
-
-            if (ranked_score < best_score) {
-                best_score = ranked_score;
-                best_idx = static_cast<int>(ri);
-                best_pair = candidate_pair;
-                best_pair.score = ranked_score;
-            }
+            candidate_pair.score += bboxDisparityConsistencyPenaltyCPU(
+                left,
+                right_detections[ri],
+                candidate_pair.initial_disparity,
+                baseline,
+                config_.depth,
+                config_.dual_yolo,
+                config_.max_disparity);
+            direct_pairs.push_back(candidate_pair);
         }
+    }
+    std::sort(direct_pairs.begin(), direct_pairs.end(),
+              [](const StereoRoiPair& a, const StereoRoiPair& b) {
+                  return a.score < b.score;
+              });
 
-        if (best_idx < 0) {
-            ++local_stats.no_candidate;
+    // Assign after global scoring so an early false detection cannot reserve
+    // the only valid detection on the opposite camera.
+    for (const auto& best_pair : direct_pairs) {
+        const int li = best_pair.left_index;
+        const int best_idx = best_pair.right_index;
+        if (li < 0 || best_idx < 0 ||
+            li >= static_cast<int>(left_detections.size()) ||
+            best_idx >= static_cast<int>(right_detections.size())) {
             continue;
         }
+        if (left_has_stereo[li] || right_used[best_idx]) continue;
+
+        const auto& left = left_detections[li];
         const auto& right = right_detections[best_idx];
         const DualYoloGpuCandidate* gpu_candidate =
-            find_gpu_candidate(static_cast<int>(li), best_idx);
+            find_gpu_candidate(li, best_idx);
         CircleFit2D left_circle = gpu_candidate
             ? circleFromGpuCandidate(gpu_candidate->left_circle, left)
             : refine_detection(left_cpu, left_pitch, left);
@@ -5029,6 +5044,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         right_used[best_idx] = true;
         left_has_stereo[li] = true;
         ++local_stats.matched;
+    }
+    for (size_t li = 0; li < left_detections.size(); ++li) {
+        if (!left_has_stereo[li] && !left_has_pair_candidate[li]) {
+            ++local_stats.no_candidate;
+        }
     }
 
     if ((epipolar_fallback_enabled ||
