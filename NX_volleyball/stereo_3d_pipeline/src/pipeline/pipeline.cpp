@@ -2665,6 +2665,14 @@ bool Pipeline::initAsyncRoiStage2() {
     const size_t rows = static_cast<size_t>(config_.rect_height);
     const bool neural_needs_bgr =
         neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+    const bool fallback_host_possible =
+        config_.dual_yolo.gpu_candidate_refine &&
+        (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
+         dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
+         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo));
+    const bool allocate_host_gray =
+        dualYoloNeedsHostImages(config_.dual_yolo) ||
+        fallback_host_possible;
     const bool allocate_bgr =
         colorPipelineEnabled() &&
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
@@ -2698,25 +2706,27 @@ bool Pipeline::initAsyncRoiStage2() {
             destroyAsyncRoiStage2();
             return false;
         }
-        b.left_gray_host_pitch = gray_width_bytes;
-        b.right_gray_host_pitch = gray_width_bytes;
-        err = cudaHostAlloc(reinterpret_cast<void**>(&b.left_gray_host),
-                            gray_width_bytes * rows,
-                            cudaHostAllocDefault);
-        if (err != cudaSuccess) {
-            LOG_ERROR("Async ROI: alloc left gray host buffer %d failed: %s",
-                      i, cudaGetErrorString(err));
-            destroyAsyncRoiStage2();
-            return false;
-        }
-        err = cudaHostAlloc(reinterpret_cast<void**>(&b.right_gray_host),
-                            gray_width_bytes * rows,
-                            cudaHostAllocDefault);
-        if (err != cudaSuccess) {
-            LOG_ERROR("Async ROI: alloc right gray host buffer %d failed: %s",
-                      i, cudaGetErrorString(err));
-            destroyAsyncRoiStage2();
-            return false;
+        if (allocate_host_gray) {
+            b.left_gray_host_pitch = gray_width_bytes;
+            b.right_gray_host_pitch = gray_width_bytes;
+            err = cudaHostAlloc(reinterpret_cast<void**>(&b.left_gray_host),
+                                gray_width_bytes * rows,
+                                cudaHostAllocDefault);
+            if (err != cudaSuccess) {
+                LOG_ERROR("Async ROI: alloc left gray host buffer %d failed: %s",
+                          i, cudaGetErrorString(err));
+                destroyAsyncRoiStage2();
+                return false;
+            }
+            err = cudaHostAlloc(reinterpret_cast<void**>(&b.right_gray_host),
+                                gray_width_bytes * rows,
+                                cudaHostAllocDefault);
+            if (err != cudaSuccess) {
+                LOG_ERROR("Async ROI: alloc right gray host buffer %d failed: %s",
+                          i, cudaGetErrorString(err));
+                destroyAsyncRoiStage2();
+                return false;
+            }
         }
 
         if (allocate_bgr) {
@@ -2745,8 +2755,9 @@ bool Pipeline::initAsyncRoiStage2() {
     async_roi_thread_stop_ = false;
     async_roi_expire_before_frame_ = -1;
     async_roi_ready_ = true;
-    LOG_INFO("Async ROI Stage2 buffers ready: count=%d gray=%dx%d bgr=%d",
+    LOG_INFO("Async ROI Stage2 buffers ready: count=%d gray=%dx%d host_gray=%d bgr=%d",
              buffer_count, config_.rect_width, config_.rect_height,
+             allocate_host_gray ? 1 : 0,
              allocate_bgr ? 1 : 0);
     return true;
 }
