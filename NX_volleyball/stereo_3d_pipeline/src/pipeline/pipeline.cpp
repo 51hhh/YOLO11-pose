@@ -18,8 +18,12 @@
  */
 
 #include "pipeline.h"
+#include "../stereo/depth_candidate_builder.h"
+#include "../stereo/depth_match_contract.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../stereo/roi_feature_match_cpu.h"
+#include "../stereo/roi_feature_match_gpu.h"
+#include "../stereo/roi_feature_validation.h"
 #include "../stereo/roi_geometry_cpu.h"
 #include "../stereo/roi_patch_match_cpu.h"
 #include "../track/nanotrack_trt.h"
@@ -32,6 +36,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <cmath>
 #include <limits>
@@ -62,6 +67,17 @@ void limitDetectionsByConfidence(std::vector<Detection>& detections,
     std::nth_element(detections.begin(), keep_end, detections.end(), by_confidence);
     detections.resize(static_cast<size_t>(max_detections));
     std::sort(detections.begin(), detections.end(), by_confidence);
+}
+
+StereoRoiPairGateConfig makeStereoRoiPairGateConfig(
+    const PipelineConfig& config) {
+    StereoRoiPairGateConfig gate;
+    gate.max_disparity = config.max_disparity;
+    gate.epipolar_y_tolerance = config.dual_yolo.epipolar_y_tolerance;
+    gate.max_size_ratio = config.dual_yolo.max_size_ratio;
+    gate.adaptive_y_ratio = 0.35f;
+    gate.min_shifted_iou = 0.0f;
+    return gate;
 }
 
 }  // namespace
@@ -401,8 +417,8 @@ bool Pipeline::init(const PipelineConfig& config) {
                 LOG_ERROR("NeuralFeatureMatcher init failed");
                 return false;
             }
-            LOG_INFO("NeuralFeatureMatcher engines loaded; fused [N,4/5] match "
-                     "outputs will be used as roi_neural_feature candidates");
+            LOG_INFO("NeuralFeatureMatcher engines loaded; TensorRT ROI matches "
+                     "will be used as roi_neural_feature candidates");
         }
     }
 
@@ -536,10 +552,10 @@ bool Pipeline::init(const PipelineConfig& config) {
             gpu_cfg.compute_corner_points = config_.dual_yolo.depth_roi_corner_points;
             gpu_cfg.compute_texture_points = config_.dual_yolo.depth_roi_texture_points;
             gpu_cfg.compute_binary_points = config_.dual_yolo.depth_roi_binary_points;
-            gpu_cfg.compute_orb_points = config_.dual_yolo.depth_roi_orb_points;
-            gpu_cfg.compute_brisk_points = config_.dual_yolo.depth_roi_brisk_points;
-            gpu_cfg.compute_akaze_points = config_.dual_yolo.depth_roi_akaze_points;
-            gpu_cfg.compute_sift_points = config_.dual_yolo.depth_roi_sift_points;
+            gpu_cfg.compute_orb_points = false;
+            gpu_cfg.compute_brisk_points = false;
+            gpu_cfg.compute_akaze_points = false;
+            gpu_cfg.compute_sift_points = false;
             gpu_cfg.compute_iou_region_color_patch =
                 config_.dual_yolo.depth_roi_iou_region_color_patch;
             gpu_cfg.compute_patch_iou_color_edge =
@@ -1467,17 +1483,6 @@ struct SubpixelSampleOffset {
     float dy = 0.0f;
 };
 
-struct SubpixelDisparityResult {
-    bool valid = false;
-    bool low_confidence = false;
-    float disparity = 0.0f;
-    float confidence = 0.0f;
-    float stddev = 0.0f;
-    float delta_gate_px = 0.0f;
-    int support = 0;
-    int attempted = 0;
-};
-
 SubpixelDisparityResult subpixelFromGpuCandidate(const DualYoloGpuDisparity& in) {
     SubpixelDisparityResult out;
     out.valid = in.valid != 0;
@@ -1503,76 +1508,6 @@ SparseFeatureDisparityResult sparseFromGpuCandidate(const DualYoloGpuDisparity& 
     out.support = in.support;
     out.attempted = in.attempted;
     return out;
-}
-
-bool pointInsideDetectionEllipseForFeature(const Detection& det,
-                                           float x,
-                                           float y,
-                                           float scale) {
-    if (det.width <= 1.0f || det.height <= 1.0f) return false;
-    const float rx = std::max(1.0f, det.width * scale);
-    const float ry = std::max(1.0f, det.height * scale);
-    const float nx = (x - det.cx) / rx;
-    const float ny = (y - det.cy) / ry;
-    return nx * nx + ny * ny <= 1.0f;
-}
-
-bool validateSparseFeatureGeometry(
-    const SparseFeatureDisparityResult& result,
-    const Detection& left_det,
-    const Detection& right_det,
-    float initial_disp,
-    const ROIFeatureMatchConfig& cfg,
-    float focal,
-    float baseline)
-{
-    if (!result.valid || result.disparity <= 0.5f ||
-        initial_disp <= 0.5f || focal <= 1e-3f || baseline <= 1e-6f) {
-        return false;
-    }
-    const float left_x = result.anchor_cx;
-    const float left_y = result.anchor_cy;
-    const float expected_y =
-        cfg.feature_y_offset_px +
-        cfg.feature_y_slope * (left_x - left_det.cx);
-    const float right_x = left_x - result.disparity;
-    const float right_y = left_y - expected_y;
-    if (std::abs((left_y - right_y) - expected_y) >
-        std::clamp(cfg.feature_y_tolerance_px, 0.5f, 8.0f)) {
-        return false;
-    }
-
-    const float scale = std::clamp(cfg.feature_overlap_scale, 0.35f, 0.90f);
-    const float projection_scale = std::min(0.98f, scale + 0.12f);
-    if (!pointInsideDetectionEllipseForFeature(left_det, left_x, left_y, scale) ||
-        !pointInsideDetectionEllipseForFeature(right_det, right_x, right_y, scale) ||
-        !pointInsideDetectionEllipseForFeature(right_det,
-                                               left_x - initial_disp,
-                                               left_y,
-                                               projection_scale) ||
-        !pointInsideDetectionEllipseForFeature(left_det,
-                                               right_x + initial_disp,
-                                               right_y,
-                                               projection_scale)) {
-        return false;
-    }
-
-    if (cfg.feature_sphere_radius_m > 0.0f) {
-        const float fb = focal * baseline;
-        const float center_z = fb / initial_disp;
-        const float z = fb / result.disparity;
-        if (!std::isfinite(center_z) || !std::isfinite(z)) return false;
-        const float dx = (left_x - left_det.cx) * z / focal;
-        const float dy = (left_y - left_det.cy) * z / focal;
-        const float dz = z - center_z;
-        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-        const float max_distance =
-            cfg.feature_sphere_radius_m *
-            std::max(1.0f, cfg.feature_sphere_radius_scale) +
-            std::max(0.0f, cfg.feature_sphere_margin_m);
-        if (distance > max_distance) return false;
-    }
-    return true;
 }
 
 float estimateDisparityFromBBoxCPU(
@@ -2329,49 +2264,20 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     write_debug_image("right_detections.png",
                       draw_detection_overlay(right_viz, slot.detections_right, "right"));
 
-    int best_left = -1;
-    int best_right = -1;
-    float best_score = std::numeric_limits<float>::max();
-    const float y_tol = std::max(1.0f, config_.dual_yolo.epipolar_y_tolerance);
-    const float size_ratio_gate = std::max(1.0f, config_.dual_yolo.max_size_ratio);
-    for (size_t li = 0; li < slot.detections.size(); ++li) {
-        const auto& l = slot.detections[li];
-        for (size_t ri = 0; ri < slot.detections_right.size(); ++ri) {
-            const auto& r = slot.detections_right[ri];
-            if (l.class_id != r.class_id) continue;
-            const float disp = l.cx - r.cx;
-            if (disp <= 0.5f || disp > static_cast<float>(config_.max_disparity)) continue;
-            const float dy = std::abs(l.cy - r.cy);
-            const float candidate_y_tol =
-                std::max(y_tol, 0.35f * std::max(l.height, r.height));
-            if (dy > candidate_y_tol) continue;
-            const float wr = std::max(l.width, r.width) /
-                             std::max(1.0f, std::min(l.width, r.width));
-            const float hr = std::max(l.height, r.height) /
-                             std::max(1.0f, std::min(l.height, r.height));
-            const float sr = std::max(wr, hr);
-            if (sr > size_ratio_gate) continue;
-            const float score = dy / candidate_y_tol + std::abs(wr - 1.0f) +
-                                std::abs(hr - 1.0f) -
-                                0.1f * (l.confidence + r.confidence);
-            if (score < best_score) {
-                best_score = score;
-                best_left = static_cast<int>(li);
-                best_right = static_cast<int>(ri);
-            }
-        }
-    }
-
-    if (best_left < 0 || best_right < 0) {
+    StereoRoiPair debug_pair;
+    if (!findBestStereoRoiPair(slot.detections,
+                               slot.detections_right,
+                               makeStereoRoiPairGateConfig(config_),
+                               &debug_pair)) {
         LOG_ERROR("Feature match debug: no valid left/right YOLO pair (left=%zu right=%zu)",
                   slot.detections.size(), slot.detections_right.size());
         cleanup();
         return false;
     }
 
-    const Detection& left_det = slot.detections[best_left];
-    const Detection& right_det = slot.detections_right[best_right];
-    const float initial_disp = left_det.cx - right_det.cx;
+    const Detection& left_det = slot.detections[debug_pair.left_index];
+    const Detection& right_det = slot.detections_right[debug_pair.right_index];
+    const float initial_disp = debug_pair.initial_disparity;
     const auto& P1 = calibration_->getProjectionLeft();
     const float focal = static_cast<float>(P1.at<double>(0, 0));
     const float baseline = calibration_->getBaseline();
@@ -2482,9 +2388,12 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     } else {
         summary << "left_count=" << slot.detections.size()
                 << " right_count=" << slot.detections_right.size() << "\n";
-        summary << "selected_left=" << best_left << " selected_right=" << best_right
+        summary << "selected_left=" << debug_pair.left_index
+                << " selected_right=" << debug_pair.right_index
                 << " initial_disp=" << initial_disp
-                << " dy=" << std::abs(left_det.cy - right_det.cy)
+                << " dy=" << debug_pair.epipolar_dy
+                << " shifted_iou=" << debug_pair.shifted_bbox_iou
+                << " pair_score=" << debug_pair.score
                 << " baseline_m=" << baseline
                 << " focal_px=" << focal << "\n";
         summary << "frame_counter_delta="
@@ -2789,6 +2698,36 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         makeROICircleSearchConfig(config_.dual_yolo);
     const float y_tol = std::max(1.0f, config_.dual_yolo.epipolar_y_tolerance);
     const float max_ratio = std::max(1.0f, config_.dual_yolo.max_size_ratio);
+    const StereoRoiPairGateConfig roi_pair_gate =
+        makeStereoRoiPairGateConfig(config_);
+
+    auto record_pair_reject = [&](StereoRoiPairRejectReason reason) {
+        switch (reason) {
+        case StereoRoiPairRejectReason::NONE:
+            break;
+        case StereoRoiPairRejectReason::CLASS_MISMATCH:
+            ++local_stats.class_mismatch;
+            break;
+        case StereoRoiPairRejectReason::INVALID_BOX:
+            ++local_stats.invalid_box;
+            break;
+        case StereoRoiPairRejectReason::NONPOSITIVE_DISPARITY:
+            ++local_stats.nonpositive_disparity;
+            break;
+        case StereoRoiPairRejectReason::OVER_MAX_DISPARITY:
+            ++local_stats.over_max_disparity;
+            break;
+        case StereoRoiPairRejectReason::EPIPOLAR_REJECT:
+            ++local_stats.epipolar_reject;
+            break;
+        case StereoRoiPairRejectReason::SIZE_REJECT:
+            ++local_stats.size_reject;
+            break;
+        case StereoRoiPairRejectReason::LOW_IOU:
+            ++local_stats.low_iou;
+            break;
+        }
+    };
 
     std::vector<bool> right_used(right_detections.size(), false);
     std::vector<bool> right_blocked_by_left(right_detections.size(), false);
@@ -2798,51 +2737,21 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     if (gpu_candidate_refine_enabled &&
         !left_detections.empty() &&
         !right_detections.empty()) {
+        const std::vector<StereoRoiPair> roi_pairs =
+            collectStereoRoiPairCandidates(
+                left_detections,
+                right_detections,
+                roi_pair_gate,
+                static_cast<std::size_t>(dual_yolo_depth_gpu_->maxPairs()));
         std::vector<DualYoloGpuDetectionPair> gpu_pairs;
-        gpu_pairs.reserve(std::min(
-            dual_yolo_depth_gpu_->maxPairs(),
-            static_cast<int>(left_detections.size() * right_detections.size())));
-        for (size_t li = 0; li < left_detections.size(); ++li) {
-            const auto& left = left_detections[li];
-            for (size_t ri = 0; ri < right_detections.size(); ++ri) {
-                const auto& right = right_detections[ri];
-                if (left.class_id != right.class_id ||
-                    left.width <= 1.0f || left.height <= 1.0f ||
-                    right.width <= 1.0f || right.height <= 1.0f) {
-                    continue;
-                }
-                const float disparity = left.cx - right.cx;
-                if (disparity <= 0.0f ||
-                    disparity > static_cast<float>(config_.max_disparity)) {
-                    continue;
-                }
-                const float candidate_y_tol =
-                    std::max(y_tol, 0.35f * std::max(left.height, right.height));
-                if (std::abs(left.cy - right.cy) > candidate_y_tol) {
-                    continue;
-                }
-                const float w_ratio = std::max(left.width / right.width,
-                                               right.width / left.width);
-                const float h_ratio = std::max(left.height / right.height,
-                                               right.height / left.height);
-                if (w_ratio > max_ratio || h_ratio > max_ratio) {
-                    continue;
-                }
-                DualYoloGpuDetectionPair pair;
-                pair.left = makeGpuDetection(left);
-                pair.right = makeGpuDetection(right);
-                pair.left_index = static_cast<int>(li);
-                pair.right_index = static_cast<int>(ri);
-                gpu_pairs.push_back(pair);
-                if (static_cast<int>(gpu_pairs.size()) >=
-                    dual_yolo_depth_gpu_->maxPairs()) {
-                    break;
-                }
-            }
-            if (static_cast<int>(gpu_pairs.size()) >=
-                dual_yolo_depth_gpu_->maxPairs()) {
-                break;
-            }
+        gpu_pairs.reserve(roi_pairs.size());
+        for (const auto& roi_pair : roi_pairs) {
+            DualYoloGpuDetectionPair pair;
+            pair.left = makeGpuDetection(roi_pair.left);
+            pair.right = makeGpuDetection(roi_pair.right);
+            pair.left_index = roi_pair.left_index;
+            pair.right_index = roi_pair.right_index;
+            gpu_pairs.push_back(pair);
         }
         if (!gpu_pairs.empty()) {
             const auto gpu_start = Clock::now();
@@ -3172,17 +3081,25 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float z_roi_orb_points = -1.0f;
         if (roi_orb_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
-            if (gpu_candidate) {
-                orb_points_result =
-                    sparseFromGpuCandidate(gpu_candidate->orb_points);
-                if (!validateSparseFeatureGeometry(
-                        orb_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
-                        focal, baseline)) {
-                    orb_points_result = SparseFeatureDisparityResult{};
-                }
+            if (gpu_image_available && stream != nullptr) {
+                const auto orb_gpu_start = Clock::now();
+                orb_points_result = matchOpenCVORBDisparityGPU(
+                    left_gpu, left_gpu_pitch,
+                    right_gpu, right_gpu_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    stream);
+                const double orb_gpu_ms =
+                    std::chrono::duration<double, std::milli>(
+                        Clock::now() - orb_gpu_start).count();
+                globalPerf().record("Stage2_OpenCVCudaORB", orb_gpu_ms);
             }
-            if (!orb_points_result.valid && !gpu_candidate && image_available) {
+            if (!orb_points_result.valid && !gpu_image_available && image_available) {
                 orb_points_result = matchOpenCVFeatureDisparityCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
@@ -3359,14 +3276,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     static_cast<int>(neural.matches.size());
                 float sx = 0.0f;
                 float sy = 0.0f;
+                float rx = 0.0f;
+                float ry = 0.0f;
                 for (const auto& m : neural.matches) {
                     sx += m.left_x;
                     sy += m.left_y;
+                    rx += m.right_x;
+                    ry += m.right_y;
                 }
                 const float inv = 1.0f /
                     static_cast<float>(std::max(1, neural_feature_result.support));
                 neural_feature_result.anchor_cx = sx * inv;
                 neural_feature_result.anchor_cy = sy * inv;
+                neural_feature_result.right_anchor_cx = rx * inv;
+                neural_feature_result.right_anchor_cy = ry * inv;
                 if (!validateSparseFeatureGeometry(
                         neural_feature_result, left_det, *right_det,
                         feature_initial_disparity, feature_cfg,
@@ -3657,103 +3580,97 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         const float z_subpixel =
             subpixel_valid_for_obj ? fb / subpixel_result.disparity : -1.0f;
-        if (subpixel_valid_for_obj) {
-            disparity = subpixel_result.disparity;
-            depth_source = 2;
-        } else if (fallback_feature_result.valid) {
-            disparity = fallback_feature_result.disparity;
-            depth_source = 12;
-            disparity_conf = std::clamp(0.55f + 0.30f * fallback_feature_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (fallback_template_depth_valid) {
-            disparity = circle_disparity;
-            depth_source = 7;
-            disparity_conf = std::max(0.45f,
-                std::min(left_circle.confidence, right_circle.confidence));
-        } else if (any_fallback_depth_valid || circle_candidate_valid) {
-            disparity = circle_disparity;
-            depth_source = 1;
-        } else if (z_roi_center_patch > 0.0f) {
-            disparity = center_patch_result.disparity;
-            depth_source = 4;
-            disparity_conf = std::clamp(0.60f + 0.25f * center_patch_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (iou_region_color_patch_result.valid) {
-            disparity = iou_region_color_patch_result.disparity;
-            depth_source = 18;
-            disparity_conf = std::clamp(0.58f + 0.30f * iou_region_color_patch_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (patch_iou_color_edge_result.valid) {
-            disparity = patch_iou_color_edge_result.disparity;
-            depth_source = 19;
-            disparity_conf = std::clamp(0.56f + 0.30f * patch_iou_color_edge_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (neural_feature_result.valid) {
-            disparity = neural_feature_result.disparity;
-            depth_source = 20;
-            disparity_conf = std::clamp(0.56f + 0.32f * neural_feature_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (corner_points_result.valid) {
-            disparity = corner_points_result.disparity;
-            depth_source = 10;
-            disparity_conf = std::clamp(0.55f + 0.30f * corner_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (texture_points_result.valid) {
-            disparity = texture_points_result.disparity;
-            depth_source = 11;
-            disparity_conf = std::clamp(0.52f + 0.28f * texture_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (binary_points_result.valid) {
-            disparity = binary_points_result.disparity;
-            depth_source = 13;
-            disparity_conf = std::clamp(0.55f + 0.30f * binary_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (orb_points_result.valid) {
-            disparity = orb_points_result.disparity;
-            depth_source = 14;
-            disparity_conf = std::clamp(0.54f + 0.30f * orb_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (brisk_points_result.valid) {
-            disparity = brisk_points_result.disparity;
-            depth_source = 15;
-            disparity_conf = std::clamp(0.53f + 0.30f * brisk_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (akaze_points_result.valid) {
-            disparity = akaze_points_result.disparity;
-            depth_source = 16;
-            disparity_conf = std::clamp(0.52f + 0.30f * akaze_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (sift_points_result.valid) {
-            disparity = sift_points_result.disparity;
-            depth_source = 17;
-            disparity_conf = std::clamp(0.52f + 0.30f * sift_points_result.confidence,
-                                        0.0f, 1.0f);
-        } else if (z_roi_radial_center > 0.0f) {
-            disparity = disparity_roi_radial_center;
-            depth_source = 8;
-            disparity_conf = 0.62f;
-        } else if (z_roi_edge_pair_center > 0.0f) {
-            disparity = disparity_roi_edge_pair_center;
-            depth_source = 9;
-            disparity_conf = 0.58f;
-        } else if (z_roi_edge_centroid > 0.0f) {
-            disparity = disparity_roi_edge_centroid;
-            depth_source = 5;
-            disparity_conf = 0.60f;
-        } else if (z_yolo > 0.0f) {
-            disparity = yolo_disparity;
-            depth_source = 3;
-            disparity_conf = 0.65f;
-        } else if (z_bbox_edge_final > 0.0f) {
-            disparity = disparity_bbox_edge_final;
-            depth_source = 6;
-            disparity_conf = 0.55f;
+
+        DepthCandidateBuilderInput depth_candidate_input;
+        depth_candidate_input.left_detection = left_det;
+        depth_candidate_input.left_circle = left_circle;
+        depth_candidate_input.left_edge_centroid_measure =
+            left_edge_centroid_measure;
+        depth_candidate_input.left_radial_measure = left_radial_measure;
+        depth_candidate_input.left_edge_pair_measure = left_edge_pair_measure;
+        depth_candidate_input.subpixel_valid = subpixel_valid_for_obj;
+        depth_candidate_input.subpixel_result = subpixel_result;
+        depth_candidate_input.z_subpixel = z_subpixel;
+        depth_candidate_input.fallback_feature_result = fallback_feature_result;
+        depth_candidate_input.z_fallback_feature_points =
+            z_fallback_feature_points;
+        depth_candidate_input.fallback_template_depth_valid =
+            fallback_template_depth_valid;
+        depth_candidate_input.epipolar_fallback_depth_valid =
+            epipolar_fallback_depth_valid;
+        depth_candidate_input.circle_candidate_valid = circle_candidate_valid;
+        depth_candidate_input.circle_disparity = circle_disparity;
+        depth_candidate_input.z_circle_raw = z_circle_raw;
+        depth_candidate_input.circle_confidence =
+            std::min(left_circle.confidence, right_circle.confidence);
+        depth_candidate_input.disparity_circle_left_edge =
+            disparity_circle_left_edge;
+        depth_candidate_input.z_circle_left_edge = z_circle_left_edge;
+        depth_candidate_input.disparity_circle_right_edge =
+            disparity_circle_right_edge;
+        depth_candidate_input.z_circle_right_edge = z_circle_right_edge;
+        depth_candidate_input.center_patch_valid = center_patch_valid_for_obj;
+        depth_candidate_input.center_patch_result = center_patch_result;
+        depth_candidate_input.z_roi_center_patch = z_roi_center_patch;
+        depth_candidate_input.iou_region_color_patch_result =
+            iou_region_color_patch_result;
+        depth_candidate_input.z_roi_iou_region_color_patch =
+            z_roi_iou_region_color_patch;
+        depth_candidate_input.patch_iou_color_edge_result =
+            patch_iou_color_edge_result;
+        depth_candidate_input.z_roi_patch_iou_color_edge =
+            z_roi_patch_iou_color_edge;
+        depth_candidate_input.neural_feature_result = neural_feature_result;
+        depth_candidate_input.z_roi_neural_feature = z_roi_neural_feature;
+        depth_candidate_input.corner_points_result = corner_points_result;
+        depth_candidate_input.z_roi_corner_points = z_roi_corner_points;
+        depth_candidate_input.texture_points_result = texture_points_result;
+        depth_candidate_input.z_roi_texture_points = z_roi_texture_points;
+        depth_candidate_input.binary_points_result = binary_points_result;
+        depth_candidate_input.z_roi_binary_points = z_roi_binary_points;
+        depth_candidate_input.orb_points_result = orb_points_result;
+        depth_candidate_input.z_roi_orb_points = z_roi_orb_points;
+        depth_candidate_input.brisk_points_result = brisk_points_result;
+        depth_candidate_input.z_roi_brisk_points = z_roi_brisk_points;
+        depth_candidate_input.akaze_points_result = akaze_points_result;
+        depth_candidate_input.z_roi_akaze_points = z_roi_akaze_points;
+        depth_candidate_input.sift_points_result = sift_points_result;
+        depth_candidate_input.z_roi_sift_points = z_roi_sift_points;
+        depth_candidate_input.disparity_roi_radial_center =
+            disparity_roi_radial_center;
+        depth_candidate_input.z_roi_radial_center = z_roi_radial_center;
+        depth_candidate_input.disparity_roi_edge_pair_center =
+            disparity_roi_edge_pair_center;
+        depth_candidate_input.z_roi_edge_pair_center = z_roi_edge_pair_center;
+        depth_candidate_input.disparity_roi_edge_centroid =
+            disparity_roi_edge_centroid;
+        depth_candidate_input.z_roi_edge_centroid = z_roi_edge_centroid;
+        depth_candidate_input.yolo_disparity = yolo_disparity;
+        depth_candidate_input.z_yolo = z_yolo;
+        depth_candidate_input.disparity_bbox_edge_final =
+            disparity_bbox_edge_final;
+        depth_candidate_input.z_bbox_edge_final = z_bbox_edge_final;
+        depth_candidate_input.disparity_bbox_left_edge =
+            disparity_bbox_left_edge;
+        depth_candidate_input.z_bbox_left_edge = z_bbox_left_edge;
+        depth_candidate_input.disparity_bbox_right_edge =
+            disparity_bbox_right_edge;
+        depth_candidate_input.z_bbox_right_edge = z_bbox_right_edge;
+
+        const DepthCandidateBuildResult depth_candidate_build =
+            buildDepthCandidateObservations(depth_candidate_input);
+        const DepthCandidateSelection& depth_selection =
+            depth_candidate_build.selection;
+        if (depth_selection.valid) {
+            disparity = depth_selection.observation.disparity_px;
+            depth_source = depth_selection.observation.stereo_depth_source;
+            disparity_conf = depth_selection.observation.fusion_confidence;
         } else {
             ++local_stats.depth_reject;
             return false;
         }
 
-        const float z = fb / disparity;
+        const float z = depth_selection.observation.depth_m;
         if (z < config_.depth.min_depth || z > config_.depth.max_depth) {
             ++local_stats.depth_reject;
             return false;
@@ -3763,52 +3680,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const float geom_conf = circle_geometry_valid
             ? std::max(0.2f, 1.0f - 0.5f * dy_norm)
             : 0.45f;
-        // 亚像素/圆心/fallback 用圆心投影; bbox 深度保留检测框中心, 避免 ROI 拟合抖动污染该候选。
-        const bool use_bbox_anchor = depth_source == 3 || depth_source == 6;
-        float anchor_cx = use_bbox_anchor ? left_det.cx : left_circle.cx;
-        float anchor_cy = use_bbox_anchor ? left_det.cy : left_circle.cy;
-        if (depth_source == 5 && left_edge_centroid_measure.valid) {
-            anchor_cx = left_edge_centroid_measure.cx;
-            anchor_cy = left_edge_centroid_measure.cy;
-        } else if (depth_source == 8 && left_radial_measure.valid) {
-            anchor_cx = left_radial_measure.cx;
-            anchor_cy = left_radial_measure.cy;
-        } else if (depth_source == 9 && left_edge_pair_measure.valid) {
-            anchor_cx = left_edge_pair_measure.cx;
-            anchor_cy = left_edge_pair_measure.cy;
-        } else if (depth_source == 10 && corner_points_result.valid) {
-            anchor_cx = corner_points_result.anchor_cx;
-            anchor_cy = corner_points_result.anchor_cy;
-        } else if (depth_source == 11 && texture_points_result.valid) {
-            anchor_cx = texture_points_result.anchor_cx;
-            anchor_cy = texture_points_result.anchor_cy;
-        } else if (depth_source == 13 && binary_points_result.valid) {
-            anchor_cx = binary_points_result.anchor_cx;
-            anchor_cy = binary_points_result.anchor_cy;
-        } else if (depth_source == 14 && orb_points_result.valid) {
-            anchor_cx = orb_points_result.anchor_cx;
-            anchor_cy = orb_points_result.anchor_cy;
-        } else if (depth_source == 15 && brisk_points_result.valid) {
-            anchor_cx = brisk_points_result.anchor_cx;
-            anchor_cy = brisk_points_result.anchor_cy;
-        } else if (depth_source == 16 && akaze_points_result.valid) {
-            anchor_cx = akaze_points_result.anchor_cx;
-            anchor_cy = akaze_points_result.anchor_cy;
-        } else if (depth_source == 17 && sift_points_result.valid) {
-            anchor_cx = sift_points_result.anchor_cx;
-            anchor_cy = sift_points_result.anchor_cy;
-        } else if (depth_source == 18 && iou_region_color_patch_result.valid) {
-            anchor_cx = iou_region_color_patch_result.anchor_cx;
-            anchor_cy = iou_region_color_patch_result.anchor_cy;
-        } else if (depth_source == 19 && patch_iou_color_edge_result.valid) {
-            anchor_cx = patch_iou_color_edge_result.anchor_cx;
-            anchor_cy = patch_iou_color_edge_result.anchor_cy;
-        } else if (depth_source == 20 && neural_feature_result.valid) {
-            anchor_cx = neural_feature_result.anchor_cx;
-            anchor_cy = neural_feature_result.anchor_cy;
-        } else if (depth_source == 12 && fallback_feature_result.valid) {
-            anchor_cx = fallback_feature_result.anchor_cx;
-            anchor_cy = fallback_feature_result.anchor_cy;
+        float anchor_cx = depth_selection.observation.anchor_left_x;
+        float anchor_cy = depth_selection.observation.anchor_left_y;
+        if (!std::isfinite(anchor_cx) || !std::isfinite(anchor_cy) ||
+            (anchor_cx == 0.0f && anchor_cy == 0.0f)) {
+            anchor_cx = left_det.cx;
+            anchor_cy = left_det.cy;
         }
         obj.x = (anchor_cx - cx0) * z / focal;
         obj.y = (anchor_cy - cy0) * z / focal;
@@ -4072,54 +3949,28 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         int best_idx = -1;
         float best_score = 1e9f;
+        StereoRoiPair best_pair;
 
         for (size_t ri = 0; ri < right_detections.size(); ++ri) {
             if (right_used[ri]) continue;
-            const auto& right = right_detections[ri];
-            if (left.class_id != right.class_id) {
-                ++local_stats.class_mismatch;
-                continue;
-            }
-            if (left.width <= 1.0f || left.height <= 1.0f ||
-                right.width <= 1.0f || right.height <= 1.0f) {
-                ++local_stats.invalid_box;
-                continue;
-            }
-
-            const float disparity = left.cx - right.cx;
-            if (disparity <= 0.0f) {
-                ++local_stats.nonpositive_disparity;
-                continue;
-            }
-            if (disparity > config_.max_disparity) {
-                ++local_stats.over_max_disparity;
+            StereoRoiPair candidate_pair;
+            StereoRoiPairRejectReason reject_reason =
+                StereoRoiPairRejectReason::NONE;
+            if (!evaluateStereoRoiPair(left,
+                                       right_detections[ri],
+                                       static_cast<int>(li),
+                                       static_cast<int>(ri),
+                                       roi_pair_gate,
+                                       &candidate_pair,
+                                       &reject_reason)) {
+                record_pair_reject(reject_reason);
                 continue;
             }
 
-            const float dy = std::abs(left.cy - right.cy);
-            const float candidate_y_tol =
-                std::max(y_tol, 0.35f * std::max(left.height, right.height));
-            if (dy > candidate_y_tol) {
-                ++local_stats.epipolar_reject;
-                continue;
-            }
-
-            const float w_ratio = std::max(left.width / right.width,
-                                           right.width / left.width);
-            const float h_ratio = std::max(left.height / right.height,
-                                           right.height / left.height);
-            if (w_ratio > max_ratio || h_ratio > max_ratio) {
-                ++local_stats.size_reject;
-                continue;
-            }
-
-            const float size_cost = std::abs(std::log(w_ratio)) +
-                                    std::abs(std::log(h_ratio));
-            const float score = dy / candidate_y_tol + size_cost -
-                                0.25f * right.confidence;
-            if (score < best_score) {
-                best_score = score;
+            if (candidate_pair.score < best_score) {
+                best_score = candidate_pair.score;
                 best_idx = static_cast<int>(ri);
+                best_pair = candidate_pair;
             }
         }
 
@@ -4149,8 +4000,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         }
 
         Object3D obj;
-        const float semantic_conf = std::sqrt(left.confidence * right.confidence);
-        const float bbox_disparity = left.cx - right.cx;
+        const float semantic_conf = best_pair.semantic_confidence;
+        const float bbox_disparity = best_pair.initial_disparity;
         if (!build_object(left, left_circle, right_circle, semantic_conf,
                           1, bbox_disparity, &right, gpu_candidate, obj)) {
             continue;
@@ -4639,7 +4490,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             LOG_INFO("[DualYOLO] frame=%d left=%d right=%d matches=%d valid=%d "
                      "missL=%d missR=%d fb=%d/%d fail=%d prior=%d l2r=%d r2l=%d "
                      "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
-                     "size=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
+                     "size=%d iou=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
                      "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d",
                      slot.frame_id,
                      match_stats.left_count,
@@ -4661,6 +4512,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                      match_stats.over_max_disparity,
                      match_stats.epipolar_reject,
                      match_stats.size_reject,
+                     match_stats.low_iou,
                      match_stats.circle_fit_fail,
                      match_stats.subpixel_refined,
                      match_stats.subpixel_attempted,

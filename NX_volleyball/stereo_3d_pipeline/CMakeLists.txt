@@ -50,6 +50,19 @@ set(STEREO_OPENCV_LIBS ${OpenCV_LIBS})
 set(STEREO_OPENCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
 
+# OpenCV CUDA ORB 是可选后端。缺少 cudafeatures2d 时禁用 ORB 候选，
+# 但不阻塞默认 100fps 实时管线构建。
+find_package(OpenCV QUIET COMPONENTS cudafeatures2d)
+if(OpenCV_cudafeatures2d_FOUND)
+  set(HAS_OPENCV_CUDAFEATURES2D ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
+  message(STATUS "OpenCV cudafeatures2d: found (CUDA ORB enabled)")
+else()
+  set(HAS_OPENCV_CUDAFEATURES2D OFF)
+  message(STATUS "OpenCV cudafeatures2d not found, CUDA ORB disabled")
+endif()
+
 # TensorRT
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   HINTS /usr/include/aarch64-linux-gnu /usr/include)
@@ -150,10 +163,15 @@ set(PIPELINE_SOURCES
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
+  src/stereo/depth_candidate_builder.cpp
+  src/stereo/depth_match_contract.cpp
   src/stereo/dual_yolo_depth_gpu.cpp
+  src/stereo/roi_feature_validation.cpp
+  src/stereo/roi_feature_match_common.cpp
   src/stereo/roi_patch_match_cpu.cpp
   src/stereo/roi_geometry_cpu.cpp
   src/stereo/roi_feature_match_cpu.cpp
+  src/stereo/roi_feature_match_gpu.cpp
   src/stereo/neural_feature_matcher.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
@@ -219,6 +237,10 @@ target_link_libraries(stereo_pipeline
   pthread
   stdc++fs
 )
+
+if(HAS_OPENCV_CUDAFEATURES2D)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAFEATURES2D)
+endif()
 
 if(HIK_FOUND)
   target_link_libraries(stereo_pipeline MvCameraControl)

@@ -8,6 +8,17 @@
 
 namespace stereo3d {
 
+struct SubpixelDisparityResult {
+    bool valid = false;
+    bool low_confidence = false;
+    float disparity = 0.0f;
+    float confidence = 0.0f;
+    float stddev = 0.0f;
+    float delta_gate_px = 0.0f;
+    int support = 0;
+    int attempted = 0;
+};
+
 inline float sampleGrayCPU(const uint8_t* img, int pitch, int x, int y, bool denoise)
 {
     const uint8_t* row = img + y * pitch;

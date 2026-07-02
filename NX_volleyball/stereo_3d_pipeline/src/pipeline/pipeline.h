@@ -365,6 +365,7 @@ private:
         int over_max_disparity = 0;
         int epipolar_reject = 0;
         int size_reject = 0;
+        int low_iou = 0;
         int circle_fit_fail = 0;
         int subpixel_attempted = 0;
         int subpixel_refined = 0;
