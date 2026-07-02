@@ -63,10 +63,10 @@ detector:
       roi_corner_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_texture_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_binary_points: false  # heavier sparse feature A/B mode; enable offline or after profiling budget is available
-      roi_orb_points: false    # GPU ORB-lite ROI binary patch candidate; CPU OpenCV only for no-GPU fallback
-      roi_brisk_points: false  # GPU BRISK-lite ROI binary patch candidate; experimental A/B mode
-      roi_akaze_points: false  # GPU AKAZE-lite ROI gradient/texture candidate; experimental A/B mode
-      roi_sift_points: false   # GPU SIFT-lite ROI descriptor candidate; experimental A/B mode
+      roi_orb_points: false    # true OpenCV CUDA ORB path when GPU image is available; slower A/B mode, not default 100fps
+      roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
+      roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
+      roi_sift_points: false   # no true CUDA SIFT backend on current NX; legacy GPU-lite only
       roi_iou_region_color_patch: false # GPU color region IoU + patch candidate; requires BGR pipeline
       roi_patch_iou_color_edge: false # GPU color edge IoU + patch candidate; requires BGR pipeline
       roi_center_patch: false  # heavier ZNCC refinement; enable for offline/quality A/B tests
