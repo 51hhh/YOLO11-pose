@@ -183,6 +183,10 @@ struct PipelineConfig {
         float feature_normalize_margin_scale = 0.62f; ///< 归一化 ROI 半径相对 bbox 尺寸
         bool feature_precompute_roi_maps = true; ///< ROI 内预计算 label/edge 供匹配使用
         float max_size_ratio = 2.0f;       ///< 左右 bbox 尺寸比例上限
+        float min_shifted_iou = 0.05f;     ///< 平移到同一 x 后左右 bbox 最小重叠
+        float bbox_disparity_consistency_ratio = 0.30f; ///< bbox 物理视差一致性相对门限
+        float bbox_disparity_consistency_min_px = 45.0f; ///< bbox 物理视差一致性最小门限
+        float bbox_disparity_penalty_scale = 0.75f; ///< 多候选排序的物理视差不一致惩罚
         int fallback_search_margin_px = 48;///< 期望视差两侧搜索半宽 (px)
         int fallback_max_width_px = 220;   ///< 极线 fallback 搜索窗口最大宽度
         int circle_max_roi_pixels = 18000; ///< CPU 圆拟合最大采样像素数, 超过后步进采样

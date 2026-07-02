@@ -108,6 +108,10 @@ detector:
     feature_normalize_margin_scale: 0.62   # crop half-size as bbox size scale
     feature_precompute_roi_maps: true      # precompute gray label/edge maps inside normalized ROI
     max_size_ratio: 2.0
+    min_shifted_iou: 0.05                  # shifted left/right bbox must still overlap after x-disparity compensation
+    bbox_disparity_consistency_ratio: 0.30 # compare bbox-size depth prior with left/right center disparity
+    bbox_disparity_consistency_min_px: 45.0
+    bbox_disparity_penalty_scale: 0.75     # ranking penalty for physically inconsistent YOLO pairs
     fallback_search_margin_px: 48
     fallback_max_width_px: 220
     circle_max_roi_pixels: 18000

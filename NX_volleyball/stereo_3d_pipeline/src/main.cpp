@@ -283,6 +283,17 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 cfg.dual_yolo.feature_precompute_roi_maps = dual["feature_precompute_roi_maps"].as<bool>();
             if (dual["max_size_ratio"])
                 cfg.dual_yolo.max_size_ratio = dual["max_size_ratio"].as<float>();
+            if (dual["min_shifted_iou"])
+                cfg.dual_yolo.min_shifted_iou = dual["min_shifted_iou"].as<float>();
+            if (dual["bbox_disparity_consistency_ratio"])
+                cfg.dual_yolo.bbox_disparity_consistency_ratio =
+                    dual["bbox_disparity_consistency_ratio"].as<float>();
+            if (dual["bbox_disparity_consistency_min_px"])
+                cfg.dual_yolo.bbox_disparity_consistency_min_px =
+                    dual["bbox_disparity_consistency_min_px"].as<float>();
+            if (dual["bbox_disparity_penalty_scale"])
+                cfg.dual_yolo.bbox_disparity_penalty_scale =
+                    dual["bbox_disparity_penalty_scale"].as<float>();
             if (dual["fallback_search_margin_px"])
                 cfg.dual_yolo.fallback_search_margin_px = dual["fallback_search_margin_px"].as<int>();
             if (dual["fallback_max_width_px"])

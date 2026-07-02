@@ -76,7 +76,7 @@ StereoRoiPairGateConfig makeStereoRoiPairGateConfig(
     gate.epipolar_y_tolerance = config.dual_yolo.epipolar_y_tolerance;
     gate.max_size_ratio = config.dual_yolo.max_size_ratio;
     gate.adaptive_y_ratio = 0.35f;
-    gate.min_shifted_iou = 0.0f;
+    gate.min_shifted_iou = config.dual_yolo.min_shifted_iou;
     return gate;
 }
 
@@ -1413,8 +1413,8 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
 
 bool dualYoloNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
     if (cfg.gpu_candidate_refine) {
-        return dualYoloROIORBPointsDepthEnabled(cfg) ||
-               dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+        // CUDA ORB uses gray GPU input; avoid full-frame D2H only for CPU ORB fallback.
+        return dualYoloROIBRISKPointsDepthEnabled(cfg) ||
                dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
                dualYoloROISIFTPointsDepthEnabled(cfg);
     }
@@ -1560,6 +1560,45 @@ float estimateDisparityFromBBoxCPU(
     const float disp = baseline * det.width * depth_cfg.bbox_scale /
                        depth_cfg.object_diameter;
     return std::clamp(disp, 1.0f, static_cast<float>(max_disparity));
+}
+
+float bboxDisparityConsistencyPenaltyCPU(
+    const Detection& left,
+    const Detection& right,
+    float pair_disparity,
+    float baseline,
+    const HybridDepthConfig& depth_cfg,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity)
+{
+    if (!std::isfinite(pair_disparity) || pair_disparity <= 0.0f) {
+        return 0.0f;
+    }
+    const float left_expected =
+        estimateDisparityFromBBoxCPU(left, baseline, depth_cfg, max_disparity);
+    const float right_expected =
+        estimateDisparityFromBBoxCPU(right, baseline, depth_cfg, max_disparity);
+
+    float expected = -1.0f;
+    if (left_expected > 0.0f && right_expected > 0.0f) {
+        expected = 0.5f * (left_expected + right_expected);
+    } else if (left_expected > 0.0f) {
+        expected = left_expected;
+    } else if (right_expected > 0.0f) {
+        expected = right_expected;
+    }
+    if (expected <= 0.0f) return 0.0f;
+
+    const float ratio_tol =
+        std::max(0.05f, dual_cfg.bbox_disparity_consistency_ratio);
+    const float abs_tol =
+        std::max(5.0f, dual_cfg.bbox_disparity_consistency_min_px);
+    const float tolerance = std::max(abs_tol, expected * ratio_tol);
+    const float excess = std::abs(pair_disparity - expected) - tolerance;
+    if (excess <= 0.0f) return 0.0f;
+
+    const float scale = std::max(0.0f, dual_cfg.bbox_disparity_penalty_scale);
+    return scale * excess / std::max(1.0f, tolerance);
 }
 
 CircleFit2D searchTemplateOnEpipolarCPU(
@@ -2643,7 +2682,6 @@ bool Pipeline::roiStage2NeedsHostImages(
     const bool has_stereo_detections =
         !left_detections.empty() && !right_detections.empty();
     const bool opencv_descriptor_cpu_possible =
-        dualYoloROIORBPointsDepthEnabled(config_.dual_yolo) ||
         dualYoloROIBRISKPointsDepthEnabled(config_.dual_yolo) ||
         dualYoloROIAKAZEPointsDepthEnabled(config_.dual_yolo) ||
         dualYoloROISIFTPointsDepthEnabled(config_.dual_yolo);
@@ -3180,6 +3218,10 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
 
     collectRoiDetections(slot, slot_index);
     slot.results.clear();
+    if (slot.detections.empty() && slot.detections_right.empty()) {
+        globalPerf().record("Stage2_AsyncRoiNoDetections", 0.0);
+        return false;
+    }
 
     int buffer_index = -1;
     size_t queue_pending_depth = 0;
@@ -3694,12 +3736,31 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     if (gpu_candidate_refine_enabled &&
         !left_detections.empty() &&
         !right_detections.empty()) {
-        const std::vector<StereoRoiPair> roi_pairs =
+        std::vector<StereoRoiPair> roi_pairs =
             collectStereoRoiPairCandidates(
                 left_detections,
                 right_detections,
                 roi_pair_gate,
-                static_cast<std::size_t>(dual_yolo_depth_gpu_->maxPairs()));
+                left_detections.size() * right_detections.size());
+        for (auto& roi_pair : roi_pairs) {
+            roi_pair.score += bboxDisparityConsistencyPenaltyCPU(
+                roi_pair.left,
+                roi_pair.right,
+                roi_pair.initial_disparity,
+                baseline,
+                config_.depth,
+                config_.dual_yolo,
+                config_.max_disparity);
+        }
+        std::sort(roi_pairs.begin(), roi_pairs.end(),
+                  [](const StereoRoiPair& a, const StereoRoiPair& b) {
+                      return a.score < b.score;
+                  });
+        const std::size_t max_gpu_pairs =
+            static_cast<std::size_t>(dual_yolo_depth_gpu_->maxPairs());
+        if (roi_pairs.size() > max_gpu_pairs) {
+            roi_pairs.resize(max_gpu_pairs);
+        }
         std::vector<DualYoloGpuDetectionPair> gpu_pairs;
         gpu_pairs.reserve(roi_pairs.size());
         for (const auto& roi_pair : roi_pairs) {
@@ -4908,10 +4969,22 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 continue;
             }
 
-            if (candidate_pair.score < best_score) {
-                best_score = candidate_pair.score;
+            const float ranked_score =
+                candidate_pair.score +
+                bboxDisparityConsistencyPenaltyCPU(
+                    left,
+                    right_detections[ri],
+                    candidate_pair.initial_disparity,
+                    baseline,
+                    config_.depth,
+                    config_.dual_yolo,
+                    config_.max_disparity);
+
+            if (ranked_score < best_score) {
+                best_score = ranked_score;
                 best_idx = static_cast<int>(ri);
                 best_pair = candidate_pair;
+                best_pair.score = ranked_score;
             }
         }
 
@@ -6075,8 +6148,11 @@ void Pipeline::pipelineLoopROI() {
                     tracker_handle_detect_result(slot);
                     publish_now = false;
                     if (!submitted) {
-                        ++stale_drop_count;
-                        globalPerf().record("Stage2_AsyncRoiSubmitDrop", 0.0);
+                        if (!slot.detections.empty() ||
+                            !slot.detections_right.empty()) {
+                            ++stale_drop_count;
+                            globalPerf().record("Stage2_AsyncRoiSubmitDrop", 0.0);
+                        }
                         RoiStage2Output dropped;
                         dropped.detections = slot.detections;
                         dropped.predict_only = true;
