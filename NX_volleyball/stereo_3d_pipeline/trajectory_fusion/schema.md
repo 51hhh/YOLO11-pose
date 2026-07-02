@@ -89,7 +89,7 @@
 | z_roi_orb_points | float | ROI OpenCV ORB/BRIEF 二值描述子匹配视差三角测距 |
 | z_roi_brisk_points | float | ROI OpenCV BRISK 二值描述子匹配视差三角测距 |
 | z_roi_akaze_points | float | ROI OpenCV AKAZE/MLDB 二值描述子匹配视差三角测距 |
-| z_roi_sift_points | float | ROI SIFT-lite GPU 梯度特征点视差三角测距 |
+| z_roi_sift_points | float | ROI OpenCV CPU SIFT 实验候选视差三角测距;当前 NX 无 true CUDA SIFT 后端 |
 | z_roi_iou_region_color_patch | float | ROI GPU 彩色区域 IoU + patch 视差三角测距 |
 | z_roi_patch_iou_color_edge | float | ROI GPU 彩色边缘 IoU + patch 视差三角测距 |
 | z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
@@ -115,7 +115,7 @@
 | disparity_roi_orb_points | float | ROI ORB 聚合视差 |
 | disparity_roi_brisk_points | float | ROI BRISK 聚合视差 |
 | disparity_roi_akaze_points | float | ROI AKAZE 聚合视差 |
-| disparity_roi_sift_points | float | ROI SIFT-lite GPU 聚合视差 |
+| disparity_roi_sift_points | float | ROI OpenCV CPU SIFT 聚合视差 |
 | disparity_roi_iou_region_color_patch | float | ROI 彩色区域 IoU 聚合视差 |
 | disparity_roi_patch_iou_color_edge | float | ROI 彩色边缘 IoU 聚合视差 |
 | disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
@@ -149,9 +149,9 @@
 | roi_akaze_points_support | int | AKAZE 特征匹配支撑点数 |
 | roi_akaze_points_std_px | float | AKAZE 特征视差标准差 |
 | roi_akaze_points_confidence | float | AKAZE 特征匹配置信度 |
-| roi_sift_points_support | int | SIFT-lite GPU 特征匹配支撑点数 |
-| roi_sift_points_std_px | float | SIFT-lite GPU 特征视差标准差 |
-| roi_sift_points_confidence | float | SIFT-lite GPU 特征匹配置信度 |
+| roi_sift_points_support | int | OpenCV CPU SIFT 特征匹配支撑点数 |
+| roi_sift_points_std_px | float | OpenCV CPU SIFT 特征视差标准差 |
+| roi_sift_points_confidence | float | OpenCV CPU SIFT 特征匹配置信度 |
 | roi_iou_region_color_patch_support | int | 彩色区域 IoU/patch 匹配支撑点数 |
 | roi_iou_region_color_patch_std_px | float | 彩色区域 IoU/patch 视差标准差 |
 | roi_iou_region_color_patch_confidence | float | 彩色区域 IoU/patch 匹配置信度 |
