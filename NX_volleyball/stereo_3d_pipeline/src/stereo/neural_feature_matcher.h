@@ -105,6 +105,15 @@ private:
     void destroyEngine(TrtEngine& engine);
     bool validateConfig() const;
     bool prepareEngineBindings(TrtEngine& engine);
+
+    NeuralFeatureMatchResult matchXFeatExtractorGpuRoi(
+        const uint8_t* left_gray_gpu, int left_gray_pitch,
+        const uint8_t* right_gray_gpu, int right_gray_pitch,
+        int img_width, int img_height,
+        const Detection& left_det,
+        const Detection& right_det,
+        float initial_disparity,
+        cudaStream_t stream);
 };
 
 }  // namespace stereo3d
