@@ -19,6 +19,17 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
+from stereo_feature_matching.realtime_contract import (
+    DEPTH_CANDIDATE_PRIORITY,
+    STEREO_DEPTH_SOURCE,
+    Detection as RuntimeDetection,
+    FeatureValidationConfig,
+    SparseFeatureObservation,
+    StereoRoiPairGateConfig,
+    evaluate_stereo_roi_pair,
+    validate_sparse_feature_geometry,
+)
+
 
 @dataclass
 class BallROI:
@@ -64,6 +75,34 @@ class ValidationThresholds:
     max_z_range_m: float = 0.060
     max_sphere_residual_m: float = 0.030
     max_depth_vs_center_m: float = 0.140
+
+
+def _confidence_from_score(score: float) -> float:
+    return float(np.clip(score / 12.0, 0.05, 1.0))
+
+
+def _candidate_to_runtime_detection(candidate: BallCandidate) -> RuntimeDetection:
+    x, y, w, h = candidate.bbox
+    return RuntimeDetection(
+        cx=float(candidate.center[0]),
+        cy=float(candidate.center[1]),
+        width=float(w),
+        height=float(h),
+        confidence=_confidence_from_score(candidate.score),
+        class_id=0,
+    )
+
+
+def _roi_to_runtime_detection(roi: BallROI, confidence: float = 1.0) -> RuntimeDetection:
+    x, y, w, h = roi.bbox
+    return RuntimeDetection(
+        cx=float(roi.center[0]),
+        cy=float(roi.center[1]),
+        width=float(w),
+        height=float(h),
+        confidence=float(np.clip(confidence, 0.05, 1.0)),
+        class_id=0,
+    )
 
 
 def _node_mat(fs: cv2.FileStorage, key: str) -> np.ndarray:
@@ -416,7 +455,11 @@ def _refine_roi_pair_with_hough(
     baseline_m: float,
     mask_margin: float = 12.0,
     ball_diameter_m: float = 0.210,
+    pair_gate_config: StereoRoiPairGateConfig | None = None,
+    min_depth_m: float = 0.8,
+    max_depth_m: float = 20.0,
 ) -> Tuple[BallROI, BallROI]:
+    pair_gate = pair_gate_config or StereoRoiPairGateConfig()
     left_options = _hough_roi_options(left, lrough, mask_margin=mask_margin)
     right_options = _hough_roi_options(right, rrough, mask_margin=mask_margin)
     if not left_options or not right_options:
@@ -426,23 +469,28 @@ def _refine_roi_pair_with_hough(
     best: Tuple[float, BallROI, BallROI] | None = None
     for lroi, lscore in left_options[:12]:
         for rroi, rscore in right_options[:12]:
-            disp = float(lroi.center[0] - rroi.center[0])
-            if disp <= 120.0 or disp > 950.0:
+            pair, _ = evaluate_stereo_roi_pair(
+                _roi_to_runtime_detection(lroi),
+                _roi_to_runtime_detection(rroi),
+                0,
+                0,
+                pair_gate,
+            )
+            if pair is None:
                 continue
-            depth = depth_from_disparity(disp, focal_px, baseline_m)
-            if depth < 1.0 or depth > 8.0:
+            depth = depth_from_disparity(pair.initial_disparity, focal_px, baseline_m)
+            if depth < min_depth_m or depth > max_depth_m:
                 continue
-            dy = abs(lroi.center[1] - rroi.center[1])
             radius_ratio = max(lroi.radius, rroi.radius) / max(1.0, min(lroi.radius, rroi.radius))
-            expected_radius = 0.5 * ball_diameter_m * disp / baseline_m
+            expected_radius = 0.5 * ball_diameter_m * pair.initial_disparity / baseline_m
             measured_radius = 0.5 * (lroi.radius + rroi.radius)
             score = (
                 lscore
                 + rscore
-                + 2.0 * dy
+                + 2.0 * pair.epipolar_dy
                 + 18.0 * abs(math.log(max(1e-3, radius_ratio)))
                 + 2.6 * abs(measured_radius - expected_radius)
-                + max(0.0, abs(disp - rough_disp) - 80.0) / 4.0
+                + max(0.0, abs(pair.initial_disparity - rough_disp) - 80.0) / 4.0
             )
             if best is None or score < best[0]:
                 best = (score, lroi, rroi)
@@ -459,7 +507,11 @@ def detect_ball_rois(
     baseline_m: float,
     mask_margin: float = 12.0,
     ball_diameter_m: float = 0.210,
+    pair_gate_config: StereoRoiPairGateConfig | None = None,
+    min_depth_m: float = 0.8,
+    max_depth_m: float = 20.0,
 ) -> Tuple[BallROI, BallROI]:
+    pair_gate = pair_gate_config or StereoRoiPairGateConfig()
     left_candidates = _ball_candidates(left, "left")
     right_candidates = _ball_candidates(right, "right")
     if not left_candidates or not right_candidates:
@@ -469,29 +521,17 @@ def detect_ball_rois(
 
     best_pair: Tuple[float, BallCandidate, BallCandidate] | None = None
     for lc in left_candidates[:16]:
-        lx, ly, lw, lh = lc.bbox
-        lsize = max(lw, lh)
+        left_det = _candidate_to_runtime_detection(lc)
         for rc in right_candidates[:24]:
-            rx, ry, rw, rh = rc.bbox
-            rsize = max(rw, rh)
-            disp = lc.center[0] - rc.center[0]
-            if disp <= 120.0 or disp > 950.0:
+            right_det = _candidate_to_runtime_detection(rc)
+            pair, _ = evaluate_stereo_roi_pair(left_det, right_det, 0, 0, pair_gate)
+            if pair is None:
                 continue
-            dy = abs(lc.center[1] - rc.center[1])
-            if dy > max(36.0, 0.45 * max(lh, rh)):
+            depth = depth_from_disparity(pair.initial_disparity, focal_px, baseline_m)
+            if depth < min_depth_m or depth > max_depth_m:
                 continue
-            size_ratio = max(lsize, rsize) / max(1.0, min(lsize, rsize))
-            if size_ratio > 3.0:
-                continue
-            depth = depth_from_disparity(disp, focal_px, baseline_m)
-            if depth < 1.0 or depth > 8.0:
-                continue
-            score = (
-                lc.score + rc.score
-                - dy / 18.0
-                - 1.7 * abs(math.log(max(1e-3, size_ratio)))
-            )
-            if best_pair is None or score > best_pair[0]:
+            score = pair.score
+            if best_pair is None or score < best_pair[0]:
                 best_pair = (score, lc, rc)
 
     if best_pair is None:
@@ -499,12 +539,36 @@ def detect_ball_rois(
         # should be treated as low trust.
         lroi = segment_ball(left, "left")
         rroi = segment_ball(right, "right")
-        return _refine_roi_pair_with_hough(left, right, lroi, rroi, focal_px, baseline_m, mask_margin, ball_diameter_m)
+        return _refine_roi_pair_with_hough(
+            left,
+            right,
+            lroi,
+            rroi,
+            focal_px,
+            baseline_m,
+            mask_margin,
+            ball_diameter_m,
+            pair_gate,
+            min_depth_m,
+            max_depth_m,
+        )
 
     _, left_seed, right_seed = best_pair
     lroi = _roi_from_group(left.shape[:2], left_seed, left_candidates)
     rroi = _roi_from_group(right.shape[:2], right_seed, right_candidates)
-    return _refine_roi_pair_with_hough(left, right, lroi, rroi, focal_px, baseline_m, mask_margin, ball_diameter_m)
+    return _refine_roi_pair_with_hough(
+        left,
+        right,
+        lroi,
+        rroi,
+        focal_px,
+        baseline_m,
+        mask_margin,
+        ball_diameter_m,
+        pair_gate,
+        min_depth_m,
+        max_depth_m,
+    )
 
 
 def draw_roi_debug(left: np.ndarray, right: np.ndarray, lroi: BallROI, rroi: BallROI) -> np.ndarray:
@@ -1478,6 +1542,60 @@ def method_validation_status(
     return ("pass" if not reasons else "fail", ";".join(reasons))
 
 
+def runtime_feature_geometry_status(
+    result: MatchResult,
+    lroi: BallROI,
+    rroi: BallROI,
+    initial_disparity: float,
+    focal_px: float,
+    baseline_m: float,
+    config: FeatureValidationConfig,
+) -> Tuple[int, float, float]:
+    if not result.matches or result.disparity <= 0.5:
+        return 0, 0.0, 0.0
+    xs: List[float] = []
+    ys: List[float] = []
+    rxs: List[float] = []
+    rys: List[float] = []
+    for match in result.matches:
+        if match.queryIdx < 0 or match.queryIdx >= len(result.left_keypoints):
+            continue
+        if match.trainIdx < 0 or match.trainIdx >= len(result.right_keypoints):
+            continue
+        kp = result.left_keypoints[match.queryIdx]
+        rkp = result.right_keypoints[match.trainIdx]
+        xs.append(float(kp.pt[0]))
+        ys.append(float(kp.pt[1]))
+        rxs.append(float(rkp.pt[0]))
+        rys.append(float(rkp.pt[1]))
+    if not xs:
+        return 0, 0.0, 0.0
+    anchor_x = float(np.mean(xs))
+    anchor_y = float(np.mean(ys))
+    right_anchor_x = float(np.mean(rxs)) if rxs else None
+    right_anchor_y = float(np.mean(rys)) if rys else None
+    observation = SparseFeatureObservation(
+        valid=True,
+        disparity_px=float(result.disparity),
+        anchor_left_x=anchor_x,
+        anchor_left_y=anchor_y,
+        anchor_right_x=right_anchor_x,
+        anchor_right_y=right_anchor_y,
+        stddev_px=float(max(0.0, result.std_px)),
+        support=len(xs),
+    )
+    ok = validate_sparse_feature_geometry(
+        observation,
+        _roi_to_runtime_detection(lroi),
+        _roi_to_runtime_detection(rroi),
+        initial_disparity,
+        config,
+        focal_px,
+        baseline_m,
+    )
+    return int(ok), anchor_x, anchor_y
+
+
 def write_triangulated_points(path: Path, rows: Sequence[Dict[str, float | int | str]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -1518,6 +1636,17 @@ def main() -> int:
     parser.add_argument("--max-z-range-m", type=float, default=0.060)
     parser.add_argument("--max-sphere-residual-m", type=float, default=0.030)
     parser.add_argument("--max-depth-vs-center-m", type=float, default=0.140)
+    parser.add_argument("--max-disparity", type=int, default=2048)
+    parser.add_argument("--pair-epipolar-y-tolerance", type=float, default=12.0)
+    parser.add_argument("--pair-max-size-ratio", type=float, default=2.0)
+    parser.add_argument("--pair-min-shifted-iou", type=float, default=0.0)
+    parser.add_argument("--min-depth-m", type=float, default=0.8)
+    parser.add_argument("--max-depth-m", type=float, default=20.0)
+    parser.add_argument("--feature-overlap-scale", type=float, default=0.55)
+    parser.add_argument("--feature-min-support", type=int, default=4)
+    parser.add_argument("--feature-max-stddev-px", type=float, default=1.0)
+    parser.add_argument("--feature-sphere-radius-scale", type=float, default=1.8)
+    parser.add_argument("--feature-sphere-margin-m", type=float, default=0.02)
     args = parser.parse_args()
     thresholds = ValidationThresholds(
         min_valid_matches=args.min_valid_matches,
@@ -1528,6 +1657,21 @@ def main() -> int:
         max_z_range_m=args.max_z_range_m,
         max_sphere_residual_m=args.max_sphere_residual_m,
         max_depth_vs_center_m=args.max_depth_vs_center_m,
+    )
+    pair_gate = StereoRoiPairGateConfig(
+        max_disparity=args.max_disparity,
+        epipolar_y_tolerance=args.pair_epipolar_y_tolerance,
+        max_size_ratio=args.pair_max_size_ratio,
+        min_shifted_iou=args.pair_min_shifted_iou,
+    )
+    feature_gate = FeatureValidationConfig(
+        min_support=args.feature_min_support,
+        max_stddev_px=args.feature_max_stddev_px,
+        feature_y_tolerance_px=args.max_y_error_px,
+        feature_overlap_scale=args.feature_overlap_scale,
+        feature_sphere_radius_m=0.5 * args.ball_diameter_m,
+        feature_sphere_radius_scale=args.feature_sphere_radius_scale,
+        feature_sphere_margin_m=args.feature_sphere_margin_m,
     )
 
     out_dir = Path(args.out)
@@ -1553,10 +1697,25 @@ def main() -> int:
         rroi = _circle_roi(right_rect.shape[:2], (rx, ry), rr, "manual", args.mask_margin)
     else:
         lroi, rroi = detect_ball_rois(
-            left_rect, right_rect, focal_px, baseline_m, args.mask_margin, args.ball_diameter_m
+            left_rect,
+            right_rect,
+            focal_px,
+            baseline_m,
+            args.mask_margin,
+            args.ball_diameter_m,
+            pair_gate,
+            args.min_depth_m,
+            args.max_depth_m,
         )
     initial_disp = float(lroi.center[0] - rroi.center[0])
     initial_depth = depth_from_disparity(initial_disp, focal_px, baseline_m)
+    runtime_pair, runtime_pair_reject = evaluate_stereo_roi_pair(
+        _roi_to_runtime_detection(lroi),
+        _roi_to_runtime_detection(rroi),
+        0,
+        0,
+        pair_gate,
+    )
 
     roi_debug = draw_roi_debug(left_rect, right_rect, lroi, rroi)
     cv2.imwrite(str(out_dir / "rectified_roi_debug.png"), roi_debug)
@@ -1649,6 +1808,17 @@ def main() -> int:
     for res in results:
         tri_stats = triangulation_stats(triangulated_rows_by_method.get(res.name, []))
         validation_status, validation_fail_reasons = method_validation_status(tri_stats, thresholds)
+        runtime_feature_ok, runtime_anchor_x, runtime_anchor_y = (
+            runtime_feature_geometry_status(
+                res,
+                lroi,
+                rroi,
+                initial_disp,
+                focal_px,
+                baseline_m,
+                feature_gate,
+            )
+        )
         rows.append({
             "method": res.name,
             "left_keypoints": len(res.left_keypoints),
@@ -1661,6 +1831,9 @@ def main() -> int:
             "confidence": res.confidence,
             "validation_status": validation_status,
             "validation_fail_reasons": validation_fail_reasons,
+            "runtime_feature_geometry_ok": runtime_feature_ok,
+            "runtime_feature_anchor_x": runtime_anchor_x,
+            "runtime_feature_anchor_y": runtime_anchor_y,
             **tri_stats,
         })
 
@@ -1686,6 +1859,38 @@ def main() -> int:
             "max_z_range_m": thresholds.max_z_range_m,
             "max_sphere_residual_m": thresholds.max_sphere_residual_m,
             "max_depth_vs_center_m": thresholds.max_depth_vs_center_m,
+        },
+        "runtime_contract": {
+            "roi_pair_gate": {
+                "max_disparity": pair_gate.max_disparity,
+                "epipolar_y_tolerance": pair_gate.epipolar_y_tolerance,
+                "max_size_ratio": pair_gate.max_size_ratio,
+                "adaptive_y_ratio": pair_gate.adaptive_y_ratio,
+                "min_shifted_iou": pair_gate.min_shifted_iou,
+                "min_depth_m": args.min_depth_m,
+                "max_depth_m": args.max_depth_m,
+            },
+            "roi_pair": {
+                "valid": runtime_pair is not None,
+                "reject_reason": runtime_pair_reject,
+                "initial_disparity_px": runtime_pair.initial_disparity if runtime_pair else initial_disp,
+                "epipolar_dy_px": runtime_pair.epipolar_dy if runtime_pair else abs(lroi.center[1] - rroi.center[1]),
+                "shifted_bbox_iou": runtime_pair.shifted_bbox_iou if runtime_pair else 0.0,
+                "score": runtime_pair.score if runtime_pair else None,
+            },
+            "depth_candidate_priority": list(DEPTH_CANDIDATE_PRIORITY),
+            "stereo_depth_source": STEREO_DEPTH_SOURCE,
+            "feature_validation_gate": {
+                "min_support": feature_gate.min_support,
+                "max_stddev_px": feature_gate.max_stddev_px,
+                "feature_y_tolerance_px": feature_gate.feature_y_tolerance_px,
+                "feature_y_slope": feature_gate.feature_y_slope,
+                "feature_y_offset_px": feature_gate.feature_y_offset_px,
+                "feature_overlap_scale": feature_gate.feature_overlap_scale,
+                "feature_sphere_radius_m": feature_gate.feature_sphere_radius_m,
+                "feature_sphere_radius_scale": feature_gate.feature_sphere_radius_scale,
+                "feature_sphere_margin_m": feature_gate.feature_sphere_margin_m,
+            },
         },
         "matcher_params": {
             "edge_percentile": args.edge_percentile,

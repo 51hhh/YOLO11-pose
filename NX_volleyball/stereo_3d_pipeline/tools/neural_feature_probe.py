@@ -89,7 +89,8 @@ def main() -> int:
     parser.add_argument("--ratio", type=float, default=1.0)
     parser.add_argument("--max-y-error-px", type=float, default=2.0)
     parser.add_argument("--max-disp-delta-px", type=float, default=32.0)
-    parser.add_argument("--final-disp-gate-px", type=float, default=2.0)
+    parser.add_argument("--final-disp-gate-px", type=float, default=0.0)
+    parser.add_argument("--max-disparity", type=float, default=2048.0)
     parser.add_argument("--min-score", type=float, default=0.0)
     parser.add_argument("--xfeat-repo", default="")
     parser.add_argument("--allow-torch-hub", action="store_true")
@@ -191,7 +192,7 @@ def main() -> int:
                 max_y_error_px=args.max_y_error_px,
                 max_disp_delta_px=args.max_disp_delta_px,
                 final_disp_gate_px=args.final_disp_gate_px,
-                max_disparity_px=512.0,
+                max_disparity_px=args.max_disparity,
                 min_score=args.min_score,
             ),
         )

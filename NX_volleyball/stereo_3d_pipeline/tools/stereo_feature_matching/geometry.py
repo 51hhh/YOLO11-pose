@@ -15,7 +15,9 @@ class MatchFilterConfig:
     initial_disparity: float
     max_y_error_px: float = 2.0
     max_disp_delta_px: float = 24.0
-    final_disp_gate_px: float = 2.0
+    final_disp_gate_px: float = 0.0
+    feature_mad_scale: float = 2.5
+    feature_ransac_gate_px: float = 0.75
     min_disparity_px: float = 0.5
     max_disparity_px: float = 512.0
     min_score: float = 0.0
@@ -150,7 +152,11 @@ def filter_stereo_matches(
     disparities = np.asarray([m.disparity for m in out], dtype=np.float32)
     median = float(np.median(disparities))
     mad = float(np.median(np.abs(disparities - median)))
-    gate = max(0.75, 2.5 * mad)
+    robust_sigma = max(0.05, 1.4826 * mad)
+    gate = max(
+        float(np.clip(cfg.feature_ransac_gate_px, 0.25, 3.0)),
+        robust_sigma * max(1.0, cfg.feature_mad_scale),
+    )
     inliers = [m for m in out if abs(m.disparity - median) <= gate]
     if cfg.final_disp_gate_px > 0.0 and len(inliers) >= 3:
         disparities = np.asarray([m.disparity for m in inliers], dtype=np.float32)
