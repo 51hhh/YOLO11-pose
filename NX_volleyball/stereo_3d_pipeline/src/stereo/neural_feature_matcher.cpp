@@ -85,6 +85,10 @@ int tensorWidth(const nvinfer1::Dims& dims) {
     return 0;
 }
 
+int tensorLastDim(const nvinfer1::Dims& dims) {
+    return dims.nbDims > 0 ? static_cast<int>(dims.d[dims.nbDims - 1]) : 0;
+}
+
 float medianOf(std::vector<float>& values) {
     if (values.empty()) return -1.0f;
     std::sort(values.begin(), values.end());
@@ -146,6 +150,13 @@ struct XFeatCandidate {
     float score = 0.0f;
 };
 
+struct DirectFeature {
+    float x = 0.0f;
+    float y = 0.0f;
+    float score = 1.0f;
+    std::vector<float> descriptor;
+};
+
 }  // namespace
 
 NeuralFeatureBackend parseNeuralFeatureBackend(const std::string& name) {
@@ -199,10 +210,6 @@ bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
         if (!loadEngine(config_.extractor_engine_path, extractor_)) {
             return false;
         }
-        if (!config_.matcher_engine_path.empty() &&
-            !loadEngine(config_.matcher_engine_path, matcher_)) {
-            return false;
-        }
     }
 
     ready_ = true;
@@ -238,11 +245,17 @@ bool NeuralFeatureMatcher::validateConfig() const {
         LOG_ERROR("neural_feature_matching requires extractor_engine_path or fused_engine_path");
         return false;
     }
-    if (config_.backend == NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE &&
-        config_.fused_engine_path.empty() &&
-        config_.matcher_engine_path.empty()) {
-        LOG_WARN("SuperPoint backend configured without matcher_engine_path; "
-                 "runtime will use descriptor/geometry matching if implemented");
+    if (config_.fused_engine_path.empty() &&
+        !config_.matcher_engine_path.empty()) {
+        LOG_WARN("neural_feature_matching.matcher_engine_path is configured but "
+                 "ignored; current realtime split path uses extractor-only "
+                 "C++ descriptor matching");
+    }
+    if (config_.fused_engine_path.empty() &&
+        config_.backend == NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE) {
+        LOG_WARN("SuperPoint+LightGlue split matcher runtime is not implemented; "
+                 "the extractor-only direct descriptor matcher will be used if "
+                 "the engine output schema is supported");
     }
     return true;
 }
@@ -791,6 +804,425 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     return out;
 }
 
+NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
+    const uint8_t* left_gray_gpu, int left_gray_pitch,
+    const uint8_t* right_gray_gpu, int right_gray_pitch,
+    const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+    const uint8_t* right_bgr_gpu, int right_bgr_pitch,
+    int img_width, int img_height,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disparity,
+    cudaStream_t stream) {
+    NeuralFeatureMatchResult out;
+    if (!extractor_.engine || !extractor_.context || !extractor_.bindings_ready) {
+        out.status = "extractor_not_ready";
+        return out;
+    }
+
+    TrtEngine::TensorBuffer* input = nullptr;
+    std::vector<TrtEngine::TensorBuffer*> outputs;
+    for (auto& tensor : extractor_.tensors) {
+        extractor_.context->setTensorAddress(tensor.name.c_str(), tensor.device);
+        if (tensor.is_input) input = &tensor;
+        else outputs.push_back(&tensor);
+    }
+    if (!input || input->dtype != nvinfer1::DataType::kFLOAT || outputs.empty()) {
+        out.status = "unsupported_direct_extractor_schema";
+        return out;
+    }
+
+    const int input_channels = tensorChannels(input->dims);
+    if (input_channels != 1 && input_channels != 3) {
+        out.status = "unsupported_input_schema";
+        return out;
+    }
+    if (input_channels == 3 &&
+        (!left_bgr_gpu || !right_bgr_gpu ||
+         left_bgr_pitch <= 0 || right_bgr_pitch <= 0)) {
+        out.status = "unsupported_input_schema";
+        return out;
+    }
+
+    auto tensor_name_has = [](const TrtEngine::TensorBuffer* tensor,
+                              const char* needle) {
+        return lowerCopy(tensor->name).find(needle) != std::string::npos;
+    };
+
+    auto find_keypoint_tensor = [&]() -> TrtEngine::TensorBuffer* {
+        TrtEngine::TensorBuffer* fallback = nullptr;
+        for (auto* tensor : outputs) {
+            if (tensor->dtype != nvinfer1::DataType::kFLOAT ||
+                tensor->host_float.empty()) {
+                continue;
+            }
+            const int last = tensorLastDim(tensor->dims);
+            const bool keypoint_shape =
+                last == 2 || last == 3 ||
+                (tensor->dims.nbDims >= 2 &&
+                 tensor->dims.d[tensor->dims.nbDims - 2] == 2);
+            const bool keypoint_name =
+                tensor_name_has(tensor, "keypoint") ||
+                tensor_name_has(tensor, "kpt") ||
+                tensor_name_has(tensor, "coord") ||
+                tensor_name_has(tensor, "point");
+            if (keypoint_shape && keypoint_name) return tensor;
+            if (keypoint_shape && !fallback) fallback = tensor;
+        }
+        return fallback;
+    };
+
+    auto find_descriptor_tensor = [&]() -> TrtEngine::TensorBuffer* {
+        TrtEngine::TensorBuffer* fallback = nullptr;
+        for (auto* tensor : outputs) {
+            if (tensor->dtype != nvinfer1::DataType::kFLOAT ||
+                tensor->host_float.empty()) {
+                continue;
+            }
+            const int last = tensorLastDim(tensor->dims);
+            const bool descriptor_shape =
+                last == config_.descriptor_dim ||
+                (tensor->dims.nbDims >= 2 &&
+                 tensor->dims.d[tensor->dims.nbDims - 2] ==
+                     config_.descriptor_dim);
+            const bool descriptor_name =
+                tensor_name_has(tensor, "descriptor") ||
+                tensor_name_has(tensor, "desc") ||
+                tensor_name_has(tensor, "feature");
+            if (descriptor_shape && descriptor_name) return tensor;
+            if (descriptor_shape && !fallback) fallback = tensor;
+        }
+        return fallback;
+    };
+
+    auto find_score_tensor = [&]() -> TrtEngine::TensorBuffer* {
+        for (auto* tensor : outputs) {
+            if (tensor->dtype != nvinfer1::DataType::kFLOAT ||
+                tensor->host_float.empty()) {
+                continue;
+            }
+            const bool score_name =
+                tensor_name_has(tensor, "score") ||
+                tensor_name_has(tensor, "conf") ||
+                tensor_name_has(tensor, "prob");
+            const int last = tensorLastDim(tensor->dims);
+            const bool score_shape = last == 1 || tensor->dims.nbDims <= 2;
+            if (score_shape && score_name) return tensor;
+        }
+        return nullptr;
+    };
+
+    auto keypoint_count = [](const TrtEngine::TensorBuffer* tensor) -> int {
+        if (!tensor) return 0;
+        const int last = tensorLastDim(tensor->dims);
+        if (last == 2 || last == 3) {
+            return static_cast<int>(tensor->elements /
+                                    static_cast<size_t>(last));
+        }
+        if (tensor->dims.nbDims >= 2 &&
+            tensor->dims.d[tensor->dims.nbDims - 2] == 2) {
+            return last;
+        }
+        return 0;
+    };
+
+    auto descriptor_count = [this](const TrtEngine::TensorBuffer* tensor) -> int {
+        if (!tensor || config_.descriptor_dim <= 0) return 0;
+        const int last = tensorLastDim(tensor->dims);
+        if (last == config_.descriptor_dim) {
+            return static_cast<int>(
+                tensor->elements / static_cast<size_t>(config_.descriptor_dim));
+        }
+        if (tensor->dims.nbDims >= 2 &&
+            tensor->dims.d[tensor->dims.nbDims - 2] ==
+                config_.descriptor_dim) {
+            return last;
+        }
+        return 0;
+    };
+
+    auto read_keypoint = [this](const TrtEngine::TensorBuffer* tensor,
+                                int index,
+                                float* x,
+                                float* y,
+                                float* score) -> bool {
+        const int last = tensorLastDim(tensor->dims);
+        const float* data = tensor->host_float.data();
+        if (last == 2 || last == 3) {
+            const size_t base = static_cast<size_t>(index) *
+                                static_cast<size_t>(last);
+            if (base + 1 >= tensor->host_float.size()) return false;
+            *x = data[base];
+            *y = data[base + 1];
+            if (last == 3 && base + 2 < tensor->host_float.size()) {
+                *score = data[base + 2];
+            }
+        } else if (tensor->dims.nbDims >= 2 &&
+                   tensor->dims.d[tensor->dims.nbDims - 2] == 2) {
+            const int count = tensorLastDim(tensor->dims);
+            const size_t ix = static_cast<size_t>(index);
+            const size_t iy = static_cast<size_t>(count) + ix;
+            if (iy >= tensor->host_float.size()) return false;
+            *x = data[ix];
+            *y = data[iy];
+        } else {
+            return false;
+        }
+
+        auto to_roi = [this](float v) {
+            if (std::fabs(v) <= 1.5f) {
+                return v < -0.01f
+                    ? (v + 1.0f) * 0.5f * static_cast<float>(config_.roi_size)
+                    : v * static_cast<float>(config_.roi_size);
+            }
+            return v;
+        };
+        *x = to_roi(*x);
+        *y = to_roi(*y);
+        return std::isfinite(*x) && std::isfinite(*y) &&
+               *x >= 0.0f && *y >= 0.0f &&
+               *x < static_cast<float>(config_.roi_size) &&
+               *y < static_cast<float>(config_.roi_size);
+    };
+
+    auto read_descriptor = [this](const TrtEngine::TensorBuffer* tensor,
+                                  int index,
+                                  std::vector<float>* descriptor) -> bool {
+        if (!tensor || config_.descriptor_dim <= 0) return false;
+        descriptor->assign(static_cast<size_t>(config_.descriptor_dim), 0.0f);
+        const int last = tensorLastDim(tensor->dims);
+        const float* data = tensor->host_float.data();
+        if (last == config_.descriptor_dim) {
+            const size_t base = static_cast<size_t>(index) *
+                                static_cast<size_t>(config_.descriptor_dim);
+            if (base + static_cast<size_t>(config_.descriptor_dim) >
+                tensor->host_float.size()) {
+                return false;
+            }
+            std::copy(data + base,
+                      data + base + config_.descriptor_dim,
+                      descriptor->begin());
+        } else if (tensor->dims.nbDims >= 2 &&
+                   tensor->dims.d[tensor->dims.nbDims - 2] ==
+                       config_.descriptor_dim) {
+            const int count = last;
+            for (int c = 0; c < config_.descriptor_dim; ++c) {
+                const size_t idx = static_cast<size_t>(c) *
+                                   static_cast<size_t>(count) +
+                                   static_cast<size_t>(index);
+                if (idx >= tensor->host_float.size()) return false;
+                (*descriptor)[static_cast<size_t>(c)] = data[idx];
+            }
+        } else {
+            return false;
+        }
+
+        float norm2 = 0.0f;
+        for (float d : *descriptor) norm2 += d * d;
+        const float inv_norm =
+            norm2 > 1e-12f ? 1.0f / std::sqrt(norm2) : 0.0f;
+        for (float& d : *descriptor) d *= inv_norm;
+        return inv_norm > 0.0f;
+    };
+
+    auto parse_features = [&](std::vector<DirectFeature>* features) -> bool {
+        TrtEngine::TensorBuffer* keypoints = find_keypoint_tensor();
+        TrtEngine::TensorBuffer* descriptors = find_descriptor_tensor();
+        TrtEngine::TensorBuffer* scores = find_score_tensor();
+        const int count = std::min(keypoint_count(keypoints),
+                                   descriptor_count(descriptors));
+        if (!keypoints || !descriptors || count < config_.min_matches) {
+            return false;
+        }
+        features->clear();
+        features->reserve(static_cast<size_t>(std::min(count, config_.top_k)));
+        for (int i = 0; i < count; ++i) {
+            DirectFeature f;
+            if (scores && static_cast<size_t>(i) < scores->host_float.size()) {
+                f.score = scores->host_float[static_cast<size_t>(i)];
+            }
+            if (!read_keypoint(keypoints, i, &f.x, &f.y, &f.score)) continue;
+            if (!std::isfinite(f.score)) f.score = 1.0f;
+            if (!read_descriptor(descriptors, i, &f.descriptor)) continue;
+            features->push_back(std::move(f));
+        }
+        std::sort(features->begin(), features->end(),
+                  [](const DirectFeature& a, const DirectFeature& b) {
+                      return a.score > b.score;
+                  });
+        if (static_cast<int>(features->size()) > config_.top_k) {
+            features->resize(static_cast<size_t>(config_.top_k));
+        }
+        return static_cast<int>(features->size()) >= config_.min_matches;
+    };
+
+    auto copy_outputs = [&]() -> bool {
+        for (auto* tensor : outputs) {
+            if (tensor->dtype != nvinfer1::DataType::kFLOAT ||
+                tensor->host_float.empty()) {
+                continue;
+            }
+            const cudaError_t err = cudaMemcpyAsync(
+                tensor->host_float.data(), tensor->device, tensor->bytes,
+                cudaMemcpyDeviceToHost, stream);
+            if (err != cudaSuccess) return false;
+        }
+        return cudaStreamSynchronize(stream) == cudaSuccess;
+    };
+
+    const float context = 1.20f;
+    auto run_one = [&](const Detection& det,
+                       const uint8_t* gray, int pitch,
+                       const uint8_t* bgr, int bgr_pitch,
+                       std::vector<DirectFeature>* features) -> bool {
+        float* dst = static_cast<float*>(input->device);
+        if (input_channels == 1) {
+            cropResizeGPU(gray, pitch, img_width, img_height,
+                          dst, config_.roi_size,
+                          det.cx, det.cy, det.width, det.height,
+                          context, stream);
+        } else {
+            cropResizeGPU_3ch(bgr, bgr_pitch, img_width, img_height,
+                              dst, config_.roi_size,
+                              det.cx, det.cy, det.width, det.height,
+                              context, stream);
+        }
+        if (!extractor_.context->enqueueV3(stream) || !copy_outputs()) {
+            return false;
+        }
+        return parse_features(features);
+    };
+
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<DirectFeature> left_features;
+    std::vector<DirectFeature> right_features;
+    if (!run_one(left_det,
+                 left_gray_gpu, left_gray_pitch,
+                 left_bgr_gpu, left_bgr_pitch,
+                 &left_features) ||
+        !run_one(right_det,
+                 right_gray_gpu, right_gray_pitch,
+                 right_bgr_gpu, right_bgr_pitch,
+                 &right_features)) {
+        out.status = "unsupported_direct_extractor_schema";
+        return out;
+    }
+
+    auto dot = [](const DirectFeature& a, const DirectFeature& b) {
+        float s = 0.0f;
+        const int n = std::min(static_cast<int>(a.descriptor.size()),
+                               static_cast<int>(b.descriptor.size()));
+        for (int i = 0; i < n; ++i) {
+            s += a.descriptor[static_cast<size_t>(i)] *
+                 b.descriptor[static_cast<size_t>(i)];
+        }
+        return s;
+    };
+
+    std::vector<int> left_best(left_features.size(), -1);
+    std::vector<float> left_score(left_features.size(), -2.0f);
+    std::vector<int> right_best(right_features.size(), -1);
+    std::vector<float> right_score(right_features.size(), -2.0f);
+    for (size_t i = 0; i < left_features.size(); ++i) {
+        for (size_t j = 0; j < right_features.size(); ++j) {
+            const float s = dot(left_features[i], right_features[j]);
+            if (s > left_score[i]) {
+                left_score[i] = s;
+                left_best[i] = static_cast<int>(j);
+            }
+            if (s > right_score[j]) {
+                right_score[j] = s;
+                right_best[j] = static_cast<int>(i);
+            }
+        }
+    }
+
+    const auto map_to_frame = [&](const Detection& det, const DirectFeature& f,
+                                  float* x, float* y) {
+        const float s = std::sqrt(std::max(1.0f, det.width * context *
+                                                  det.height * context));
+        const float roi_x = det.cx - 0.5f * s;
+        const float roi_y = det.cy - 0.5f * s;
+        *x = roi_x + (f.x + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
+        *y = roi_y + (f.y + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
+    };
+
+    std::vector<NeuralFeaturePointMatch> candidates;
+    std::vector<float> disparities;
+    for (size_t i = 0; i < left_features.size(); ++i) {
+        const int j = left_best[i];
+        if (j < 0 || j >= static_cast<int>(right_features.size()) ||
+            right_best[static_cast<size_t>(j)] != static_cast<int>(i)) {
+            continue;
+        }
+        const float score = left_score[i];
+        if (score < config_.min_score) continue;
+        float lx, ly, rx, ry;
+        map_to_frame(left_det, left_features[i], &lx, &ly);
+        map_to_frame(right_det, right_features[static_cast<size_t>(j)], &rx, &ry);
+        const float disp = lx - rx;
+        if (disp <= 0.5f || disp > static_cast<float>(max_disparity_) ||
+            std::fabs(ly - ry) > config_.max_y_error_px ||
+            std::fabs(disp - initial_disparity) > config_.max_disp_delta_px) {
+            continue;
+        }
+        NeuralFeaturePointMatch m;
+        m.left_x = lx;
+        m.left_y = ly;
+        m.right_x = rx;
+        m.right_y = ry;
+        m.disparity = disp;
+        m.score = score;
+        candidates.push_back(m);
+        disparities.push_back(disp);
+    }
+
+    if (static_cast<int>(disparities.size()) < config_.min_matches) {
+        out.status = "not_enough_matches";
+        return out;
+    }
+    const float median = medianOf(disparities);
+    std::vector<float> abs_dev;
+    abs_dev.reserve(disparities.size());
+    for (float d : disparities) abs_dev.push_back(std::fabs(d - median));
+    const float mad = medianOf(abs_dev);
+    const float gate = std::max(config_.final_disp_gate_px, 1.4826f * mad * 2.5f);
+    float sum = 0.0f;
+    float sum2 = 0.0f;
+    float score_sum = 0.0f;
+    for (const auto& m : candidates) {
+        if (std::fabs(m.disparity - median) > gate) continue;
+        out.matches.push_back(m);
+        sum += m.disparity;
+        sum2 += m.disparity * m.disparity;
+        score_sum += m.score;
+    }
+    if (static_cast<int>(out.matches.size()) < config_.min_matches) {
+        out.status = "not_enough_inliers";
+        out.matches.clear();
+        return out;
+    }
+    const float kept = static_cast<float>(out.matches.size());
+    out.disparity = sum / kept;
+    const float var = std::max(0.0f, sum2 / kept - out.disparity * out.disparity);
+    out.stddev_px = std::sqrt(var);
+    out.depth_m = focal_ * baseline_ / std::max(0.5f, out.disparity);
+    const float support_conf =
+        std::min(1.0f, kept / static_cast<float>(std::max(1, config_.min_matches * 2)));
+    const float score_conf = std::clamp((score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
+    const float consistency = std::clamp(1.0f / (1.0f + out.stddev_px), 0.0f, 1.0f);
+    out.confidence = std::clamp(0.45f * support_conf +
+                                0.35f * score_conf +
+                                0.20f * consistency,
+                                0.0f, 1.0f);
+    out.inference_ms = static_cast<float>(
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count());
+    out.valid = true;
+    out.status = "ok";
+    return out;
+}
+
 NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
     const uint8_t* left_gray_gpu, int left_gray_pitch,
     const uint8_t* right_gray_gpu, int right_gray_pitch,
@@ -815,7 +1247,21 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
     if (!fused_.engine || !fused_.context) {
         if (extractor_.engine && extractor_.context &&
             config_.backend == NeuralFeatureBackend::XFEAT) {
-            return matchXFeatExtractorGpuRoi(
+            NeuralFeatureMatchResult xfeat = matchXFeatExtractorGpuRoi(
+                left_gray_gpu, left_gray_pitch,
+                right_gray_gpu, right_gray_pitch,
+                left_bgr_gpu, left_bgr_pitch,
+                right_bgr_gpu, right_bgr_pitch,
+                img_width, img_height,
+                left_det, right_det,
+                initial_disparity,
+                stream);
+            if (xfeat.status != "unsupported_extractor_schema") {
+                return xfeat;
+            }
+        }
+        if (extractor_.engine && extractor_.context) {
+            return matchDirectExtractorGpuRoi(
                 left_gray_gpu, left_gray_pitch,
                 right_gray_gpu, right_gray_pitch,
                 left_bgr_gpu, left_bgr_pitch,

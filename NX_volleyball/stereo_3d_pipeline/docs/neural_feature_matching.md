@@ -41,9 +41,9 @@ NX_volleyball/stereo_3d_pipeline/scripts/setup_neural_feature_env.sh
 
 - 固定 ROI 输入尺寸，当前推荐 `224x224`，`top_k=128`。
 - 当前 C++ 实时实现支持 fused TensorRT engine:输入为左右 ROI(灰度 1/2 通道或 BGR 3/6 通道),输出 `[N,4]` 或 `[N,5]` 匹配点。
-- XFeat extractor-only TensorRT split 路径已实现:输入单张固定 ROI gray,输出 `feats/keypoints/heatmap`;C++ 后处理做 keypoint 选择、descriptor 采样、互反查匹配和几何 gate。
-- ALIKED 的 extractor+descriptor mutual NN split 路径仍待实现;真实 engine 未落位时 pipeline 会 warn 后禁用神经候选。
-- SuperPoint+LightGlue 优先使用 fused TensorRT engine；extractor+matcher split engine 仍待实现。
+- XFeat extractor-only TensorRT split 路径已实现:输入单张固定 ROI gray/BGR,输出 `feats/keypoints/heatmap`;C++ 后处理做 keypoint 选择、descriptor 采样、互反查匹配和几何 gate。
+- ALIKED/SuperPoint 等 direct extractor 路径已接入:若真实 TensorRT engine 输出固定 shape `keypoints/descriptors/scores`, C++ 会用 descriptor mutual NN 和几何 gate 生成候选。
+- SuperPoint+LightGlue 优先使用 fused TensorRT engine；LightGlue extractor+matcher split engine 的多输入运行时仍待实现。
 - 后处理必须保留 `max_y_error_px`、`max_disp_delta_px`、`final_disp_gate_px`，不能直接相信网络匹配。
 - 目标 10ms 内时，优先评估 XFeat TensorRT；ALIKED 和 SuperPoint+LightGlue 作为质量对照。
 

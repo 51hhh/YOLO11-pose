@@ -154,6 +154,8 @@ akaze   matches=0
 
 它是真 XFeat extractor，但不是完整 GPU 常驻特征匹配路径。实测 75-90fps，取决于 ROI size 和 top-k。`trtexec` 裸 extractor 128/160 的 GPU compute mean 分别约 0.467ms/0.546ms；管线内更慢是因为左右各跑一次 extractor、D2H 拷贝和 CPU 后处理仍在同步路径。
 
+当前也已新增通用 direct extractor fallback:无 fused engine 时，如果 ALIKED/SuperPoint/其他真实 TensorRT extractor 输出固定 shape `keypoints/descriptors/scores`，C++ 会运行 extractor、D2H 拷贝输出，并用真实 descriptor mutual-NN + 几何 gate 生成 `roi_neural_feature`。这不是 LightGlue split matcher，也不是全 GPU 后处理；LightGlue 类 matcher 仍建议导出 fused `[N,4/5]` 点对 engine。
+
 ## 架构问题
 
 当前 ROI 管线主循环是:
