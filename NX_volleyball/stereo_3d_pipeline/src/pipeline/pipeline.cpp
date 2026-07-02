@@ -5319,7 +5319,6 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
 
 void Pipeline::applyRoiStage2Output(FrameSlot& slot,
                                     RoiStage2Output&& output) {
-    std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
     slot.detections = std::move(output.detections);
     if (output.detection_only) {
         slot.results.clear();

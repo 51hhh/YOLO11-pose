@@ -177,6 +177,7 @@ requestGrab(N+1)
 - 每个 ring slot 有 `async_roi_slot_copy_done_` event；slot 复用前只等待 snapshot copy 完成，不等待 ORB/XFeat/ROI Stage2 完成。
 - 下一帧 YOLO ready 时调用 `expireAsyncRoiBefore(frame_id)`，更老的 pending/ready/running 结果过期；running GPU/CPU work 不能强杀，只能完成后丢弃结果并释放 buffer。
 - async ROI stream 使用低优先级 CUDA stream，YOLO 使用 GPU engine 时可降低特征后处理对检测推理的干扰。
+- `roi_postprocess_mutex_` 只串行保护共享 matcher/context；已完成结果写回和 predict-only 回退不持有该锁，避免 worker 正在跑重特征时反向阻塞主调度。
 
 这个版本牺牲了一些 snapshot copy 成本，换取清晰的数据生命周期。它不再要求第一版只做旁路 FeatureJob；后续性能优化方向是把全帧快照缩小为 ROI buffer，并把 XFeat/LightGlue 后处理 GPU 常驻化。
 
