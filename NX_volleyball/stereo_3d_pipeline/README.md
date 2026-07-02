@@ -1,8 +1,10 @@
 # stereo_3d_pipeline — 实时双目排球追踪
 
-Jetson Orin NX Super 16GB 双目深度管线。**实测 98 FPS** (100Hz PWM 触发)。
+Jetson Orin NX Super 16GB 双目深度管线。
 
-> **当前状态**: 生产就绪 — ROI 模式 + DLA INT8 + VPI TNR，2026-04-03 验证通过。
+> **正式文档入口**: 新 Wiki 源目录见 [`wiki/Home.md`](wiki/Home.md)。旧 `docs/` 目录保留为历史报告和迁移来源。
+
+> **注意**: README 下方内容保留为历史概览，当前运行命令、配置字段、标定流程、深度候选和性能复测方法以 [`wiki/Home.md`](wiki/Home.md) 及其子页面为准。
 
 ## 架构
 
@@ -39,7 +41,7 @@ stereo_3d_pipeline/
 ├── CMakeLists.txt
 ├── config/
 │   ├── pipeline.yaml               # 默认全帧模式配置
-│   ├── pipeline_roi.yaml           # ✅ ROI 模式 (98 FPS, 纯 YOLO)
+│   ├── pipeline_roi.yaml           # 历史 ROI 模式记录 (98 FPS, 纯 YOLO)
 │   ├── pipeline_roi_nanotrack.yaml # ✅ ROI + NanoTrack 补帧
 │   └── pipeline_roi_mixformer.yaml # ROI + MixFormerV2 补帧
 ├── scripts/
@@ -260,7 +262,7 @@ calibration:
 
 ```bash
 # === 基础模式 ===
-# ROI 模式 (98 FPS, 每帧 YOLO 检测)
+# 历史 ROI 模式记录 (98 FPS, 每帧 YOLO 检测)
 ./stereo_pipeline --config config/pipeline_roi.yaml
 
 # === SOT Tracker 补帧模式 (推荐) ===

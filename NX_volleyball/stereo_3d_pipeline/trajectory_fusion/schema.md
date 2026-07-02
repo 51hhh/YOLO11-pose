@@ -24,6 +24,18 @@
 | dt | float | 与上一输出帧间隔 |
 | raw_observation_valid | int | 当前行是否包含未滤波观测；`recording.raw_mode=true` 时只写有效观测 |
 
+## 目标状态字段
+
+这些字段在所有记录级别都会写出:
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| x,y,z | float | 当前在线输出位置；`raw_mode=true` 时为未滤波观测，否则为滤波后状态 |
+| vx,vy,vz | float | 当前速度估计 |
+| ax,ay,az | float | 当前加速度估计 |
+| depth_method | int | 在线最终深度融合方法，0=单目,1=双目,2=融合 |
+| confidence | float | 当前 3D 观测或融合置信度 |
+
 ## 检测和几何字段
 
 | 字段 | 类型 | 说明 |
@@ -87,7 +99,7 @@
 | z_fallback_template | float | 单侧漏检时极线模板搜索 fallback 测距 |
 | z_fallback_feature_points | float | 单侧漏检时极线特征点搜索 fallback 测距 |
 | z_stereo | float | 当前在线选择的双目测距观测，不是独立取点方法 |
-| z | float | 当前在线 HybridDepth 输出；raw_mode=true 时为未滤波观测 |
+| z | float | 当前在线 HybridDepth 输出；基础状态字段中也会写出，用于兼容宽表读取 |
 | disparity_bbox_center | float | bbox 中心视差 |
 | disparity_bbox_left_edge | float | bbox 左边缘视差 |
 | disparity_bbox_right_edge | float | bbox 右边缘视差 |
@@ -112,6 +124,7 @@
 | disparity_fallback_template | float | 极线模板搜索 fallback 视差 |
 | disparity_fallback_feature_points | float | 极线特征点搜索 fallback 视差 |
 | z_yolo_bbox_pair,z_circle,z_subpixel | float | 旧兼容别名，分别对应 bbox_center/circle_center/roi_multi_point |
+| disparity_yolo,disparity_circle,disparity_subpixel | float | 旧兼容别名，分别对应 disparity_bbox_center/disparity_circle_center/disparity_roi_multi_point |
 | subpixel_valid | int | 亚像素测距是否接受 |
 | subpixel_attempted | int | 本帧是否尝试亚像素测距 |
 | subpixel_support | int | 接受的多点数量 |
