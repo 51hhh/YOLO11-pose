@@ -198,6 +198,10 @@ baseline_recording:
   output_dir: "baseline_clips"
   duration_sec: 3.0
   frame_limit: 0
+  clip_count: 1
+  clip_gap_sec: 0.0
+  clip_gap_frames: 0
+  require_left_detection: true
   require_right_detection: true
   require_pair_gate: false
   min_confidence: 0.0
@@ -205,6 +209,8 @@ baseline_recording:
   pair_max_size_ratio: 2.5
   pair_min_disparity_px: 0.0
   image_format: "png"
+  image_mode: "gray"                  # gray|bgr; both 仅用于调试兼容，会额外写 left_bgr/right_bgr
   png_compression: 1
-  max_queue_frames: 120            # 写盘线程最多缓存约 1.2s，磁盘慢时丢帧而不是无限涨内存
+  write_after_capture: true           # 先快速缓存到内存，clip 结束后再写盘
+  max_queue_frames: 0                 # 0=不限; write_after_capture=true 时建议不限或至少 >= frame_limit*clip_count
   stop_after_clip: true

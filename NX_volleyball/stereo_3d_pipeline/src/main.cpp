@@ -464,6 +464,11 @@ static stereo3d::BaselineClipRecorderConfig loadBaselineClipRecorderConfig(
             if (rec["output_dir"]) cfg.output_dir = rec["output_dir"].as<std::string>();
             if (rec["duration_sec"]) cfg.duration_sec = rec["duration_sec"].as<double>();
             if (rec["frame_limit"]) cfg.frame_limit = rec["frame_limit"].as<int>();
+            if (rec["clip_count"]) cfg.clip_count = rec["clip_count"].as<int>();
+            if (rec["clip_gap_sec"]) cfg.clip_gap_sec = rec["clip_gap_sec"].as<double>();
+            if (rec["clip_gap_frames"]) cfg.clip_gap_frames = rec["clip_gap_frames"].as<int>();
+            if (rec["require_left_detection"])
+                cfg.require_left_detection = rec["require_left_detection"].as<bool>();
             if (rec["require_right_detection"])
                 cfg.require_right_detection = rec["require_right_detection"].as<bool>();
             if (rec["require_pair_gate"])
@@ -476,8 +481,11 @@ static stereo3d::BaselineClipRecorderConfig loadBaselineClipRecorderConfig(
             if (rec["pair_min_disparity_px"])
                 cfg.pair_min_disparity_px = rec["pair_min_disparity_px"].as<float>();
             if (rec["image_format"]) cfg.image_format = rec["image_format"].as<std::string>();
+            if (rec["image_mode"]) cfg.image_mode = rec["image_mode"].as<std::string>();
             if (rec["png_compression"])
                 cfg.png_compression = rec["png_compression"].as<int>();
+            if (rec["write_after_capture"])
+                cfg.write_after_capture = rec["write_after_capture"].as<bool>();
             if (rec["stop_after_clip"])
                 cfg.stop_after_clip = rec["stop_after_clip"].as<bool>();
             if (rec["max_queue_frames"])
@@ -536,14 +544,20 @@ int main(int argc, char* argv[]) {
     std::string baseline_out_override;
     double baseline_duration_override = -1.0;
     int baseline_frames_override = 0;
+    int baseline_clips_override = 0;
+    double baseline_gap_override = -1.0;
     std::string baseline_format_override;
+    std::string baseline_image_mode_override;
+    bool baseline_start_immediately = false;
     std::vector<std::string> unknown_args;
     const char* usage =
         "Usage: %s [--config <path>] [--visualize] "
         "[--debug-feature-matches] [--debug-feature-matches-dir <dir>] "
         "[--record-baseline-clip] [--baseline-out <dir>] "
         "[--baseline-duration <sec>] [--baseline-frames <n>] "
-        "[--baseline-format <png|pgm>]\n";
+        "[--baseline-clips <n>] [--baseline-gap <sec>] "
+        "[--baseline-format <png|pgm>] [--baseline-image-mode <gray|bgr|both>] "
+        "[--baseline-start-immediately]\n";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") &&
@@ -590,6 +604,22 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
             fprintf(stderr, usage, argv[0]);
             return 1;
+        } else if (arg == "--baseline-clips" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_clips_override = std::stoi(argv[++i]);
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-clips") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--baseline-gap" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_gap_override = std::stod(argv[++i]);
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-gap") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
         } else if (arg == "--baseline-format" &&
                    i + 1 < argc && argv[i + 1][0] != '-') {
             baseline_format_override = argv[++i];
@@ -598,6 +628,17 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
             fprintf(stderr, usage, argv[0]);
             return 1;
+        } else if (arg == "--baseline-image-mode" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            baseline_image_mode_override = argv[++i];
+            baseline_clip_cli = true;
+        } else if (arg == "--baseline-image-mode") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--baseline-start-immediately") {
+            baseline_start_immediately = true;
+            baseline_clip_cli = true;
         } else if (arg == "--visualizels") {
             // 兼容常见拼写误写，避免静默关闭可视化
             fprintf(stderr, "Warning: unknown option '--visualizels', treating as '--visualize'.\n");
@@ -612,7 +653,11 @@ int main(int argc, char* argv[]) {
             printf("  --baseline-out                Output root directory for baseline clips\n");
             printf("  --baseline-duration           Clip duration in seconds, converted by trigger frequency\n");
             printf("  --baseline-frames             Exact number of frames to record\n");
+            printf("  --baseline-clips              Number of clips to record\n");
+            printf("  --baseline-gap                Gap between clips in seconds\n");
             printf("  --baseline-format             Lossless image format: png or pgm\n");
+            printf("  --baseline-image-mode         Image mode: gray, bgr, or both\n");
+            printf("  --baseline-start-immediately  Record without waiting for detections\n");
             return 0;
         } else if (!arg.empty() && arg[0] == '-') {
             unknown_args.push_back(arg);
@@ -652,11 +697,28 @@ int main(int argc, char* argv[]) {
     if (!baseline_out_override.empty()) baseline_cfg.output_dir = baseline_out_override;
     if (baseline_duration_override > 0.0) baseline_cfg.duration_sec = baseline_duration_override;
     if (baseline_frames_override > 0) baseline_cfg.frame_limit = baseline_frames_override;
+    if (baseline_clips_override > 0) baseline_cfg.clip_count = baseline_clips_override;
+    if (baseline_gap_override >= 0.0) baseline_cfg.clip_gap_sec = baseline_gap_override;
     if (!baseline_format_override.empty()) baseline_cfg.image_format = baseline_format_override;
+    if (!baseline_image_mode_override.empty()) baseline_cfg.image_mode = baseline_image_mode_override;
+    if (baseline_start_immediately) {
+        baseline_cfg.require_left_detection = false;
+        baseline_cfg.require_right_detection = false;
+        baseline_cfg.require_pair_gate = false;
+    }
     baseline_cfg.trigger_hz = cfg.trigger_freq_hz;
     if (debug_feature_matches) baseline_cfg.enabled = false;
 
     if (baseline_cfg.enabled) {
+        std::string baseline_mode = baseline_cfg.image_mode;
+        std::transform(baseline_mode.begin(), baseline_mode.end(), baseline_mode.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if ((baseline_mode == "bgr" || baseline_mode == "both") &&
+            cfg.detector_input_format != "bgr") {
+            LOG_WARN("Baseline image_mode=%s requested but detector.input_format=%s; "
+                     "BGR images are only valid when the color pipeline is enabled",
+                     baseline_cfg.image_mode.c_str(), cfg.detector_input_format.c_str());
+        }
         cfg.detection_only = true;
         cfg.disparity_strategy = stereo3d::DisparityStrategy::ROI_ONLY;
         cfg.tracker.enabled = false;
@@ -907,6 +969,8 @@ int main(int argc, char* argv[]) {
                     baseline_recorder.record(frame_data.frame_id,
                                              frame_data.rect_gray_left,
                                              frame_data.rect_gray_right,
+                                             frame_data.rect_bgr_left,
+                                             frame_data.rect_bgr_right,
                                              frame_data.detections_left,
                                              frame_data.detections_right,
                                              frame_data.metadata,
