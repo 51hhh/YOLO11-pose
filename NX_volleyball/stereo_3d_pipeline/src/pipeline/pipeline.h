@@ -480,8 +480,9 @@ private:
                                 bool need_bgr);
     std::vector<int> drainCompletedAsyncRoiStage2();
     void expireAsyncRoiBefore(int frame_id);
+    void releaseAsyncRoiBuffer(int buffer_index, const char* reason);
     void releaseAsyncRoiBufferLocked(int buffer_index);
-    bool waitAsyncRoiBufferCopyLocked(int buffer_index, const char* reason);
+    bool waitAsyncRoiBufferCopy(int buffer_index, const char* reason);
     void markAsyncRoiSlotCopyPendingLocked(int slot_index);
     void waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
 

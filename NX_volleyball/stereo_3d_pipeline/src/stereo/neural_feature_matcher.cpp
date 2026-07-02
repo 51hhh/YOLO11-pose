@@ -9,6 +9,7 @@
 #include "utils/logger.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -87,6 +88,106 @@ int tensorWidth(const nvinfer1::Dims& dims) {
 
 int tensorLastDim(const nvinfer1::Dims& dims) {
     return dims.nbDims > 0 ? static_cast<int>(dims.d[dims.nbDims - 1]) : 0;
+}
+
+template <size_t N>
+bool nameHasAny(const std::string& lname,
+                const std::array<const char*, N>& needles) {
+    for (const char* needle : needles) {
+        if (lname.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool isImageSizeTensorName(const std::string& lname) {
+    return nameHasAny(lname, std::array<const char*, 5>{
+        "image_size", "imagesize", "image_shape", "imageshape", "input_size"});
+}
+
+bool hasSideSeparator(const std::string& lname, char side) {
+    const std::array<char, 5> separators{'_', '/', '.', ':', '-'};
+    for (char sep : separators) {
+        const std::string left{sep, side};
+        const std::string right{side, sep};
+        if (lname.find(left) != std::string::npos ||
+            lname.find(right) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int splitTensorSideFromName(const std::string& lname) {
+    if (lname.find("left") != std::string::npos ||
+        lname.find("query") != std::string::npos) {
+        return 0;
+    }
+    if (lname.find("right") != std::string::npos ||
+        lname.find("train") != std::string::npos) {
+        return 1;
+    }
+
+    const bool semantic =
+        nameHasAny(lname, std::array<const char*, 10>{
+            "image", "img", "keypoint", "kpt", "point", "coord",
+            "descriptor", "desc", "score", "size"});
+    if (!semantic) return -1;
+
+    if (nameHasAny(lname, std::array<const char*, 15>{
+            "image0", "img0", "keypoints0", "keypoint0", "kpts0",
+            "kpt0", "points0", "coords0", "descriptors0", "descriptor0",
+            "descs0", "desc0", "scores0", "score0", "size0"}) ||
+        hasSideSeparator(lname, '0')) {
+        return 0;
+    }
+    if (nameHasAny(lname, std::array<const char*, 15>{
+            "image1", "img1", "keypoints1", "keypoint1", "kpts1",
+            "kpt1", "points1", "coords1", "descriptors1", "descriptor1",
+            "descs1", "desc1", "scores1", "score1", "size1"}) ||
+        hasSideSeparator(lname, '1')) {
+        return 1;
+    }
+    return -1;
+}
+
+bool isLeftMatchIndexTensorName(const std::string& lname) {
+    return nameHasAny(lname, std::array<const char*, 8>{
+               "matches0", "match0", "indices0", "index0",
+               "matching_indices0", "matching_index0",
+               "assignment0", "assign0"}) ||
+           (nameHasAny(lname, std::array<const char*, 3>{
+                "match", "index", "indice"}) &&
+            splitTensorSideFromName(lname) == 0);
+}
+
+bool isRightMatchIndexTensorName(const std::string& lname) {
+    return nameHasAny(lname, std::array<const char*, 8>{
+               "matches1", "match1", "indices1", "index1",
+               "matching_indices1", "matching_index1",
+               "assignment1", "assign1"}) ||
+           (nameHasAny(lname, std::array<const char*, 3>{
+                "match", "index", "indice"}) &&
+            splitTensorSideFromName(lname) == 1);
+}
+
+bool isLeftScoreTensorName(const std::string& lname) {
+    return nameHasAny(lname, std::array<const char*, 8>{
+               "scores0", "score0", "mscores0", "mscore0",
+               "matching_scores0", "matching_score0",
+               "conf0", "prob0"}) ||
+           (nameHasAny(lname, std::array<const char*, 3>{
+                "score", "conf", "prob"}) &&
+            splitTensorSideFromName(lname) == 0);
+}
+
+bool isRightScoreTensorName(const std::string& lname) {
+    return nameHasAny(lname, std::array<const char*, 8>{
+               "scores1", "score1", "mscores1", "mscore1",
+               "matching_scores1", "matching_score1",
+               "conf1", "prob1"}) ||
+           (nameHasAny(lname, std::array<const char*, 3>{
+                "score", "conf", "prob"}) &&
+            splitTensorSideFromName(lname) == 1);
 }
 
 float medianOf(std::vector<float>& values) {
@@ -210,6 +311,11 @@ bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
         if (!loadEngine(config_.extractor_engine_path, extractor_)) {
             return false;
         }
+        if (config_.use_lightglue &&
+            !config_.matcher_engine_path.empty() &&
+            !loadEngine(config_.matcher_engine_path, matcher_)) {
+            return false;
+        }
     }
 
     ready_ = true;
@@ -246,16 +352,16 @@ bool NeuralFeatureMatcher::validateConfig() const {
         return false;
     }
     if (config_.fused_engine_path.empty() &&
-        !config_.matcher_engine_path.empty()) {
+        !config_.matcher_engine_path.empty() &&
+        !config_.use_lightglue) {
         LOG_WARN("neural_feature_matching.matcher_engine_path is configured but "
-                 "ignored; current realtime split path uses extractor-only "
-                 "C++ descriptor matching");
+                 "ignored because use_lightglue=false");
     }
     if (config_.fused_engine_path.empty() &&
         config_.backend == NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE) {
-        LOG_WARN("SuperPoint+LightGlue split matcher runtime is not implemented; "
-                 "the extractor-only direct descriptor matcher will be used if "
-                 "the engine output schema is supported");
+        LOG_WARN("SuperPoint+LightGlue split matcher runtime requires a supported "
+                 "fixed TensorRT matcher schema; otherwise direct descriptor "
+                 "matching is used");
     }
     return true;
 }
@@ -350,9 +456,94 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
 
     const bool is_extractor_engine = (&e == &extractor_);
     const bool is_fused_engine = (&e == &fused_);
+    const bool is_matcher_engine = (&e == &matcher_);
     const bool is_roi_image_engine = is_extractor_engine || is_fused_engine;
 
     const int nb = e.engine->getNbIOTensors();
+    auto set_matcher_input_shape =
+        [&](const char* cname, const nvinfer1::Dims& dims) -> bool {
+            if (!is_matcher_engine || !hasDynamicDim(dims)) return true;
+            nvinfer1::Dims shape = dims;
+            const std::string lname = lowerCopy(cname);
+            const bool is_keypoints =
+                lname.find("keypoint") != std::string::npos ||
+                lname.find("kpt") != std::string::npos ||
+                lname.find("point") != std::string::npos ||
+                lname.find("coord") != std::string::npos;
+            const bool is_descriptors =
+                lname.find("descriptor") != std::string::npos ||
+                lname.find("desc") != std::string::npos ||
+                lname.find("feature") != std::string::npos;
+            const bool is_scores =
+                lname.find("score") != std::string::npos ||
+                lname.find("conf") != std::string::npos ||
+                lname.find("prob") != std::string::npos;
+            const bool is_image_size = isImageSizeTensorName(lname);
+
+            if (is_keypoints) {
+                for (int d = 0; d < shape.nbDims; ++d) {
+                    if (shape.d[d] > 0) continue;
+                    if (d == 0 && shape.nbDims >= 3) shape.d[d] = 1;
+                    else if (d == shape.nbDims - 1) shape.d[d] = 2;
+                    else shape.d[d] = config_.top_k;
+                }
+            } else if (is_descriptors) {
+                const bool channel_first =
+                    shape.nbDims >= 2 &&
+                    shape.d[shape.nbDims - 2] == config_.descriptor_dim;
+                for (int d = 0; d < shape.nbDims; ++d) {
+                    if (shape.d[d] > 0) continue;
+                    if (d == 0 && shape.nbDims >= 3) shape.d[d] = 1;
+                    else if (channel_first && d == shape.nbDims - 1) {
+                        shape.d[d] = config_.top_k;
+                    } else if (!channel_first && d == shape.nbDims - 1) {
+                        shape.d[d] = config_.descriptor_dim;
+                    } else {
+                        shape.d[d] = channel_first
+                            ? config_.descriptor_dim
+                            : config_.top_k;
+                    }
+                }
+            } else if (is_scores) {
+                for (int d = 0; d < shape.nbDims; ++d) {
+                    if (shape.d[d] > 0) continue;
+                    shape.d[d] = (d == 0 && shape.nbDims >= 2)
+                        ? 1
+                        : config_.top_k;
+                }
+            } else if (is_image_size) {
+                for (int d = 0; d < shape.nbDims; ++d) {
+                    if (shape.d[d] > 0) continue;
+                    shape.d[d] = (d == 0 && shape.nbDims >= 2) ? 1 : 2;
+                }
+            } else {
+                LOG_WARN("Neural feature: unsupported dynamic matcher input %s",
+                         cname);
+                return false;
+            }
+            if (!e.context->setInputShape(cname, shape)) {
+                LOG_WARN("Neural feature: set matcher input shape failed for %s",
+                         cname);
+                return false;
+            }
+            return true;
+        };
+
+    if (is_matcher_engine) {
+        for (int i = 0; i < nb; ++i) {
+            const char* cname = e.engine->getIOTensorName(i);
+            if (!cname) return false;
+            if (e.engine->getTensorIOMode(cname) !=
+                nvinfer1::TensorIOMode::kINPUT) {
+                continue;
+            }
+            if (!set_matcher_input_shape(cname,
+                                         e.engine->getTensorShape(cname))) {
+                return false;
+            }
+        }
+    }
+
     for (int i = 0; i < nb; ++i) {
         const char* cname = e.engine->getIOTensorName(i);
         if (!cname) return false;
@@ -370,6 +561,12 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
             nvinfer1::Dims4 shape{1, c, config_.roi_size, config_.roi_size};
             if (!e.context->setInputShape(cname, shape)) {
                 LOG_WARN("Neural feature: setInputShape failed for %s", cname);
+                return false;
+            }
+            tensor.dims = e.context->getTensorShape(cname);
+        }
+        if (tensor.is_input && is_matcher_engine && hasDynamicDim(tensor.dims)) {
+            if (!set_matcher_input_shape(cname, tensor.dims)) {
                 return false;
             }
             tensor.dims = e.context->getTensorShape(cname);
@@ -419,6 +616,8 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
             ++e.output_count;
             if (tensor.dtype == nvinfer1::DataType::kFLOAT) {
                 tensor.host_float.resize(tensor.elements);
+            } else if (tensor.dtype == nvinfer1::DataType::kINT32) {
+                tensor.host_int32.resize(tensor.elements);
             }
         }
         e.tensors.push_back(std::move(tensor));
@@ -461,6 +660,11 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
                      e.input_count, c0, c1);
             e.bindings_ready = false;
         }
+    }
+    if (e.bindings_ready && is_matcher_engine && e.input_count < 4) {
+        LOG_WARN("Neural feature: split matcher expects keypoints/descriptors "
+                 "for left and right, got inputs=%d", e.input_count);
+        e.bindings_ready = false;
     }
     return e.bindings_ready;
 }
@@ -1108,6 +1312,506 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return out;
     }
 
+    struct IndexMatch {
+        int query_idx = -1;
+        int train_idx = -1;
+        float score = 1.0f;
+    };
+
+    const auto map_to_frame = [&](const Detection& det, const DirectFeature& f,
+                                  float* x, float* y) {
+        const float s = std::sqrt(std::max(1.0f, det.width * context *
+                                                  det.height * context));
+        const float roi_x = det.cx - 0.5f * s;
+        const float roi_y = det.cy - 0.5f * s;
+        *x = roi_x + (f.x + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
+        *y = roi_y + (f.y + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
+    };
+
+    auto build_result_from_indices =
+        [&](const std::vector<IndexMatch>& index_matches) {
+            NeuralFeatureMatchResult result;
+            std::vector<NeuralFeaturePointMatch> candidates;
+            std::vector<float> disparities;
+            candidates.reserve(index_matches.size());
+            disparities.reserve(index_matches.size());
+            for (const auto& im : index_matches) {
+                if (im.query_idx < 0 || im.train_idx < 0 ||
+                    im.query_idx >= static_cast<int>(left_features.size()) ||
+                    im.train_idx >= static_cast<int>(right_features.size())) {
+                    continue;
+                }
+                if (im.score < config_.min_score) continue;
+                float lx, ly, rx, ry;
+                map_to_frame(left_det,
+                             left_features[static_cast<size_t>(im.query_idx)],
+                             &lx, &ly);
+                map_to_frame(right_det,
+                             right_features[static_cast<size_t>(im.train_idx)],
+                             &rx, &ry);
+                const float disp = lx - rx;
+                if (disp <= 0.5f ||
+                    disp > static_cast<float>(max_disparity_) ||
+                    std::fabs(ly - ry) > config_.max_y_error_px ||
+                    std::fabs(disp - initial_disparity) >
+                        config_.max_disp_delta_px) {
+                    continue;
+                }
+                NeuralFeaturePointMatch m;
+                m.left_x = lx;
+                m.left_y = ly;
+                m.right_x = rx;
+                m.right_y = ry;
+                m.disparity = disp;
+                m.score = im.score;
+                candidates.push_back(m);
+                disparities.push_back(disp);
+            }
+
+            if (static_cast<int>(disparities.size()) < config_.min_matches) {
+                result.status = "not_enough_matches";
+                return result;
+            }
+            const float median = medianOf(disparities);
+            std::vector<float> abs_dev;
+            abs_dev.reserve(disparities.size());
+            for (float d : disparities) {
+                abs_dev.push_back(std::fabs(d - median));
+            }
+            const float mad = medianOf(abs_dev);
+            const float gate =
+                std::max(config_.final_disp_gate_px, 1.4826f * mad * 2.5f);
+            float sum = 0.0f;
+            float sum2 = 0.0f;
+            float score_sum = 0.0f;
+            for (const auto& m : candidates) {
+                if (std::fabs(m.disparity - median) > gate) continue;
+                result.matches.push_back(m);
+                sum += m.disparity;
+                sum2 += m.disparity * m.disparity;
+                score_sum += m.score;
+            }
+            if (static_cast<int>(result.matches.size()) < config_.min_matches) {
+                result.status = "not_enough_inliers";
+                result.matches.clear();
+                return result;
+            }
+            const float kept = static_cast<float>(result.matches.size());
+            result.disparity = sum / kept;
+            const float var = std::max(
+                0.0f, sum2 / kept - result.disparity * result.disparity);
+            result.stddev_px = std::sqrt(var);
+            result.depth_m =
+                focal_ * baseline_ / std::max(0.5f, result.disparity);
+            const float support_conf = std::min(
+                1.0f,
+                kept / static_cast<float>(
+                    std::max(1, config_.min_matches * 2)));
+            const float score_conf = std::clamp(
+                (score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
+            const float consistency =
+                std::clamp(1.0f / (1.0f + result.stddev_px), 0.0f, 1.0f);
+            result.confidence = std::clamp(0.45f * support_conf +
+                                           0.35f * score_conf +
+                                           0.20f * consistency,
+                                           0.0f, 1.0f);
+            result.inference_ms = static_cast<float>(
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start).count());
+            result.valid = true;
+            result.status = "ok";
+            return result;
+        };
+
+    auto run_split_matcher = [&]() {
+        NeuralFeatureMatchResult result;
+        result.status = "unsupported_split_matcher_schema";
+        if (!matcher_.engine || !matcher_.context || !matcher_.bindings_ready) {
+            return result;
+        }
+
+        std::array<TrtEngine::TensorBuffer*, 2> keypoint_inputs{nullptr, nullptr};
+        std::array<TrtEngine::TensorBuffer*, 2> descriptor_inputs{nullptr, nullptr};
+        std::array<TrtEngine::TensorBuffer*, 2> score_inputs{nullptr, nullptr};
+        std::array<TrtEngine::TensorBuffer*, 2> size_inputs{nullptr, nullptr};
+        int next_keypoint = 0;
+        int next_descriptor = 0;
+        int next_score = 0;
+        int next_size = 0;
+        std::vector<TrtEngine::TensorBuffer*> matcher_outputs;
+
+        auto assign_input =
+            [](std::array<TrtEngine::TensorBuffer*, 2>& slots,
+               int& next_slot,
+               int side,
+               TrtEngine::TensorBuffer* tensor) {
+                if (side >= 0 && side < 2) {
+                    slots[static_cast<size_t>(side)] = tensor;
+                    return;
+                }
+                if (next_slot < 2) {
+                    slots[static_cast<size_t>(next_slot++)] = tensor;
+                }
+            };
+
+        for (auto& tensor : matcher_.tensors) {
+            matcher_.context->setTensorAddress(tensor.name.c_str(),
+                                               tensor.device);
+            if (!tensor.is_input) {
+                matcher_outputs.push_back(&tensor);
+                continue;
+            }
+            if (tensor.dtype != nvinfer1::DataType::kFLOAT) {
+                return result;
+            }
+            const std::string lname = lowerCopy(tensor.name);
+            const int side = splitTensorSideFromName(lname);
+            const bool is_keypoints =
+                tensor_name_has(&tensor, "keypoint") ||
+                tensor_name_has(&tensor, "kpt") ||
+                tensor_name_has(&tensor, "point") ||
+                tensor_name_has(&tensor, "coord");
+            const bool is_descriptors =
+                tensor_name_has(&tensor, "descriptor") ||
+                tensor_name_has(&tensor, "desc") ||
+                tensor_name_has(&tensor, "feature");
+            const bool is_scores =
+                tensor_name_has(&tensor, "score") ||
+                tensor_name_has(&tensor, "conf") ||
+                tensor_name_has(&tensor, "prob");
+            const bool is_size =
+                isImageSizeTensorName(lname);
+            if (is_keypoints) {
+                assign_input(keypoint_inputs, next_keypoint, side, &tensor);
+            } else if (is_descriptors) {
+                assign_input(descriptor_inputs, next_descriptor, side, &tensor);
+            } else if (is_scores) {
+                assign_input(score_inputs, next_score, side, &tensor);
+            } else if (is_size) {
+                assign_input(size_inputs, next_size, side, &tensor);
+            } else {
+                return result;
+            }
+        }
+        if (!keypoint_inputs[0] || !keypoint_inputs[1] ||
+            !descriptor_inputs[0] || !descriptor_inputs[1] ||
+            matcher_outputs.empty()) {
+            return result;
+        }
+
+        auto copy_vector_to_input =
+            [&](TrtEngine::TensorBuffer* tensor,
+                const std::vector<float>& values) {
+                if (!tensor || values.size() > tensor->elements) return false;
+                const cudaError_t err = cudaMemcpyAsync(
+                    tensor->device,
+                    values.data(),
+                    values.size() * sizeof(float),
+                    cudaMemcpyHostToDevice,
+                    stream);
+                if (err != cudaSuccess) return false;
+                if (values.size() < tensor->elements) {
+                    const size_t offset = values.size() * sizeof(float);
+                    const size_t bytes = tensor->bytes - offset;
+                    return cudaMemsetAsync(
+                        static_cast<uint8_t*>(tensor->device) + offset,
+                        0,
+                        bytes,
+                        stream) == cudaSuccess;
+                }
+                return true;
+            };
+        auto make_keypoint_input =
+            [&](TrtEngine::TensorBuffer* tensor,
+                const std::vector<DirectFeature>& features) {
+                std::vector<float> values(tensor->elements, 0.0f);
+                const int last = tensorLastDim(tensor->dims);
+                const int count = keypoint_count(tensor);
+                const int n = std::min(
+                    std::min(count, config_.top_k),
+                    static_cast<int>(features.size()));
+                if (last == 2 || last == 3) {
+                    for (int i = 0; i < n; ++i) {
+                        const size_t base = static_cast<size_t>(i) *
+                                            static_cast<size_t>(last);
+                        values[base] = features[static_cast<size_t>(i)].x;
+                        values[base + 1] = features[static_cast<size_t>(i)].y;
+                        if (last == 3) {
+                            values[base + 2] =
+                                features[static_cast<size_t>(i)].score;
+                        }
+                    }
+                } else if (tensor->dims.nbDims >= 2 &&
+                           tensor->dims.d[tensor->dims.nbDims - 2] == 2) {
+                    for (int i = 0; i < n; ++i) {
+                        values[static_cast<size_t>(i)] =
+                            features[static_cast<size_t>(i)].x;
+                        values[static_cast<size_t>(count) +
+                               static_cast<size_t>(i)] =
+                            features[static_cast<size_t>(i)].y;
+                    }
+                } else {
+                    return std::vector<float>{};
+                }
+                return values;
+            };
+        auto make_descriptor_input =
+            [&](TrtEngine::TensorBuffer* tensor,
+                const std::vector<DirectFeature>& features) {
+                std::vector<float> values(tensor->elements, 0.0f);
+                const int last = tensorLastDim(tensor->dims);
+                const int count = descriptor_count(tensor);
+                const int n = std::min(
+                    std::min(count, config_.top_k),
+                    static_cast<int>(features.size()));
+                if (last == config_.descriptor_dim) {
+                    for (int i = 0; i < n; ++i) {
+                        const auto& desc =
+                            features[static_cast<size_t>(i)].descriptor;
+                        const size_t base = static_cast<size_t>(i) *
+                                            static_cast<size_t>(config_.descriptor_dim);
+                        for (int c = 0; c < config_.descriptor_dim; ++c) {
+                            values[base + static_cast<size_t>(c)] =
+                                c < static_cast<int>(desc.size())
+                                    ? desc[static_cast<size_t>(c)]
+                                    : 0.0f;
+                        }
+                    }
+                } else if (tensor->dims.nbDims >= 2 &&
+                           tensor->dims.d[tensor->dims.nbDims - 2] ==
+                               config_.descriptor_dim) {
+                    for (int i = 0; i < n; ++i) {
+                        const auto& desc =
+                            features[static_cast<size_t>(i)].descriptor;
+                        for (int c = 0; c < config_.descriptor_dim; ++c) {
+                            const size_t idx = static_cast<size_t>(c) *
+                                               static_cast<size_t>(count) +
+                                               static_cast<size_t>(i);
+                            values[idx] = c < static_cast<int>(desc.size())
+                                ? desc[static_cast<size_t>(c)]
+                                : 0.0f;
+                        }
+                    }
+                } else {
+                    return std::vector<float>{};
+                }
+                return values;
+            };
+        auto make_score_input =
+            [&](TrtEngine::TensorBuffer* tensor,
+                const std::vector<DirectFeature>& features) {
+                std::vector<float> values(tensor->elements, 0.0f);
+                const int n = std::min(static_cast<int>(values.size()),
+                                       static_cast<int>(features.size()));
+                for (int i = 0; i < n; ++i) {
+                    values[static_cast<size_t>(i)] =
+                        features[static_cast<size_t>(i)].score;
+                }
+                return values;
+            };
+        auto make_size_input = [&](TrtEngine::TensorBuffer* tensor) {
+            std::vector<float> values(tensor->elements, 0.0f);
+            for (size_t i = 0; i + 1 < values.size(); i += 2) {
+                values[i] = static_cast<float>(config_.roi_size);
+                values[i + 1] = static_cast<float>(config_.roi_size);
+            }
+            return values;
+        };
+
+        const std::array<const std::vector<DirectFeature>*, 2> feature_sets{
+            &left_features, &right_features};
+        for (int side = 0; side < 2; ++side) {
+            const auto& feats = *feature_sets[static_cast<size_t>(side)];
+            std::vector<float> kpts =
+                make_keypoint_input(keypoint_inputs[static_cast<size_t>(side)],
+                                    feats);
+            std::vector<float> desc =
+                make_descriptor_input(descriptor_inputs[static_cast<size_t>(side)],
+                                      feats);
+            if (kpts.empty() || desc.empty() ||
+                !copy_vector_to_input(keypoint_inputs[static_cast<size_t>(side)],
+                                      kpts) ||
+                !copy_vector_to_input(descriptor_inputs[static_cast<size_t>(side)],
+                                      desc)) {
+                result.status = "matcher_input_copy_failed";
+                return result;
+            }
+            if (score_inputs[static_cast<size_t>(side)]) {
+                std::vector<float> scores =
+                    make_score_input(score_inputs[static_cast<size_t>(side)],
+                                     feats);
+                if (!copy_vector_to_input(score_inputs[static_cast<size_t>(side)],
+                                          scores)) {
+                    result.status = "matcher_input_copy_failed";
+                    return result;
+                }
+            }
+            if (size_inputs[static_cast<size_t>(side)]) {
+                std::vector<float> sizes =
+                    make_size_input(size_inputs[static_cast<size_t>(side)]);
+                if (!copy_vector_to_input(size_inputs[static_cast<size_t>(side)],
+                                          sizes)) {
+                    result.status = "matcher_input_copy_failed";
+                    return result;
+                }
+            }
+        }
+
+        if (!matcher_.context->enqueueV3(stream)) {
+            result.status = "matcher_enqueue_failed";
+            return result;
+        }
+        for (auto* tensor : matcher_outputs) {
+            if (tensor->dtype == nvinfer1::DataType::kFLOAT &&
+                !tensor->host_float.empty()) {
+                if (cudaMemcpyAsync(tensor->host_float.data(),
+                                    tensor->device,
+                                    tensor->bytes,
+                                    cudaMemcpyDeviceToHost,
+                                    stream) != cudaSuccess) {
+                    result.status = "matcher_copy_failed";
+                    return result;
+                }
+            } else if (tensor->dtype == nvinfer1::DataType::kINT32 &&
+                       !tensor->host_int32.empty()) {
+                if (cudaMemcpyAsync(tensor->host_int32.data(),
+                                    tensor->device,
+                                    tensor->bytes,
+                                    cudaMemcpyDeviceToHost,
+                                    stream) != cudaSuccess) {
+                    result.status = "matcher_copy_failed";
+                    return result;
+                }
+            }
+        }
+        if (cudaStreamSynchronize(stream) != cudaSuccess) {
+            result.status = "matcher_sync_failed";
+            return result;
+        }
+
+        TrtEngine::TensorBuffer* matches = nullptr;
+        TrtEngine::TensorBuffer* matches0 = nullptr;
+        TrtEngine::TensorBuffer* generic_scores = nullptr;
+        TrtEngine::TensorBuffer* left_scores = nullptr;
+        for (auto* tensor : matcher_outputs) {
+            const std::string lname = lowerCopy(tensor->name);
+            const bool is_match_name =
+                lname.find("match") != std::string::npos ||
+                lname.find("index") != std::string::npos ||
+                lname.find("indices") != std::string::npos;
+            const bool is_score_name =
+                lname.find("score") != std::string::npos ||
+                lname.find("conf") != std::string::npos ||
+                lname.find("prob") != std::string::npos;
+            const int last = tensorLastDim(tensor->dims);
+            if (is_score_name && tensor->dtype == nvinfer1::DataType::kFLOAT) {
+                if (isLeftScoreTensorName(lname)) {
+                    left_scores = tensor;
+                } else if (!isRightScoreTensorName(lname) && !generic_scores) {
+                    generic_scores = tensor;
+                }
+            } else if (is_match_name && (last == 2 || last == 3)) {
+                if (!matches) matches = tensor;
+            } else if (is_match_name &&
+                       isLeftMatchIndexTensorName(lname)) {
+                matches0 = tensor;
+            } else if (is_match_name &&
+                       !isRightMatchIndexTensorName(lname) &&
+                       !matches0) {
+                matches0 = tensor;
+            }
+        }
+        if (!matches && !matches0) {
+            return result;
+        }
+
+        std::vector<IndexMatch> index_matches;
+        TrtEngine::TensorBuffer* scores = left_scores ? left_scores
+                                                      : generic_scores;
+        auto score_at = [&](int idx, float fallback) {
+            if (!scores || scores->host_float.empty() ||
+                idx < 0 ||
+                static_cast<size_t>(idx) >= scores->host_float.size()) {
+                return fallback;
+            }
+            return scores->host_float[static_cast<size_t>(idx)];
+        };
+        auto push_pair = [&](int qi, int ti, float score) {
+            if (qi < 0 || ti < 0 ||
+                qi >= static_cast<int>(left_features.size()) ||
+                ti >= static_cast<int>(right_features.size())) {
+                return;
+            }
+            IndexMatch im;
+            im.query_idx = qi;
+            im.train_idx = ti;
+            im.score = score;
+            index_matches.push_back(im);
+        };
+        if (matches) {
+            const int stride = tensorLastDim(matches->dims);
+            const int rows = stride > 0
+                ? static_cast<int>(matches->elements /
+                                   static_cast<size_t>(stride))
+                : 0;
+            for (int i = 0; i < rows; ++i) {
+                if (matches->dtype == nvinfer1::DataType::kINT32) {
+                    const size_t base = static_cast<size_t>(i) *
+                                        static_cast<size_t>(stride);
+                    const int qi = matches->host_int32[base];
+                    const int ti = matches->host_int32[base + 1];
+                    const float score = stride >= 3
+                        ? static_cast<float>(matches->host_int32[base + 2])
+                        : score_at(i, 1.0f);
+                    push_pair(qi, ti, score);
+                } else if (matches->dtype == nvinfer1::DataType::kFLOAT) {
+                    const size_t base = static_cast<size_t>(i) *
+                                        static_cast<size_t>(stride);
+                    const float fq = matches->host_float[base];
+                    const float ft = matches->host_float[base + 1];
+                    const int qi = static_cast<int>(std::round(fq));
+                    const int ti = static_cast<int>(std::round(ft));
+                    if (std::fabs(fq - static_cast<float>(qi)) > 1e-3f ||
+                        std::fabs(ft - static_cast<float>(ti)) > 1e-3f) {
+                        continue;
+                    }
+                    const float score = stride >= 3
+                        ? matches->host_float[base + 2]
+                        : score_at(i, 1.0f);
+                    push_pair(qi, ti, score);
+                }
+            }
+        } else if (matches0) {
+            const int rows = static_cast<int>(matches0->elements);
+            for (int qi = 0; qi < rows; ++qi) {
+                int ti = -1;
+                if (matches0->dtype == nvinfer1::DataType::kINT32) {
+                    ti = matches0->host_int32[static_cast<size_t>(qi)];
+                } else if (matches0->dtype == nvinfer1::DataType::kFLOAT) {
+                    const float ft = matches0->host_float[static_cast<size_t>(qi)];
+                    ti = static_cast<int>(std::round(ft));
+                    if (std::fabs(ft - static_cast<float>(ti)) > 1e-3f) {
+                        continue;
+                    }
+                }
+                push_pair(qi, ti, score_at(qi, 1.0f));
+            }
+        }
+        if (index_matches.empty()) {
+            result.status = "not_enough_matches";
+            return result;
+        }
+        return build_result_from_indices(index_matches);
+    };
+
+    if (config_.use_lightglue &&
+        matcher_.engine && matcher_.context && matcher_.bindings_ready) {
+        NeuralFeatureMatchResult split = run_split_matcher();
+        if (split.status != "unsupported_split_matcher_schema") {
+            return split;
+        }
+    }
+
     auto dot = [](const DirectFeature& a, const DirectFeature& b) {
         float s = 0.0f;
         const int n = std::min(static_cast<int>(a.descriptor.size()),
@@ -1137,90 +1841,21 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         }
     }
 
-    const auto map_to_frame = [&](const Detection& det, const DirectFeature& f,
-                                  float* x, float* y) {
-        const float s = std::sqrt(std::max(1.0f, det.width * context *
-                                                  det.height * context));
-        const float roi_x = det.cx - 0.5f * s;
-        const float roi_y = det.cy - 0.5f * s;
-        *x = roi_x + (f.x + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
-        *y = roi_y + (f.y + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
-    };
-
-    std::vector<NeuralFeaturePointMatch> candidates;
-    std::vector<float> disparities;
+    std::vector<IndexMatch> mutual_matches;
+    mutual_matches.reserve(left_features.size());
     for (size_t i = 0; i < left_features.size(); ++i) {
         const int j = left_best[i];
         if (j < 0 || j >= static_cast<int>(right_features.size()) ||
             right_best[static_cast<size_t>(j)] != static_cast<int>(i)) {
             continue;
         }
-        const float score = left_score[i];
-        if (score < config_.min_score) continue;
-        float lx, ly, rx, ry;
-        map_to_frame(left_det, left_features[i], &lx, &ly);
-        map_to_frame(right_det, right_features[static_cast<size_t>(j)], &rx, &ry);
-        const float disp = lx - rx;
-        if (disp <= 0.5f || disp > static_cast<float>(max_disparity_) ||
-            std::fabs(ly - ry) > config_.max_y_error_px ||
-            std::fabs(disp - initial_disparity) > config_.max_disp_delta_px) {
-            continue;
-        }
-        NeuralFeaturePointMatch m;
-        m.left_x = lx;
-        m.left_y = ly;
-        m.right_x = rx;
-        m.right_y = ry;
-        m.disparity = disp;
-        m.score = score;
-        candidates.push_back(m);
-        disparities.push_back(disp);
+        IndexMatch im;
+        im.query_idx = static_cast<int>(i);
+        im.train_idx = j;
+        im.score = left_score[i];
+        mutual_matches.push_back(im);
     }
-
-    if (static_cast<int>(disparities.size()) < config_.min_matches) {
-        out.status = "not_enough_matches";
-        return out;
-    }
-    const float median = medianOf(disparities);
-    std::vector<float> abs_dev;
-    abs_dev.reserve(disparities.size());
-    for (float d : disparities) abs_dev.push_back(std::fabs(d - median));
-    const float mad = medianOf(abs_dev);
-    const float gate = std::max(config_.final_disp_gate_px, 1.4826f * mad * 2.5f);
-    float sum = 0.0f;
-    float sum2 = 0.0f;
-    float score_sum = 0.0f;
-    for (const auto& m : candidates) {
-        if (std::fabs(m.disparity - median) > gate) continue;
-        out.matches.push_back(m);
-        sum += m.disparity;
-        sum2 += m.disparity * m.disparity;
-        score_sum += m.score;
-    }
-    if (static_cast<int>(out.matches.size()) < config_.min_matches) {
-        out.status = "not_enough_inliers";
-        out.matches.clear();
-        return out;
-    }
-    const float kept = static_cast<float>(out.matches.size());
-    out.disparity = sum / kept;
-    const float var = std::max(0.0f, sum2 / kept - out.disparity * out.disparity);
-    out.stddev_px = std::sqrt(var);
-    out.depth_m = focal_ * baseline_ / std::max(0.5f, out.disparity);
-    const float support_conf =
-        std::min(1.0f, kept / static_cast<float>(std::max(1, config_.min_matches * 2)));
-    const float score_conf = std::clamp((score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
-    const float consistency = std::clamp(1.0f / (1.0f + out.stddev_px), 0.0f, 1.0f);
-    out.confidence = std::clamp(0.45f * support_conf +
-                                0.35f * score_conf +
-                                0.20f * consistency,
-                                0.0f, 1.0f);
-    out.inference_ms = static_cast<float>(
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count());
-    out.valid = true;
-    out.status = "ok";
-    return out;
+    return build_result_from_indices(mutual_matches);
 }
 
 NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(

@@ -18,6 +18,7 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,7 @@ private:
             size_t bytes = 0;
             size_t elements = 0;
             std::vector<float> host_float;
+            std::vector<int32_t> host_int32;
         };
 
         nvinfer1::IRuntime* runtime = nullptr;

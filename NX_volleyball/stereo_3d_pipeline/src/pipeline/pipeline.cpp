@@ -2585,14 +2585,61 @@ void Pipeline::collectRoiDetections(FrameSlot& slot, int slot_index) {
 bool Pipeline::roiStage2NeedsHostImages(
     const std::vector<Detection>& left_detections,
     const std::vector<Detection>& right_detections) const {
-    const bool fallback_host_needed_now =
-        config_.dual_yolo.gpu_candidate_refine &&
-        (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
-         dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
-         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo)) &&
-        (left_detections.empty() || right_detections.empty());
-    return dualYoloNeedsHostImages(config_.dual_yolo) ||
-           fallback_host_needed_now;
+    if (dualYoloNeedsHostImages(config_.dual_yolo)) {
+        return true;
+    }
+
+    const bool fallback_enabled =
+        dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
+        dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
+        dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
+    if (!config_.dual_yolo.gpu_candidate_refine || !fallback_enabled) {
+        return false;
+    }
+    if (left_detections.empty() && right_detections.empty()) {
+        return false;
+    }
+    if (left_detections.empty() || right_detections.empty()) {
+        return true;
+    }
+
+    const StereoRoiPairGateConfig roi_pair_gate =
+        makeStereoRoiPairGateConfig(config_);
+    std::vector<bool> right_used(right_detections.size(), false);
+    int matched_left = 0;
+    for (size_t li = 0; li < left_detections.size(); ++li) {
+        int best_idx = -1;
+        float best_score = std::numeric_limits<float>::max();
+        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+            if (right_used[ri]) continue;
+            StereoRoiPair candidate_pair;
+            if (!evaluateStereoRoiPair(left_detections[li],
+                                       right_detections[ri],
+                                       static_cast<int>(li),
+                                       static_cast<int>(ri),
+                                       roi_pair_gate,
+                                       &candidate_pair,
+                                       nullptr)) {
+                continue;
+            }
+            if (candidate_pair.score < best_score) {
+                best_score = candidate_pair.score;
+                best_idx = static_cast<int>(ri);
+            }
+        }
+        if (best_idx >= 0) {
+            right_used[static_cast<size_t>(best_idx)] = true;
+            ++matched_left;
+        }
+    }
+
+    if (matched_left < static_cast<int>(left_detections.size())) {
+        return true;
+    }
+    for (bool used : right_used) {
+        if (!used) return true;
+    }
+    return false;
 }
 
 bool Pipeline::asyncRoiStage2Configured() const {
@@ -2780,16 +2827,25 @@ bool Pipeline::startAsyncRoiStage2() {
     return true;
 }
 
+void Pipeline::releaseAsyncRoiBuffer(int buffer_index, const char* reason) {
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
+        return;
+    }
+    waitAsyncRoiBufferCopy(buffer_index, reason);
+    std::lock_guard<std::mutex> lk(async_roi_mutex_);
+    releaseAsyncRoiBufferLocked(buffer_index);
+}
+
 void Pipeline::releaseAsyncRoiBufferLocked(int buffer_index) {
     if (buffer_index >= 0 &&
         buffer_index < static_cast<int>(async_roi_buffers_.size())) {
-        waitAsyncRoiBufferCopyLocked(buffer_index, "release");
         async_roi_free_buffers_.push_back(buffer_index);
     }
 }
 
-bool Pipeline::waitAsyncRoiBufferCopyLocked(int buffer_index,
-                                            const char* reason) {
+bool Pipeline::waitAsyncRoiBufferCopy(int buffer_index,
+                                      const char* reason) {
     using Clock = std::chrono::high_resolution_clock;
     if (buffer_index < 0 ||
         buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
@@ -2866,15 +2922,19 @@ void Pipeline::shutdownAsyncRoiStage2() {
     if (!async_roi_ready_ && !async_roi_thread_.joinable()) {
         return;
     }
+    std::vector<int> pending_buffers;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         async_roi_thread_stop_ = true;
         while (!async_roi_pending_.empty()) {
-            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            pending_buffers.push_back(async_roi_pending_.front().buffer_index);
             async_roi_pending_.pop_front();
         }
     }
     async_roi_cv_.notify_all();
+    for (int buffer_index : pending_buffers) {
+        releaseAsyncRoiBuffer(buffer_index, "shutdown");
+    }
     if (async_roi_thread_.joinable()) {
         async_roi_thread_.join();
     }
@@ -2961,6 +3021,14 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
                                       AsyncRoiBuffer& buffer,
                                       bool need_host_gray,
                                       bool need_bgr) {
+    using SnapshotClock = std::chrono::high_resolution_clock;
+    auto record_snapshot_elapsed = [](const char* name,
+                                      const SnapshotClock::time_point& start) {
+        const double ms = std::chrono::duration<double, std::milli>(
+            SnapshotClock::now() - start).count();
+        globalPerf().record(name, ms);
+    };
+
     const uint8_t* left_src =
         static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
     const uint8_t* right_src =
@@ -3007,6 +3075,7 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
         return false;
     }
 
+    const auto gray_submit_start = SnapshotClock::now();
     cudaError_t err = cudaMemcpy2DAsync(
         buffer.left_gray_gpu, buffer.left_gray_pitch,
         left_src, static_cast<size_t>(left_src_pitch),
@@ -3021,8 +3090,13 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
             cudaMemcpyDeviceToDevice,
             async_roi_copy_stream_);
     }
+    if (err == cudaSuccess) {
+        record_snapshot_elapsed("Stage2_AsyncRoiGrayD2DSubmit",
+                                gray_submit_start);
+    }
 
     if (err == cudaSuccess && need_bgr) {
+        const auto bgr_submit_start = SnapshotClock::now();
         err = cudaMemcpy2DAsync(
             buffer.left_bgr_gpu, buffer.left_bgr_pitch,
             left_bgr_src, static_cast<size_t>(left_bgr_src_pitch),
@@ -3037,9 +3111,14 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
                 cudaMemcpyDeviceToDevice,
                 async_roi_copy_stream_);
         }
+        if (err == cudaSuccess) {
+            record_snapshot_elapsed("Stage2_AsyncRoiBgrD2DSubmit",
+                                    bgr_submit_start);
+        }
     }
 
     if (err == cudaSuccess && need_host_gray) {
+        const auto host_submit_start = SnapshotClock::now();
         err = cudaMemcpy2DAsync(
             buffer.left_gray_host, buffer.left_gray_host_pitch,
             buffer.left_gray_gpu, buffer.left_gray_pitch,
@@ -3054,12 +3133,19 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
                 cudaMemcpyDeviceToHost,
                 async_roi_copy_stream_);
         }
+        if (err == cudaSuccess) {
+            record_snapshot_elapsed("Stage2_AsyncRoiHostGrayD2HSubmit",
+                                    host_submit_start);
+        }
     }
 
     if (err == cudaSuccess) {
+        const auto event_submit_start = SnapshotClock::now();
         err = cudaEventRecord(buffer.copy_done, async_roi_copy_stream_);
         if (err == cudaSuccess) {
             buffer.copy_event_recorded = true;
+            record_snapshot_elapsed("Stage2_AsyncRoiEventRecord",
+                                    event_submit_start);
         }
     }
     if (err != cudaSuccess) {
@@ -3080,27 +3166,58 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     slot.results.clear();
 
     int buffer_index = -1;
+    size_t queue_pending_depth = 0;
+    size_t queue_free_buffers = 0;
+    bool queue_worker_busy = false;
+    bool no_buffer = false;
+    size_t no_buffer_pending_depth = 0;
+    bool no_buffer_worker_busy = false;
+    int dropped_reuse_buffer = -1;
+    int dropped_reuse_frame = -1;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        queue_pending_depth = async_roi_pending_.size();
+        queue_free_buffers = async_roi_free_buffers_.size();
+        queue_worker_busy = async_roi_worker_busy_;
         if (async_roi_free_buffers_.empty() && !async_roi_pending_.empty()) {
-            const int dropped_frame = async_roi_pending_.front().frame_id;
-            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            dropped_reuse_frame = async_roi_pending_.front().frame_id;
+            dropped_reuse_buffer = async_roi_pending_.front().buffer_index;
             async_roi_pending_.pop_front();
             globalPerf().record("Stage2_AsyncRoiDropPending", 0.0);
-            LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
-                     dropped_frame, slot.frame_id);
         }
-        if (async_roi_free_buffers_.empty()) {
-            globalPerf().record("Stage2_AsyncRoiDropNoBuffer", 0.0);
-            LOG_WARN("[AsyncROI] Drop frame=%d: no async ROI buffer free "
-                     "(worker_busy=%d pending=%zu)",
-                     slot.frame_id,
-                     async_roi_worker_busy_ ? 1 : 0,
-                     async_roi_pending_.size());
-            return false;
+        if (!async_roi_free_buffers_.empty()) {
+            buffer_index = async_roi_free_buffers_.front();
+            async_roi_free_buffers_.pop_front();
+        } else if (dropped_reuse_buffer < 0) {
+            no_buffer = true;
+            no_buffer_pending_depth = async_roi_pending_.size();
+            no_buffer_worker_busy = async_roi_worker_busy_;
         }
-        buffer_index = async_roi_free_buffers_.front();
-        async_roi_free_buffers_.pop_front();
+    }
+    if (dropped_reuse_buffer >= 0) {
+        waitAsyncRoiBufferCopy(dropped_reuse_buffer, "replace_pending_reuse");
+        if (buffer_index < 0) {
+            buffer_index = dropped_reuse_buffer;
+        } else {
+            releaseAsyncRoiBuffer(dropped_reuse_buffer, "replace_pending_extra");
+        }
+        LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
+                 dropped_reuse_frame, slot.frame_id);
+    }
+    globalPerf().record("Stage2_AsyncRoiPendingDepth",
+                        static_cast<double>(queue_pending_depth));
+    globalPerf().record("Stage2_AsyncRoiFreeBuffers",
+                        static_cast<double>(queue_free_buffers));
+    globalPerf().record("Stage2_AsyncRoiWorkerBusy",
+                        queue_worker_busy ? 1.0 : 0.0);
+    if (no_buffer) {
+        globalPerf().record("Stage2_AsyncRoiDropNoBuffer", 0.0);
+        LOG_WARN("[AsyncROI] Drop frame=%d: no async ROI buffer free "
+                 "(worker_busy=%d pending=%zu)",
+                 slot.frame_id,
+                 no_buffer_worker_busy ? 1 : 0,
+                 no_buffer_pending_depth);
+        return false;
     }
 
     AsyncRoiBuffer& buffer =
@@ -3114,11 +3231,16 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
          config_.dual_yolo.depth_roi_patch_iou_color_edge ||
          neural_needs_bgr);
+    if (need_host_gray) {
+        globalPerf().record("Stage2_AsyncRoiNeedHostGray", 0.0);
+    }
+    if (need_bgr) {
+        globalPerf().record("Stage2_AsyncRoiNeedBgr", 0.0);
+    }
 
     ScopedTimer tsnap("Stage2_AsyncRoiSnapshot");
     if (!snapshotAsyncRoiImages(slot, buffer, need_host_gray, need_bgr)) {
-        std::lock_guard<std::mutex> lk(async_roi_mutex_);
-        releaseAsyncRoiBufferLocked(buffer_index);
+        releaseAsyncRoiBuffer(buffer_index, "snapshot_failed");
         return false;
     }
     if (slot_index >= 0 && slot_index < RING_BUFFER_SIZE) {
@@ -3130,8 +3252,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
             if (evt_err != cudaSuccess) {
                 LOG_WARN("Async ROI: record slot copy event failed frame=%d err=%s",
                          slot.frame_id, cudaGetErrorString(evt_err));
-                std::lock_guard<std::mutex> lk(async_roi_mutex_);
-                releaseAsyncRoiBufferLocked(buffer_index);
+                releaseAsyncRoiBuffer(buffer_index, "slot_event_failed");
                 return false;
             }
             std::lock_guard<std::mutex> lk(async_roi_mutex_);
@@ -3170,17 +3291,22 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.input.height = config_.rect_height;
     task.input.stream = async_roi_stream_;
 
+    int dropped_pending_buffer = -1;
+    int dropped_pending_frame = -1;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         if (!async_roi_pending_.empty()) {
-            const int dropped_frame = async_roi_pending_.front().frame_id;
-            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            dropped_pending_frame = async_roi_pending_.front().frame_id;
+            dropped_pending_buffer = async_roi_pending_.front().buffer_index;
             async_roi_pending_.pop_front();
             globalPerf().record("Stage2_AsyncRoiDropPending", 0.0);
-            LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
-                     dropped_frame, slot.frame_id);
         }
         async_roi_pending_.push_back(std::move(task));
+    }
+    if (dropped_pending_buffer >= 0) {
+        releaseAsyncRoiBuffer(dropped_pending_buffer, "replace_pending_after_submit");
+        LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
+                 dropped_pending_frame, slot.frame_id);
     }
     async_roi_cv_.notify_one();
     globalPerf().record("Stage2_AsyncRoiSubmitted", 0.0);
@@ -3229,6 +3355,12 @@ void Pipeline::asyncRoiWorkerLoop() {
             }
         }
         if (copy_ready) {
+            if (task.host_gray_valid) {
+                globalPerf().record("Stage2_AsyncRoiHostGrayTask", 0.0);
+            }
+            if (task.bgr_valid) {
+                globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
+            }
             std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
             output = runRoiStage2Core(task.input);
         } else {
@@ -3312,14 +3444,20 @@ void Pipeline::expireAsyncRoiBefore(int frame_id) {
     if (!async_roi_ready_) {
         return;
     }
-    std::lock_guard<std::mutex> lk(async_roi_mutex_);
-    async_roi_expire_before_frame_ =
-        std::max(async_roi_expire_before_frame_, frame_id);
-    while (!async_roi_pending_.empty() &&
-           async_roi_pending_.front().frame_id < async_roi_expire_before_frame_) {
-        globalPerf().record("Stage2_AsyncRoiDropExpiredPending", 0.0);
-        releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
-        async_roi_pending_.pop_front();
+    std::vector<int> expired_buffers;
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_expire_before_frame_ =
+            std::max(async_roi_expire_before_frame_, frame_id);
+        while (!async_roi_pending_.empty() &&
+               async_roi_pending_.front().frame_id < async_roi_expire_before_frame_) {
+            globalPerf().record("Stage2_AsyncRoiDropExpiredPending", 0.0);
+            expired_buffers.push_back(async_roi_pending_.front().buffer_index);
+            async_roi_pending_.pop_front();
+        }
+    }
+    for (int buffer_index : expired_buffers) {
+        releaseAsyncRoiBuffer(buffer_index, "expire_pending");
     }
 }
 
@@ -3482,6 +3620,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     if (!image_available && cpu_pixel_modes_enabled) {
         local_stats.image_lock_fail =
             static_cast<int>(left_detections.size() + right_detections.size());
+        globalPerf().record("Stage2_CPUHostImageUnavailable", 0.0);
+    } else if (image_available && cpu_pixel_modes_enabled) {
+        globalPerf().record("Stage2_CPUHostImageUsed", 0.0);
     }
 
     const auto& P1 = calibration_->getProjectionLeft();
@@ -3771,6 +3912,65 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
              yolo_disparity <= static_cast<float>(config_.max_disparity))
                 ? yolo_disparity
                 : (circle_disp_positive ? circle_disparity : -1.0f);
+        auto record_cpu_feature_elapsed =
+            [](const char* aggregate_metric,
+               const char* mode_metric,
+               const Clock::time_point& start) {
+                const double ms = std::chrono::duration<double, std::milli>(
+                    Clock::now() - start).count();
+                if (aggregate_metric) {
+                    globalPerf().record(aggregate_metric, ms);
+                }
+                if (mode_metric) {
+                    globalPerf().record(mode_metric, ms);
+                }
+            };
+        auto match_sparse_feature_cpu_timed =
+            [&](const Detection& left_feature_det,
+                const Detection& right_feature_det,
+                bool source_left,
+                SparseFeatureMode mode,
+                const char* aggregate_metric,
+                const char* mode_metric) -> SparseFeatureDisparityResult {
+                const auto start = Clock::now();
+                SparseFeatureDisparityResult result =
+                    matchSparseFeatureDisparityCPU(
+                        left_cpu, left_pitch, right_cpu, right_pitch,
+                        img_width, img_height,
+                        left_feature_det, right_feature_det,
+                        source_left,
+                        feature_initial_disparity,
+                        feature_cfg,
+                        config_.max_disparity,
+                        focal,
+                        baseline,
+                        mode);
+                record_cpu_feature_elapsed(aggregate_metric, mode_metric, start);
+                return result;
+            };
+        auto match_opencv_feature_cpu_timed =
+            [&](const Detection& left_feature_det,
+                const Detection& right_feature_det,
+                bool source_left,
+                OpenCVFeatureMode mode,
+                const char* aggregate_metric,
+                const char* mode_metric) -> SparseFeatureDisparityResult {
+                const auto start = Clock::now();
+                SparseFeatureDisparityResult result =
+                    matchOpenCVFeatureDisparityCPU(
+                        left_cpu, left_pitch, right_cpu, right_pitch,
+                        img_width, img_height,
+                        left_feature_det, right_feature_det,
+                        source_left,
+                        feature_initial_disparity,
+                        feature_cfg,
+                        config_.max_disparity,
+                        focal,
+                        baseline,
+                        mode);
+                record_cpu_feature_elapsed(aggregate_metric, mode_metric, start);
+                return result;
+            };
 
         SparseFeatureDisparityResult corner_points_result;
         float z_roi_corner_points = -1.0f;
@@ -3787,17 +3987,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (!corner_points_result.valid && image_available) {
-                corner_points_result = matchSparseFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    SparseFeatureMode::CORNER);
+                corner_points_result = match_sparse_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    SparseFeatureMode::CORNER,
+                    "Stage2_CPUFeatureSparse",
+                    "Stage2_CPUFeatureSparseCorner");
             }
             if (corner_points_result.valid) {
                 z_roi_corner_points =
@@ -3821,17 +4015,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (!texture_points_result.valid && image_available) {
-                texture_points_result = matchSparseFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    SparseFeatureMode::TEXTURE);
+                texture_points_result = match_sparse_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    SparseFeatureMode::TEXTURE,
+                    "Stage2_CPUFeatureSparse",
+                    "Stage2_CPUFeatureSparseTexture");
             }
             if (texture_points_result.valid) {
                 z_roi_texture_points =
@@ -3855,17 +4043,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (!binary_points_result.valid && image_available) {
-                binary_points_result = matchSparseFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    SparseFeatureMode::BINARY);
+                binary_points_result = match_sparse_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    SparseFeatureMode::BINARY,
+                    "Stage2_CPUFeatureSparse",
+                    "Stage2_CPUFeatureSparseBinary");
             }
             if (binary_points_result.valid) {
                 z_roi_binary_points =
@@ -3897,17 +4079,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 globalPerf().record("Stage2_OpenCVCudaORB", orb_gpu_ms);
             }
             if (!orb_points_result.valid && image_available) {
-                orb_points_result = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::ORB);
+                orb_points_result = match_opencv_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    OpenCVFeatureMode::ORB,
+                    "Stage2_CPUFeatureOpenCV",
+                    "Stage2_CPUFeatureOpenCVORB");
             }
             if (orb_points_result.valid) {
                 z_roi_orb_points =
@@ -3921,17 +4097,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (roi_brisk_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
             if (image_available) {
-                brisk_points_result = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::BRISK);
+                brisk_points_result = match_opencv_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    OpenCVFeatureMode::BRISK,
+                    "Stage2_CPUFeatureOpenCV",
+                    "Stage2_CPUFeatureOpenCVBRISK");
             }
             if (brisk_points_result.valid) {
                 z_roi_brisk_points =
@@ -3945,17 +4115,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (roi_akaze_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
             if (image_available) {
-                akaze_points_result = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::AKAZE);
+                akaze_points_result = match_opencv_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    OpenCVFeatureMode::AKAZE,
+                    "Stage2_CPUFeatureOpenCV",
+                    "Stage2_CPUFeatureOpenCVAKAZE");
             }
             if (akaze_points_result.valid) {
                 z_roi_akaze_points =
@@ -3969,17 +4133,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (roi_sift_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
             if (image_available) {
-                sift_points_result = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, *right_det,
-                    true,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::SIFT);
+                sift_points_result = match_opencv_feature_cpu_timed(
+                    left_det, *right_det, true,
+                    OpenCVFeatureMode::SIFT,
+                    "Stage2_CPUFeatureOpenCV",
+                    "Stage2_CPUFeatureOpenCVSIFT");
             }
             if (sift_points_result.valid) {
                 z_roi_sift_points =
@@ -4092,39 +4250,24 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             const Detection right_proxy =
                 right_det ? *right_det : detectionFromCircleCPU(right_circle, left_det);
             const Detection& right_for_feature = right_det ? *right_det : right_proxy;
-            SparseFeatureDisparityResult corner_fb = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, right_for_feature,
-                source_left,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::CORNER);
-            SparseFeatureDisparityResult texture_fb = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, right_for_feature,
-                source_left,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::TEXTURE);
-            SparseFeatureDisparityResult binary_fb = matchSparseFeatureDisparityCPU(
-                left_cpu, left_pitch, right_cpu, right_pitch,
-                img_width, img_height,
-                left_det, right_for_feature,
-                source_left,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                SparseFeatureMode::BINARY);
+            SparseFeatureDisparityResult corner_fb =
+                match_sparse_feature_cpu_timed(
+                    left_det, right_for_feature, source_left,
+                    SparseFeatureMode::CORNER,
+                    "Stage2_CPUFallbackFeatureSparse",
+                    "Stage2_CPUFallbackFeatureSparseCorner");
+            SparseFeatureDisparityResult texture_fb =
+                match_sparse_feature_cpu_timed(
+                    left_det, right_for_feature, source_left,
+                    SparseFeatureMode::TEXTURE,
+                    "Stage2_CPUFallbackFeatureSparse",
+                    "Stage2_CPUFallbackFeatureSparseTexture");
+            SparseFeatureDisparityResult binary_fb =
+                match_sparse_feature_cpu_timed(
+                    left_det, right_for_feature, source_left,
+                    SparseFeatureMode::BINARY,
+                    "Stage2_CPUFallbackFeatureSparse",
+                    "Stage2_CPUFallbackFeatureSparseBinary");
             fallback_feature_result = corner_fb;
             if (!fallback_feature_result.valid ||
                 (texture_fb.valid &&
@@ -4137,17 +4280,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 fallback_feature_result = binary_fb;
             }
             if (roi_orb_points_depth_enabled) {
-                SparseFeatureDisparityResult orb_fb = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, right_for_feature,
-                    source_left,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::ORB);
+                SparseFeatureDisparityResult orb_fb =
+                    match_opencv_feature_cpu_timed(
+                        left_det, right_for_feature, source_left,
+                        OpenCVFeatureMode::ORB,
+                        "Stage2_CPUFallbackFeatureOpenCV",
+                        "Stage2_CPUFallbackFeatureOpenCVORB");
                 if (!fallback_feature_result.valid ||
                     (orb_fb.valid &&
                      orb_fb.confidence > fallback_feature_result.confidence)) {
@@ -4155,17 +4293,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (roi_brisk_points_depth_enabled) {
-                SparseFeatureDisparityResult brisk_fb = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, right_for_feature,
-                    source_left,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::BRISK);
+                SparseFeatureDisparityResult brisk_fb =
+                    match_opencv_feature_cpu_timed(
+                        left_det, right_for_feature, source_left,
+                        OpenCVFeatureMode::BRISK,
+                        "Stage2_CPUFallbackFeatureOpenCV",
+                        "Stage2_CPUFallbackFeatureOpenCVBRISK");
                 if (!fallback_feature_result.valid ||
                     (brisk_fb.valid &&
                      brisk_fb.confidence > fallback_feature_result.confidence)) {
@@ -4173,17 +4306,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (roi_akaze_points_depth_enabled) {
-                SparseFeatureDisparityResult akaze_fb = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, right_for_feature,
-                    source_left,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::AKAZE);
+                SparseFeatureDisparityResult akaze_fb =
+                    match_opencv_feature_cpu_timed(
+                        left_det, right_for_feature, source_left,
+                        OpenCVFeatureMode::AKAZE,
+                        "Stage2_CPUFallbackFeatureOpenCV",
+                        "Stage2_CPUFallbackFeatureOpenCVAKAZE");
                 if (!fallback_feature_result.valid ||
                     (akaze_fb.valid &&
                      akaze_fb.confidence > fallback_feature_result.confidence)) {
@@ -4191,17 +4319,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (roi_sift_points_depth_enabled) {
-                SparseFeatureDisparityResult sift_fb = matchOpenCVFeatureDisparityCPU(
-                    left_cpu, left_pitch, right_cpu, right_pitch,
-                    img_width, img_height,
-                    left_det, right_for_feature,
-                    source_left,
-                    feature_initial_disparity,
-                    feature_cfg,
-                    config_.max_disparity,
-                    focal,
-                    baseline,
-                    OpenCVFeatureMode::SIFT);
+                SparseFeatureDisparityResult sift_fb =
+                    match_opencv_feature_cpu_timed(
+                        left_det, right_for_feature, source_left,
+                        OpenCVFeatureMode::SIFT,
+                        "Stage2_CPUFallbackFeatureOpenCV",
+                        "Stage2_CPUFallbackFeatureOpenCVSIFT");
                 if (!fallback_feature_result.valid ||
                     (sift_fb.valid &&
                      sift_fb.confidence > fallback_feature_result.confidence)) {
@@ -4820,6 +4943,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
          fallback_template_enabled ||
          fallback_feature_points_enabled) &&
         image_available) {
+        const int fallback_attempted_before = local_stats.fallback_attempted;
+        const auto fallback_search_start = Clock::now();
         for (size_t li = 0; li < left_detections.size(); ++li) {
             if (left_has_stereo[li]) continue;
 
@@ -4999,6 +5124,13 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             right_used[ri] = true;
             ++local_stats.matched;
             ++local_stats.fallback_matched;
+        }
+        if (local_stats.fallback_attempted > fallback_attempted_before) {
+            const double fallback_search_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - fallback_search_start).count();
+            globalPerf().record("Stage2_CPUFallbackSearch",
+                                fallback_search_ms);
         }
     }
 
