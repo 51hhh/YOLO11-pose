@@ -191,7 +191,10 @@ bool NanoTrackTRT::init(const std::string& backbone_path,
         }
     }
 
-    allocateBuffers();
+    if (!allocateBuffers()) {
+        LOG_ERROR("[NanoTrack] Failed to allocate buffers");
+        return false;
+    }
     LOG_INFO("[NanoTrack] Initialized (single backbone): %s, head=%s",
              backbone_path.c_str(), head_path.c_str());
     return true;
@@ -230,32 +233,66 @@ bool NanoTrackTRT::initDualBackbone(const std::string& template_path,
     search_feat_elements_ = queryOutputElements(searchEngine_, "Backbone-Search");
     queryHeadOutputs(headEngine_, cls_elements_, reg_elements_, score_map_h_, score_map_w_);
 
-    allocateBuffers();
+    if (!allocateBuffers()) {
+        LOG_ERROR("[NanoTrack] Failed to allocate buffers");
+        return false;
+    }
     LOG_INFO("[NanoTrack] Initialized (dual backbone): tmpl=%s, search=%s, head=%s",
              template_path.c_str(), search_path.c_str(), head_path.c_str());
     return true;
 }
 
-void NanoTrackTRT::allocateBuffers() {
+bool NanoTrackTRT::allocateBuffers() {
+    freeBuffers();
     int tmpl_pixels = input_channels_ * template_size_ * template_size_;
     int srch_pixels = input_channels_ * search_size_ * search_size_;
+    if (tmpl_pixels <= 0 || srch_pixels <= 0 ||
+        template_feat_elements_ <= 0 || search_feat_elements_ <= 0) {
+        LOG_ERROR("[NanoTrack] Invalid buffer sizes: tmpl_pixels=%d search_pixels=%d "
+                  "tmpl_feat=%d search_feat=%d",
+                  tmpl_pixels, srch_pixels,
+                  template_feat_elements_, search_feat_elements_);
+        return false;
+    }
+    if (cls_elements_ <= 0) {
+        LOG_ERROR("[NanoTrack] Invalid head outputs: cls=%d reg=%d",
+                  cls_elements_, reg_elements_);
+        return false;
+    }
     auto chk = [](cudaError_t err, const char* tag) {
-        if (err != cudaSuccess) { LOG_ERROR("cudaMalloc %s failed: %s", tag, cudaGetErrorString(err)); return false; }
+        if (err != cudaSuccess) {
+            LOG_ERROR("[NanoTrack] CUDA allocation %s failed: %s",
+                      tag, cudaGetErrorString(err));
+            return false;
+        }
         return true;
     };
-    if (!chk(cudaMalloc(&d_template_patch_, tmpl_pixels * sizeof(float)), "tmpl_patch")) return;
-    if (!chk(cudaMalloc(&d_search_patch_, srch_pixels * sizeof(float)), "srch_patch")) return;
-    if (!chk(cudaMalloc(&d_template_feat_, template_feat_elements_ * sizeof(float)), "tmpl_feat")) return;
-    if (!chk(cudaMalloc(&d_search_feat_, search_feat_elements_ * sizeof(float)), "srch_feat")) return;
+    auto fail = [this]() {
+        freeBuffers();
+        return false;
+    };
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_template_patch_),
+                        tmpl_pixels * sizeof(float)), "tmpl_patch")) return fail();
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_search_patch_),
+                        srch_pixels * sizeof(float)), "srch_patch")) return fail();
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_template_feat_),
+                        template_feat_elements_ * sizeof(float)), "tmpl_feat")) return fail();
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_search_feat_),
+                        search_feat_elements_ * sizeof(float)), "srch_feat")) return fail();
 
     if (cls_elements_ > 0) {
-        if (!chk(cudaMalloc(&d_head_cls_, cls_elements_ * sizeof(float)), "head_cls")) return;
-        cudaMallocHost(&h_head_cls_, cls_elements_ * sizeof(float));
+        if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_head_cls_),
+                            cls_elements_ * sizeof(float)), "head_cls")) return fail();
+        if (!chk(cudaMallocHost(reinterpret_cast<void**>(&h_head_cls_),
+                                cls_elements_ * sizeof(float)), "head_cls_host")) return fail();
     }
     if (reg_elements_ > 0) {
-        if (!chk(cudaMalloc(&d_head_reg_, reg_elements_ * sizeof(float)), "head_reg")) return;
-        cudaMallocHost(&h_head_reg_, reg_elements_ * sizeof(float));
+        if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_head_reg_),
+                            reg_elements_ * sizeof(float)), "head_reg")) return fail();
+        if (!chk(cudaMallocHost(reinterpret_cast<void**>(&h_head_reg_),
+                                reg_elements_ * sizeof(float)), "head_reg_host")) return fail();
     }
+    return true;
 }
 
 void NanoTrackTRT::freeBuffers() {

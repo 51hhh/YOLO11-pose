@@ -88,12 +88,51 @@ bool MixFormerTRT::init(const std::string& engine_path,
         }
     }
 
+    auto chk = [](cudaError_t err, const char* tag) {
+        if (err == cudaSuccess) return true;
+        LOG_ERROR("[MixFormer] CUDA allocation %s failed: %s",
+                  tag, cudaGetErrorString(err));
+        return false;
+    };
+    auto free_partial = [&]() {
+        auto freeDev = [](float*& p) { if (p) { cudaFree(p); p = nullptr; } };
+        auto freeHost = [](float*& p) { if (p) { cudaFreeHost(p); p = nullptr; } };
+        freeDev(d_template_patch_);
+        freeDev(d_search_patch_);
+        freeDev(d_output_);
+        freeHost(h_output_);
+    };
+
     // Allocate buffers
-    cudaMalloc(&d_template_patch_, template_size_ * template_size_ * sizeof(float));
-    cudaMalloc(&d_search_patch_, search_size_ * search_size_ * sizeof(float));
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_template_patch_),
+                        template_size_ * template_size_ * sizeof(float)),
+             "template_patch")) {
+        free_partial();
+        return false;
+    }
+    if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_search_patch_),
+                        search_size_ * search_size_ * sizeof(float)),
+             "search_patch")) {
+        free_partial();
+        return false;
+    }
     if (output_elements_ > 0) {
-        cudaMalloc(&d_output_, output_elements_ * sizeof(float));
-        cudaMallocHost(&h_output_, output_elements_ * sizeof(float));
+        if (!chk(cudaMalloc(reinterpret_cast<void**>(&d_output_),
+                            output_elements_ * sizeof(float)),
+                 "output")) {
+            free_partial();
+            return false;
+        }
+        if (!chk(cudaMallocHost(reinterpret_cast<void**>(&h_output_),
+                                output_elements_ * sizeof(float)),
+                 "output_host")) {
+            free_partial();
+            return false;
+        }
+    } else {
+        LOG_ERROR("[MixFormer] Invalid output size: %d", output_elements_);
+        free_partial();
+        return false;
     }
 
     LOG_INFO("[MixFormer] Initialized: engine=%s, output=%d elements",

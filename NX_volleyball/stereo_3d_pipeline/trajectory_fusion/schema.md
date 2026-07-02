@@ -141,11 +141,11 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| innovation_z | float | 在线滤波器 z 创新 |
-| innovation_norm | float | 归一化创新 |
-| rejected_reason | str | 被拒绝原因 |
 | predicted_z | float | update 前预测深度 |
-| kalman_sigma_z | float | 在线估计 z 方差 |
+| innovation_z | float | 在线滤波器 z 创新，`raw_z - predicted_z` |
+| innovation_norm | float | 归一化创新，`innovation_z / sqrt(Pzz_prior + Rz)` |
+| kalman_sigma_z | float | update 后在线估计 z 标准差 |
+| rejected_reason | str | 候选级被拒原因；当前 recorder 尚未写入，需先把 pipeline 内 gate 失败原因结构化 |
 | landing_x,landing_y,landing_t | float | 当前落点预测 |
 
 ## 最小可用版本
@@ -182,6 +182,7 @@ roi_brisk_points_support,roi_brisk_points_std_px,roi_brisk_points_confidence,
 roi_akaze_points_support,roi_akaze_points_std_px,roi_akaze_points_confidence,
 fallback_feature_points_support,fallback_feature_points_std_px,
 fallback_feature_points_confidence,raw_observation_valid,
+predicted_z,innovation_z,innovation_norm,kalman_sigma_z,
 left_circle_source,right_circle_source,stereo_match_source,stereo_depth_source,
 depth_method,confidence
 ```

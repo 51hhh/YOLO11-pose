@@ -82,7 +82,7 @@ public:
         if (chip_) { gpiod_chip_close(chip_); chip_ = nullptr; }
 #endif
         if (sysfs_fd_ >= 0) {
-            (void)write(sysfs_fd_, "0", 1);
+            (void)writeExact(sysfs_fd_, "0", 1);
             close(sysfs_fd_);
             sysfs_fd_ = -1;
             unexportGpio();
@@ -92,6 +92,20 @@ public:
     bool isRunning() const { return running_.load(); }
 
 private:
+    static bool writeExact(int fd, const char* data, size_t len) {
+        size_t total = 0;
+        while (total < len) {
+            const ssize_t written = ::write(fd, data + total, len - total);
+            if (written < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+            if (written == 0) return false;
+            total += static_cast<size_t>(written);
+        }
+        return true;
+    }
+
     /// Unexport sysfs GPIO (safe to call multiple times)
     void unexportGpio() {
         if (sysfs_gpio_num_ < 0) return;
@@ -99,7 +113,7 @@ private:
         if (fd >= 0) {
             char buf[16];
             int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-            (void)::write(fd, buf, len);
+            if (len > 0) (void)writeExact(fd, buf, static_cast<size_t>(len));
             ::close(fd);
         }
     }
@@ -180,7 +194,12 @@ private:
         }
         char buf[16];
         int len = snprintf(buf, sizeof(buf), "%d", sysfs_gpio_num_);
-        (void)::write(fd, buf, len);
+        if (len <= 0 || !writeExact(fd, buf, static_cast<size_t>(len))) {
+            fprintf(stderr, "[PWM] Cannot export GPIO %d: %s\n",
+                    sysfs_gpio_num_, strerror(errno));
+            ::close(fd);
+            return false;
+        }
         ::close(fd);
 
         usleep(50000);
@@ -193,7 +212,13 @@ private:
             unexportGpio();
             return false;
         }
-        (void)::write(fd, "out", 3);
+        if (!writeExact(fd, "out", 3)) {
+            fprintf(stderr, "[PWM] Cannot write GPIO %d direction: %s\n",
+                    sysfs_gpio_num_, strerror(errno));
+            ::close(fd);
+            unexportGpio();
+            return false;
+        }
         ::close(fd);
 
         char val_path[256];
@@ -223,12 +248,12 @@ private:
         clock_gettime(CLOCK_MONOTONIC, &next);
 
         while (running_.load(std::memory_order_relaxed)) {
-            (void)::write(sysfs_fd_, "1", 1);
+            (void)writeExact(sysfs_fd_, "1", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
             timespecAdd(next, high_ns);
             sleepUntil(next);
 
-            (void)::write(sysfs_fd_, "0", 1);
+            (void)writeExact(sysfs_fd_, "0", 1);
             lseek(sysfs_fd_, 0, SEEK_SET);
             timespecAdd(next, low_ns);
             sleepUntil(next);

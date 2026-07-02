@@ -8,8 +8,8 @@
 camera:
   left_index: 0
   right_index: 1
-  serial_left: ""
-  serial_right: ""
+  serial_left: "00D39342665"
+  serial_right: "00219471413"
   exposure_us: 9867.0
   gain_db: 11.9906
   use_trigger: true
@@ -60,17 +60,17 @@ detector:
       roi_edge_centroid: true  # gradient-weighted ROI edge centroid disparity candidate
       roi_radial_center: true  # radial-gradient center disparity candidate
       roi_edge_pair_center: true # paired left/right ROI edge center disparity candidate
-      roi_corner_points: true  # Shi-Tomasi-like ROI corner feature point disparity candidate
-      roi_texture_points: true # high-gradient ROI texture feature point disparity candidate
-      roi_binary_points: true  # Census/BRIEF-like binary descriptor feature disparity candidate
+      roi_corner_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
+      roi_texture_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
+      roi_binary_points: false  # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_orb_points: false    # OpenCV ORB ROI descriptor matching candidate; CPU cost, enable for A/B test
       roi_brisk_points: false  # OpenCV BRISK ROI descriptor matching candidate; CPU cost, enable for A/B test
       roi_akaze_points: false  # OpenCV AKAZE ROI descriptor matching candidate; heavier, enable for A/B test
-      roi_center_patch: true   # center patch ZNCC subpixel disparity candidate
-      roi_subpixel: true       # ROI multi-point ZNCC subpixel candidate
+      roi_center_patch: false  # heavier ZNCC refinement; enable for offline/quality A/B tests
+      roi_subpixel: false      # heavier multi-point ZNCC refinement; enable for offline/quality A/B tests
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
-      fallback_template: true  # single-side miss -> bounded ZNCC template search candidate
-      fallback_feature_points: true # single-side miss -> bounded ROI feature point search candidate
+      fallback_template: false # CPU fallback; keep off in 100fps realtime config
+      fallback_feature_points: false # CPU fallback; keep off in 100fps realtime config
     fallback_to_roi_match: false       # legacy full ROI texture match, keep off for dual-YOLO test
     gpu_candidate_refine: true         # direct dual-YOLO ROI candidates run in one CUDA batch
     fallback_epipolar_search: true     # left/right single-side miss -> bounded epipolar search
@@ -78,7 +78,7 @@ detector:
     roi_denoise: true                  # local 3x3 denoise only inside ROI
     log_matches: true
     depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match
-    subpixel_enabled: true             # ROI multi-point ZNCC + parabolic subpixel disparity
+    subpixel_enabled: false            # ROI multi-point ZNCC + parabolic subpixel disparity (offline/quality A/B)
     subpixel_patch_radius: 5
     subpixel_search_radius_px: 8
     subpixel_max_points: 12
@@ -133,6 +133,7 @@ performance:
   target_fps: 100
   log_interval: 100
   enable_profiling: true
+  drop_stale_roi_frames: true  # 若后一帧 YOLO 已完成，跳过旧帧 IoU/特征/深度后处理以控制实时延迟
 
 tracker:
   enabled: false
@@ -187,6 +188,7 @@ recording:
   # extended: add sync watermark + bbox/circle geometry for model training.
   detail_level: "extended"
   raw_mode: true
+  max_queue_frames: 1000           # CSV 写入落后时丢记录，不阻塞 100fps 实时线程
 
 baseline_recording:
   enabled: false
@@ -201,4 +203,5 @@ baseline_recording:
   pair_min_disparity_px: 0.0
   image_format: "png"
   png_compression: 1
+  max_queue_frames: 120            # 写盘线程最多缓存约 1.2s，磁盘慢时丢帧而不是无限涨内存
   stop_after_clip: true

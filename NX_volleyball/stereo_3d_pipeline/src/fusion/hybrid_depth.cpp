@@ -377,7 +377,14 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         float Rz  = getObsNoise(z_obs, method);
         // xy 噪声与深度关联: sigma_xy = sigma_z * z / f (误差传播)
         float Rxy = Rz * (z_obs * z_obs) / (focal_ * focal_) + 0.001f;
+        const float predicted_z = track->z();
+        const float prior_z_var = std::max(0.0f, track->P[2][2]);
+        const float innovation_z = z_obs - predicted_z;
+        const float innovation_norm =
+            innovation_z / std::sqrt(std::max(1e-6f, prior_z_var + Rz));
         track->update(obs_x, obs_y, z_obs, Rxy, Rz);
+        const float kalman_sigma_z =
+            std::sqrt(std::max(0.0f, track->P[2][2]));
         track->method = method;
         track->updateBBox(det.cx, det.cy, det.width, det.height);
 
@@ -390,6 +397,10 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         obj.raw_y = obs_y;
         obj.raw_z = z_obs;
         obj.raw_observation_valid = 1;
+        obj.predicted_z = predicted_z;
+        obj.innovation_z = innovation_z;
+        obj.innovation_norm = innovation_norm;
+        obj.kalman_sigma_z = kalman_sigma_z;
         obj.confidence = det.confidence * std::max(0.0f, 1.0f - track->lost_count * 0.1f);
         obj.class_id = det.class_id;
         obj.track_id = track->track_id;
@@ -530,6 +541,8 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
             obj.x  = track.x();    obj.y  = track.y();    obj.z  = track.z();
             obj.vx = track.vx();   obj.vy = track.vy();   obj.vz = track.vz();
             obj.ax = track.ax();   obj.ay = track.ay();   obj.az = track.az();
+            obj.predicted_z = track.z();
+            obj.kalman_sigma_z = std::sqrt(std::max(0.0f, track.P[2][2]));
             obj.confidence = std::max(0.0f, 0.5f - track.lost_count * 0.1f);
             obj.class_id = 0;
             obj.track_id = track.track_id;

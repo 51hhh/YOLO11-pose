@@ -69,6 +69,7 @@ public:
 
     float getFocal()    const { return focal_; }
     float getBaseline() const { return baseline_; }
+    bool ready() const { return ready_; }
 
 private:
     float focal_    = 0.0f;
@@ -84,6 +85,7 @@ private:
     float* detCy_device_   = nullptr;   ///< 检测中心 y
     float* results_device_ = nullptr;   ///< [X,Y,Z,disp,conf] * N
     float* results_host_   = nullptr;   ///< pinned host mirror
+    bool ready_ = false;
 
     bool allocateBuffers();
     void freeBuffers();

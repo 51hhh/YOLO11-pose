@@ -1,9 +1,9 @@
 /**
  * @file hikvision_camera.cpp
- * @brief 海康工业相机零拷贝采集实现
+ * @brief 海康工业相机采集实现
  *
  * 核心设计:
- *   SDK GetImageBuffer → memcpy 到零拷贝对齐地址 → FreeImageBuffer
+ *   SDK GetImageBuffer → memcpy 到 VPI host-mapped buffer → FreeImageBuffer
  *   不做 ISP / 格式转换, 原始 BayerRG8 输出
  *   ISP 由后续 CUDA/VPI 在 GPU 上完成
  */
@@ -677,7 +677,8 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
     int srcWidth  = info.nWidth;
     int srcHeight = info.nHeight;
 
-    // 直接 memcpy 到目标 buffer (零拷贝路径: dst 可以是 cudaHostAlloc 地址)
+    // 直接 memcpy 到目标 buffer; dst 通常是 VPI host-mapped 内存,
+    // 后续 CUDA/VPI 可复用该图像资源, 但相机 SDK buffer 仍有一次拷贝。
     int dstPitch = (pitch > 0) ? pitch : srcWidth;
     if (dstPitch == srcWidth) {
         // 连续拷贝

@@ -74,6 +74,7 @@ private:
     float* depthResults_host_   = nullptr;  ///< CPU 上的深度输出 (pinned)
     int*   bboxes_device_       = nullptr;  ///< GPU 上的 BBox 数据
     int maxBoxes_ = 32;                     ///< 最大检测框数
+    bool ready_ = false;
 
     bool allocateGPUBuffers();
     void freeGPUBuffers();

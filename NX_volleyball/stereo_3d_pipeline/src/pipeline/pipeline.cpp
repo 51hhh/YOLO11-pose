@@ -47,6 +47,25 @@ extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr
 
 namespace stereo3d {
 
+namespace {
+
+void limitDetectionsByConfidence(std::vector<Detection>& detections,
+                                 int max_detections) {
+    if (max_detections <= 0 ||
+        detections.size() <= static_cast<size_t>(max_detections)) {
+        return;
+    }
+    auto by_confidence = [](const Detection& a, const Detection& b) {
+        return a.confidence > b.confidence;
+    };
+    const auto keep_end = detections.begin() + max_detections;
+    std::nth_element(detections.begin(), keep_end, detections.end(), by_confidence);
+    detections.resize(static_cast<size_t>(max_detections));
+    std::sort(detections.begin(), detections.end(), by_confidence);
+}
+
+}  // namespace
+
 Pipeline::Pipeline() = default;
 
 Pipeline::~Pipeline() {
@@ -111,7 +130,7 @@ bool Pipeline::init(const PipelineConfig& config) {
         return false;
     }
 
-    // 5. 分配 VPI Images (使用 VPI zero-copy buffers)
+    // 5. 分配 VPI Images (CPU 写入, CUDA/VPI 后续复用的 host-mapped buffers)
     LOG_INFO("Allocating VPI images for %d slots...", RING_BUFFER_SIZE);
     for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
         VPIStatus err;
@@ -191,7 +210,9 @@ bool Pipeline::init(const PipelineConfig& config) {
             if (!cachePtr("rawL", slots_[i].rawL, slots_[i].rawL_gpu) ||
                 !cachePtr("rawR", slots_[i].rawR, slots_[i].rawR_gpu) ||
                 !cachePtr("tempBGR_L", slots_[i].tempBGR_L, slots_[i].tempBGR_L_gpu) ||
-                !cachePtr("tempBGR_R", slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu)) {
+                !cachePtr("tempBGR_R", slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu) ||
+                !cachePtr("rectBGR_vpiL", slots_[i].rectBGR_vpiL, slots_[i].rectBGR_L_gpu) ||
+                !cachePtr("rectBGR_vpiR", slots_[i].rectBGR_vpiR, slots_[i].rectBGR_R_gpu)) {
                 return false;
             }
         }
@@ -357,20 +378,10 @@ bool Pipeline::init(const PipelineConfig& config) {
     }
 
     if (config_.neural_features.enabled) {
-        const auto& P1 = calibration_->getProjectionLeft();
-        const float focal = static_cast<float>(P1.at<double>(0, 0));
-        LOG_INFO("Initializing neural ROI feature matcher: backend=%s roi=%d top_k=%d",
-                 config_.neural_features.backend_name.c_str(),
-                 config_.neural_features.roi_size,
-                 config_.neural_features.top_k);
-        neural_feature_matcher_ = std::make_unique<NeuralFeatureMatcher>();
-        if (!neural_feature_matcher_->init(config_.neural_features,
-                                           focal,
-                                           calibration_->getBaseline(),
-                                           config_.max_disparity)) {
-            LOG_ERROR("Failed to initialize neural ROI feature matcher");
-            return false;
-        }
+        LOG_ERROR("neural_feature_matching.enabled=true but realtime Pipeline "
+                  "does not bind/use NeuralFeatureMatcher outputs yet. Disable "
+                  "it or finish Pipeline integration before benchmarking NX FPS.");
+        return false;
     }
 
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
@@ -547,6 +558,10 @@ bool Pipeline::init(const PipelineConfig& config) {
             roi_cfg.objectDiameter  = config_.depth.object_diameter;
             roi_cfg.useCircleFit    = true;
             roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
+            if (!roi_matcher_->ready()) {
+                LOG_ERROR("ROI Stereo Matcher failed to initialize");
+                return false;
+            }
         } else {
             LOG_INFO("Skipping ROI Stereo Matcher: dual YOLO depth path has ROI fallback disabled");
         }
@@ -628,6 +643,7 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_INFO("  Trigger: %d Hz", config_.trigger_freq_hz);
     LOG_INFO("  Detect: %s (DLA=%d)", config_.engine_file.c_str(), config_.use_dla);
     LOG_INFO("  Disparity: %s", strategyStr.c_str());
+    LOG_INFO("  Drop stale ROI frames: %d", config_.drop_stale_roi_frames ? 1 : 0);
     LOG_INFO("========================================");
 
     return true;
@@ -698,15 +714,15 @@ void Pipeline::stop() {
 }
 
 // ===================================================================
-// 异步相机采集线程 (零拷贝, 按需模式)
+// 异步相机采集线程 (按需模式)
 //
 // 工作流:
 //   1. pipeline 调用 requestGrab(slot) → 采集线程唤醒
-//   2. 采集线程: lock VPI Image → grabFramePair → unlock
+//   2. 采集线程: lock VPI host buffer → grabFramePair memcpy → unlock
 //   3. 采集线程: signal grab_done → pipeline 端 waitGrab() 返回
 //
 // 关键优化:
-//   - 直接写入 VPI Image (零拷贝, 无 staging buffer)
+//   - 直接写入 VPI Image host-mapped buffer, 不再经过额外 staging buffer
 //   - grab 期间 pipeline 并行执行 stage1+stage2 (重叠 ~3ms)
 //   - 总迭代时间: grab_wait(~2ms) + process(~4ms) ≈ 6-7ms
 // ===================================================================
@@ -726,7 +742,7 @@ void Pipeline::grabLoop() {
 
         auto& slot = slots_[slot_idx];
 
-        // 直接锁定 VPI Image 并写入 (零拷贝: camera DMA → 统一内存)
+        // 直接锁定 VPI Image host buffer 并写入，后续 VPI/CUDA 复用同一图像资源。
         VPIImageData imgDataL, imgDataR;
         VPIStatus stL = vpiImageLockData(
             slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
@@ -1020,7 +1036,7 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             LOG_WARN("[Pipeline] Frame %d grab failed, skipping", slot.frame_id);
         }
     }
-    // grab_preloaded == true: 异步采集线程已将数据写入 rawL/rawR (零拷贝)
+    // grab_preloaded == true: 异步采集线程已将数据写入 rawL/rawR 的 host-mapped buffer
 #endif
 
     // === VPI 流同步: 确保上一帧的 remap/convert 完成后再提交新任务 ===
@@ -2126,6 +2142,7 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     if (slot.detection_submitted) {
         slot.detections = getDetector(slot.frame_id)->collect(
             0, config_.rect_width, config_.rect_height);
+        limitDetectionsByConfidence(slot.detections, config_.max_detections);
     }
     collectRightDetections(slot, 0);
 
@@ -2488,6 +2505,38 @@ void Pipeline::waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const 
     }
 }
 
+bool Pipeline::detectEventsReady(const FrameSlot& slot) const {
+    if (!slot.is_detect_frame || !slot.detection_submitted) {
+        return false;
+    }
+
+    cudaError_t err = cudaEventQuery(slot.evtDetectDone);
+    if (err == cudaErrorNotReady) {
+        return false;
+    }
+    if (err != cudaSuccess) {
+        LOG_WARN("[Pipeline] left detect event query failed: frame=%d err=%s",
+                 slot.frame_id, cudaGetErrorString(err));
+        return false;
+    }
+
+    if (dualYoloEnabled()) {
+        if (!slot.right_detection_submitted) {
+            return false;
+        }
+        err = cudaEventQuery(slot.evtDetectRightDone);
+        if (err == cudaErrorNotReady) {
+            return false;
+        }
+        if (err != cudaSuccess) {
+            LOG_WARN("[Pipeline] right detect event query failed: frame=%d err=%s",
+                     slot.frame_id, cudaGetErrorString(err));
+            return false;
+        }
+    }
+    return true;
+}
+
 void Pipeline::collectRightDetections(FrameSlot& slot, int slot_index) {
     slot.detections_right.clear();
     if (!dualYoloEnabled() || !slot.is_detect_frame ||
@@ -2498,6 +2547,7 @@ void Pipeline::collectRightDetections(FrameSlot& slot, int slot_index) {
     slot.detections_right = detector_right_->collect(slot_index,
                                                      config_.rect_width,
                                                      config_.rect_height);
+    limitDetectionsByConfidence(slot.detections_right, config_.max_detections);
 }
 
 Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
@@ -4000,27 +4050,23 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     auto stream = getDLAStream(slot.frame_id);
     cudaStreamWaitEvent(stream, slot.evtRectDone, 0);
 
-    // 从 VPI Image 获取 GPU 指针，传给 TensorRT
-    // BGR 模式: 使用校正后 BGR 图像; Gray 模式: 使用校正后灰度图
-    VPIImage detectImg = leftDetectorUsesBGR()
-                         ? slot.rectBGR_vpiL : slot.rectGray_vpiL;
-    VPIImageData imgData;
-    VPIStatus st = vpiImageLockData(detectImg, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
-    if (st != VPI_SUCCESS) {
-        LOG_WARN("stage1_detect: vpiImageLockData failed (%d)", (int)st);
+    // BGR 模式使用校正后 BGR 图像，Gray 模式使用校正后灰度图。
+    // CUDA 指针在 init() 时缓存，避免每帧 VPI lock/unlock。
+    const auto& leftDetectGpu = leftDetectorUsesBGR()
+        ? slot.rectBGR_L_gpu
+        : slot.rectGray_L_gpu;
+    if (!leftDetectGpu.data || leftDetectGpu.pitchBytes <= 0) {
+        LOG_WARN("stage1_detect: invalid left detect CUDA pointer");
         NVTX_RANGE_POP();
         return;
     }
 
-    void* gpu_ptr = imgData.buffer.pitch.planes[0].data;
-    int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
-
     // 异步推理提交: 仅 enqueue，不在此处同步
-    const bool submitted = det->enqueue(slot_index, gpu_ptr, pitch,
+    const bool submitted = det->enqueue(slot_index, leftDetectGpu.data,
+                                        leftDetectGpu.pitchBytes,
                                         config_.rect_width, config_.rect_height,
                                         stream);
 
-    vpiImageUnlock(detectImg);
     if (!submitted) {
         LOG_WARN("stage1_detect: left TRT enqueue failed");
         NVTX_RANGE_POP();
@@ -4033,27 +4079,21 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
         auto streamR = getRightDLAStream(slot.frame_id);
         cudaStreamWaitEvent(streamR, slot.evtRectDone, 0);
 
-        VPIImage detectImgR = rightDetectorUsesBGR()
-                             ? slot.rectBGR_vpiR : slot.rectGray_vpiR;
-        VPIImageData imgDataR;
-        VPIStatus stR = vpiImageLockData(detectImgR, VPI_LOCK_READ,
-                                         VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR,
-                                         &imgDataR);
-        if (stR != VPI_SUCCESS) {
-            LOG_WARN("stage1_detect: right vpiImageLockData failed (%d)", (int)stR);
+        const auto& rightDetectGpu = rightDetectorUsesBGR()
+            ? slot.rectBGR_R_gpu
+            : slot.rectGray_R_gpu;
+        if (!rightDetectGpu.data || rightDetectGpu.pitchBytes <= 0) {
+            LOG_WARN("stage1_detect: invalid right detect CUDA pointer");
             NVTX_RANGE_POP();
             return;
         }
 
-        void* gpu_ptr_r = imgDataR.buffer.pitch.planes[0].data;
-        int pitch_r = imgDataR.buffer.pitch.planes[0].pitchBytes;
-
-        const bool submittedR = detR->enqueue(slot_index, gpu_ptr_r, pitch_r,
+        const bool submittedR = detR->enqueue(slot_index, rightDetectGpu.data,
+                                              rightDetectGpu.pitchBytes,
                                               config_.rect_width,
                                               config_.rect_height,
                                               streamR);
 
-        vpiImageUnlock(detectImgR);
         if (!submittedR) {
             LOG_WARN("stage1_detect: right TRT enqueue failed");
             NVTX_RANGE_POP();
@@ -4102,6 +4142,7 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     if (slot.detection_submitted) {
         slot.detections = getDetector(slot.frame_id)->collect(
             slot_index, config_.rect_width, config_.rect_height);
+        limitDetectionsByConfidence(slot.detections, config_.max_detections);
     } else {
         slot.detections.clear();
     }
@@ -4147,6 +4188,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     if (slot.detection_submitted) {
         slot.detections = det->collect(slot_index,
                                        config_.rect_width, config_.rect_height);
+        limitDetectionsByConfidence(slot.detections, config_.max_detections);
     } else {
         slot.detections.clear();
     }
@@ -4593,6 +4635,7 @@ void Pipeline::pipelineLoopROI() {
     using Clock = std::chrono::high_resolution_clock;
     auto fps_start = Clock::now();
     int fps_count = 0;
+    int stale_drop_count = 0;
     constexpr double kStage1SubmitOutlierMs = 15.0;
     constexpr double kStage2WaitYoloOutlierMs = 8.0;
     constexpr double kStage0WaitGrabOutlierMs = 8.0;
@@ -4615,6 +4658,17 @@ void Pipeline::pipelineLoopROI() {
         }
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
         return true;
+    };
+
+    auto newer_yolo_ready = [&](int frame_id) -> bool {
+        if (!config_.drop_stale_roi_frames || frame_id >= next_detect_frame) {
+            return false;
+        }
+        const FrameSlot& newer = slots_[frame_id % RING_BUFFER_SIZE];
+        return newer.frame_id == frame_id &&
+               !newer.grab_failed &&
+               newer.is_detect_frame &&
+               detectEventsReady(newer);
     };
 
     // ===== 填充: 同步抓取 + 处理首帧 =====
@@ -4770,6 +4824,22 @@ void Pipeline::pipelineLoopROI() {
                 continue;
             }
 
+            if (config_.drop_stale_roi_frames &&
+                !config_.detection_only &&
+                slot.is_detect_frame &&
+                next_fuse_frame + 1 < next_detect_frame &&
+                newer_yolo_ready(next_fuse_frame + 1)) {
+                ++stale_drop_count;
+                globalPerf().record("Stage2_DropStaleROI", 0.0);
+                if (config_.stats_interval > 0 &&
+                    stale_drop_count % config_.stats_interval == 0) {
+                    LOG_WARN("[ROI] Dropped %d stale frame(s); latest ready frame=%d",
+                             stale_drop_count, next_fuse_frame + 1);
+                }
+                next_fuse_frame++;
+                continue;
+            }
+
             {
                 ScopedTimer tw("Stage2_WaitDetect");
                 waitDetectDone(streams_.cudaStreamFuse, slot);
@@ -4849,7 +4919,8 @@ void Pipeline::pipelineLoopROI() {
                 fps_count = 0;
                 fps_start = now;
                 if (config_.stats_interval > 0) {
-                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d)", current_fps_.load(), next_fuse_frame);
+                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d, stale_drop=%d)",
+                             current_fps_.load(), next_fuse_frame, stale_drop_count);
                 }
             }
         }

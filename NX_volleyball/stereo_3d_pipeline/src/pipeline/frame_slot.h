@@ -56,6 +56,10 @@ struct Object3D {
     float ax, ay, az;       ///< 3D 加速度 (m/s²)
     float raw_x, raw_y, raw_z; ///< 未经 Kalman 的当前帧观测, raw_mode 录制用
     int raw_observation_valid; ///< 1=raw_x/raw_y/raw_z 有效
+    float predicted_z;      ///< Kalman update 前的 z 预测, -1=无有效先验
+    float innovation_z;     ///< z 观测创新: raw_z - predicted_z
+    float innovation_norm;  ///< z 创新归一化值: innovation_z / sqrt(Pzz_prior + Rz)
+    float kalman_sigma_z;   ///< Kalman update 后 z 标准差估计
     float z_mono;          ///< 单目测距 (m), 校准用
     float z_stereo;        ///< 双目测距 (m), -1=无效
     float z_bbox_center;   ///< bbox 中心视差测距, -1=无效
@@ -161,6 +165,8 @@ struct Object3D {
     Object3D() : x(0), y(0), z(0), vx(0), vy(0), vz(0),
                  ax(0), ay(0), az(0),
                  raw_x(0), raw_y(0), raw_z(0), raw_observation_valid(0),
+                 predicted_z(-1), innovation_z(0), innovation_norm(0),
+                 kalman_sigma_z(-1),
                  z_mono(0), z_stereo(-1),
                  z_bbox_center(-1), z_bbox_left_edge(-1), z_bbox_right_edge(-1),
                  z_circle_center(-1), z_circle_left_edge(-1), z_circle_right_edge(-1),
@@ -306,6 +312,7 @@ struct FrameSlot {
     };
     CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
     CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
+    CachedGPU rectBGR_L_gpu, rectBGR_R_gpu;   ///< 校正 BGR 图 CUDA 指针
     CachedGPU rectGray_L_gpu;                  ///< 校正灰度左图 CUDA 指针
     CachedGPU rectGray_R_gpu;                  ///< 校正灰度右图 CUDA 指针
 

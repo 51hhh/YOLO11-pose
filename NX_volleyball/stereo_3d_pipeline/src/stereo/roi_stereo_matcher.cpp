@@ -47,6 +47,7 @@ ROIStereoMatcher::~ROIStereoMatcher() {
 void ROIStereoMatcher::init(float focal, float baseline, float cx, float cy,
                             const ROIMatchConfig& config)
 {
+    ready_ = false;
     focal_    = focal;
     baseline_ = baseline;
     cx_       = cx;
@@ -57,6 +58,7 @@ void ROIStereoMatcher::init(float focal, float baseline, float cx, float cy,
         LOG_ERROR("ROIStereoMatcher: CUDA buffer allocation failed");
         return;
     }
+    ready_ = true;
 
     LOG_INFO("ROIStereoMatcher: focal=%.1f, baseline=%.4fm, cx=%.1f, cy=%.1f",
              focal_, baseline_, cx_, cy_);
@@ -68,17 +70,21 @@ void ROIStereoMatcher::init(float focal, float baseline, float cx, float cy,
 bool ROIStereoMatcher::allocateBuffers() {
     cudaError_t err;
 
-    err = cudaMalloc(&bboxes_device_, kMaxBoxes * 4 * sizeof(int));
+    err = cudaMalloc(reinterpret_cast<void**>(&bboxes_device_),
+                     kMaxBoxes * 4 * sizeof(int));
     if (err != cudaSuccess) { LOG_ERROR("cudaMalloc bboxes failed"); freeBuffers(); return false; }
 
-    err = cudaMalloc(&detCx_device_, kMaxBoxes * sizeof(float));
+    err = cudaMalloc(reinterpret_cast<void**>(&detCx_device_),
+                     kMaxBoxes * sizeof(float));
     if (err != cudaSuccess) { freeBuffers(); return false; }
 
-    err = cudaMalloc(&detCy_device_, kMaxBoxes * sizeof(float));
+    err = cudaMalloc(reinterpret_cast<void**>(&detCy_device_),
+                     kMaxBoxes * sizeof(float));
     if (err != cudaSuccess) { freeBuffers(); return false; }
 
     // results: [X, Y, Z, disp, conf] per detection = 5 floats
-    err = cudaMalloc(&results_device_, kMaxBoxes * 5 * sizeof(float));
+    err = cudaMalloc(reinterpret_cast<void**>(&results_device_),
+                     kMaxBoxes * 5 * sizeof(float));
     if (err != cudaSuccess) { freeBuffers(); return false; }
 
     err = cudaHostAlloc(reinterpret_cast<void**>(&results_host_),
@@ -89,6 +95,7 @@ bool ROIStereoMatcher::allocateBuffers() {
 }
 
 void ROIStereoMatcher::freeBuffers() {
+    ready_ = false;
     if (bboxes_device_)  { cudaFree(bboxes_device_);  bboxes_device_  = nullptr; }
     if (detCx_device_)   { cudaFree(detCx_device_);   detCx_device_   = nullptr; }
     if (detCy_device_)   { cudaFree(detCy_device_);   detCy_device_   = nullptr; }
@@ -105,6 +112,15 @@ std::vector<Object3D> ROIStereoMatcher::match(
 {
     int numBoxes = std::min(static_cast<int>(detections.size()), kMaxBoxes);
     if (numBoxes == 0) return {};
+    if (!ready_) {
+        LOG_WARN("ROIStereoMatcher::match called before successful init");
+        return {};
+    }
+    if (!leftGPU || !rightGPU || leftPitch <= 0 || rightPitch <= 0 ||
+        imgWidth <= 0 || imgHeight <= 0) {
+        LOG_WARN("ROIStereoMatcher::match invalid image input");
+        return {};
+    }
 
     // 1. 准备 BBox + 中心坐标并上传 GPU
     std::vector<int>   bboxes_h(numBoxes * 4);
@@ -125,12 +141,25 @@ std::vector<Object3D> ROIStereoMatcher::match(
         cy_h[i] = d.cy;
     }
 
-    cudaMemcpyAsync(bboxes_device_, bboxes_h.data(),
-                    numBoxes * 4 * sizeof(int), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(detCx_device_, cx_h.data(),
-                    numBoxes * sizeof(float), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(detCy_device_, cy_h.data(),
-                    numBoxes * sizeof(float), cudaMemcpyHostToDevice, stream);
+    cudaError_t err = cudaMemcpyAsync(
+        bboxes_device_, bboxes_h.data(),
+        numBoxes * 4 * sizeof(int), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: H2D bboxes failed: %s", cudaGetErrorString(err));
+        return {};
+    }
+    err = cudaMemcpyAsync(detCx_device_, cx_h.data(),
+                          numBoxes * sizeof(float), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: H2D detCx failed: %s", cudaGetErrorString(err));
+        return {};
+    }
+    err = cudaMemcpyAsync(detCy_device_, cy_h.data(),
+                          numBoxes * sizeof(float), cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: H2D detCy failed: %s", cudaGetErrorString(err));
+        return {};
+    }
 
     // 2. 启动 CUDA Kernel
     if (config_.useCircleFit) {
@@ -157,9 +186,22 @@ std::vector<Object3D> ROIStereoMatcher::match(
     }
 
     // 3. 拷回 CPU
-    cudaMemcpyAsync(results_host_, results_device_,
-                    numBoxes * 5 * sizeof(float), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: kernel launch failed: %s", cudaGetErrorString(err));
+        return {};
+    }
+    err = cudaMemcpyAsync(results_host_, results_device_,
+                          numBoxes * 5 * sizeof(float), cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: D2H results failed: %s", cudaGetErrorString(err));
+        return {};
+    }
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("ROIStereoMatcher: stream sync failed: %s", cudaGetErrorString(err));
+        return {};
+    }
 
     // 4. 组装结果 — 始终为每个检测输出一个结果 (无效结果 confidence=0)
     //    保证 output[i] 与 detections[i] 一一对应, 避免索引错位

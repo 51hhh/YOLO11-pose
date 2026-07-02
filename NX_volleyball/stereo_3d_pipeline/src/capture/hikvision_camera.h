@@ -1,10 +1,10 @@
 /**
  * @file hikvision_camera.h
- * @brief 海康工业相机零拷贝采集封装
+ * @brief 海康工业相机采集封装
  *
  * 针对 Pipeline 架构设计:
  *   - grabFramePair(): 同步抓取左右图像
- *   - 直接写入调用方提供的 buffer (零拷贝路径)
+ *   - 从 SDK buffer 拷贝到调用方提供的 VPI host-mapped buffer
  *   - 支持外触发 (Line0/Line1) + 软触发
  *   - BayerRG8 原始格式输出 (后续由 CUDA/VPI 处理)
  */
@@ -106,7 +106,7 @@ public:
      * 输出格式: BayerRG8 (H × W, uint8_t)
      * 缓冲区大小: width * height bytes
      *
-     * @param dst_left  左图写入地址 (调用方分配, 可以是零拷贝内存)
+     * @param dst_left  左图写入地址 (调用方分配, 可以是 VPI host-mapped 内存)
      * @param dst_right 右图写入地址
      * @param left_pitch  左图行跨度 (bytes), 0 = width
      * @param right_pitch 右图行跨度 (bytes), 0 = width

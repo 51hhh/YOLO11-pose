@@ -48,6 +48,7 @@ __device__ double blockReduceSum(double val) {
         val = (lane < 4) ? warpSums[lane] : 0.0;
         val = warpReduceSum(val);
     }
+    __syncthreads();
     return val;
 }
 

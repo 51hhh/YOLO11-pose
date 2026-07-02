@@ -22,9 +22,11 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
 
     writeHeader();
     frame_count_ = 0;
+    dropped_frame_count_ = 0;
     running_ = true;
     writer_thread_ = std::thread(&TrajectoryRecorder::writerLoop, this);
-    LOG_INFO("TrajectoryRecorder: recording to %s", cfg_.output_path.c_str());
+    LOG_INFO("TrajectoryRecorder: recording to %s (max_queue_frames=%zu)",
+             cfg_.output_path.c_str(), cfg_.max_queue_frames);
 }
 
 void TrajectoryRecorder::writeHeader() {
@@ -67,7 +69,9 @@ void TrajectoryRecorder::writeHeader() {
               << "roi_akaze_points_std_px,roi_akaze_points_confidence,"
               << "fallback_feature_points_support,"
               << "fallback_feature_points_std_px,fallback_feature_points_confidence,"
-              << "raw_observation_valid,left_circle_source,right_circle_source,"
+              << "raw_observation_valid,predicted_z,innovation_z,"
+              << "innovation_norm,kalman_sigma_z,"
+              << "left_circle_source,right_circle_source,"
               << "stereo_match_source,stereo_depth_source,";
     }
     if (cfg_.recordExtendedGeometry()) {
@@ -94,6 +98,15 @@ void TrajectoryRecorder::record(
 
     {
         std::lock_guard<std::mutex> lock(queue_mtx_);
+        if (cfg_.max_queue_frames > 0 &&
+            queue_.size() >= cfg_.max_queue_frames) {
+            const int dropped = ++dropped_frame_count_;
+            if (dropped <= 3 || dropped % 100 == 0) {
+                LOG_WARN("TrajectoryRecorder: queue full, dropping frame=%d dropped=%d",
+                         frame_id, dropped);
+            }
+            return;
+        }
         queue_.push_back({frame_id, timestamp, results, preds});
     }
     queue_cv_.notify_one();
@@ -210,6 +223,10 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                   << r.fallback_feature_points_std_px << ","
                   << r.fallback_feature_points_confidence << ","
                   << r.raw_observation_valid << ","
+                  << r.predicted_z << ","
+                  << r.innovation_z << ","
+                  << r.innovation_norm << ","
+                  << r.kalman_sigma_z << ","
                   << r.left_circle_source << "," << r.right_circle_source << ","
                   << r.stereo_match_source << "," << r.stereo_depth_source << ",";
         }
@@ -254,7 +271,8 @@ void TrajectoryRecorder::close() {
         file_.flush();
         file_.close();
         if (frame_count_.load() > 0) {
-            LOG_INFO("TrajectoryRecorder: saved %d frames", frame_count_.load());
+            LOG_INFO("TrajectoryRecorder: saved %d frames (dropped=%d)",
+                     frame_count_.load(), dropped_frame_count_.load());
         }
     }
 }

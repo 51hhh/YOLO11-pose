@@ -149,7 +149,8 @@ bool BaselineClipRecorder::startClip() {
              << "min_confidence: " << cfg_.min_confidence << "\n"
              << "pair_y_tolerance_px: " << cfg_.pair_y_tolerance_px << "\n"
              << "pair_max_size_ratio: " << cfg_.pair_max_size_ratio << "\n"
-             << "pair_min_disparity_px: " << cfg_.pair_min_disparity_px << "\n";
+             << "pair_min_disparity_px: " << cfg_.pair_min_disparity_px << "\n"
+             << "max_queue_frames: " << cfg_.max_queue_frames << "\n";
     }
 
     running_ = true;

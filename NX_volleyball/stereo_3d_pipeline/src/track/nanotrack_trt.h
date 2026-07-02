@@ -64,7 +64,7 @@ private:
     bool loadEngine(const std::string& path,
                     nvinfer1::ICudaEngine*& engine,
                     nvinfer1::IExecutionContext*& ctx);
-    void allocateBuffers();
+    bool allocateBuffers();
     void freeBuffers();
     SOTResult decodeScoreMap(int img_width, int img_height);
 

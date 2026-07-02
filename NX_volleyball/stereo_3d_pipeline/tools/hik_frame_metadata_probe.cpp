@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <cmath>
 #include <memory>
 #include <map>
 #include <string>
@@ -59,6 +60,39 @@ struct FrameMeta {
     uint64_t frame_len = 0;
     uint8_t first_bytes[16] = {};
 };
+
+struct RunningStats {
+    int n = 0;
+    double mean = 0.0;
+    double m2 = 0.0;
+    double min_v = std::numeric_limits<double>::infinity();
+    double max_v = -std::numeric_limits<double>::infinity();
+
+    void add(double v) {
+        ++n;
+        min_v = std::min(min_v, v);
+        max_v = std::max(max_v, v);
+        const double delta = v - mean;
+        mean += delta / static_cast<double>(n);
+        const double delta2 = v - mean;
+        m2 += delta * delta2;
+    }
+
+    double stddev() const {
+        return n > 1 ? std::sqrt(m2 / static_cast<double>(n - 1)) : 0.0;
+    }
+};
+
+void printIntervalStats(const char* label, const RunningStats& stats) {
+    if (stats.n <= 0) {
+        std::printf("  %s: no samples\n", label);
+        return;
+    }
+    const double fps = stats.mean > 0.0 ? 1.0e9 / stats.mean : 0.0;
+    std::printf("  %s: n=%d mean=%.1fns min=%.1f max=%.1f std=%.1f fps=%.3f\n",
+                label, stats.n, stats.mean, stats.min_v, stats.max_v,
+                stats.stddev(), fps);
+}
 
 void usage(const char* argv0) {
     std::printf(
@@ -489,6 +523,11 @@ int main(int argc, char** argv) {
     uint32_t r_max_frame_counter_step = 0;
     uint32_t l_max_trigger_index_step = 0;
     uint32_t r_max_trigger_index_step = 0;
+    RunningStats l_dev_ts_step_stats;
+    RunningStats r_dev_ts_step_stats;
+    RunningStats l_host_ts_step_stats;
+    RunningStats r_host_ts_step_stats;
+    RunningStats dev_ts_delta_stats;
     int64_t first_frame_delta = 0;
     int64_t first_counter_delta = 0;
     int64_t first_trigger_delta = 0;
@@ -549,6 +588,20 @@ int main(int argc, char** argv) {
             const uint32_t r_frame_counter_step = counterStep(prev_r.frame_counter, r.frame_counter);
             const uint32_t l_trigger_index_step = counterStep(prev_l.trigger_index, l.trigger_index);
             const uint32_t r_trigger_index_step = counterStep(prev_r.trigger_index, r.trigger_index);
+            if (l.dev_ts >= prev_l.dev_ts) {
+                l_dev_ts_step_stats.add(static_cast<double>(l.dev_ts - prev_l.dev_ts));
+            }
+            if (r.dev_ts >= prev_r.dev_ts) {
+                r_dev_ts_step_stats.add(static_cast<double>(r.dev_ts - prev_r.dev_ts));
+            }
+            if (l.host_ts >= prev_l.host_ts) {
+                l_host_ts_step_stats.add(static_cast<double>(l.host_ts - prev_l.host_ts));
+            }
+            if (r.host_ts >= prev_r.host_ts) {
+                r_host_ts_step_stats.add(static_cast<double>(r.host_ts - prev_r.host_ts));
+            }
+            dev_ts_delta_stats.add(static_cast<double>(
+                static_cast<int64_t>(l.dev_ts) - static_cast<int64_t>(r.dev_ts)));
             l_max_frame_num_step = std::max(l_max_frame_num_step, l_frame_num_step);
             r_max_frame_num_step = std::max(r_max_frame_num_step, r_frame_num_step);
             l_max_frame_counter_step = std::max(l_max_frame_counter_step, l_frame_counter_step);
@@ -601,6 +654,11 @@ int main(int argc, char** argv) {
     std::printf("  per-camera jumps: trigger_index L/R=%d/%d max_step=%u/%u\n",
                 l_trigger_index_jumps, r_trigger_index_jumps,
                 l_max_trigger_index_step, r_max_trigger_index_step);
+    printIntervalStats("left_dev_timestamp_step", l_dev_ts_step_stats);
+    printIntervalStats("right_dev_timestamp_step", r_dev_ts_step_stats);
+    printIntervalStats("left_host_timestamp_step", l_host_ts_step_stats);
+    printIntervalStats("right_host_timestamp_step", r_host_ts_step_stats);
+    printIntervalStats("left_minus_right_dev_timestamp", dev_ts_delta_stats);
     std::printf("  verdict: frame_counter=%s trigger_index=%s\n",
                 counter_nonzero_or_changing > 0 ? "usable-looking" : "not populated",
                 trigger_nonzero_or_changing > 0 ? "usable-looking" : "not populated");

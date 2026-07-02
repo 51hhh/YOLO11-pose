@@ -363,6 +363,8 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
     if (auto perf = root["performance"]) {
         if (perf["log_interval"])   cfg.stats_interval = perf["log_interval"].as<int>();
         if (perf["pwm_frequency"])  cfg.trigger_freq_hz = static_cast<int>(perf["pwm_frequency"].as<float>());
+        if (perf["drop_stale_roi_frames"])
+            cfg.drop_stale_roi_frames = perf["drop_stale_roi_frames"].as<bool>();
     }
     if (!camera_trigger_frequency_set) {
         cfg.camera.trigger_frequency_hz = cfg.trigger_freq_hz;
@@ -414,6 +416,8 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
             if (rec["enabled"])     rcfg.enabled     = rec["enabled"].as<bool>();
             if (rec["output_path"]) rcfg.output_path = rec["output_path"].as<std::string>();
             if (rec["raw_mode"])    rcfg.raw_mode    = rec["raw_mode"].as<bool>();
+            if (rec["max_queue_frames"])
+                rcfg.max_queue_frames = rec["max_queue_frames"].as<size_t>();
             if (rec["detail_level"]) {
                 std::string level = rec["detail_level"].as<std::string>();
                 std::transform(level.begin(), level.end(), level.begin(),

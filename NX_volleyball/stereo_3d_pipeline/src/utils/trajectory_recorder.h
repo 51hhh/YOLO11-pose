@@ -34,6 +34,7 @@ struct TrajectoryRecorderConfig {
     bool enabled = true;
     bool raw_mode = false; ///< true=写未滤波观测, false=写 Kalman 后轨迹
     TrajectoryRecordDetail detail_level = TrajectoryRecordDetail::LEGACY;
+    size_t max_queue_frames = 1000; ///< 0=无限队列；实时路径建议保留上限，避免 IO 慢拖垮内存
 
     bool recordDepthCandidates() const {
         return static_cast<int>(detail_level) >=
@@ -62,6 +63,7 @@ public:
     void close();
 
     int frameCount() const { return frame_count_.load(); }
+    int droppedFrameCount() const { return dropped_frame_count_.load(); }
 
 private:
     struct RecordEntry {
@@ -74,6 +76,7 @@ private:
     TrajectoryRecorderConfig cfg_;
     std::ofstream file_;
     std::atomic<int> frame_count_{0};
+    std::atomic<int> dropped_frame_count_{0};
     bool header_written_ = false;
 
     // Async write queue

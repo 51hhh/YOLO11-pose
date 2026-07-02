@@ -87,12 +87,22 @@ TRTDetector::~TRTDetector() {
     freeBuffers();
 #if NV_TENSORRT_MAJOR >= 10
     // TensorRT 10.x: 使用 delete
-    if (context_) { delete context_; context_ = nullptr; }
+    for (auto& context : contexts_) {
+        if (context) {
+            delete context;
+            context = nullptr;
+        }
+    }
     if (engine_)  { delete engine_;  engine_ = nullptr; }
     if (runtime_) { delete runtime_; runtime_ = nullptr; }
 #else
     // TensorRT 8.x: 使用 deprecated destroy()
-    if (context_) { context_->destroy(); context_ = nullptr; }
+    for (auto& context : contexts_) {
+        if (context) {
+            context->destroy();
+            context = nullptr;
+        }
+    }
     if (engine_)  { engine_->destroy();  engine_ = nullptr; }
     if (runtime_) { runtime_->destroy(); runtime_ = nullptr; }
 #endif
@@ -156,8 +166,10 @@ bool TRTDetector::loadEngine(const std::string& path) {
     engine_ = runtime_->deserializeCudaEngine(engineData.data(), fileSize);
     if (!engine_) return false;
 
-    context_ = engine_->createExecutionContext();
-    if (!context_) return false;
+    for (auto& context : contexts_) {
+        context = engine_->createExecutionContext();
+        if (!context) return false;
+    }
 
     // 获取 tensor 信息
     int nbBindings = engine_->getNbIOTensors();
@@ -205,9 +217,14 @@ bool TRTDetector::allocateBuffers() {
     size_t inputBytes  = 3 * inputSize_ * inputSize_ * sizeof(float);
 
     cudaError_t err;
+    auto fail = [&](cudaError_t e, const char* what) {
+        LOG_ERROR("[TRT] %s allocation failed: %s", what, cudaGetErrorString(e));
+        freeBuffers();
+        return false;
+    };
     for (auto& b : buffers_) {
         err = cudaMalloc(&b.inputDevice, inputBytes);
-        if (err != cudaSuccess) return false;
+        if (err != cudaSuccess) return fail(err, "input");
 
         if (multiScaleOutput_) {
             // 6-tensor mode: allocate per-scale buffers
@@ -234,10 +251,14 @@ bool TRTDetector::allocateBuffers() {
                 bytes *= sizeof(float);
 
                 err = cudaMalloc(&so.device, bytes);
-                if (err != cudaSuccess) return false;
+                if (err != cudaSuccess) return fail(err, "scale output device");
                 err = cudaHostAlloc(reinterpret_cast<void**>(&so.host),
                                     bytes, cudaHostAllocDefault);
-                if (err != cudaSuccess) return false;
+                if (err != cudaSuccess) {
+                    cudaFree(so.device);
+                    so.device = nullptr;
+                    return fail(err, "scale output host");
+                }
 
                 LOG_INFO("  Scale output: %s [%d,%d,%d] stride=%d %s",
                          name, so.h, so.w, so.channels, so.stride,
@@ -247,23 +268,24 @@ bool TRTDetector::allocateBuffers() {
             // Allocate GPU DFL decode buffers
             constexpr int MAX_DFL_DET = 512;
             err = cudaMalloc(&b.dflOutDevice, MAX_DFL_DET * 6 * sizeof(float));
-            if (err != cudaSuccess) return false;
+            if (err != cudaSuccess) return fail(err, "DFL output device");
             err = cudaHostAlloc(reinterpret_cast<void**>(&b.dflOutHost),
                                 MAX_DFL_DET * 6 * sizeof(float), cudaHostAllocDefault);
-            if (err != cudaSuccess) return false;
-            err = cudaMalloc(&b.dflCountDevice, sizeof(int));
-            if (err != cudaSuccess) return false;
+            if (err != cudaSuccess) return fail(err, "DFL output host");
+            err = cudaMalloc(reinterpret_cast<void**>(&b.dflCountDevice),
+                             sizeof(int));
+            if (err != cudaSuccess) return fail(err, "DFL count device");
             err = cudaHostAlloc(reinterpret_cast<void**>(&b.dflCountHost),
                                 sizeof(int), cudaHostAllocDefault);
-            if (err != cudaSuccess) return false;
+            if (err != cudaSuccess) return fail(err, "DFL count host");
         } else {
             // Single-output mode
             size_t outputBytes = outputSize_ * sizeof(float);
             err = cudaMalloc(&b.outputDevice, outputBytes);
-            if (err != cudaSuccess) return false;
+            if (err != cudaSuccess) return fail(err, "output device");
             err = cudaHostAlloc(reinterpret_cast<void**>(&b.outputHost),
                                 outputBytes, cudaHostAllocDefault);
-            if (err != cudaSuccess) return false;
+            if (err != cudaSuccess) return fail(err, "output host");
         }
     }
 
@@ -310,9 +332,14 @@ bool TRTDetector::enqueue(int slotId,
 {
     int sid = slotId % RING_BUFFER_SIZE;
     auto& b = buffers_[sid];
+    auto* context = contexts_[sid];
     if (!gpuImageU8 || pitch <= 0 || width <= 0 || height <= 0) {
         LOG_ERROR("[TRT] Invalid enqueue input: ptr=%p pitch=%d size=%dx%d",
                   gpuImageU8, pitch, width, height);
+        return false;
+    }
+    if (!context) {
+        LOG_ERROR("[TRT] Invalid execution context for slot %d", sid);
         return false;
     }
 
@@ -323,7 +350,7 @@ bool TRTDetector::enqueue(int slotId,
     }
 
     // 2. 绑定本次推理缓冲并异步推理
-    if (!context_->setTensorAddress(inputTensorName_.c_str(), b.inputDevice)) {
+    if (!context->setTensorAddress(inputTensorName_.c_str(), b.inputDevice)) {
         LOG_ERROR("[TRT] setTensorAddress input '%s' failed",
                   inputTensorName_.c_str());
         return false;
@@ -332,20 +359,20 @@ bool TRTDetector::enqueue(int slotId,
     if (multiScaleOutput_) {
         // Bind all 6 output tensors
         for (auto& so : b.scaleOutputs) {
-            if (!context_->setTensorAddress(so.name.c_str(), so.device)) {
+            if (!context->setTensorAddress(so.name.c_str(), so.device)) {
                 LOG_ERROR("[TRT] setTensorAddress output '%s' failed",
                           so.name.c_str());
                 return false;
             }
         }
     } else {
-        if (!context_->setTensorAddress(outputTensorName_.c_str(), b.outputDevice)) {
+        if (!context->setTensorAddress(outputTensorName_.c_str(), b.outputDevice)) {
             LOG_ERROR("[TRT] setTensorAddress output '%s' failed",
                       outputTensorName_.c_str());
             return false;
         }
     }
-    if (!context_->enqueueV3(stream)) {
+    if (!context->enqueueV3(stream)) {
         LOG_ERROR("[TRT] enqueueV3 failed");
         return false;
     }
@@ -710,7 +737,7 @@ float TRTDetector::computeIoU(const Detection& a, const Detection& b) {
 std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
     // GPU DFL kernel already ran in enqueue(), results in dflOutHost
     constexpr int MAX_DFL_DET = 512;
-    int count = std::min(*buf.dflCountHost, MAX_DFL_DET);
+    int count = std::clamp(*buf.dflCountHost, 0, MAX_DFL_DET);
 
     std::vector<Detection> raw_dets;
     raw_dets.reserve(count);

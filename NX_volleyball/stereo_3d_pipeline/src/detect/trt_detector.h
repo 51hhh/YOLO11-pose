@@ -109,7 +109,11 @@ private:
     // TensorRT 组件
     nvinfer1::IRuntime* runtime_   = nullptr;
     nvinfer1::ICudaEngine* engine_ = nullptr;
-    nvinfer1::IExecutionContext* context_ = nullptr;
+    // One execution context per ring slot. TensorRT tensor addresses are
+    // context state, so sharing one context across asynchronous slot enqueues
+    // can race when the next frame updates bindings before the previous one
+    // has finished.
+    std::array<nvinfer1::IExecutionContext*, RING_BUFFER_SIZE> contexts_{};
 
     // 每个 RingSlot 一套 I/O 缓冲, 避免异步覆盖
     std::array<BufferSet, RING_BUFFER_SIZE> buffers_;

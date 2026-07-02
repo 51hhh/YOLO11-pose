@@ -209,6 +209,7 @@ struct PipelineConfig {
     // 性能
     int stats_interval = 100;      ///< 每 N 帧打印统计
     bool detection_only = false;   ///< 仅运行采集/校正/检测/回调, 跳过 stereo/depth
+    bool drop_stale_roi_frames = false; ///< ROI 模式下若后一帧 YOLO 已完成则跳过旧帧后处理
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR
@@ -340,6 +341,7 @@ private:
     bool colorPipelineEnabled() const;
     void recordDetectDoneEvents(FrameSlot& slot) const;
     void waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const;
+    bool detectEventsReady(const FrameSlot& slot) const;
     void collectRightDetections(FrameSlot& slot, int slot_index);
     struct DualYoloMatchStats {
         int left_count = 0;
@@ -399,8 +401,8 @@ private:
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
     std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
 
-    // ===== 异步采集线程 (零拷贝) =====
-    // 按需模式: pipeline 请求 → 采集线程直接写入 VPI Image → 通知完成
+    // ===== 异步采集线程 =====
+    // 按需模式: pipeline 请求 → 采集线程写入 VPI host-mapped Image → 通知完成
     // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
     std::thread grab_thread_;
     void grabLoop();
