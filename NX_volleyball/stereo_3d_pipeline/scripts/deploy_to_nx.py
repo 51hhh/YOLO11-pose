@@ -60,6 +60,8 @@ def sync_files(ssh):
         sync_list = [
             "src/pipeline/pipeline.h",
             "src/pipeline/pipeline.cpp",
+            "src/pipeline/pipeline_async_roi.cpp",
+            "src/pipeline/pipeline_loops.cpp",
             "src/pipeline/frame_slot.h",
             "src/pipeline/sync.h",
             "src/stereo/vpi_stereo.h",
