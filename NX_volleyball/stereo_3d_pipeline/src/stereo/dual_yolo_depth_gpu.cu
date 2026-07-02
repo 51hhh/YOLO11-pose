@@ -12,6 +12,7 @@ constexpr int kThreads = 128;
 constexpr int kMaxEdges = 1024;
 constexpr int kMaxFeaturePoints = 64;
 constexpr int kThreadsPerPoint = 4;
+constexpr int kMaxParallelFeaturePoints = kThreads / kThreadsPerPoint;
 
 __device__ __forceinline__ int clampInt(int v, int lo, int hi) {
     return max(lo, min(hi, v));
@@ -928,7 +929,8 @@ __device__ void matchSparsePoints(
     }
     __syncthreads();
 
-    max_points = clampInt(max_points, 1, kMaxFeaturePoints);
+    max_points = clampInt(max_points, 1,
+                          min(kMaxFeaturePoints, kMaxParallelFeaturePoints));
     min_points = clampInt(min_points, 1, max_points);
     patch_radius = clampInt(patch_radius, 2, 8);
     const int point_idx = tid / kThreadsPerPoint;
@@ -1197,7 +1199,8 @@ __device__ void matchMultiPointPatch(
     }
     __syncthreads();
 
-    max_points = clampInt(max_points, 1, kMaxFeaturePoints);
+    max_points = clampInt(max_points, 1,
+                          min(kMaxFeaturePoints, kMaxParallelFeaturePoints));
     min_points = clampInt(min_points, 1, max_points);
     patch_radius = clampInt(patch_radius, 2, 8);
     const int point_idx = tid / kThreadsPerPoint;

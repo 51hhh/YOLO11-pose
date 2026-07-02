@@ -89,18 +89,17 @@ float computeSubpixelDispDeltaGateCPU(
     const float abs_gate = std::max(0.25f, max_disp_delta_px);
     const float ratio_gate = std::max(0.25f,
         std::max(0.0f, max_disp_delta_ratio) * initial_disp);
-    float gate = std::min(abs_gate, ratio_gate);
+    float gate = std::max(abs_gate, ratio_gate);
 
     const float fb = focal * baseline;
     if (fb > 1e-3f && initial_disp > 0.5f && max_depth_delta_m > 0.01f) {
         const float z0 = fb / initial_disp;
         const float disp_far = fb / (z0 + max_depth_delta_m);
-        float depth_gate = std::max(0.0f, initial_disp - disp_far);
+        gate = std::max(gate, std::max(0.0f, initial_disp - disp_far));
         if (z0 > max_depth_delta_m + 0.01f) {
             const float disp_near = fb / (z0 - max_depth_delta_m);
-            depth_gate = std::min(depth_gate, std::max(0.0f, disp_near - initial_disp));
+            gate = std::max(gate, std::max(0.0f, disp_near - initial_disp));
         }
-        gate = std::min(gate, std::max(0.25f, depth_gate));
     }
     return std::max(0.25f, gate);
 }
