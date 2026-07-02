@@ -77,6 +77,10 @@ struct Object3D {
     float z_roi_orb_points;///< ROI ORB 特征点视差测距, -1=无效
     float z_roi_brisk_points;///< ROI BRISK 特征点视差测距, -1=无效
     float z_roi_akaze_points;///< ROI AKAZE 特征点视差测距, -1=无效
+    float z_roi_sift_points;///< ROI SIFT-lite GPU 特征点视差测距, -1=无效
+    float z_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差测距, -1=无效
+    float z_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差测距, -1=无效
+    float z_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差测距, -1=无效
     float z_roi_center_patch; ///< ROI 中心 patch ZNCC 视差测距, -1=无效
     float z_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差测距, -1=无效
     float z_yolo_bbox_pair; ///< 左右 YOLO bbox 中心视差测距, -1=无效
@@ -100,6 +104,10 @@ struct Object3D {
     float disparity_roi_orb_points;///< ROI ORB 特征点视差, -1=无效
     float disparity_roi_brisk_points;///< ROI BRISK 特征点视差, -1=无效
     float disparity_roi_akaze_points;///< ROI AKAZE 特征点视差, -1=无效
+    float disparity_roi_sift_points;///< ROI SIFT-lite GPU 特征点视差, -1=无效
+    float disparity_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差, -1=无效
+    float disparity_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差, -1=无效
+    float disparity_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差, -1=无效
     float disparity_roi_center_patch; ///< ROI 中心 patch ZNCC 视差, -1=无效
     float disparity_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差, -1=无效
     float disparity_fallback_template; ///< 极线模板搜索 fallback 视差, -1=无效
@@ -141,11 +149,23 @@ struct Object3D {
     int roi_akaze_points_support; ///< ROI AKAZE 有效匹配点数
     float roi_akaze_points_std_px; ///< ROI AKAZE 视差标准差
     float roi_akaze_points_confidence; ///< ROI AKAZE 匹配置信度
+    int roi_sift_points_support; ///< ROI SIFT-lite 有效匹配点数
+    float roi_sift_points_std_px; ///< ROI SIFT-lite 视差标准差
+    float roi_sift_points_confidence; ///< ROI SIFT-lite 匹配置信度
+    int roi_iou_region_color_patch_support; ///< ROI 彩色区域有效匹配点数
+    float roi_iou_region_color_patch_std_px; ///< ROI 彩色区域视差标准差
+    float roi_iou_region_color_patch_confidence; ///< ROI 彩色区域匹配置信度
+    int roi_patch_iou_color_edge_support; ///< ROI 彩色边缘有效匹配点数
+    float roi_patch_iou_color_edge_std_px; ///< ROI 彩色边缘视差标准差
+    float roi_patch_iou_color_edge_confidence; ///< ROI 彩色边缘匹配置信度
+    int roi_neural_feature_support; ///< ROI 神经特征有效匹配点数
+    float roi_neural_feature_std_px; ///< ROI 神经特征视差标准差
+    float roi_neural_feature_confidence; ///< ROI 神经特征匹配置信度
     int fallback_feature_points_support; ///< fallback 特征有效匹配点数
     float fallback_feature_points_std_px; ///< fallback 特征视差标准差
     float fallback_feature_points_confidence; ///< fallback 特征匹配置信度
     int stereo_match_source; ///< 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback
-    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE
+    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT-lite,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征
     uint64_t left_timestamp_us;  ///< 左目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint64_t right_timestamp_us; ///< 右目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint32_t left_frame_number;  ///< 左目 SDK 帧号
@@ -174,7 +194,10 @@ struct Object3D {
                  z_roi_edge_pair_center(-1), z_roi_corner_points(-1),
                  z_roi_texture_points(-1), z_roi_binary_points(-1),
                  z_roi_orb_points(-1), z_roi_brisk_points(-1),
-                 z_roi_akaze_points(-1),
+                 z_roi_akaze_points(-1), z_roi_sift_points(-1),
+                 z_roi_iou_region_color_patch(-1),
+                 z_roi_patch_iou_color_edge(-1),
+                 z_roi_neural_feature(-1),
                  z_roi_center_patch(-1),
                  z_roi_multi_point(-1),
                  z_yolo_bbox_pair(-1), z_circle(-1), z_subpixel(-1),
@@ -187,7 +210,10 @@ struct Object3D {
                  disparity_roi_edge_pair_center(-1), disparity_roi_corner_points(-1),
                  disparity_roi_texture_points(-1), disparity_roi_binary_points(-1),
                  disparity_roi_orb_points(-1), disparity_roi_brisk_points(-1),
-                 disparity_roi_akaze_points(-1),
+                 disparity_roi_akaze_points(-1), disparity_roi_sift_points(-1),
+                 disparity_roi_iou_region_color_patch(-1),
+                 disparity_roi_patch_iou_color_edge(-1),
+                 disparity_roi_neural_feature(-1),
                  disparity_roi_center_patch(-1),
                  disparity_roi_multi_point(-1), disparity_fallback_template(-1),
                  disparity_fallback_feature_points(-1),
@@ -215,6 +241,16 @@ struct Object3D {
                  roi_brisk_points_confidence(0),
                  roi_akaze_points_support(0), roi_akaze_points_std_px(-1),
                  roi_akaze_points_confidence(0),
+                 roi_sift_points_support(0), roi_sift_points_std_px(-1),
+                 roi_sift_points_confidence(0),
+                 roi_iou_region_color_patch_support(0),
+                 roi_iou_region_color_patch_std_px(-1),
+                 roi_iou_region_color_patch_confidence(0),
+                 roi_patch_iou_color_edge_support(0),
+                 roi_patch_iou_color_edge_std_px(-1),
+                 roi_patch_iou_color_edge_confidence(0),
+                 roi_neural_feature_support(0), roi_neural_feature_std_px(-1),
+                 roi_neural_feature_confidence(0),
                  fallback_feature_points_support(0), fallback_feature_points_std_px(-1),
                  fallback_feature_points_confidence(0),
                  stereo_match_source(0), stereo_depth_source(0),

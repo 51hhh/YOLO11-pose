@@ -423,6 +423,10 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.z_roi_orb_points = roi.z_roi_orb_points;
             obj.z_roi_brisk_points = roi.z_roi_brisk_points;
             obj.z_roi_akaze_points = roi.z_roi_akaze_points;
+            obj.z_roi_sift_points = roi.z_roi_sift_points;
+            obj.z_roi_iou_region_color_patch = roi.z_roi_iou_region_color_patch;
+            obj.z_roi_patch_iou_color_edge = roi.z_roi_patch_iou_color_edge;
+            obj.z_roi_neural_feature = roi.z_roi_neural_feature;
             obj.z_roi_center_patch = roi.z_roi_center_patch;
             obj.z_roi_multi_point = roi.z_roi_multi_point;
             obj.z_yolo_bbox_pair = roi.z_yolo_bbox_pair;
@@ -446,6 +450,13 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.disparity_roi_orb_points = roi.disparity_roi_orb_points;
             obj.disparity_roi_brisk_points = roi.disparity_roi_brisk_points;
             obj.disparity_roi_akaze_points = roi.disparity_roi_akaze_points;
+            obj.disparity_roi_sift_points = roi.disparity_roi_sift_points;
+            obj.disparity_roi_iou_region_color_patch =
+                roi.disparity_roi_iou_region_color_patch;
+            obj.disparity_roi_patch_iou_color_edge =
+                roi.disparity_roi_patch_iou_color_edge;
+            obj.disparity_roi_neural_feature =
+                roi.disparity_roi_neural_feature;
             obj.disparity_roi_center_patch = roi.disparity_roi_center_patch;
             obj.disparity_roi_multi_point = roi.disparity_roi_multi_point;
             obj.disparity_fallback_template = roi.disparity_fallback_template;
@@ -499,6 +510,27 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.roi_akaze_points_support = roi.roi_akaze_points_support;
             obj.roi_akaze_points_std_px = roi.roi_akaze_points_std_px;
             obj.roi_akaze_points_confidence = roi.roi_akaze_points_confidence;
+            obj.roi_sift_points_support = roi.roi_sift_points_support;
+            obj.roi_sift_points_std_px = roi.roi_sift_points_std_px;
+            obj.roi_sift_points_confidence = roi.roi_sift_points_confidence;
+            obj.roi_iou_region_color_patch_support =
+                roi.roi_iou_region_color_patch_support;
+            obj.roi_iou_region_color_patch_std_px =
+                roi.roi_iou_region_color_patch_std_px;
+            obj.roi_iou_region_color_patch_confidence =
+                roi.roi_iou_region_color_patch_confidence;
+            obj.roi_patch_iou_color_edge_support =
+                roi.roi_patch_iou_color_edge_support;
+            obj.roi_patch_iou_color_edge_std_px =
+                roi.roi_patch_iou_color_edge_std_px;
+            obj.roi_patch_iou_color_edge_confidence =
+                roi.roi_patch_iou_color_edge_confidence;
+            obj.roi_neural_feature_support =
+                roi.roi_neural_feature_support;
+            obj.roi_neural_feature_std_px =
+                roi.roi_neural_feature_std_px;
+            obj.roi_neural_feature_confidence =
+                roi.roi_neural_feature_confidence;
             obj.fallback_feature_points_support = roi.fallback_feature_points_support;
             obj.fallback_feature_points_std_px = roi.fallback_feature_points_std_px;
             obj.fallback_feature_points_confidence = roi.fallback_feature_points_confidence;

@@ -48,6 +48,12 @@ struct DualYoloDepthGpuConfig {
     bool compute_corner_points = false;
     bool compute_texture_points = false;
     bool compute_binary_points = false;
+    bool compute_orb_points = false;
+    bool compute_brisk_points = false;
+    bool compute_akaze_points = false;
+    bool compute_sift_points = false;
+    bool compute_iou_region_color_patch = false;
+    bool compute_patch_iou_color_edge = false;
 };
 
 struct DualYoloGpuDetectionPair {
@@ -104,6 +110,12 @@ struct DualYoloGpuCandidate {
     DualYoloGpuDisparity corner_points;
     DualYoloGpuDisparity texture_points;
     DualYoloGpuDisparity binary_points;
+    DualYoloGpuDisparity orb_points;
+    DualYoloGpuDisparity brisk_points;
+    DualYoloGpuDisparity akaze_points;
+    DualYoloGpuDisparity sift_points;
+    DualYoloGpuDisparity iou_region_color_patch;
+    DualYoloGpuDisparity patch_iou_color_edge;
 };
 
 class DualYoloDepthGpuMatcher {
@@ -124,6 +136,8 @@ public:
     std::vector<DualYoloGpuCandidate> matchPairs(
         const uint8_t* left_gpu, int left_pitch,
         const uint8_t* right_gpu, int right_pitch,
+        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
         int img_width, int img_height,
         const std::vector<DualYoloGpuDetectionPair>& pairs,
         cudaStream_t stream);

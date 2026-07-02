@@ -35,12 +35,13 @@ NX_volleyball/stereo_3d_pipeline/scripts/setup_neural_feature_env.sh
 
 ## NX 实时推理方式
 
-配置入口是 `config/pipeline_roi.yaml` 的 `neural_feature_matching`，默认关闭。
+配置入口是 `config/pipeline_dual_yolo_roi.yaml` 的 `neural_feature_matching`，默认关闭。
 
 实时路径原则:
 
 - 固定 ROI 输入尺寸，当前推荐 `224x224`，`top_k=128`。
-- XFeat/ALIKED 优先使用 extractor TensorRT engine，输出 keypoints/descriptors/scores，再做 descriptor mutual NN + 极线/视差/最终簇剔除。
-- SuperPoint+LightGlue 使用 extractor+matcher 或 fused TensorRT engine；只在 descriptor NN 不稳定时进入主线。
+- 当前 C++ 实时实现支持 fused TensorRT engine:输入为左右 ROI(灰度 1/2 通道或 BGR 3/6 通道),输出 `[N,4]` 或 `[N,5]` 匹配点。
+- XFeat/ALIKED 的 extractor+descriptor mutual NN split 路径仍待实现;真实 engine 未落位时 pipeline 会 warn 后禁用神经候选。
+- SuperPoint+LightGlue 优先使用 fused TensorRT engine；extractor+matcher split engine 仍待实现。
 - 后处理必须保留 `max_y_error_px`、`max_disp_delta_px`、`final_disp_gate_px`，不能直接相信网络匹配。
 - 目标 10ms 内时，优先评估 XFeat TensorRT；ALIKED 和 SuperPoint+LightGlue 作为质量对照。

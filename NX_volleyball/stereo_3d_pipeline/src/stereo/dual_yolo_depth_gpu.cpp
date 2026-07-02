@@ -8,6 +8,8 @@
 extern "C" void launchDualYoloDepthCandidatesGpu(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
+    const uint8_t* left_bgr, int left_bgr_pitch,
+    const uint8_t* right_bgr, int right_bgr_pitch,
     int img_width, int img_height,
     const stereo3d::DualYoloGpuDetectionPair* pairs,
     int num_pairs,
@@ -40,6 +42,12 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     int compute_corner_points,
     int compute_texture_points,
     int compute_binary_points,
+    int compute_orb_points,
+    int compute_brisk_points,
+    int compute_akaze_points,
+    int compute_sift_points,
+    int compute_iou_region_color_patch,
+    int compute_patch_iou_color_edge,
     float focal,
     float baseline,
     float min_depth,
@@ -102,13 +110,19 @@ bool DualYoloDepthGpuMatcher::init(float focal, float baseline, float cx, float 
     LOG_INFO("DualYoloDepthGpuMatcher: maxPairs=%d maxDisp=%d patch=%d search=%d points=%d/%d",
              max_pairs_, config_.max_disparity, config_.patch_radius,
              config_.search_radius_px, config_.min_points, config_.max_points);
-    LOG_INFO("  GPU candidate modes: geom=%d centerPatch=%d multi=%d corner=%d texture=%d binary=%d",
+    LOG_INFO("  GPU candidate modes: geom=%d centerPatch=%d multi=%d corner=%d texture=%d binary=%d orb=%d brisk=%d akaze=%d sift=%d colorPatch=%d colorEdge=%d",
              config_.compute_geometry,
              config_.compute_center_patch,
              config_.compute_multi_point,
              config_.compute_corner_points,
              config_.compute_texture_points,
-             config_.compute_binary_points);
+             config_.compute_binary_points,
+             config_.compute_orb_points,
+             config_.compute_brisk_points,
+             config_.compute_akaze_points,
+             config_.compute_sift_points,
+             config_.compute_iou_region_color_patch,
+             config_.compute_patch_iou_color_edge);
     return true;
 }
 
@@ -136,6 +150,8 @@ void DualYoloDepthGpuMatcher::freeBuffers() {
 std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     const uint8_t* left_gpu, int left_pitch,
     const uint8_t* right_gpu, int right_pitch,
+    const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+    const uint8_t* right_bgr_gpu, int right_bgr_pitch,
     int img_width, int img_height,
     const std::vector<DualYoloGpuDetectionPair>& pairs,
     cudaStream_t stream) {
@@ -162,8 +178,14 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
         return {};
     }
 
+    const bool bgr_available = left_bgr_gpu && right_bgr_gpu &&
+                               left_bgr_pitch > 0 && right_bgr_pitch > 0;
     launchDualYoloDepthCandidatesGpu(
         left_gpu, left_pitch, right_gpu, right_pitch,
+        bgr_available ? left_bgr_gpu : nullptr,
+        bgr_available ? left_bgr_pitch : 0,
+        bgr_available ? right_bgr_gpu : nullptr,
+        bgr_available ? right_bgr_pitch : 0,
         img_width, img_height,
         pairs_device_, n, results_device_,
         config_.max_disparity,
@@ -194,6 +216,12 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
         config_.compute_corner_points ? 1 : 0,
         config_.compute_texture_points ? 1 : 0,
         config_.compute_binary_points ? 1 : 0,
+        config_.compute_orb_points ? 1 : 0,
+        config_.compute_brisk_points ? 1 : 0,
+        config_.compute_akaze_points ? 1 : 0,
+        config_.compute_sift_points ? 1 : 0,
+        (config_.compute_iou_region_color_patch && bgr_available) ? 1 : 0,
+        (config_.compute_patch_iou_color_edge && bgr_available) ? 1 : 0,
         focal_,
         baseline_,
         config_.min_depth,

@@ -63,9 +63,12 @@ detector:
       roi_corner_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_texture_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_binary_points: false  # heavier sparse feature A/B mode; enable offline or after profiling budget is available
-      roi_orb_points: false    # OpenCV ORB ROI descriptor matching candidate; CPU cost, enable for A/B test
-      roi_brisk_points: false  # OpenCV BRISK ROI descriptor matching candidate; CPU cost, enable for A/B test
-      roi_akaze_points: false  # OpenCV AKAZE ROI descriptor matching candidate; heavier, enable for A/B test
+      roi_orb_points: false    # GPU ORB-lite ROI binary patch candidate; CPU OpenCV only for no-GPU fallback
+      roi_brisk_points: false  # GPU BRISK-lite ROI binary patch candidate; experimental A/B mode
+      roi_akaze_points: false  # GPU AKAZE-lite ROI gradient/texture candidate; experimental A/B mode
+      roi_sift_points: false   # GPU SIFT-lite ROI descriptor candidate; experimental A/B mode
+      roi_iou_region_color_patch: false # GPU color region IoU + patch candidate; requires BGR pipeline
+      roi_patch_iou_color_edge: false # GPU color edge IoU + patch candidate; requires BGR pipeline
       roi_center_patch: false  # heavier ZNCC refinement; enable for offline/quality A/B tests
       roi_subpixel: false      # heavier multi-point ZNCC refinement; enable for offline/quality A/B tests
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate

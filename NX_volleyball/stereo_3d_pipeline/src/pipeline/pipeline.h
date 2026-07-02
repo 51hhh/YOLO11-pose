@@ -138,6 +138,9 @@ struct PipelineConfig {
         bool depth_roi_orb_points = false; ///< 计算 ROI ORB 特征点视差候选
         bool depth_roi_brisk_points = false; ///< 计算 ROI BRISK 特征点视差候选
         bool depth_roi_akaze_points = false; ///< 计算 ROI AKAZE 特征点视差候选
+        bool depth_roi_sift_points = false; ///< 计算 ROI SIFT-lite GPU 特征点视差候选
+        bool depth_roi_iou_region_color_patch = false; ///< 计算 ROI 彩色区域 IoU/patch 视差候选
+        bool depth_roi_patch_iou_color_edge = false; ///< 计算 ROI 彩色边缘 IoU/patch 视差候选
         bool depth_roi_center_patch = false; ///< 计算 ROI 中心 patch ZNCC 视差候选
         bool depth_roi_subpixel = true;    ///< 计算 ROI 多点亚像素视差候选
         bool depth_epipolar_fallback = true; ///< 单目漏检时启用有界极线搜索候选
@@ -388,6 +391,8 @@ private:
         const uint8_t* right_cpu, int right_pitch,
         const uint8_t* left_gpu, int left_gpu_pitch,
         const uint8_t* right_gpu, int right_gpu_pitch,
+        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
         int img_width, int img_height,
         cudaStream_t stream,
         DualYoloMatchStats* stats);

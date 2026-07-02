@@ -27,6 +27,37 @@ __device__ __forceinline__ float readGray(
     return static_cast<float>(img[y * pitch + x]);
 }
 
+__device__ __forceinline__ void readBgr(
+    const uint8_t* img, int pitch, int x, int y,
+    float* b, float* g, float* r) {
+    const uint8_t* px = img + y * pitch + x * 3;
+    *b = static_cast<float>(px[0]);
+    *g = static_cast<float>(px[1]);
+    *r = static_cast<float>(px[2]);
+}
+
+__device__ __forceinline__ int colorLabel(float b, float g, float r) {
+    const float hi = fmaxf(r, fmaxf(g, b));
+    const float lo = fminf(r, fminf(g, b));
+    const float luma = 0.114f * b + 0.587f * g + 0.299f * r;
+    const float sat = hi > 1.0f ? (hi - lo) / hi : 0.0f;
+    if (luma > 150.0f && sat < 0.25f) return 1;     // white panel
+    if (r > 95.0f && g > 85.0f && b < 0.78f * fminf(r, g)) return 2; // yellow
+    if (b > 80.0f && b > 1.18f * r && b > 1.08f * g) return 3;       // blue
+    if (hi < 45.0f) return 4;                       // dark edge/shadow
+    return 0;
+}
+
+__device__ __forceinline__ float colorBallLikelihood(float b, float g, float r) {
+    const int label = colorLabel(b, g, r);
+    if (label == 1 || label == 2 || label == 3) return 1.0f;
+    const float hi = fmaxf(r, fmaxf(g, b));
+    const float lo = fminf(r, fminf(g, b));
+    const float sat = hi > 1.0f ? (hi - lo) / hi : 0.0f;
+    const float luma = 0.114f * b + 0.587f * g + 0.299f * r;
+    return clampFloat(0.35f * sat + 0.35f * (luma / 255.0f), 0.0f, 1.0f);
+}
+
 __device__ __forceinline__ float sobelMag(
     const uint8_t* img, int pitch, int x, int y) {
     const float gx =
@@ -180,6 +211,65 @@ __device__ float binaryPatchScore(
     return zncc > -1.5f ? 0.55f * census + 0.45f * (0.5f + 0.5f * zncc) : census;
 }
 
+__device__ float colorPatchScore(
+    const uint8_t* left_gray, int left_pitch,
+    const uint8_t* right_gray, int right_pitch,
+    const uint8_t* left_bgr, int left_bgr_pitch,
+    const uint8_t* right_bgr, int right_bgr_pitch,
+    int x_left, int y_left, int x_right, int y_right,
+    int patch_radius) {
+    if (!left_bgr || !right_bgr || left_bgr_pitch <= 0 || right_bgr_pitch <= 0) {
+        const float zncc = znccScore(left_gray, left_pitch, right_gray, right_pitch,
+                                     x_left, y_left, x_right, y_right, patch_radius);
+        return zncc > -1.5f ? 0.5f + 0.5f * zncc : -2.0f;
+    }
+
+    float color_diff = 0.0f;
+    float label_same = 0.0f;
+    float gray_sim = 0.0f;
+    float color_support = 0.0f;
+    int n = 0;
+    for (int yy = -patch_radius; yy <= patch_radius; ++yy) {
+        for (int xx = -patch_radius; xx <= patch_radius; ++xx) {
+            float lb, lg, lr, rb, rg, rr;
+            readBgr(left_bgr, left_bgr_pitch, x_left + xx, y_left + yy,
+                    &lb, &lg, &lr);
+            readBgr(right_bgr, right_bgr_pitch, x_right + xx, y_right + yy,
+                    &rb, &rg, &rr);
+            const float diff =
+                (fabsf(lb - rb) + fabsf(lg - rg) + fabsf(lr - rr)) / (3.0f * 255.0f);
+            color_diff += diff;
+            const int ll = colorLabel(lb, lg, lr);
+            const int rl = colorLabel(rb, rg, rr);
+            label_same += (ll == rl && ll != 0) ? 1.0f : 0.0f;
+            color_support += 0.5f * (colorBallLikelihood(lb, lg, lr) +
+                                     colorBallLikelihood(rb, rg, rr));
+            const float lv = readGray(left_gray, left_pitch, x_left + xx, y_left + yy);
+            const float rv = readGray(right_gray, right_pitch, x_right + xx, y_right + yy);
+            gray_sim += 1.0f - fminf(1.0f, fabsf(lv - rv) / 255.0f);
+            ++n;
+        }
+    }
+    if (n <= 0) return -2.0f;
+
+    const float inv_n = 1.0f / static_cast<float>(n);
+    const float color_similarity = clampFloat(1.0f - color_diff * inv_n * 2.4f,
+                                              0.0f, 1.0f);
+    const float label_iou = clampFloat(label_same * inv_n, 0.0f, 1.0f);
+    const float support = clampFloat(color_support * inv_n, 0.0f, 1.0f);
+    const float gray_consistency = clampFloat(gray_sim * inv_n, 0.0f, 1.0f);
+    const float zncc = znccScore(left_gray, left_pitch, right_gray, right_pitch,
+                                 x_left, y_left, x_right, y_right, patch_radius);
+    const float zncc01 = zncc > -1.5f ? clampFloat(0.5f + 0.5f * zncc, 0.0f, 1.0f) : 0.0f;
+
+    return clampFloat(0.30f * zncc01 +
+                      0.25f * color_similarity +
+                      0.25f * label_iou +
+                      0.12f * gray_consistency +
+                      0.08f * support,
+                      0.0f, 1.0f);
+}
+
 __device__ float localVariance(
     const uint8_t* img, int pitch, int x, int y) {
     float sum = 0.0f;
@@ -227,6 +317,23 @@ __device__ float sparseResponse(
     if (mode == 0) return corner;
     if (mode == 1) return texture;
     return 0.65f * corner + 0.35f * texture;
+}
+
+__device__ float colorSparseResponse(
+    const uint8_t* gray, int gray_pitch,
+    const uint8_t* bgr, int bgr_pitch,
+    int x, int y,
+    int mode) {
+    if (!bgr || bgr_pitch <= 0) return 0.0f;
+    float b, g, r;
+    readBgr(bgr, bgr_pitch, x, y, &b, &g, &r);
+    const float support = colorBallLikelihood(b, g, r);
+    const float edge = sobelMag(gray, gray_pitch, x, y);
+    const float variance = sqrtf(fmaxf(0.0f, localVariance(gray, gray_pitch, x, y)));
+    if (mode == 3) {
+        return 64.0f * support + 0.18f * variance + 0.08f * edge;
+    }
+    return edge * (0.35f + 0.65f * support) + 0.10f * variance;
 }
 
 __device__ float disparityDeltaGate(
@@ -870,6 +977,8 @@ __device__ void matchPatchAtPoint(
 __device__ void matchSparsePoints(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
+    const uint8_t* left_bgr, int left_bgr_pitch,
+    const uint8_t* right_bgr, int right_bgr_pitch,
     int img_w, int img_h,
     const stereo3d::DualYoloGpuDetection& left_det,
     const stereo3d::DualYoloGpuDetection& right_det,
@@ -951,8 +1060,12 @@ __device__ void matchSparsePoints(
         const int y = static_cast<int>(rintf(y_f));
         if (nx * nx + ny * ny <= 0.92f * 0.92f &&
             patchInside(img_w, img_h, x, y, patch_radius)) {
-            const float response = sparseResponse(left_img, left_pitch, x, y, mode);
-            const float response_floor = mode == 1 ? 20.0f : 8.0f;
+            const float response = mode >= 3
+                ? colorSparseResponse(left_img, left_pitch,
+                                      left_bgr, left_bgr_pitch, x, y, mode)
+                : sparseResponse(left_img, left_pitch, x, y, mode);
+            const float response_floor =
+                mode == 3 ? 24.0f : (mode == 4 ? 12.0f : (mode == 1 ? 20.0f : 8.0f));
             if (response > response_floor) {
                 const int d0 = static_cast<int>(rintf(initial_disp));
                 const int d_start = max(1, d0 - search_radius);
@@ -982,8 +1095,14 @@ __device__ void matchSparsePoints(
                             const float score = mode == 2
                                 ? binaryPatchScore(left_img, left_pitch, right_img, right_pitch,
                                                    x, y, xr, yr, patch_radius)
-                                : znccScore(left_img, left_pitch, right_img, right_pitch,
-                                            x, y, xr, yr, patch_radius);
+                                : (mode >= 3
+                                    ? colorPatchScore(left_img, left_pitch,
+                                                      right_img, right_pitch,
+                                                      left_bgr, left_bgr_pitch,
+                                                      right_bgr, right_bgr_pitch,
+                                                      x, y, xr, yr, patch_radius)
+                                    : znccScore(left_img, left_pitch, right_img, right_pitch,
+                                                x, y, xr, yr, patch_radius));
                             if (score > best_score) {
                                 best_score = score;
                                 best_disp = static_cast<float>(d);
@@ -1017,7 +1136,9 @@ __device__ void matchSparsePoints(
         }
         const float min_score = mode == 2
             ? fmaxf(0.58f, 0.50f + min_confidence * 0.35f)
-            : fmaxf(0.12f, min_confidence * 0.60f);
+            : (mode >= 3
+                ? fmaxf(0.48f, 0.42f + min_confidence * 0.35f)
+                : fmaxf(0.12f, min_confidence * 0.60f));
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
             const float z = focal * baseline / best_disp;
@@ -1106,7 +1227,9 @@ __device__ void matchSparsePoints(
                 } else {
                     const float min_score = mode == 2
                         ? fmaxf(0.58f, 0.50f + min_confidence * 0.35f)
-                        : fmaxf(0.12f, min_confidence * 0.60f);
+                        : (mode >= 3
+                            ? fmaxf(0.48f, 0.42f + min_confidence * 0.35f)
+                            : fmaxf(0.12f, min_confidence * 0.60f));
                     const float score_conf =
                         clampFloat((avg_score - min_score) /
                                    fmaxf(0.01f, 1.0f - min_score),
@@ -1401,6 +1524,8 @@ __device__ void matchMultiPointPatch(
 __global__ void dualYoloDepthCandidatesKernel(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
+    const uint8_t* left_bgr, int left_bgr_pitch,
+    const uint8_t* right_bgr, int right_bgr_pitch,
     int img_w, int img_h,
     const stereo3d::DualYoloGpuDetectionPair* pairs,
     int num_pairs,
@@ -1433,6 +1558,12 @@ __global__ void dualYoloDepthCandidatesKernel(
     int compute_corner_points,
     int compute_texture_points,
     int compute_binary_points,
+    int compute_orb_points,
+    int compute_brisk_points,
+    int compute_akaze_points,
+    int compute_sift_points,
+    int compute_iou_region_color_patch,
+    int compute_patch_iou_color_edge,
     float focal,
     float baseline,
     float min_depth,
@@ -1474,6 +1605,12 @@ __global__ void dualYoloDepthCandidatesKernel(
         clearDisparity(&out->corner_points);
         clearDisparity(&out->texture_points);
         clearDisparity(&out->binary_points);
+        clearDisparity(&out->orb_points);
+        clearDisparity(&out->brisk_points);
+        clearDisparity(&out->akaze_points);
+        clearDisparity(&out->sift_points);
+        clearDisparity(&out->iou_region_color_patch);
+        clearDisparity(&out->patch_iou_color_edge);
     }
     __syncthreads();
 
@@ -1506,6 +1643,11 @@ __global__ void dualYoloDepthCandidatesKernel(
                                                max_disp_delta_px,
                                                max_disp_delta_ratio,
                                                max_depth_delta_m);
+    const int fast_points = clampInt(max_points, 4, 6);
+    const int fast_min_points = clampInt(min_points, 2, fast_points);
+    const int fast_search_radius = clampInt(search_radius_px, 2, 3);
+    const int color_points = 4;
+    const int color_min_points = 3;
     if (initial_disp <= 0.5f ||
         initial_disp > static_cast<float>(max_disparity) ||
         fabsf(left_cy - (out->right_circle.valid ? out->right_circle.cy : pair.right.cy)) >
@@ -1565,15 +1707,16 @@ __global__ void dualYoloDepthCandidatesKernel(
     }
     if (compute_corner_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
                           img_w, img_h,
                           pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           0,
-                          patch_radius,
-                          search_radius_px,
-                          max(max_points, 16),
-                          min_points,
+                          min(patch_radius, 4),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
                           max_disparity,
                           min_confidence,
                           max_delta,
@@ -1600,15 +1743,16 @@ __global__ void dualYoloDepthCandidatesKernel(
     }
     if (compute_texture_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
                           img_w, img_h,
                           pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           1,
-                          patch_radius,
-                          search_radius_px,
-                          max(max_points, 16),
-                          min_points,
+                          min(patch_radius, 4),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
                           max_disparity,
                           min_confidence,
                           max_delta,
@@ -1635,15 +1779,16 @@ __global__ void dualYoloDepthCandidatesKernel(
     }
     if (compute_binary_points) {
         matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
                           img_w, img_h,
                           pair.left, pair.right,
                           left_cx, left_cy, left_r,
                           initial_disp,
                           2,
-                          patch_radius,
-                          search_radius_px,
-                          max(max_points, 16),
-                          min_points,
+                          min(patch_radius, 3),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
                           max_disparity,
                           min_confidence,
                           max_delta,
@@ -1668,6 +1813,222 @@ __global__ void dualYoloDepthCandidatesKernel(
                           best_dy_parts, &valid_count,
                           &out->binary_points);
     }
+    if (compute_orb_points) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          2,
+                          min(patch_radius, 3),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->orb_points);
+    }
+    if (compute_brisk_points) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          2,
+                          min(patch_radius, 3),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->brisk_points);
+    }
+    if (compute_akaze_points) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          1,
+                          min(patch_radius, 4),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->akaze_points);
+    }
+    if (compute_sift_points) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          nullptr, 0, nullptr, 0,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          1,
+                          min(patch_radius, 4),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->sift_points);
+    }
+    if (compute_iou_region_color_patch && left_bgr && right_bgr) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          left_bgr, left_bgr_pitch, right_bgr, right_bgr_pitch,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          3,
+                          min(patch_radius, 2),
+                          fast_search_radius,
+                          color_points,
+                          color_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->iou_region_color_patch);
+    }
+    if (compute_patch_iou_color_edge && left_bgr && right_bgr) {
+        matchSparsePoints(left_img, left_pitch, right_img, right_pitch,
+                          left_bgr, left_bgr_pitch, right_bgr, right_bgr_pitch,
+                          img_w, img_h,
+                          pair.left, pair.right,
+                          left_cx, left_cy, left_r,
+                          initial_disp,
+                          4,
+                          min(patch_radius, 3),
+                          fast_search_radius,
+                          fast_points,
+                          fast_min_points,
+                          max_disparity,
+                          min_confidence,
+                          max_delta,
+                          max_stddev_px,
+                          focal,
+                          baseline,
+                          min_depth,
+                          max_depth,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          feature_y_offset_px,
+                          feature_reverse_check_px,
+                          feature_overlap_scale,
+                          feature_mad_scale,
+                          feature_ransac_gate_px,
+                          feature_sphere_radius_m,
+                          feature_sphere_radius_scale,
+                          feature_sphere_margin_m,
+                          sample_disp, sample_score, sample_x, sample_y,
+                          point_x, point_y,
+                          best_score_parts, best_disp_parts,
+                          best_dy_parts, &valid_count,
+                          &out->patch_iou_color_edge);
+    }
 }
 
 }  // namespace
@@ -1675,6 +2036,8 @@ __global__ void dualYoloDepthCandidatesKernel(
 extern "C" void launchDualYoloDepthCandidatesGpu(
     const uint8_t* left_img, int left_pitch,
     const uint8_t* right_img, int right_pitch,
+    const uint8_t* left_bgr, int left_bgr_pitch,
+    const uint8_t* right_bgr, int right_bgr_pitch,
     int img_width, int img_height,
     const stereo3d::DualYoloGpuDetectionPair* pairs,
     int num_pairs,
@@ -1707,6 +2070,12 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     int compute_corner_points,
     int compute_texture_points,
     int compute_binary_points,
+    int compute_orb_points,
+    int compute_brisk_points,
+    int compute_akaze_points,
+    int compute_sift_points,
+    int compute_iou_region_color_patch,
+    int compute_patch_iou_color_edge,
     float focal,
     float baseline,
     float min_depth,
@@ -1717,6 +2086,8 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     dualYoloDepthCandidatesKernel<<<blocks, kThreads, 0, stream>>>(
         left_img, left_pitch,
         right_img, right_pitch,
+        left_bgr, left_bgr_pitch,
+        right_bgr, right_bgr_pitch,
         img_width, img_height,
         pairs,
         num_pairs,
@@ -1749,6 +2120,12 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
         compute_corner_points,
         compute_texture_points,
         compute_binary_points,
+        compute_orb_points,
+        compute_brisk_points,
+        compute_akaze_points,
+        compute_sift_points,
+        compute_iou_region_color_patch,
+        compute_patch_iou_color_edge,
         focal,
         baseline,
         min_depth,

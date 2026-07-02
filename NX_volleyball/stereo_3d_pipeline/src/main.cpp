@@ -212,6 +212,14 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                     cfg.dual_yolo.depth_roi_brisk_points = modes["roi_brisk_points"].as<bool>();
                 if (modes["roi_akaze_points"])
                     cfg.dual_yolo.depth_roi_akaze_points = modes["roi_akaze_points"].as<bool>();
+                if (modes["roi_sift_points"])
+                    cfg.dual_yolo.depth_roi_sift_points = modes["roi_sift_points"].as<bool>();
+                if (modes["roi_iou_region_color_patch"])
+                    cfg.dual_yolo.depth_roi_iou_region_color_patch =
+                        modes["roi_iou_region_color_patch"].as<bool>();
+                if (modes["roi_patch_iou_color_edge"])
+                    cfg.dual_yolo.depth_roi_patch_iou_color_edge =
+                        modes["roi_patch_iou_color_edge"].as<bool>();
                 if (modes["roi_center_patch"])
                     cfg.dual_yolo.depth_roi_center_patch = modes["roi_center_patch"].as<bool>();
                 if (modes["roi_subpixel"])

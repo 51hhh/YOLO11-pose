@@ -17,6 +17,8 @@
 #include <NvInfer.h>
 #include <cuda_runtime.h>
 
+#include <cstddef>
+#include <string>
 #include <vector>
 
 namespace stereo3d {
@@ -55,16 +57,11 @@ public:
     bool isReady() const { return ready_; }
     const NeuralFeatureConfig& config() const { return config_; }
 
-    /**
-     * @brief Future realtime entry point for rectified ROI pairs on GPU.
-     *
-     * The current class owns and validates TensorRT engines. Actual model
-     * tensor binding is intentionally isolated here so Pipeline does not grow
-     * another model-specific code path.
-     */
     NeuralFeatureMatchResult matchGpuRoi(
-        const uint8_t* left_gpu, int left_pitch,
-        const uint8_t* right_gpu, int right_pitch,
+        const uint8_t* left_gray_gpu, int left_gray_pitch,
+        const uint8_t* right_gray_gpu, int right_gray_pitch,
+        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
         int img_width, int img_height,
         const Detection& left_det,
         const Detection& right_det,
@@ -73,10 +70,25 @@ public:
 
 private:
     struct TrtEngine {
+        struct TensorBuffer {
+            std::string name;
+            bool is_input = false;
+            nvinfer1::DataType dtype = nvinfer1::DataType::kFLOAT;
+            nvinfer1::Dims dims{};
+            void* device = nullptr;
+            size_t bytes = 0;
+            size_t elements = 0;
+            std::vector<float> host_float;
+        };
+
         nvinfer1::IRuntime* runtime = nullptr;
         nvinfer1::ICudaEngine* engine = nullptr;
         nvinfer1::IExecutionContext* context = nullptr;
         std::string path;
+        std::vector<TensorBuffer> tensors;
+        bool bindings_ready = false;
+        int input_count = 0;
+        int output_count = 0;
     };
 
     NeuralFeatureConfig config_;
@@ -92,6 +104,7 @@ private:
     bool loadEngine(const std::string& path, TrtEngine& out);
     void destroyEngine(TrtEngine& engine);
     bool validateConfig() const;
+    bool prepareEngineBindings(TrtEngine& engine);
 };
 
 }  // namespace stereo3d
