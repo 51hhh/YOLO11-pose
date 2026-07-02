@@ -1,6 +1,6 @@
 # GPU 真实关键点匹配与 100fps 架构评估
 
-日期: 2026-07-02
+日期: 2026-07-03
 
 ## 结论
 
@@ -11,10 +11,10 @@
 1. 默认几何 CUDA 候选: bbox/circle/edge/radial/edge-pair，当前生产 100fps 主路径。
 2. 自研 CUDA lite 特征: 跑在 GPU，速度快，但不是 ORB/BRISK/AKAZE/SIFT 的真实算法，历史实测连续帧有效率为 0。
 3. OpenCV CUDA ORB: 当前 NX OpenCV 4.10 已有 `cudafeatures2d` 和 `cv::cuda::ORB`，实时 `roi_orb_points` 已接到真实 CUDA ORB，但同步路径实测 78-79fps 且 0/512 有效。
-4. CPU/OpenCV debug 特征: 真实 ORB/BRISK/AKAZE，但只用于单帧 debug，不适合 100fps。
+4. CPU/OpenCV debug 特征: 真实 ORB/BRISK/AKAZE/SIFT，但只用于单帧 debug，不适合 100fps。
 5. XFeat TensorRT extractor: 真实神经特征 extractor，但当前实现把输出拷回 CPU 做 NMS、descriptor 采样和互反查匹配，实测 75-90fps，不能作为同帧同步 100fps 主路径。
 
-要实现“真实算法 + 100fps”，必须重构为异步 FeatureJob: YOLO 后只启动特征任务，不在 Stage2 等待；以下一帧 YOLO 完成为 deadline，feature 未完成就丢弃该候选，默认几何深度照常输出。
+后续落地状态(2026-07-03): 当前已按实时管线需求实现检测帧 `stage2_roi_match_fuse()` 整段异步化。YOLO ready 后主线程只 collect 检测、提交 async ROI snapshot 和任务；worker 在自有 GPU/host buffer 上执行完整 Stage2。下一帧 YOLO ready 会使更老任务过期，未按时完成的结果只释放 buffer、不写回主输出。该方案是 correctness-first 的整帧快照实现，后续仍可继续优化为小 ROI FeatureJob。
 
 ## 数据来源
 
@@ -135,7 +135,7 @@ akaze   matches=0
 文件: `src/stereo/roi_feature_match_cpu.*`
 
 - sparse corner/texture/binary。
-- OpenCV ORB/BRISK/AKAZE。
+- OpenCV ORB/BRISK/AKAZE/SIFT。
 - BFMatcher/Hamming。
 - `drawMatches` 可视化。
 
@@ -145,9 +145,10 @@ akaze   matches=0
 
 文件: `src/stereo/neural_feature_matcher.*`
 
-当前 uncommitted 实现已有 XFeat extractor-only fallback:
+当前实现已有 XFeat extractor-only fallback:
 
 - TensorRT extractor 在 GPU 上跑。
+- extractor 输入支持 C=1 gray 或 C=3 BGR；C=3 时必须由 BGR 管线提供校正 BGR 指针，不能把灰度指针当彩色输入。
 - `feats/keypoints/heatmap` 通过 `cudaMemcpyAsync` 拷回 CPU。
 - CPU 做 heatmap NMS、descriptor 采样、互反查匹配、MAD/final gate。
 
@@ -165,9 +166,19 @@ requestGrab(N+1)
   -> Stage0 Process(N+1)
 ```
 
-`stage2_roi_match_fuse()` 会同步等待并执行 ROI 候选、神经特征和融合。也就是说，重 feature 后处理现在会阻塞 Stage2 输出和下一轮调度。
+旧同步路径中，`stage2_roi_match_fuse()` 会同步等待并执行 ROI 候选、神经特征和融合。也就是说，重 feature 后处理会阻塞 Stage2 输出和下一轮调度。
 
-当前 `drop_stale_roi_frames` 的语义是: 如果旧检测帧进入 Stage2 时，后一帧 YOLO 已 ready，就跳过旧帧 ROI 后处理。它不是“特征任务异步运行，下一帧 YOLO 完成时超时取消”。因此它不能解决 XFeat/subpixel 这种 3-5ms 后处理拖慢全管线的问题。
+当前已新增异步 ROI Stage2 路径:
+
+- `performance.async_roi_stage2=true` 时，检测帧 YOLO ready 后提交 `AsyncRoiTask`，主线程继续下一轮调度。
+- worker 持有 `AsyncRoiBuffer` 自有灰度 GPU 快照、可选 BGR GPU 快照、可选 pinned host 灰度快照，不跨帧持有 `FrameSlot` 图像指针。
+- BGR 快照在彩色候选或 3/6 通道神经 TensorRT engine 需要时启用；若管线本身是 gray-only，彩色 engine 会返回 unsupported schema，而不会误读灰度内存。
+- 每个 async buffer 有 `copy_done` event；worker 开始完整 Stage2 前等待该 event。
+- 每个 ring slot 有 `async_roi_slot_copy_done_` event；slot 复用前只等待 snapshot copy 完成，不等待 ORB/XFeat/ROI Stage2 完成。
+- 下一帧 YOLO ready 时调用 `expireAsyncRoiBefore(frame_id)`，更老的 pending/ready/running 结果过期；running GPU/CPU work 不能强杀，只能完成后丢弃结果并释放 buffer。
+- async ROI stream 使用低优先级 CUDA stream，YOLO 使用 GPU engine 时可降低特征后处理对检测推理的干扰。
+
+这个版本牺牲了一些 snapshot copy 成本，换取清晰的数据生命周期。它不再要求第一版只做旁路 FeatureJob；后续性能优化方向是把全帧快照缩小为 ROI buffer，并把 XFeat/LightGlue 后处理 GPU 常驻化。
 
 另外，当前主配置是:
 
@@ -184,15 +195,15 @@ detector:
 - 使用 CUDA stream priority，让 YOLO 高优先级，feature 低优先级；或
 - feature 任务只在 GPU 空隙中 opportunistic 运行，deadline 到即丢弃。
 
-## 正确的 100fps FeatureJob 设计
+## 后续 100fps FeatureJob 优化
 
-建议新增独立异步特征队列:
+在当前整段 Stage2 异步方案之上，仍建议继续把最重的特征模型优化为独立小 ROI FeatureJob:
 
 ```text
-Stage2(YOLO collect for frame N):
-  1. 立即生成默认几何深度候选。
-  2. 若有 ROI pair，提交 FeatureJob(N) 到 cudaStreamFeature。
-  3. 不等待 FeatureJob。
+Stage2 async worker for frame N:
+  1. 完成 IoU/极线/尺寸 gate。
+  2. 为重特征提交小 ROI FeatureJob。
+  3. 默认几何/颜色候选可先完成。
 
 下一帧 YOLO 完成或 Stage2(N+1) 开始:
   1. cudaEventQuery(FeatureJob(N))。
@@ -208,6 +219,18 @@ Stage2(YOLO collect for frame N):
 - 所有 GPU 后处理必须 kernel 化: heatmap NMS、topK、descriptor gather、mutual check、y/disp gate、MAD/RANSAC。
 - `cudaMemcpyDeviceToHost` 只能用于低频 debug，不允许在 100fps hot path 里每帧同步。
 - 如果 feature 结果跨帧返回，只能作为候选记录和训练数据，不能阻塞当前帧主输出。
+
+更具体的补丁边界:
+
+- 主线程继续同步执行 YOLO collect、IoU/极线/尺寸配对和默认几何深度，保证实时输出不断流。
+- FeatureJob 只接收配对后的 ROI、检测框、初始视差、feature gate 参数和独立 ROI buffer。
+- `FrameSlot` 中的 CUDA 指针只能用于提交阶段的 ROI copy，不能作为 worker 输入长期持有。
+- worker 同时最多一个 running job，另保留一个 latest pending job；如果 pending 未开始可被更新帧替换，running 只能自然完成后释放。
+- 若需要更抗抖，worker ROI buffer 建议三缓冲: running、copying/pending、free。
+- TensorRT feature model 需要独立 execution context 和 device/host tensor buffer；同一 context 不能被两个异步任务同时 `setTensorAddress`/`enqueueV3`。
+- deadline 到时只递增 drop/expired generation，不调用 CUDA/TensorRT 取消 API。
+
+这一步属于性能优化，不是当前异步正确性的前置条件。
 
 ## 可行模型排序
 

@@ -14,7 +14,7 @@
 - 生产/测试配置: `config/pipeline_dual_yolo_roi.yaml`
 - 标定采集: `capture_chessboard`
 - 标定求解: `stereo_calibrate` 或本机 `stereo_calibration.py`
-- 基准片段录制: `--record-baseline-clip`
+- 基准片段录制: `--record-baseline-clip`, 详见 [录制与离线评估](录制与离线评估.md)
 - 单帧特征匹配可视化: `--debug-feature-matches`
 
 ## 阅读路径

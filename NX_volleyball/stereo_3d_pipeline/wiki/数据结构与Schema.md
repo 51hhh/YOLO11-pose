@@ -69,7 +69,7 @@
 | 14 | ORB |
 | 15 | BRISK |
 | 16 | AKAZE |
-| 17 | SIFT-lite |
+| 17 | SIFT |
 | 18 | 彩色区域 IoU |
 | 19 | 彩色边缘 IoU |
 | 20 | 神经特征 |
@@ -107,17 +107,22 @@ recording:
 输出:
 
 ```text
-clip_YYYYMMDD_HHMMSS/
+clip_YYYYMMDD_HHMMSS_01/
 ├── left/
 ├── right/
+├── left_bgr/      # image_mode=both 时存在
+├── right_bgr/     # image_mode=both 时存在
 ├── frames.csv
 └── metadata.yaml
 ```
+
+`left/` 和 `right/` 保存 `image_mode` 选择的主图像；`bgr` 时是彩色图，`gray` 时是灰度图。默认 `write_after_capture=true`，实时阶段先缓存到内存，clip 完成后写盘。
 
 `frames.csv` 记录:
 
 - pipeline frame id。
 - 左右图相对路径。
+- 额外 BGR 图相对路径；仅 `image_mode=both` 时填写。
 - 左右检测数量和最佳框。
 - 左右 pair gate 结果。
 - disparity、dy、size ratio。
