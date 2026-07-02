@@ -72,7 +72,7 @@ neural_feature_matching:
   enabled: false
   backend: "xfeat"             # xfeat | aliked | superpoint_lightglue
   extractor_engine_path: ""    # XFeat/ALIKED/SuperPoint extractor TensorRT engine
-  matcher_engine_path: ""      # optional LightGlue/LighterGlue TensorRT engine
+  matcher_engine_path: ""      # optional LightGlue/LighterGlue TensorRT engine; used only when use_lightglue=true
   fused_engine_path: ""        # optional full extractor+matcher TensorRT engine
   roi_size: 224
   top_k: 128
