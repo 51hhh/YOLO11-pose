@@ -2585,61 +2585,77 @@ void Pipeline::collectRoiDetections(FrameSlot& slot, int slot_index) {
 bool Pipeline::roiStage2NeedsHostImages(
     const std::vector<Detection>& left_detections,
     const std::vector<Detection>& right_detections) const {
-    if (dualYoloNeedsHostImages(config_.dual_yolo)) {
-        return true;
+    if (left_detections.empty() && right_detections.empty()) {
+        return false;
     }
-
     const bool fallback_enabled =
         dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
         dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
-    if (!config_.dual_yolo.gpu_candidate_refine || !fallback_enabled) {
-        return false;
-    }
-    if (left_detections.empty() && right_detections.empty()) {
-        return false;
-    }
-    if (left_detections.empty() || right_detections.empty()) {
-        return true;
-    }
 
-    const StereoRoiPairGateConfig roi_pair_gate =
-        makeStereoRoiPairGateConfig(config_);
-    std::vector<bool> right_used(right_detections.size(), false);
-    int matched_left = 0;
-    for (size_t li = 0; li < left_detections.size(); ++li) {
-        int best_idx = -1;
-        float best_score = std::numeric_limits<float>::max();
-        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
-            if (right_used[ri]) continue;
-            StereoRoiPair candidate_pair;
-            if (!evaluateStereoRoiPair(left_detections[li],
-                                       right_detections[ri],
-                                       static_cast<int>(li),
-                                       static_cast<int>(ri),
-                                       roi_pair_gate,
-                                       &candidate_pair,
-                                       nullptr)) {
-                continue;
+    auto fallback_may_need_host = [&]() -> bool {
+        if (!fallback_enabled) {
+            return false;
+        }
+        if (left_detections.empty() || right_detections.empty()) {
+            return true;
+        }
+
+        const StereoRoiPairGateConfig roi_pair_gate =
+            makeStereoRoiPairGateConfig(config_);
+        std::vector<bool> right_used(right_detections.size(), false);
+        int matched_left = 0;
+        for (size_t li = 0; li < left_detections.size(); ++li) {
+            int best_idx = -1;
+            float best_score = std::numeric_limits<float>::max();
+            for (size_t ri = 0; ri < right_detections.size(); ++ri) {
+                if (right_used[ri]) continue;
+                StereoRoiPair candidate_pair;
+                if (!evaluateStereoRoiPair(left_detections[li],
+                                           right_detections[ri],
+                                           static_cast<int>(li),
+                                           static_cast<int>(ri),
+                                           roi_pair_gate,
+                                           &candidate_pair,
+                                           nullptr)) {
+                    continue;
+                }
+                if (candidate_pair.score < best_score) {
+                    best_score = candidate_pair.score;
+                    best_idx = static_cast<int>(ri);
+                }
             }
-            if (candidate_pair.score < best_score) {
-                best_score = candidate_pair.score;
-                best_idx = static_cast<int>(ri);
+            if (best_idx >= 0) {
+                right_used[static_cast<size_t>(best_idx)] = true;
+                ++matched_left;
             }
         }
-        if (best_idx >= 0) {
-            right_used[static_cast<size_t>(best_idx)] = true;
-            ++matched_left;
+
+        if (matched_left < static_cast<int>(left_detections.size())) {
+            return true;
         }
+        for (bool used : right_used) {
+            if (!used) return true;
+        }
+        return false;
+    };
+
+    const bool has_stereo_detections =
+        !left_detections.empty() && !right_detections.empty();
+    const bool opencv_descriptor_cpu_possible =
+        dualYoloROIORBPointsDepthEnabled(config_.dual_yolo) ||
+        dualYoloROIBRISKPointsDepthEnabled(config_.dual_yolo) ||
+        dualYoloROIAKAZEPointsDepthEnabled(config_.dual_yolo) ||
+        dualYoloROISIFTPointsDepthEnabled(config_.dual_yolo);
+
+    if (config_.dual_yolo.gpu_candidate_refine) {
+        return (has_stereo_detections && opencv_descriptor_cpu_possible) ||
+               fallback_may_need_host();
     }
 
-    if (matched_left < static_cast<int>(left_detections.size())) {
-        return true;
-    }
-    for (bool used : right_used) {
-        if (!used) return true;
-    }
-    return false;
+    return (has_stereo_detections &&
+            dualYoloNeedsHostImages(config_.dual_yolo)) ||
+           fallback_may_need_host();
 }
 
 bool Pipeline::asyncRoiStage2Configured() const {
@@ -3226,8 +3242,11 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
         neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+    const bool has_stereo_detections =
+        !slot.detections.empty() && !slot.detections_right.empty();
     const bool need_bgr =
         colorPipelineEnabled() &&
+        has_stereo_detections &&
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
          config_.dual_yolo.depth_roi_patch_iou_color_edge ||
          neural_needs_bgr);
