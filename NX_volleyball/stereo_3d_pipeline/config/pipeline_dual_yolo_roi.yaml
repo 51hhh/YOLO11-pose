@@ -66,7 +66,7 @@ detector:
       roi_orb_points: false    # true OpenCV CUDA ORB path when GPU image is available; slower A/B mode, not default 100fps
       roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
       roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
-      roi_sift_points: false   # no true CUDA SIFT backend on current NX; legacy GPU-lite only
+      roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
       roi_iou_region_color_patch: false # GPU color region IoU + patch candidate; requires BGR pipeline
       roi_patch_iou_color_edge: false # GPU color edge IoU + patch candidate; requires BGR pipeline
       roi_center_patch: false  # heavier ZNCC refinement; enable for offline/quality A/B tests
@@ -137,6 +137,9 @@ performance:
   log_interval: 100
   enable_profiling: true
   drop_stale_roi_frames: true  # 若后一帧 YOLO 已完成，跳过旧帧 IoU/特征/深度后处理以控制实时延迟
+  async_roi_stage2: true        # 检测帧 ROI/IoU/特征候选异步执行；tracker detect_interval>1 时自动禁用，避免倒序更新深度
+  async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
+  async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
 
 tracker:
   enabled: false

@@ -205,8 +205,54 @@ cv::Ptr<cv::Feature2D> createOpenCVFeatureExtractorCPU(
         akaze->setNOctaveLayers(2);
         return akaze;
     }
+    case OpenCVFeatureMode::SIFT:
+        return cv::SIFT::create(max_features, 3, 0.04, 10.0, 1.6);
     }
     return {};
+}
+
+int descriptorNormType(OpenCVFeatureMode mode)
+{
+    return mode == OpenCVFeatureMode::SIFT ? cv::NORM_L2 : cv::NORM_HAMMING;
+}
+
+bool descriptorDepthCompatible(OpenCVFeatureMode mode, const cv::Mat& descriptors)
+{
+    if (descriptors.empty()) return false;
+    if (mode == OpenCVFeatureMode::SIFT) {
+        return descriptors.depth() == CV_32F || descriptors.depth() == CV_8U;
+    }
+    return descriptors.depth() == CV_8U;
+}
+
+float descriptorMatchScore(OpenCVFeatureMode mode,
+                           float distance,
+                           int descriptor_cols)
+{
+    if (!std::isfinite(distance) || distance < 0.0f) return 0.0f;
+    if (mode == OpenCVFeatureMode::SIFT) {
+        const float scale = std::max(
+            32.0f,
+            std::sqrt(static_cast<float>(std::max(1, descriptor_cols))) * 18.0f);
+        return std::clamp(std::exp(-distance / scale), 0.0f, 1.0f);
+    }
+    const float max_hamming = static_cast<float>(
+        std::max(1, descriptor_cols * 8));
+    return 1.0f - std::min(1.0f, distance / max_hamming);
+}
+
+float descriptorMinScore(OpenCVFeatureMode mode,
+                         const ROIFeatureMatchConfig& cfg)
+{
+    if (mode == OpenCVFeatureMode::SIFT) {
+        return std::max(0.12f, 0.10f + cfg.subpixel_min_confidence * 0.35f);
+    }
+    return std::max(0.45f, 0.35f + cfg.subpixel_min_confidence * 0.45f);
+}
+
+float descriptorRatioThreshold(OpenCVFeatureMode mode)
+{
+    return mode == OpenCVFeatureMode::SIFT ? 0.75f : 0.78f;
 }
 
 void detectAndDescribeOpenCVFeatureCPU(
@@ -520,6 +566,7 @@ const char* openCVFeatureModeName(OpenCVFeatureMode mode)
     case OpenCVFeatureMode::ORB: return "ORB";
     case OpenCVFeatureMode::BRISK: return "BRISK";
     case OpenCVFeatureMode::AKAZE: return "AKAZE";
+    case OpenCVFeatureMode::SIFT: return "SIFT";
     }
     return "UNKNOWN";
 }
@@ -877,14 +924,14 @@ SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
         if (source_keypoints.size() < static_cast<size_t>(min_points) ||
             target_keypoints.size() < static_cast<size_t>(min_points) ||
             source_descriptors.empty() || target_descriptors.empty() ||
-            source_descriptors.depth() != CV_8U ||
-            target_descriptors.depth() != CV_8U) {
+            !descriptorDepthCompatible(mode, source_descriptors) ||
+            !descriptorDepthCompatible(mode, target_descriptors)) {
             result.low_confidence = true;
             return result;
         }
 
-        const float ratio_thresh = 0.78f;
-        cv::BFMatcher matcher(cv::NORM_HAMMING, false);
+        const float ratio_thresh = descriptorRatioThreshold(mode);
+        cv::BFMatcher matcher(descriptorNormType(mode), false);
         std::vector<std::vector<cv::DMatch>> knn_matches;
         matcher.knnMatch(source_descriptors, target_descriptors, knn_matches, 2);
         std::vector<std::vector<cv::DMatch>> reverse_knn_matches;
@@ -910,10 +957,7 @@ SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
             return result;
         }
 
-        const float max_hamming = static_cast<float>(
-            std::max(1, source_descriptors.cols * 8));
-        const float min_score = std::max(0.45f,
-            0.35f + cfg.subpixel_min_confidence * 0.45f);
+        const float min_score = descriptorMinScore(mode, cfg);
         std::vector<RobustMatchSample> samples;
         samples.reserve(knn_matches.size());
 
@@ -950,7 +994,8 @@ SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
                 continue;
             }
 
-            const float score = 1.0f - std::min(1.0f, best.distance / max_hamming);
+            const float score = descriptorMatchScore(
+                mode, best.distance, source_descriptors.cols);
             if (score < min_score) continue;
 
             RobustMatchSample sample;
@@ -1365,12 +1410,13 @@ DebugFeatureMatchResult makeDebugOpenCVFeatureMatchesCPU(
         if (left_local.size() < static_cast<size_t>(min_points) ||
             right_local.size() < static_cast<size_t>(min_points) ||
             left_desc.empty() || right_desc.empty() ||
-            left_desc.depth() != CV_8U || right_desc.depth() != CV_8U) {
+            !descriptorDepthCompatible(mode, left_desc) ||
+            !descriptorDepthCompatible(mode, right_desc)) {
             return out;
         }
 
-        const float ratio_thresh = 0.78f;
-        cv::BFMatcher matcher(cv::NORM_HAMMING, false);
+        const float ratio_thresh = descriptorRatioThreshold(mode);
+        cv::BFMatcher matcher(descriptorNormType(mode), false);
         std::vector<std::vector<cv::DMatch>> knn_matches;
         matcher.knnMatch(left_desc, right_desc, knn_matches, 2);
         std::vector<std::vector<cv::DMatch>> reverse_knn_matches;
@@ -1390,9 +1436,7 @@ DebugFeatureMatchResult makeDebugOpenCVFeatureMatchesCPU(
             }
             reverse_best[best.queryIdx] = best.trainIdx;
         }
-        const float max_hamming = static_cast<float>(std::max(1, left_desc.cols * 8));
-        const float min_score = std::max(0.45f,
-            0.35f + cfg.subpixel_min_confidence * 0.45f);
+        const float min_score = descriptorMinScore(mode, cfg);
 
         std::vector<RobustMatchSample> samples;
         std::vector<cv::DMatch> candidates;
@@ -1430,7 +1474,8 @@ DebugFeatureMatchResult makeDebugOpenCVFeatureMatchesCPU(
                 continue;
             }
 
-            const float score = 1.0f - std::min(1.0f, best.distance / max_hamming);
+            const float score = descriptorMatchScore(mode, best.distance,
+                                                     left_desc.cols);
             if (score < min_score) continue;
 
             RobustMatchSample sample;

@@ -335,6 +335,10 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
     e.output_count = 0;
     e.bindings_ready = false;
 
+    const bool is_extractor_engine = (&e == &extractor_);
+    const bool is_fused_engine = (&e == &fused_);
+    const bool is_roi_image_engine = is_extractor_engine || is_fused_engine;
+
     const int nb = e.engine->getNbIOTensors();
     for (int i = 0; i < nb; ++i) {
         const char* cname = e.engine->getIOTensorName(i);
@@ -346,7 +350,8 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
         tensor.dtype = e.engine->getTensorDataType(cname);
         tensor.dims = e.engine->getTensorShape(cname);
 
-        if (tensor.is_input && hasDynamicDim(tensor.dims) && tensor.dims.nbDims == 4) {
+        if (tensor.is_input && is_roi_image_engine &&
+            hasDynamicDim(tensor.dims) && tensor.dims.nbDims == 4) {
             int c = static_cast<int>(tensor.dims.d[1]);
             if (c <= 0) c = 1;
             nvinfer1::Dims4 shape{1, c, config_.roi_size, config_.roi_size};
@@ -359,6 +364,23 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
 
         if (!tensor.is_input && hasDynamicDim(tensor.dims)) {
             tensor.dims = e.context->getTensorShape(cname);
+        }
+
+        if (tensor.is_input && is_roi_image_engine) {
+            const int c = tensorChannels(tensor.dims);
+            const int h = tensorHeight(tensor.dims);
+            const int w = tensorWidth(tensor.dims);
+            const bool channels_ok =
+                is_extractor_engine ? (c == 1 || c == 3)
+                                    : (c == 1 || c == 2 || c == 3 || c == 6);
+            if ((tensor.dims.nbDims != 3 && tensor.dims.nbDims != 4) ||
+                h != config_.roi_size || w != config_.roi_size ||
+                !channels_ok) {
+                LOG_WARN("Neural feature: unsupported input tensor %s shape "
+                         "(channels=%d h=%d w=%d, expected roi=%d)",
+                         cname, c, h, w, config_.roi_size);
+                return false;
+            }
         }
 
         tensor.elements = volume(tensor.dims);
@@ -374,6 +396,8 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
         }
         if (!e.context->setTensorAddress(tensor.name.c_str(), tensor.device)) {
             LOG_WARN("Neural feature: setTensorAddress failed for %s", cname);
+            cudaFree(tensor.device);
+            tensor.device = nullptr;
             return false;
         }
         if (tensor.is_input) {
@@ -388,12 +412,64 @@ bool NeuralFeatureMatcher::prepareEngineBindings(TrtEngine& e) {
     }
 
     e.bindings_ready = e.input_count > 0 && e.output_count > 0;
+    if (e.bindings_ready && is_extractor_engine) {
+        TrtEngine::TensorBuffer* input = nullptr;
+        for (auto& tensor : e.tensors) {
+            if (tensor.is_input) input = &tensor;
+        }
+        const int c = input ? tensorChannels(input->dims) : 0;
+        if (e.input_count != 1 || (c != 1 && c != 3)) {
+            LOG_WARN("Neural feature: extractor engine expects exactly one "
+                     "1/3-channel ROI image input, got inputs=%d channels=%d",
+                     e.input_count, c);
+            e.bindings_ready = false;
+        }
+    }
+    if (e.bindings_ready && is_fused_engine) {
+        std::vector<int> input_channels;
+        input_channels.reserve(static_cast<size_t>(e.input_count));
+        for (const auto& tensor : e.tensors) {
+            if (tensor.is_input) input_channels.push_back(tensorChannels(tensor.dims));
+        }
+        bool schema_ok = false;
+        if (input_channels.size() == 1) {
+            schema_ok = input_channels[0] == 2 || input_channels[0] == 6;
+        } else if (input_channels.size() == 2) {
+            schema_ok =
+                (input_channels[0] == 1 || input_channels[0] == 3) &&
+                (input_channels[1] == 1 || input_channels[1] == 3);
+        }
+        if (!schema_ok) {
+            const int c0 = input_channels.empty() ? 0 : input_channels[0];
+            const int c1 = input_channels.size() < 2 ? 0 : input_channels[1];
+            LOG_WARN("Neural feature: fused engine expects one 2/6-channel "
+                     "input or two 1/3-channel inputs, got inputs=%d "
+                     "channels=(%d,%d)",
+                     e.input_count, c0, c1);
+            e.bindings_ready = false;
+        }
+    }
     return e.bindings_ready;
+}
+
+bool NeuralFeatureMatcher::requiresBgrInput() const {
+    auto engine_requires_bgr = [](const TrtEngine& e) {
+        if (!e.bindings_ready) return false;
+        for (const auto& tensor : e.tensors) {
+            if (!tensor.is_input) continue;
+            const int c = tensorChannels(tensor.dims);
+            if (c == 3 || c == 6) return true;
+        }
+        return false;
+    };
+    return engine_requires_bgr(extractor_) || engine_requires_bgr(fused_);
 }
 
 NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     const uint8_t* left_gray_gpu, int left_gray_pitch,
     const uint8_t* right_gray_gpu, int right_gray_pitch,
+    const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+    const uint8_t* right_bgr_gpu, int right_bgr_pitch,
     int img_width, int img_height,
     const Detection& left_det,
     const Detection& right_det,
@@ -459,6 +535,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     const int input_channels = tensorChannels(input->dims);
     auto run_one = [&](const Detection& det,
                        const uint8_t* gray, int pitch,
+                       const uint8_t* bgr, int bgr_pitch,
                        XFeatRawOutput& raw) -> bool {
         float* dst = static_cast<float*>(input->device);
         if (input_channels == 1) {
@@ -467,7 +544,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
                           det.cx, det.cy, det.width, det.height,
                           context, stream);
         } else if (input_channels == 3) {
-            cropResizeGPU_3ch(gray, pitch, img_width, img_height,
+            if (!bgr || bgr_pitch <= 0) {
+                return false;
+            }
+            cropResizeGPU_3ch(bgr, bgr_pitch, img_width, img_height,
                               dst, config_.roi_size,
                               det.cx, det.cy, det.width, det.height,
                               context, stream);
@@ -481,8 +561,20 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     const auto start = std::chrono::steady_clock::now();
     XFeatRawOutput left_raw;
     XFeatRawOutput right_raw;
-    if (!run_one(left_det, left_gray_gpu, left_gray_pitch, left_raw) ||
-        !run_one(right_det, right_gray_gpu, right_gray_pitch, right_raw)) {
+    if (input_channels == 3 &&
+        (!left_bgr_gpu || !right_bgr_gpu ||
+         left_bgr_pitch <= 0 || right_bgr_pitch <= 0)) {
+        out.status = "unsupported_input_schema";
+        return out;
+    }
+    if (!run_one(left_det,
+                 left_gray_gpu, left_gray_pitch,
+                 left_bgr_gpu, left_bgr_pitch,
+                 left_raw) ||
+        !run_one(right_det,
+                 right_gray_gpu, right_gray_pitch,
+                 right_bgr_gpu, right_bgr_pitch,
+                 right_raw)) {
         out.status = "extractor_enqueue_or_copy_failed";
         return out;
     }
@@ -726,6 +818,8 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
             return matchXFeatExtractorGpuRoi(
                 left_gray_gpu, left_gray_pitch,
                 right_gray_gpu, right_gray_pitch,
+                left_bgr_gpu, left_bgr_pitch,
+                right_bgr_gpu, right_bgr_pitch,
                 img_width, img_height,
                 left_det, right_det,
                 initial_disparity,

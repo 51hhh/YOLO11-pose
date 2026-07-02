@@ -42,7 +42,8 @@ enum class SparseFeatureMode {
 enum class OpenCVFeatureMode {
     ORB,
     BRISK,
-    AKAZE
+    AKAZE,
+    SIFT
 };
 
 }  // namespace stereo3d

@@ -373,6 +373,12 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["pwm_frequency"])  cfg.trigger_freq_hz = static_cast<int>(perf["pwm_frequency"].as<float>());
         if (perf["drop_stale_roi_frames"])
             cfg.drop_stale_roi_frames = perf["drop_stale_roi_frames"].as<bool>();
+        if (perf["async_roi_stage2"])
+            cfg.async_roi_stage2 = perf["async_roi_stage2"].as<bool>();
+        if (perf["async_roi_buffers"])
+            cfg.async_roi_buffers = perf["async_roi_buffers"].as<int>();
+        if (perf["async_roi_deadline_ms"])
+            cfg.async_roi_deadline_ms = perf["async_roi_deadline_ms"].as<float>();
     }
     if (!camera_trigger_frequency_set) {
         cfg.camera.trigger_frequency_hz = cfg.trigger_freq_hz;
@@ -388,6 +394,7 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (trk["detect_interval"]) cfg.tracker.detect_interval = trk["detect_interval"].as<int>();
         if (trk["lost_threshold"])  cfg.tracker.lost_threshold  = trk["lost_threshold"].as<int>();
         if (trk["min_confidence"])  cfg.tracker.min_confidence  = trk["min_confidence"].as<float>();
+        cfg.tracker.detect_interval = std::max(1, cfg.tracker.detect_interval);
     }
 
     return cfg;

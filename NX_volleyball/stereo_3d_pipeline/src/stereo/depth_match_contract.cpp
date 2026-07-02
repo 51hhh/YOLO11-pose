@@ -270,7 +270,8 @@ bool evaluateStereoRoiPair(
         const float size_cost = std::abs(std::log(w_ratio)) +
                                 std::abs(std::log(h_ratio));
         pair->score = dy / adaptive_y_tol + size_cost - 0.25f * right.confidence;
-        pair->semantic_confidence = std::sqrt(left.confidence * right.confidence);
+        pair->semantic_confidence =
+            std::sqrt(std::max(0.0f, left.confidence * right.confidence));
     }
     return true;
 }

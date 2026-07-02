@@ -44,8 +44,11 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -138,7 +141,7 @@ struct PipelineConfig {
         bool depth_roi_orb_points = false; ///< 计算 ROI ORB 特征点视差候选
         bool depth_roi_brisk_points = false; ///< 计算 ROI BRISK 特征点视差候选
         bool depth_roi_akaze_points = false; ///< 计算 ROI AKAZE 特征点视差候选
-        bool depth_roi_sift_points = false; ///< 计算 ROI SIFT-lite GPU 特征点视差候选
+        bool depth_roi_sift_points = false; ///< 计算 ROI OpenCV CPU SIFT 特征点视差候选
         bool depth_roi_iou_region_color_patch = false; ///< 计算 ROI 彩色区域 IoU/patch 视差候选
         bool depth_roi_patch_iou_color_edge = false; ///< 计算 ROI 彩色边缘 IoU/patch 视差候选
         bool depth_roi_center_patch = false; ///< 计算 ROI 中心 patch ZNCC 视差候选
@@ -213,6 +216,9 @@ struct PipelineConfig {
     int stats_interval = 100;      ///< 每 N 帧打印统计
     bool detection_only = false;   ///< 仅运行采集/校正/检测/回调, 跳过 stereo/depth
     bool drop_stale_roi_frames = false; ///< ROI 模式下若后一帧 YOLO 已完成则跳过旧帧后处理
+    bool async_roi_stage2 = false; ///< ROI_ONLY 检测帧异步执行 IoU/ROI 特征/候选深度
+    int async_roi_buffers = 3;     ///< 异步 ROI 图像快照缓冲数 (running + pending + free)
+    float async_roi_deadline_ms = 10.0f; ///< 期望在下一帧 YOLO ready 前完成的软预算
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR
@@ -385,6 +391,32 @@ private:
         std::vector<Detection> detections;
         std::vector<Object3D> results;
     };
+    struct RoiStage2Input {
+        int frame_id = -1;
+        std::vector<Detection> left_detections;
+        std::vector<Detection> right_detections;
+        const uint8_t* left_cpu = nullptr;
+        int left_cpu_pitch = 0;
+        const uint8_t* right_cpu = nullptr;
+        int right_cpu_pitch = 0;
+        const uint8_t* left_gray_gpu = nullptr;
+        int left_gray_pitch = 0;
+        const uint8_t* right_gray_gpu = nullptr;
+        int right_gray_pitch = 0;
+        const uint8_t* left_bgr_gpu = nullptr;
+        int left_bgr_pitch = 0;
+        const uint8_t* right_bgr_gpu = nullptr;
+        int right_bgr_pitch = 0;
+        int width = 0;
+        int height = 0;
+        cudaStream_t stream = nullptr;
+    };
+    struct RoiStage2Output {
+        std::vector<Detection> detections;
+        std::vector<Object3D> roi_results;
+        bool predict_only = false;
+        bool detection_only = false;
+    };
     DualYoloMatchOutput matchDualYoloDetections(
         const std::vector<Detection>& left_detections,
         const std::vector<Detection>& right_detections,
@@ -397,6 +429,61 @@ private:
         int img_width, int img_height,
         cudaStream_t stream,
         DualYoloMatchStats* stats);
+    void collectRoiDetections(FrameSlot& slot, int slot_index);
+    bool roiStage2NeedsHostImages(const std::vector<Detection>& left_detections,
+                                  const std::vector<Detection>& right_detections) const;
+    RoiStage2Output runRoiStage2Core(const RoiStage2Input& input);
+    void applyRoiStage2Output(FrameSlot& slot, RoiStage2Output&& output);
+    void publishRoiFrameCallbacks(FrameSlot& slot);
+
+    struct AsyncRoiBuffer {
+        uint8_t* left_gray_gpu = nullptr;
+        size_t left_gray_pitch = 0;
+        uint8_t* right_gray_gpu = nullptr;
+        size_t right_gray_pitch = 0;
+        uint8_t* left_bgr_gpu = nullptr;
+        size_t left_bgr_pitch = 0;
+        uint8_t* right_bgr_gpu = nullptr;
+        size_t right_bgr_pitch = 0;
+        uint8_t* left_gray_host = nullptr;
+        size_t left_gray_host_pitch = 0;
+        uint8_t* right_gray_host = nullptr;
+        size_t right_gray_host_pitch = 0;
+        cudaEvent_t copy_done = nullptr;
+        bool copy_event_recorded = false;
+    };
+    struct AsyncRoiTask {
+        int frame_id = -1;
+        int slot_index = -1;
+        int buffer_index = -1;
+        bool host_gray_valid = false;
+        bool bgr_valid = false;
+        bool copy_event_recorded = false;
+        RoiStage2Input input;
+    };
+    struct AsyncRoiResult {
+        int frame_id = -1;
+        int slot_index = -1;
+        double elapsed_ms = 0.0;
+        RoiStage2Output output;
+    };
+    bool asyncRoiStage2Configured() const;
+    bool initAsyncRoiStage2();
+    bool startAsyncRoiStage2();
+    void shutdownAsyncRoiStage2();
+    void destroyAsyncRoiStage2();
+    void asyncRoiWorkerLoop();
+    bool submitAsyncRoiStage2(FrameSlot& slot, int slot_index);
+    bool snapshotAsyncRoiImages(FrameSlot& slot,
+                                AsyncRoiBuffer& buffer,
+                                bool need_host_gray,
+                                bool need_bgr);
+    std::vector<int> drainCompletedAsyncRoiStage2();
+    void expireAsyncRoiBefore(int frame_id);
+    void releaseAsyncRoiBufferLocked(int buffer_index);
+    bool waitAsyncRoiBufferCopyLocked(int buffer_index, const char* reason);
+    void markAsyncRoiSlotCopyPendingLocked(int slot_index);
+    void waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -433,6 +520,25 @@ private:
     std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
+
+    // ===== ROI Stage2 异步后处理 =====
+    bool async_roi_ready_ = false;
+    bool async_roi_thread_stop_ = false;
+    cudaStream_t async_roi_stream_ = nullptr;
+    cudaStream_t async_roi_copy_stream_ = nullptr;
+    std::thread async_roi_thread_;
+    std::mutex async_roi_mutex_;
+    std::condition_variable async_roi_cv_;
+    std::deque<int> async_roi_free_buffers_;
+    std::deque<AsyncRoiTask> async_roi_pending_;
+    std::deque<AsyncRoiResult> async_roi_completed_;
+    std::vector<AsyncRoiBuffer> async_roi_buffers_;
+    std::array<cudaEvent_t, RING_BUFFER_SIZE> async_roi_slot_copy_done_{};
+    std::array<bool, RING_BUFFER_SIZE> async_roi_slot_copy_pending_{};
+    int async_roi_expire_before_frame_ = -1;
+    bool async_roi_worker_busy_ = false;
+    std::mutex roi_postprocess_mutex_;
+    std::mutex hybrid_depth_mutex_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器

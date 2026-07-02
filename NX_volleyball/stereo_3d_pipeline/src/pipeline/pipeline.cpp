@@ -86,6 +86,7 @@ Pipeline::Pipeline() = default;
 
 Pipeline::~Pipeline() {
     stop();
+    destroyAsyncRoiStage2();
     for (auto& slot : slots_) {
         slot.destroy();
     }
@@ -101,6 +102,7 @@ Pipeline::~Pipeline() {
 
 bool Pipeline::init(const PipelineConfig& config) {
     config_ = config;
+    config_.tracker.detect_interval = std::max(1, config_.tracker.detect_interval);
 
     LOG_INFO("========================================");
     LOG_INFO("Stereo 3D Pipeline (4-Stage)");
@@ -417,6 +419,13 @@ bool Pipeline::init(const PipelineConfig& config) {
                 LOG_ERROR("NeuralFeatureMatcher init failed");
                 return false;
             }
+            if (neural_feature_matcher_->requiresBgrInput() &&
+                !colorPipelineEnabled()) {
+                LOG_WARN("NeuralFeatureMatcher engine requires 3/6-channel BGR input, "
+                         "but the current detector input format keeps the pipeline in "
+                         "gray-only mode; roi_neural_feature will report unsupported "
+                         "input until BGR input is enabled");
+            }
             LOG_INFO("NeuralFeatureMatcher engines loaded; TensorRT ROI matches "
                      "will be used as roi_neural_feature candidates");
         }
@@ -662,6 +671,20 @@ bool Pipeline::init(const PipelineConfig& config) {
                       config_.depth.min_depth, config_.depth.max_depth);
     }
 
+    if (config_.async_roi_stage2 &&
+        config_.tracker.enabled &&
+        config_.tracker.detect_interval > 1) {
+        LOG_WARN("Async ROI Stage2 disabled because tracker detect_interval=%d "
+                 "would allow out-of-order HybridDepth updates; use "
+                 "detect_interval=1 or disable tracker for async ROI",
+                 config_.tracker.detect_interval);
+    }
+
+    if (asyncRoiStage2Configured() && !initAsyncRoiStage2()) {
+        LOG_ERROR("Failed to initialize async ROI Stage2 resources");
+        return false;
+    }
+
     const bool dualYoloDepthOnly =
         config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
         config_.dual_yolo.enabled &&
@@ -710,6 +733,10 @@ bool Pipeline::init(const PipelineConfig& config) {
     LOG_INFO("  Detect: %s (DLA=%d)", config_.engine_file.c_str(), config_.use_dla);
     LOG_INFO("  Disparity: %s", strategyStr.c_str());
     LOG_INFO("  Drop stale ROI frames: %d", config_.drop_stale_roi_frames ? 1 : 0);
+    LOG_INFO("  Async ROI Stage2: %d (buffers=%d deadline=%.1fms)",
+             async_roi_ready_ ? 1 : 0,
+             config_.async_roi_buffers,
+             config_.async_roi_deadline_ms);
     LOG_INFO("========================================");
 
     return true;
@@ -718,11 +745,17 @@ bool Pipeline::init(const PipelineConfig& config) {
 void Pipeline::start() {
     if (running_.exchange(true)) return;
 
+    if (!startAsyncRoiStage2()) {
+        running_ = false;
+        return;
+    }
+
 #ifdef HIK_CAMERA_ENABLED
     // 先启动相机采集, 再启动 PWM 触发
     if (camera_ && !camera_->startGrabbing()) {
         LOG_ERROR("Failed to start camera grabbing");
         running_ = false;
+        shutdownAsyncRoiStage2();
         return;
     }
     if (pwm_trigger_ && !pwm_trigger_->start()) {
@@ -761,6 +794,8 @@ void Pipeline::stop() {
     if (pipeline_thread_.joinable()) {
         pipeline_thread_.join();
     }
+
+    shutdownAsyncRoiStage2();
 
 #ifdef HIK_CAMERA_ENABLED
     // 等待采集线程退出 (最多等待一个 camera grab timeout)
@@ -1378,7 +1413,10 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
 
 bool dualYoloNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
     if (cfg.gpu_candidate_refine) {
-        return false;
+        return dualYoloROIORBPointsDepthEnabled(cfg) ||
+               dualYoloROIBRISKPointsDepthEnabled(cfg) ||
+               dualYoloROIAKAZEPointsDepthEnabled(cfg) ||
+               dualYoloROISIFTPointsDepthEnabled(cfg);
     }
     return dualYoloNeedsCircleSeedRefine(cfg) ||
            dualYoloROIRadialCenterDepthEnabled(cfg) ||
@@ -2309,6 +2347,10 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
         left_gray, right_gray, left_det, right_det, initial_disp,
         feature_cfg, config_.max_disparity, focal, baseline,
         OpenCVFeatureMode::AKAZE));
+    results.push_back(makeDebugOpenCVFeatureMatchesCPU(
+        left_gray, right_gray, left_det, right_det, initial_disp,
+        feature_cfg, config_.max_disparity, focal, baseline,
+        OpenCVFeatureMode::SIFT));
 
     cv::Mat left_color = left_viz.clone();
     cv::Mat right_color = right_viz.clone();
@@ -2527,6 +2569,749 @@ void Pipeline::collectRightDetections(FrameSlot& slot, int slot_index) {
     limitDetectionsByConfidence(slot.detections_right, config_.max_detections);
 }
 
+void Pipeline::collectRoiDetections(FrameSlot& slot, int slot_index) {
+    auto* det = getDetector(slot.frame_id);
+    if (slot.detection_submitted) {
+        slot.detections = det->collect(slot_index,
+                                       config_.rect_width,
+                                       config_.rect_height);
+        limitDetectionsByConfidence(slot.detections, config_.max_detections);
+    } else {
+        slot.detections.clear();
+    }
+    collectRightDetections(slot, slot_index);
+}
+
+bool Pipeline::roiStage2NeedsHostImages(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections) const {
+    const bool fallback_host_needed_now =
+        config_.dual_yolo.gpu_candidate_refine &&
+        (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
+         dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
+         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo)) &&
+        (left_detections.empty() || right_detections.empty());
+    return dualYoloNeedsHostImages(config_.dual_yolo) ||
+           fallback_host_needed_now;
+}
+
+bool Pipeline::asyncRoiStage2Configured() const {
+    return config_.async_roi_stage2 &&
+           config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
+           !config_.detection_only &&
+           (!config_.tracker.enabled || config_.tracker.detect_interval <= 1);
+}
+
+bool Pipeline::initAsyncRoiStage2() {
+    if (async_roi_ready_) {
+        return true;
+    }
+
+    const int buffer_count = std::clamp(config_.async_roi_buffers, 2, 8);
+    config_.async_roi_buffers = buffer_count;
+    config_.async_roi_deadline_ms =
+        std::max(1.0f, config_.async_roi_deadline_ms);
+
+    int least_priority = 0;
+    int greatest_priority = 0;
+    const cudaError_t priority_err =
+        cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority);
+    const bool use_low_priority = priority_err == cudaSuccess;
+    (void)greatest_priority;
+    auto create_async_stream = [&](cudaStream_t* stream,
+                                   const char* name) -> cudaError_t {
+        cudaError_t e = use_low_priority
+            ? cudaStreamCreateWithPriority(stream, cudaStreamNonBlocking,
+                                           least_priority)
+            : cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
+        if (e != cudaSuccess && use_low_priority) {
+            LOG_WARN("Async ROI: create low-priority %s stream failed (%s), "
+                     "falling back to default priority",
+                     name, cudaGetErrorString(e));
+            e = cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
+        }
+        return e;
+    };
+
+    cudaError_t err = create_async_stream(&async_roi_stream_, "worker");
+    if (err != cudaSuccess) {
+        LOG_ERROR("Async ROI: create worker stream failed: %s",
+                  cudaGetErrorString(err));
+        return false;
+    }
+    err = create_async_stream(&async_roi_copy_stream_, "copy");
+    if (err != cudaSuccess) {
+        LOG_ERROR("Async ROI: create copy stream failed: %s",
+                  cudaGetErrorString(err));
+        destroyAsyncRoiStage2();
+        return false;
+    }
+
+    for (auto& evt : async_roi_slot_copy_done_) {
+        err = cudaEventCreateWithFlags(&evt, cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: create slot copy event failed: %s",
+                      cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+    }
+    async_roi_slot_copy_pending_.fill(false);
+
+    async_roi_buffers_.resize(static_cast<size_t>(buffer_count));
+    const size_t gray_width_bytes = static_cast<size_t>(config_.rect_width);
+    const size_t bgr_width_bytes =
+        static_cast<size_t>(config_.rect_width) * 3u;
+    const size_t rows = static_cast<size_t>(config_.rect_height);
+    const bool neural_needs_bgr =
+        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+    const bool allocate_bgr =
+        colorPipelineEnabled() &&
+        (config_.dual_yolo.depth_roi_iou_region_color_patch ||
+         config_.dual_yolo.depth_roi_patch_iou_color_edge ||
+         neural_needs_bgr);
+
+    for (int i = 0; i < buffer_count; ++i) {
+        auto& b = async_roi_buffers_[static_cast<size_t>(i)];
+        err = cudaEventCreateWithFlags(&b.copy_done, cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: create buffer copy event %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+        err = cudaMallocPitch(reinterpret_cast<void**>(&b.left_gray_gpu),
+                              &b.left_gray_pitch,
+                              gray_width_bytes, rows);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: alloc left gray buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+        err = cudaMallocPitch(reinterpret_cast<void**>(&b.right_gray_gpu),
+                              &b.right_gray_pitch,
+                              gray_width_bytes, rows);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: alloc right gray buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+        b.left_gray_host_pitch = gray_width_bytes;
+        b.right_gray_host_pitch = gray_width_bytes;
+        err = cudaHostAlloc(reinterpret_cast<void**>(&b.left_gray_host),
+                            gray_width_bytes * rows,
+                            cudaHostAllocDefault);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: alloc left gray host buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+        err = cudaHostAlloc(reinterpret_cast<void**>(&b.right_gray_host),
+                            gray_width_bytes * rows,
+                            cudaHostAllocDefault);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: alloc right gray host buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+
+        if (allocate_bgr) {
+            err = cudaMallocPitch(reinterpret_cast<void**>(&b.left_bgr_gpu),
+                                  &b.left_bgr_pitch,
+                                  bgr_width_bytes, rows);
+            if (err != cudaSuccess) {
+                LOG_ERROR("Async ROI: alloc left BGR buffer %d failed: %s",
+                          i, cudaGetErrorString(err));
+                destroyAsyncRoiStage2();
+                return false;
+            }
+            err = cudaMallocPitch(reinterpret_cast<void**>(&b.right_bgr_gpu),
+                                  &b.right_bgr_pitch,
+                                  bgr_width_bytes, rows);
+            if (err != cudaSuccess) {
+                LOG_ERROR("Async ROI: alloc right BGR buffer %d failed: %s",
+                          i, cudaGetErrorString(err));
+                destroyAsyncRoiStage2();
+                return false;
+            }
+        }
+        async_roi_free_buffers_.push_back(i);
+    }
+
+    async_roi_thread_stop_ = false;
+    async_roi_expire_before_frame_ = -1;
+    async_roi_ready_ = true;
+    LOG_INFO("Async ROI Stage2 buffers ready: count=%d gray=%dx%d bgr=%d",
+             buffer_count, config_.rect_width, config_.rect_height,
+             allocate_bgr ? 1 : 0);
+    return true;
+}
+
+bool Pipeline::startAsyncRoiStage2() {
+    if (!async_roi_ready_) {
+        return true;
+    }
+    if (async_roi_thread_.joinable()) {
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_thread_stop_ = false;
+        async_roi_expire_before_frame_ = -1;
+        async_roi_completed_.clear();
+    }
+    async_roi_thread_ = std::thread(&Pipeline::asyncRoiWorkerLoop, this);
+    LOG_INFO("Async ROI Stage2 worker started");
+    return true;
+}
+
+void Pipeline::releaseAsyncRoiBufferLocked(int buffer_index) {
+    if (buffer_index >= 0 &&
+        buffer_index < static_cast<int>(async_roi_buffers_.size())) {
+        waitAsyncRoiBufferCopyLocked(buffer_index, "release");
+        async_roi_free_buffers_.push_back(buffer_index);
+    }
+}
+
+bool Pipeline::waitAsyncRoiBufferCopyLocked(int buffer_index,
+                                            const char* reason) {
+    using Clock = std::chrono::high_resolution_clock;
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
+        return false;
+    }
+
+    auto& buffer = async_roi_buffers_[static_cast<size_t>(buffer_index)];
+    if (!buffer.copy_event_recorded || !buffer.copy_done) {
+        return true;
+    }
+
+    const auto t0 = Clock::now();
+    const cudaError_t err = cudaEventSynchronize(buffer.copy_done);
+    const double wait_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    globalPerf().record("Stage2_AsyncRoiCopyWait", wait_ms);
+    buffer.copy_event_recorded = false;
+    if (err != cudaSuccess) {
+        LOG_WARN("[AsyncROI] Buffer copy wait failed buffer=%d reason=%s err=%s",
+                 buffer_index,
+                 reason ? reason : "unknown",
+                 cudaGetErrorString(err));
+        return false;
+    }
+    return true;
+}
+
+void Pipeline::markAsyncRoiSlotCopyPendingLocked(int slot_index) {
+    if (slot_index >= 0 && slot_index < RING_BUFFER_SIZE) {
+        async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)] = true;
+    }
+}
+
+void Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
+                                            const char* reason) {
+    using Clock = std::chrono::high_resolution_clock;
+    if (!async_roi_ready_ ||
+        slot_index < 0 ||
+        slot_index >= RING_BUFFER_SIZE) {
+        return;
+    }
+
+    cudaEvent_t evt = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        if (!async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)]) {
+            return;
+        }
+        evt = async_roi_slot_copy_done_[static_cast<size_t>(slot_index)];
+    }
+    if (!evt) {
+        return;
+    }
+
+    const auto t0 = Clock::now();
+    const cudaError_t err = cudaEventSynchronize(evt);
+    const double wait_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    globalPerf().record("Stage2_AsyncRoiSlotCopyWait", wait_ms);
+
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)] = false;
+    }
+    if (err != cudaSuccess) {
+        LOG_WARN("[AsyncROI] Slot snapshot wait failed slot=%d reason=%s err=%s",
+                 slot_index,
+                 reason ? reason : "unknown",
+                 cudaGetErrorString(err));
+    }
+}
+
+void Pipeline::shutdownAsyncRoiStage2() {
+    if (!async_roi_ready_ && !async_roi_thread_.joinable()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_thread_stop_ = true;
+        while (!async_roi_pending_.empty()) {
+            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            async_roi_pending_.pop_front();
+        }
+    }
+    async_roi_cv_.notify_all();
+    if (async_roi_thread_.joinable()) {
+        async_roi_thread_.join();
+    }
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_completed_.clear();
+        async_roi_slot_copy_pending_.fill(false);
+        async_roi_worker_busy_ = false;
+    }
+}
+
+void Pipeline::destroyAsyncRoiStage2() {
+    shutdownAsyncRoiStage2();
+
+    for (auto& b : async_roi_buffers_) {
+        if (b.copy_done) {
+            if (b.copy_event_recorded) {
+                cudaEventSynchronize(b.copy_done);
+                b.copy_event_recorded = false;
+            }
+            cudaEventDestroy(b.copy_done);
+            b.copy_done = nullptr;
+        }
+        if (b.left_gray_gpu) {
+            cudaFree(b.left_gray_gpu);
+            b.left_gray_gpu = nullptr;
+        }
+        if (b.right_gray_gpu) {
+            cudaFree(b.right_gray_gpu);
+            b.right_gray_gpu = nullptr;
+        }
+        if (b.left_bgr_gpu) {
+            cudaFree(b.left_bgr_gpu);
+            b.left_bgr_gpu = nullptr;
+        }
+        if (b.right_bgr_gpu) {
+            cudaFree(b.right_bgr_gpu);
+            b.right_bgr_gpu = nullptr;
+        }
+        if (b.left_gray_host) {
+            cudaFreeHost(b.left_gray_host);
+            b.left_gray_host = nullptr;
+        }
+        if (b.right_gray_host) {
+            cudaFreeHost(b.right_gray_host);
+            b.right_gray_host = nullptr;
+        }
+        b.left_gray_pitch = 0;
+        b.right_gray_pitch = 0;
+        b.left_bgr_pitch = 0;
+        b.right_bgr_pitch = 0;
+        b.left_gray_host_pitch = 0;
+        b.right_gray_host_pitch = 0;
+    }
+    async_roi_buffers_.clear();
+    async_roi_free_buffers_.clear();
+    async_roi_pending_.clear();
+    async_roi_completed_.clear();
+
+    for (size_t i = 0; i < async_roi_slot_copy_done_.size(); ++i) {
+        auto& evt = async_roi_slot_copy_done_[i];
+        if (evt) {
+            if (async_roi_slot_copy_pending_[i]) {
+                cudaEventSynchronize(evt);
+            }
+            cudaEventDestroy(evt);
+            evt = nullptr;
+        }
+    }
+    async_roi_slot_copy_pending_.fill(false);
+
+    if (async_roi_stream_) {
+        cudaStreamDestroy(async_roi_stream_);
+        async_roi_stream_ = nullptr;
+    }
+    if (async_roi_copy_stream_) {
+        cudaStreamDestroy(async_roi_copy_stream_);
+        async_roi_copy_stream_ = nullptr;
+    }
+    async_roi_ready_ = false;
+}
+
+bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
+                                      AsyncRoiBuffer& buffer,
+                                      bool need_host_gray,
+                                      bool need_bgr) {
+    const uint8_t* left_src =
+        static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+    const uint8_t* right_src =
+        static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
+    const int left_src_pitch = slot.rectGray_L_gpu.pitchBytes;
+    const int right_src_pitch = slot.rectGray_R_gpu.pitchBytes;
+    const size_t gray_width_bytes = static_cast<size_t>(config_.rect_width);
+    const size_t bgr_width_bytes =
+        static_cast<size_t>(config_.rect_width) * 3u;
+    const size_t rows = static_cast<size_t>(config_.rect_height);
+    buffer.copy_event_recorded = false;
+
+    if (!left_src || !right_src ||
+        left_src_pitch <= 0 || right_src_pitch <= 0 ||
+        !buffer.left_gray_gpu || !buffer.right_gray_gpu) {
+        LOG_WARN("Async ROI: invalid gray snapshot source/buffer frame=%d",
+                 slot.frame_id);
+        return false;
+    }
+
+    const uint8_t* left_bgr_src = nullptr;
+    const uint8_t* right_bgr_src = nullptr;
+    int left_bgr_src_pitch = 0;
+    int right_bgr_src_pitch = 0;
+    if (need_bgr) {
+        left_bgr_src = static_cast<const uint8_t*>(slot.rectBGR_L_gpu.data);
+        right_bgr_src = static_cast<const uint8_t*>(slot.rectBGR_R_gpu.data);
+        left_bgr_src_pitch = slot.rectBGR_L_gpu.pitchBytes;
+        right_bgr_src_pitch = slot.rectBGR_R_gpu.pitchBytes;
+        if (!left_bgr_src || !right_bgr_src ||
+            left_bgr_src_pitch <= 0 || right_bgr_src_pitch <= 0 ||
+            !buffer.left_bgr_gpu || !buffer.right_bgr_gpu) {
+            LOG_WARN("Async ROI: BGR snapshot requested but unavailable frame=%d",
+                     slot.frame_id);
+            return false;
+        }
+    }
+    if (need_host_gray &&
+        (!buffer.left_gray_host || !buffer.right_gray_host ||
+         buffer.left_gray_host_pitch == 0 ||
+         buffer.right_gray_host_pitch == 0)) {
+        LOG_WARN("Async ROI: host gray snapshot requested but unavailable frame=%d",
+                 slot.frame_id);
+        return false;
+    }
+
+    cudaError_t err = cudaMemcpy2DAsync(
+        buffer.left_gray_gpu, buffer.left_gray_pitch,
+        left_src, static_cast<size_t>(left_src_pitch),
+        gray_width_bytes, rows,
+        cudaMemcpyDeviceToDevice,
+        async_roi_copy_stream_);
+    if (err == cudaSuccess) {
+        err = cudaMemcpy2DAsync(
+            buffer.right_gray_gpu, buffer.right_gray_pitch,
+            right_src, static_cast<size_t>(right_src_pitch),
+            gray_width_bytes, rows,
+            cudaMemcpyDeviceToDevice,
+            async_roi_copy_stream_);
+    }
+
+    if (err == cudaSuccess && need_bgr) {
+        err = cudaMemcpy2DAsync(
+            buffer.left_bgr_gpu, buffer.left_bgr_pitch,
+            left_bgr_src, static_cast<size_t>(left_bgr_src_pitch),
+            bgr_width_bytes, rows,
+            cudaMemcpyDeviceToDevice,
+            async_roi_copy_stream_);
+        if (err == cudaSuccess) {
+            err = cudaMemcpy2DAsync(
+                buffer.right_bgr_gpu, buffer.right_bgr_pitch,
+                right_bgr_src, static_cast<size_t>(right_bgr_src_pitch),
+                bgr_width_bytes, rows,
+                cudaMemcpyDeviceToDevice,
+                async_roi_copy_stream_);
+        }
+    }
+
+    if (err == cudaSuccess && need_host_gray) {
+        err = cudaMemcpy2DAsync(
+            buffer.left_gray_host, buffer.left_gray_host_pitch,
+            buffer.left_gray_gpu, buffer.left_gray_pitch,
+            gray_width_bytes, rows,
+            cudaMemcpyDeviceToHost,
+            async_roi_copy_stream_);
+        if (err == cudaSuccess) {
+            err = cudaMemcpy2DAsync(
+                buffer.right_gray_host, buffer.right_gray_host_pitch,
+                buffer.right_gray_gpu, buffer.right_gray_pitch,
+                gray_width_bytes, rows,
+                cudaMemcpyDeviceToHost,
+                async_roi_copy_stream_);
+        }
+    }
+
+    if (err == cudaSuccess) {
+        err = cudaEventRecord(buffer.copy_done, async_roi_copy_stream_);
+        if (err == cudaSuccess) {
+            buffer.copy_event_recorded = true;
+        }
+    }
+    if (err != cudaSuccess) {
+        cudaStreamSynchronize(async_roi_copy_stream_);
+        LOG_WARN("Async ROI: image snapshot failed frame=%d err=%s",
+                 slot.frame_id, cudaGetErrorString(err));
+        return false;
+    }
+    return true;
+}
+
+bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
+    if (!async_roi_ready_) {
+        return false;
+    }
+
+    collectRoiDetections(slot, slot_index);
+    slot.results.clear();
+
+    int buffer_index = -1;
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        if (async_roi_free_buffers_.empty() && !async_roi_pending_.empty()) {
+            const int dropped_frame = async_roi_pending_.front().frame_id;
+            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            async_roi_pending_.pop_front();
+            globalPerf().record("Stage2_AsyncRoiDropPending", 0.0);
+            LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
+                     dropped_frame, slot.frame_id);
+        }
+        if (async_roi_free_buffers_.empty()) {
+            globalPerf().record("Stage2_AsyncRoiDropNoBuffer", 0.0);
+            LOG_WARN("[AsyncROI] Drop frame=%d: no async ROI buffer free "
+                     "(worker_busy=%d pending=%zu)",
+                     slot.frame_id,
+                     async_roi_worker_busy_ ? 1 : 0,
+                     async_roi_pending_.size());
+            return false;
+        }
+        buffer_index = async_roi_free_buffers_.front();
+        async_roi_free_buffers_.pop_front();
+    }
+
+    AsyncRoiBuffer& buffer =
+        async_roi_buffers_[static_cast<size_t>(buffer_index)];
+    const bool need_host_gray =
+        roiStage2NeedsHostImages(slot.detections, slot.detections_right);
+    const bool neural_needs_bgr =
+        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+    const bool need_bgr =
+        colorPipelineEnabled() &&
+        (config_.dual_yolo.depth_roi_iou_region_color_patch ||
+         config_.dual_yolo.depth_roi_patch_iou_color_edge ||
+         neural_needs_bgr);
+
+    ScopedTimer tsnap("Stage2_AsyncRoiSnapshot");
+    if (!snapshotAsyncRoiImages(slot, buffer, need_host_gray, need_bgr)) {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        releaseAsyncRoiBufferLocked(buffer_index);
+        return false;
+    }
+    if (slot_index >= 0 && slot_index < RING_BUFFER_SIZE) {
+        cudaEvent_t slot_copy_done =
+            async_roi_slot_copy_done_[static_cast<size_t>(slot_index)];
+        if (slot_copy_done) {
+            const cudaError_t evt_err =
+                cudaEventRecord(slot_copy_done, async_roi_copy_stream_);
+            if (evt_err != cudaSuccess) {
+                LOG_WARN("Async ROI: record slot copy event failed frame=%d err=%s",
+                         slot.frame_id, cudaGetErrorString(evt_err));
+                std::lock_guard<std::mutex> lk(async_roi_mutex_);
+                releaseAsyncRoiBufferLocked(buffer_index);
+                return false;
+            }
+            std::lock_guard<std::mutex> lk(async_roi_mutex_);
+            markAsyncRoiSlotCopyPendingLocked(slot_index);
+        }
+    }
+    globalPerf().record("Stage2_AsyncRoiSnapshot", tsnap.elapsedMs());
+
+    AsyncRoiTask task;
+    task.frame_id = slot.frame_id;
+    task.slot_index = slot_index;
+    task.buffer_index = buffer_index;
+    task.host_gray_valid = need_host_gray;
+    task.bgr_valid = need_bgr;
+    task.copy_event_recorded = buffer.copy_event_recorded;
+    task.input.frame_id = slot.frame_id;
+    task.input.left_detections = slot.detections;
+    task.input.right_detections = slot.detections_right;
+    task.input.left_cpu = need_host_gray ? buffer.left_gray_host : nullptr;
+    task.input.left_cpu_pitch =
+        need_host_gray ? static_cast<int>(buffer.left_gray_host_pitch) : 0;
+    task.input.right_cpu = need_host_gray ? buffer.right_gray_host : nullptr;
+    task.input.right_cpu_pitch =
+        need_host_gray ? static_cast<int>(buffer.right_gray_host_pitch) : 0;
+    task.input.left_gray_gpu = buffer.left_gray_gpu;
+    task.input.left_gray_pitch = static_cast<int>(buffer.left_gray_pitch);
+    task.input.right_gray_gpu = buffer.right_gray_gpu;
+    task.input.right_gray_pitch = static_cast<int>(buffer.right_gray_pitch);
+    task.input.left_bgr_gpu = need_bgr ? buffer.left_bgr_gpu : nullptr;
+    task.input.left_bgr_pitch =
+        need_bgr ? static_cast<int>(buffer.left_bgr_pitch) : 0;
+    task.input.right_bgr_gpu = need_bgr ? buffer.right_bgr_gpu : nullptr;
+    task.input.right_bgr_pitch =
+        need_bgr ? static_cast<int>(buffer.right_bgr_pitch) : 0;
+    task.input.width = config_.rect_width;
+    task.input.height = config_.rect_height;
+    task.input.stream = async_roi_stream_;
+
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        if (!async_roi_pending_.empty()) {
+            const int dropped_frame = async_roi_pending_.front().frame_id;
+            releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+            async_roi_pending_.pop_front();
+            globalPerf().record("Stage2_AsyncRoiDropPending", 0.0);
+            LOG_WARN("[AsyncROI] Replace pending ROI task frame=%d with frame=%d",
+                     dropped_frame, slot.frame_id);
+        }
+        async_roi_pending_.push_back(std::move(task));
+    }
+    async_roi_cv_.notify_one();
+    globalPerf().record("Stage2_AsyncRoiSubmitted", 0.0);
+    return true;
+}
+
+void Pipeline::asyncRoiWorkerLoop() {
+    using Clock = std::chrono::high_resolution_clock;
+    while (true) {
+        AsyncRoiTask task;
+        {
+            std::unique_lock<std::mutex> lk(async_roi_mutex_);
+            async_roi_cv_.wait(lk, [this] {
+                return async_roi_thread_stop_ || !async_roi_pending_.empty();
+            });
+            if (async_roi_thread_stop_ && async_roi_pending_.empty()) {
+                break;
+            }
+            task = std::move(async_roi_pending_.front());
+            async_roi_pending_.pop_front();
+            async_roi_worker_busy_ = true;
+        }
+
+        RoiStage2Output output;
+        const auto t0 = Clock::now();
+        bool copy_ready = true;
+        if (task.copy_event_recorded &&
+            task.buffer_index >= 0 &&
+            task.buffer_index < static_cast<int>(async_roi_buffers_.size())) {
+            auto& buffer =
+                async_roi_buffers_[static_cast<size_t>(task.buffer_index)];
+            if (buffer.copy_done) {
+                const auto copy_wait_start = Clock::now();
+                const cudaError_t copy_err =
+                    cudaEventSynchronize(buffer.copy_done);
+                const double copy_wait_ms =
+                    std::chrono::duration<double, std::milli>(
+                        Clock::now() - copy_wait_start).count();
+                globalPerf().record("Stage2_AsyncRoiCopyWait", copy_wait_ms);
+                buffer.copy_event_recorded = false;
+                if (copy_err != cudaSuccess) {
+                    copy_ready = false;
+                    LOG_WARN("[AsyncROI] Copy event failed frame=%d err=%s",
+                             task.frame_id, cudaGetErrorString(copy_err));
+                }
+            }
+        }
+        if (copy_ready) {
+            std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
+            output = runRoiStage2Core(task.input);
+        } else {
+            output.detections = task.input.left_detections;
+            output.predict_only = true;
+        }
+        const double elapsed_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        globalPerf().record("Stage2_AsyncRoiWorker", elapsed_ms);
+        if (elapsed_ms > static_cast<double>(config_.async_roi_deadline_ms)) {
+            globalPerf().record("Stage2_AsyncRoiOverDeadline", elapsed_ms);
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(async_roi_mutex_);
+            async_roi_worker_busy_ = false;
+            const bool stale =
+                async_roi_thread_stop_ ||
+                (async_roi_expire_before_frame_ >= 0 &&
+                 task.frame_id < async_roi_expire_before_frame_);
+            releaseAsyncRoiBufferLocked(task.buffer_index);
+            if (stale) {
+                globalPerf().record("Stage2_AsyncRoiDropStaleResult",
+                                    elapsed_ms);
+            } else {
+                AsyncRoiResult result;
+                result.frame_id = task.frame_id;
+                result.slot_index = task.slot_index;
+                result.elapsed_ms = elapsed_ms;
+                result.output = std::move(output);
+                async_roi_completed_.push_back(std::move(result));
+            }
+        }
+    }
+    LOG_INFO("Async ROI Stage2 worker exited");
+}
+
+std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
+    std::deque<AsyncRoiResult> ready;
+    int expire_before = -1;
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        ready.swap(async_roi_completed_);
+        expire_before = async_roi_expire_before_frame_;
+    }
+
+    std::vector<int> accepted;
+    while (!ready.empty()) {
+        AsyncRoiResult result = std::move(ready.front());
+        ready.pop_front();
+        if (expire_before >= 0 && result.frame_id < expire_before) {
+            globalPerf().record("Stage2_AsyncRoiDropStaleReady",
+                                result.elapsed_ms);
+            continue;
+        }
+        if (result.slot_index < 0 ||
+            result.slot_index >= RING_BUFFER_SIZE) {
+            globalPerf().record("Stage2_AsyncRoiDropBadSlot", 0.0);
+            continue;
+        }
+
+        FrameSlot& slot = slots_[result.slot_index];
+        if (slot.frame_id != result.frame_id) {
+            globalPerf().record("Stage2_AsyncRoiDropReusedSlot",
+                                result.elapsed_ms);
+            LOG_WARN("[AsyncROI] Drop frame=%d: slot %d already reused by frame=%d",
+                     result.frame_id, result.slot_index, slot.frame_id);
+            continue;
+        }
+
+        applyRoiStage2Output(slot, std::move(result.output));
+        slot.bbox_source = BboxSource::YOLO;
+        publishRoiFrameCallbacks(slot);
+        accepted.push_back(slot.frame_id);
+        globalPerf().record("Stage2_AsyncRoiAccepted", result.elapsed_ms);
+    }
+    return accepted;
+}
+
+void Pipeline::expireAsyncRoiBefore(int frame_id) {
+    if (!async_roi_ready_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(async_roi_mutex_);
+    async_roi_expire_before_frame_ =
+        std::max(async_roi_expire_before_frame_, frame_id);
+    while (!async_roi_pending_.empty() &&
+           async_roi_pending_.front().frame_id < async_roi_expire_before_frame_) {
+        globalPerf().record("Stage2_AsyncRoiDropExpiredPending", 0.0);
+        releaseAsyncRoiBufferLocked(async_roi_pending_.front().buffer_index);
+        async_roi_pending_.pop_front();
+    }
+}
+
 Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const std::vector<Detection>& left_detections,
     const std::vector<Detection>& right_detections,
@@ -2540,6 +3325,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     cudaStream_t stream,
     DualYoloMatchStats* stats)
 {
+    using Clock = std::chrono::high_resolution_clock;
     DualYoloMatchStats local_stats;
     local_stats.left_count = static_cast<int>(left_detections.size());
     local_stats.right_count = static_cast<int>(right_detections.size());
@@ -3099,7 +3885,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                         Clock::now() - orb_gpu_start).count();
                 globalPerf().record("Stage2_OpenCVCudaORB", orb_gpu_ms);
             }
-            if (!orb_points_result.valid && !gpu_image_available && image_available) {
+            if (!orb_points_result.valid && image_available) {
                 orb_points_result = matchOpenCVFeatureDisparityCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
@@ -3123,17 +3909,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float z_roi_brisk_points = -1.0f;
         if (roi_brisk_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
-            if (gpu_candidate) {
-                brisk_points_result =
-                    sparseFromGpuCandidate(gpu_candidate->brisk_points);
-                if (!validateSparseFeatureGeometry(
-                        brisk_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
-                        focal, baseline)) {
-                    brisk_points_result = SparseFeatureDisparityResult{};
-                }
-            }
-            if (!brisk_points_result.valid && !gpu_candidate && image_available) {
+            if (image_available) {
                 brisk_points_result = matchOpenCVFeatureDisparityCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
@@ -3157,17 +3933,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float z_roi_akaze_points = -1.0f;
         if (roi_akaze_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
-            if (gpu_candidate) {
-                akaze_points_result =
-                    sparseFromGpuCandidate(gpu_candidate->akaze_points);
-                if (!validateSparseFeatureGeometry(
-                        akaze_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
-                        focal, baseline)) {
-                    akaze_points_result = SparseFeatureDisparityResult{};
-                }
-            }
-            if (!akaze_points_result.valid && !gpu_candidate && image_available) {
+            if (image_available) {
                 akaze_points_result = matchOpenCVFeatureDisparityCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
@@ -3191,15 +3957,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float z_roi_sift_points = -1.0f;
         if (roi_sift_points_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f) {
-            if (gpu_candidate) {
-                sift_points_result =
-                    sparseFromGpuCandidate(gpu_candidate->sift_points);
-                if (!validateSparseFeatureGeometry(
-                        sift_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
-                        focal, baseline)) {
-                    sift_points_result = SparseFeatureDisparityResult{};
-                }
+            if (image_available) {
+                sift_points_result = matchOpenCVFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    true,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    OpenCVFeatureMode::SIFT);
             }
             if (sift_points_result.valid) {
                 z_roi_sift_points =
@@ -3408,6 +4177,24 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     (akaze_fb.valid &&
                      akaze_fb.confidence > fallback_feature_result.confidence)) {
                     fallback_feature_result = akaze_fb;
+                }
+            }
+            if (roi_sift_points_depth_enabled) {
+                SparseFeatureDisparityResult sift_fb = matchOpenCVFeatureDisparityCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_det, right_for_feature,
+                    source_left,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    OpenCVFeatureMode::SIFT);
+                if (!fallback_feature_result.valid ||
+                    (sift_fb.valid &&
+                     sift_fb.confidence > fallback_feature_result.confidence)) {
+                    fallback_feature_result = sift_fb;
                 }
             }
             if (fallback_feature_result.valid) {
@@ -3927,6 +4714,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     auto estimate_fallback_disparity = [&](const Detection& det,
                                            bool allow_track_depth) -> float {
         if (hybrid_depth_) {
+            std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
             const float z_prior = allow_track_depth
                 ? hybrid_depth_->predictDepthForDetection(det)
                 : hybrid_depth_->predictPrimaryDepth();
@@ -4344,25 +5132,14 @@ void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
 // ROI 模式: Stage 2 — 检测后 ROI 多点匹配 + 三角测距 (一步到位)
 // ===================================================================
 
-void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
-    NVTX_RANGE("Stage2_ROIMatchFuse");
-
-    slot.results.clear();
-
-    // 1. 收集检测结果 (Stage 1 完成后) — 使用与 stage1 相同的 detector
-    auto* det = getDetector(slot.frame_id);
-    if (slot.detection_submitted) {
-        slot.detections = det->collect(slot_index,
-                                       config_.rect_width, config_.rect_height);
-        limitDetectionsByConfidence(slot.detections, config_.max_detections);
-    } else {
-        slot.detections.clear();
-    }
-    collectRightDetections(slot, slot_index);
+Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
+    const RoiStage2Input& input) {
+    RoiStage2Output output;
+    output.detections = input.left_detections;
 
     if (config_.detection_only) {
-        NVTX_RANGE_POP();
-        return;
+        output.detection_only = true;
+        return output;
     }
 
     const bool use_dual_yolo_depth =
@@ -4372,16 +5149,11 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
          config_.neural_features.enabled);
     const bool can_try_right_only =
         use_dual_yolo_depth &&
-        !slot.detections_right.empty() &&
+        !input.right_detections.empty() &&
         dualYoloEpipolarFallbackEnabled(config_.dual_yolo);
-    if (slot.detections.empty() && !can_try_right_only) {
-        // 无检测: 仅 Kalman 预测
-        if (hybrid_depth_) {
-            slot.results = hybrid_depth_->predictOnly();
-            stampFrameMetadata(slot);
-        }
-        NVTX_RANGE_POP();
-        return;
+    if (input.left_detections.empty() && !can_try_right_only) {
+        output.predict_only = true;
+        return output;
     }
 
     auto has_valid_stereo = [this](const Object3D& obj) {
@@ -4397,7 +5169,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     };
 
     std::vector<stereo3d::Object3D> roi_results;
-    std::vector<Detection> fusion_detections = slot.detections;
+    std::vector<Detection> fusion_detections = input.left_detections;
     bool need_roi_texture_match = true;
 
     if (use_dual_yolo_depth) {
@@ -4405,83 +5177,24 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         DualYoloMatchStats match_stats;
         DualYoloMatchOutput semantic_match;
 
-        const uint8_t* leftGPU = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
-        const uint8_t* rightGPU = static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
-        const int leftGpuPitch = slot.rectGray_L_gpu.pitchBytes;
-        const int rightGpuPitch = slot.rectGray_R_gpu.pitchBytes;
-        const uint8_t* leftBGRGPU = colorPipelineEnabled()
-            ? static_cast<const uint8_t*>(slot.rectBGR_L_gpu.data)
-            : nullptr;
-        const uint8_t* rightBGRGPU = colorPipelineEnabled()
-            ? static_cast<const uint8_t*>(slot.rectBGR_R_gpu.data)
-            : nullptr;
-        const int leftBGRPitch = colorPipelineEnabled()
-            ? slot.rectBGR_L_gpu.pitchBytes
-            : 0;
-        const int rightBGRPitch = colorPipelineEnabled()
-            ? slot.rectBGR_R_gpu.pitchBytes
-            : 0;
-        const bool fallback_host_needed_now =
-            config_.dual_yolo.gpu_candidate_refine &&
-            (dualYoloEpipolarFallbackEnabled(config_.dual_yolo) ||
-             dualYoloFallbackTemplateEnabled(config_.dual_yolo) ||
-             dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo)) &&
-            (slot.detections.empty() || slot.detections_right.empty());
-        const bool need_host_images =
-            dualYoloNeedsHostImages(config_.dual_yolo) ||
-            fallback_host_needed_now;
-        if (need_host_images) {
-            VPIImageData hostDataL, hostDataR;
-            VPIStatus stL = vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
-                                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                             &hostDataL);
-            VPIStatus stR = vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
-                                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                             &hostDataR);
-            if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
-                const uint8_t* leftCPU = static_cast<const uint8_t*>(
-                    hostDataL.buffer.pitch.planes[0].data);
-                const uint8_t* rightCPU = static_cast<const uint8_t*>(
-                    hostDataR.buffer.pitch.planes[0].data);
-                int leftPitch = hostDataL.buffer.pitch.planes[0].pitchBytes;
-                int rightPitch = hostDataR.buffer.pitch.planes[0].pitchBytes;
-                semantic_match = matchDualYoloDetections(
-                    slot.detections, slot.detections_right,
-                    leftCPU, leftPitch, rightCPU, rightPitch,
-                    leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
-                    leftBGRGPU, leftBGRPitch, rightBGRGPU, rightBGRPitch,
-                    config_.rect_width, config_.rect_height,
-                    streams_.cudaStreamFuse,
-                    &match_stats);
-            } else {
-                semantic_match = matchDualYoloDetections(
-                    slot.detections, slot.detections_right,
-                    nullptr, 0, nullptr, 0,
-                    leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
-                    leftBGRGPU, leftBGRPitch, rightBGRGPU, rightBGRPitch,
-                    config_.rect_width, config_.rect_height,
-                    streams_.cudaStreamFuse,
-                    &match_stats);
-            }
-            if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiL);
-            if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rectGray_vpiR);
-        } else {
-            semantic_match = matchDualYoloDetections(
-                slot.detections, slot.detections_right,
-                nullptr, 0, nullptr, 0,
-                leftGPU, leftGpuPitch, rightGPU, rightGpuPitch,
-                leftBGRGPU, leftBGRPitch, rightBGRGPU, rightBGRPitch,
-                config_.rect_width, config_.rect_height,
-                streams_.cudaStreamFuse,
-                &match_stats);
-        }
+        semantic_match = matchDualYoloDetections(
+            input.left_detections, input.right_detections,
+            input.left_cpu, input.left_cpu_pitch,
+            input.right_cpu, input.right_cpu_pitch,
+            input.left_gray_gpu, input.left_gray_pitch,
+            input.right_gray_gpu, input.right_gray_pitch,
+            input.left_bgr_gpu, input.left_bgr_pitch,
+            input.right_bgr_gpu, input.right_bgr_pitch,
+            input.width, input.height,
+            input.stream,
+            &match_stats);
 
         int semantic_valid = count_valid(semantic_match.results);
         globalPerf().record("Stage2_DualYoloMatch", tdual.elapsedMs());
 
         if (config_.dual_yolo.log_matches &&
             config_.stats_interval > 0 &&
-            slot.frame_id % config_.stats_interval == 0) {
+            input.frame_id % config_.stats_interval == 0) {
             const float subpixel_avg_support =
                 match_stats.subpixel_refined > 0
                     ? static_cast<float>(match_stats.subpixel_support_sum) /
@@ -4492,7 +5205,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                      "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
                      "size=%d iou=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
                      "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d",
-                     slot.frame_id,
+                     input.frame_id,
                      match_stats.left_count,
                      match_stats.right_count,
                      match_stats.matched,
@@ -4556,27 +5269,19 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     if (need_roi_texture_match) {
         if (!roi_matcher_) {
             LOG_ERROR("ROI texture match requested but ROIStereoMatcher is not initialized");
-            if (hybrid_depth_) {
-                slot.results = hybrid_depth_->predictOnly();
-                stampFrameMetadata(slot);
-            }
-            NVTX_RANGE_POP();
-            return;
+            output.detections = std::move(fusion_detections);
+            output.predict_only = true;
+            return output;
         }
 
-        const uint8_t* leftPtr =
-            static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
-        const uint8_t* rightPtr =
-            static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
-        const int leftPitch = slot.rectGray_L_gpu.pitchBytes;
-        const int rightPitch = slot.rectGray_R_gpu.pitchBytes;
+        const uint8_t* leftPtr = input.left_gray_gpu;
+        const uint8_t* rightPtr = input.right_gray_gpu;
+        const int leftPitch = input.left_gray_pitch;
+        const int rightPitch = input.right_gray_pitch;
         if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
-            if (hybrid_depth_) {
-                slot.results = hybrid_depth_->predictOnly();
-                stampFrameMetadata(slot);
-            }
-            NVTX_RANGE_POP();
-            return;
+            output.detections = std::move(fusion_detections);
+            output.predict_only = true;
+            return output;
         }
 
         std::vector<stereo3d::Object3D> texture_results;
@@ -4584,8 +5289,8 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             ScopedTimer troi("Stage2_ROIMatch");
             texture_results = roi_matcher_->match(
                 leftPtr, leftPitch, rightPtr, rightPitch,
-                config_.rect_width, config_.rect_height,
-                fusion_detections, streams_.cudaStreamFuse);
+                input.width, input.height,
+                fusion_detections, input.stream);
             globalPerf().record("Stage2_ROIMatch", troi.elapsedMs());
         }
 
@@ -4604,18 +5309,36 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         }
     }
 
-    slot.detections = std::move(fusion_detections);
-    if (slot.detections.empty()) {
-        if (hybrid_depth_) {
-            slot.results = hybrid_depth_->predictOnly();
-            stampFrameMetadata(slot);
-        }
-        NVTX_RANGE_POP();
+    output.detections = std::move(fusion_detections);
+    output.roi_results = std::move(roi_results);
+    if (output.detections.empty()) {
+        output.predict_only = true;
+    }
+    return output;
+}
+
+void Pipeline::applyRoiStage2Output(FrameSlot& slot,
+                                    RoiStage2Output&& output) {
+    std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
+    slot.detections = std::move(output.detections);
+    if (output.detection_only) {
+        slot.results.clear();
         return;
     }
 
-    // 4. 混合深度估计 (单目+双目融合+Kalman滤波)
+    if (output.predict_only || slot.detections.empty()) {
+        if (hybrid_depth_) {
+            std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
+            slot.results = hybrid_depth_->predictOnly();
+            stampFrameMetadata(slot);
+        } else {
+            slot.results.clear();
+        }
+        return;
+    }
+
     if (hybrid_depth_) {
+        std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
         auto now = std::chrono::steady_clock::now();
         double dt = 0.01;
         if (last_fuse_time_.time_since_epoch().count() > 0) {
@@ -4624,13 +5347,105 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         }
         last_fuse_time_ = now;
         ScopedTimer thd("Stage2_HybridDepth");
-        slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
+        slot.results = hybrid_depth_->estimate(slot.detections,
+                                               output.roi_results,
+                                               dt);
         stampFrameMetadata(slot);
         globalPerf().record("Stage2_HybridDepth", thd.elapsedMs());
     } else {
-        slot.results = std::move(roi_results);
+        slot.results = std::move(output.roi_results);
         stampFrameMetadata(slot);
     }
+}
+
+void Pipeline::publishRoiFrameCallbacks(FrameSlot& slot) {
+    if (result_callback_) {
+        ScopedTimer trc("Stage2_ResultCB");
+        result_callback_(slot.frame_id, slot.results);
+        globalPerf().record("Stage2_ResultCB", trc.elapsedMs());
+    }
+
+    if (frame_callback_) {
+        ScopedTimer tfc("Stage2_FrameCB");
+        FrameCallbackData frame{
+            slot.frame_id,
+            slot.rectGray_vpiL,
+            slot.rectGray_vpiR,
+            slot.rectBGR_vpiL,
+            slot.rectBGR_vpiR,
+            slot.rawL,
+            slot.rawR,
+            slot.detections,
+            slot.detections_right,
+            slot.results,
+            makeFrameMetadata(slot),
+            current_fps_.load()
+        };
+        frame_callback_(frame);
+        globalPerf().record("Stage2_FrameCB", tfc.elapsedMs());
+    }
+}
+
+void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
+    NVTX_RANGE("Stage2_ROIMatchFuse");
+
+    slot.results.clear();
+    collectRoiDetections(slot, slot_index);
+
+    RoiStage2Input input;
+    input.frame_id = slot.frame_id;
+    input.left_detections = slot.detections;
+    input.right_detections = slot.detections_right;
+    input.left_gray_gpu = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
+    input.left_gray_pitch = slot.rectGray_L_gpu.pitchBytes;
+    input.right_gray_gpu = static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
+    input.right_gray_pitch = slot.rectGray_R_gpu.pitchBytes;
+    if (colorPipelineEnabled()) {
+        input.left_bgr_gpu = static_cast<const uint8_t*>(slot.rectBGR_L_gpu.data);
+        input.left_bgr_pitch = slot.rectBGR_L_gpu.pitchBytes;
+        input.right_bgr_gpu = static_cast<const uint8_t*>(slot.rectBGR_R_gpu.data);
+        input.right_bgr_pitch = slot.rectBGR_R_gpu.pitchBytes;
+    }
+    input.width = config_.rect_width;
+    input.height = config_.rect_height;
+    input.stream = streams_.cudaStreamFuse;
+
+    const bool need_host_images =
+        roiStage2NeedsHostImages(slot.detections, slot.detections_right);
+    VPIImageData hostDataL, hostDataR;
+    bool lockedL = false;
+    bool lockedR = false;
+    if (need_host_images) {
+        const VPIStatus stL =
+            vpiImageLockData(slot.rectGray_vpiL, VPI_LOCK_READ,
+                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                             &hostDataL);
+        const VPIStatus stR =
+            vpiImageLockData(slot.rectGray_vpiR, VPI_LOCK_READ,
+                             VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                             &hostDataR);
+        lockedL = stL == VPI_SUCCESS;
+        lockedR = stR == VPI_SUCCESS;
+        if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+            input.left_cpu = static_cast<const uint8_t*>(
+                hostDataL.buffer.pitch.planes[0].data);
+            input.left_cpu_pitch = hostDataL.buffer.pitch.planes[0].pitchBytes;
+            input.right_cpu = static_cast<const uint8_t*>(
+                hostDataR.buffer.pitch.planes[0].data);
+            input.right_cpu_pitch = hostDataR.buffer.pitch.planes[0].pitchBytes;
+        }
+    }
+
+    RoiStage2Output output;
+    {
+        std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
+        output = runRoiStage2Core(input);
+    }
+
+    if (lockedL) vpiImageUnlock(slot.rectGray_vpiL);
+    if (lockedR) vpiImageUnlock(slot.rectGray_vpiR);
+
+    applyRoiStage2Output(slot, std::move(output));
 
     NVTX_RANGE_POP();
 }
@@ -4722,11 +5537,13 @@ void Pipeline::tracker_infill(FrameSlot& slot) {
 // ===================================================================
 void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage2_ROIFuseTracker");
+    std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
     slot.results.clear();
 
     if (slot.bbox_source != BboxSource::TRACKER || !slot.sot_bbox_result.valid) {
         // 无有效 tracker 结果: 仅 Kalman 预测
         if (hybrid_depth_) {
+            std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
             slot.results = hybrid_depth_->predictOnly();
             stampFrameMetadata(slot);
         }
@@ -4748,6 +5565,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     if (!roi_matcher_) {
         LOG_ERROR("Tracker ROI fuse requested but ROIStereoMatcher is not initialized");
         if (hybrid_depth_) {
+            std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
             slot.results = hybrid_depth_->predictOnly();
             stampFrameMetadata(slot);
         }
@@ -4763,6 +5581,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     const int rightPitch = slot.rectGray_R_gpu.pitchBytes;
     if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
         if (hybrid_depth_) {
+            std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
             slot.results = hybrid_depth_->predictOnly();
             stampFrameMetadata(slot);
         }
@@ -4783,6 +5602,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
 
     // 4. 混合深度估计
     if (hybrid_depth_) {
+        std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
         auto now = std::chrono::steady_clock::now();
         double dt = 0.01;
         if (last_fuse_time_.time_since_epoch().count() > 0) {
@@ -4854,10 +5674,36 @@ void Pipeline::pipelineLoopROI() {
                detectEventsReady(newer);
     };
 
+    auto account_output_frame = [&](int output_frame_id) {
+        fps_count++;
+        auto now = Clock::now();
+        double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
+        if (elapsed_s >= 1.0) {
+            current_fps_ = static_cast<float>(fps_count / elapsed_s);
+            fps_count = 0;
+            fps_start = now;
+            if (config_.stats_interval > 0) {
+                LOG_INFO("[ROI] FPS: %.1f  (Output frame %d, stale_drop=%d)",
+                         current_fps_.load(), output_frame_id, stale_drop_count);
+            }
+        }
+    };
+
+    auto drain_async_outputs = [&]() {
+        if (!async_roi_ready_) {
+            return;
+        }
+        const std::vector<int> accepted = drainCompletedAsyncRoiStage2();
+        for (int frame_id : accepted) {
+            account_output_frame(frame_id);
+        }
+    };
+
     // ===== 填充: 同步抓取 + 处理首帧 =====
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
+        waitAsyncRoiSlotSnapshotDone(slot_idx, "roi_initial_grab_reuse");
         slot.reset();
         slot.frame_id = next_grab_frame;
 
@@ -4904,6 +5750,8 @@ void Pipeline::pipelineLoopROI() {
     }
 
     while (running_) {
+        drain_async_outputs();
+
         // ====================================================================
         // Phase A: 发起异步采集 (极速, ~0.01ms)
         //   grab 线程锁定 VPI Image → 阻塞等待相机 USB 传输
@@ -4912,6 +5760,7 @@ void Pipeline::pipelineLoopROI() {
         int grab_slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         {
             auto& slot = slots_[grab_slot_idx];
+            waitAsyncRoiSlotSnapshotDone(grab_slot_idx, "roi_grab_reuse");
             slot.reset();
             slot.frame_id = next_grab_frame;
 #ifdef HIK_CAMERA_ENABLED
@@ -4993,6 +5842,8 @@ void Pipeline::pipelineLoopROI() {
             }
         }
 
+        drain_async_outputs();
+
         // ====================================================================
         // Phase C: Stage2 — ROI 匹配 + 融合帧 N-1 (与 grab 并行, ~0.1ms)
         //   检测帧: collect YOLO → ROI match → depth fuse + 刷新 tracker template
@@ -5019,6 +5870,7 @@ void Pipeline::pipelineLoopROI() {
                     LOG_WARN("[ROI] Dropped %d stale frame(s); latest ready frame=%d",
                              stale_drop_count, next_fuse_frame + 1);
                 }
+                expireAsyncRoiBefore(next_fuse_frame + 1);
                 next_fuse_frame++;
                 continue;
             }
@@ -5049,14 +5901,42 @@ void Pipeline::pipelineLoopROI() {
                     }
                 }
 
-                {
-                    ScopedTimer t2("Stage2_ROIMatchFuse");
-                    stage2_roi_match_fuse(slot, slot_idx);
-                    globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
+                bool publish_now = true;
+                if (async_roi_ready_) {
+                    // 当前帧 YOLO 已 ready；上一检测帧的异步 ROI 截止线到达。
+                    drain_async_outputs();
+                    expireAsyncRoiBefore(slot.frame_id);
+
+                    ScopedTimer t2("Stage2_ROIMatchFuseSubmit");
+                    const bool submitted = submitAsyncRoiStage2(slot, slot_idx);
+                    globalPerf().record("Stage2_ROIMatchFuseSubmit", t2.elapsedMs());
+                    slot.bbox_source = BboxSource::YOLO;
+                    tracker_handle_detect_result(slot);
+                    publish_now = false;
+                    if (!submitted) {
+                        ++stale_drop_count;
+                        globalPerf().record("Stage2_AsyncRoiSubmitDrop", 0.0);
+                        RoiStage2Output dropped;
+                        dropped.detections = slot.detections;
+                        dropped.predict_only = true;
+                        applyRoiStage2Output(slot, std::move(dropped));
+                        publish_now = true;
+                    }
+                } else {
+                    {
+                        ScopedTimer t2("Stage2_ROIMatchFuse");
+                        stage2_roi_match_fuse(slot, slot_idx);
+                        globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
+                    }
+                    slot.bbox_source = BboxSource::YOLO;
+                    // 用 YOLO 结果刷新 tracker template
+                    tracker_handle_detect_result(slot);
                 }
-                slot.bbox_source = BboxSource::YOLO;
-                // 用 YOLO 结果刷新 tracker template
-                tracker_handle_detect_result(slot);
+
+                if (publish_now) {
+                    publishRoiFrameCallbacks(slot);
+                    account_output_frame(slot.frame_id);
+                }
             } else {
                 // ---- Tracker 填充帧: tracker bbox → ROI + depth ----
                 {
@@ -5064,48 +5944,11 @@ void Pipeline::pipelineLoopROI() {
                     stage2_roi_fuse_tracker(slot, slot_idx);
                     globalPerf().record("Stage2_ROIFuseTracker", t2.elapsedMs());
                 }
-            }
-
-            if (result_callback_) {
-                ScopedTimer trc("Stage2_ResultCB");
-                result_callback_(slot.frame_id, slot.results);
-                globalPerf().record("Stage2_ResultCB", trc.elapsedMs());
-            }
-
-            if (frame_callback_) {
-                ScopedTimer tfc("Stage2_FrameCB");
-                FrameCallbackData frame{
-                    slot.frame_id,
-                    slot.rectGray_vpiL,
-                    slot.rectGray_vpiR,
-                    slot.rectBGR_vpiL,
-                    slot.rectBGR_vpiR,
-                    slot.rawL,
-                    slot.rawR,
-                    slot.detections,
-                    slot.detections_right,
-                    slot.results,
-                    makeFrameMetadata(slot),
-                    current_fps_.load()
-                };
-                frame_callback_(frame);
-                globalPerf().record("Stage2_FrameCB", tfc.elapsedMs());
+                publishRoiFrameCallbacks(slot);
+                account_output_frame(slot.frame_id);
             }
 
             next_fuse_frame++;
-
-            fps_count++;
-            auto now = Clock::now();
-            double elapsed_s = std::chrono::duration<double>(now - fps_start).count();
-            if (elapsed_s >= 1.0) {
-                current_fps_ = static_cast<float>(fps_count / elapsed_s);
-                fps_count = 0;
-                fps_start = now;
-                if (config_.stats_interval > 0) {
-                    LOG_INFO("[ROI] FPS: %.1f  (Output frame %d, stale_drop=%d)",
-                             current_fps_.load(), next_fuse_frame, stale_drop_count);
-                }
-            }
         }
 
         // ====================================================================
@@ -5143,6 +5986,7 @@ void Pipeline::pipelineLoopROI() {
 
     // ===== 排空 =====
     vpiStreamSync(streams_.vpiStreamPVA);
+    drain_async_outputs();
 
     while (next_detect_frame < next_grab_frame) {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
@@ -5172,7 +6016,8 @@ void Pipeline::pipelineLoopROI() {
         waitDetectDone(streams_.cudaStreamFuse, slot);
         cudaStreamSynchronize(streams_.cudaStreamFuse);
         stage2_roi_match_fuse(slot, slot_idx);
-        if (result_callback_) result_callback_(slot.frame_id, slot.results);
+        publishRoiFrameCallbacks(slot);
+        account_output_frame(slot.frame_id);
         next_fuse_frame++;
     }
 

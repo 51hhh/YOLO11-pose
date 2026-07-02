@@ -77,7 +77,7 @@ struct Object3D {
     float z_roi_orb_points;///< ROI ORB 特征点视差测距, -1=无效
     float z_roi_brisk_points;///< ROI BRISK 特征点视差测距, -1=无效
     float z_roi_akaze_points;///< ROI AKAZE 特征点视差测距, -1=无效
-    float z_roi_sift_points;///< ROI SIFT-lite GPU 特征点视差测距, -1=无效
+    float z_roi_sift_points;///< ROI SIFT 特征点视差测距, -1=无效
     float z_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差测距, -1=无效
     float z_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差测距, -1=无效
     float z_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差测距, -1=无效
@@ -104,7 +104,7 @@ struct Object3D {
     float disparity_roi_orb_points;///< ROI ORB 特征点视差, -1=无效
     float disparity_roi_brisk_points;///< ROI BRISK 特征点视差, -1=无效
     float disparity_roi_akaze_points;///< ROI AKAZE 特征点视差, -1=无效
-    float disparity_roi_sift_points;///< ROI SIFT-lite GPU 特征点视差, -1=无效
+    float disparity_roi_sift_points;///< ROI SIFT 特征点视差, -1=无效
     float disparity_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差, -1=无效
     float disparity_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差, -1=无效
     float disparity_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差, -1=无效
@@ -149,9 +149,9 @@ struct Object3D {
     int roi_akaze_points_support; ///< ROI AKAZE 有效匹配点数
     float roi_akaze_points_std_px; ///< ROI AKAZE 视差标准差
     float roi_akaze_points_confidence; ///< ROI AKAZE 匹配置信度
-    int roi_sift_points_support; ///< ROI SIFT-lite 有效匹配点数
-    float roi_sift_points_std_px; ///< ROI SIFT-lite 视差标准差
-    float roi_sift_points_confidence; ///< ROI SIFT-lite 匹配置信度
+    int roi_sift_points_support; ///< ROI SIFT 有效匹配点数
+    float roi_sift_points_std_px; ///< ROI SIFT 视差标准差
+    float roi_sift_points_confidence; ///< ROI SIFT 匹配置信度
     int roi_iou_region_color_patch_support; ///< ROI 彩色区域有效匹配点数
     float roi_iou_region_color_patch_std_px; ///< ROI 彩色区域视差标准差
     float roi_iou_region_color_patch_confidence; ///< ROI 彩色区域匹配置信度
@@ -165,7 +165,7 @@ struct Object3D {
     float fallback_feature_points_std_px; ///< fallback 特征视差标准差
     float fallback_feature_points_confidence; ///< fallback 特征匹配置信度
     int stereo_match_source; ///< 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback
-    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT-lite,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征
+    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征
     uint64_t left_timestamp_us;  ///< 左目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint64_t right_timestamp_us; ///< 右目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint32_t left_frame_number;  ///< 左目 SDK 帧号
