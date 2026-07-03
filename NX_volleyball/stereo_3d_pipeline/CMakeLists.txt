@@ -289,6 +289,8 @@ endif()
 # stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
 add_executable(stereo_calibrate
   src/calibration/stereo_calibrate.cpp
+  src/calibration/stereo_calibrate_args.cpp
+  src/calibration/stereo_calibrate_images.cpp
 )
 set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
 target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
