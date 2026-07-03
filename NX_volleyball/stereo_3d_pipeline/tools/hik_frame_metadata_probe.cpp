@@ -1,4 +1,5 @@
 #include "MvCameraControl.h"
+#include "hik_frame_metadata_probe_args.h"
 #include "../src/calibration/pwm_trigger.h"
 
 #include <algorithm>
@@ -6,7 +7,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <cmath>
@@ -18,20 +18,7 @@
 
 namespace {
 
-struct Args {
-    std::string left_sn;
-    std::string right_sn;
-    int left_index = 0;
-    int right_index = 1;
-    int frames = 300;
-    int timeout_ms = 1000;
-    float exposure_us = 9867.0f;
-    float gain_db = 11.99f;
-    bool start_pwm = true;
-    std::string trigger_chip = "gpiochip2";
-    unsigned int trigger_line = 7;
-    double pwm_hz = 100.0;
-};
+using hik_metadata_probe::Args;
 
 struct Cam {
     void* handle = nullptr;
@@ -92,48 +79,6 @@ void printIntervalStats(const char* label, const RunningStats& stats) {
     std::printf("  %s: n=%d mean=%.1fns min=%.1f max=%.1f std=%.1f fps=%.3f\n",
                 label, stats.n, stats.mean, stats.min_v, stats.max_v,
                 stats.stddev(), fps);
-}
-
-void usage(const char* argv0) {
-    std::printf(
-        "Usage: %s [--left-sn SN] [--right-sn SN] [--left-index N] [--right-index N]\n"
-        "          [--frames N] [--timeout-ms N] [--exposure-us US] [--gain-db DB]\n"
-        "          [--no-pwm] [--trigger-chip gpiochip2] [--trigger-line 7] [--pwm-hz 100]\n",
-        argv0);
-}
-
-bool parseArgs(int argc, char** argv, Args& args) {
-    for (int i = 1; i < argc; ++i) {
-        std::string a(argv[i]);
-        auto need = [&](const char* name) -> const char* {
-            if (i + 1 >= argc) {
-                std::fprintf(stderr, "Missing value for %s\n", name);
-                std::exit(2);
-            }
-            return argv[++i];
-        };
-        if (a == "--left-sn") args.left_sn = need("--left-sn");
-        else if (a == "--right-sn") args.right_sn = need("--right-sn");
-        else if (a == "--left-index") args.left_index = std::atoi(need("--left-index"));
-        else if (a == "--right-index") args.right_index = std::atoi(need("--right-index"));
-        else if (a == "--frames") args.frames = std::atoi(need("--frames"));
-        else if (a == "--timeout-ms") args.timeout_ms = std::atoi(need("--timeout-ms"));
-        else if (a == "--exposure-us") args.exposure_us = std::atof(need("--exposure-us"));
-        else if (a == "--gain-db") args.gain_db = std::atof(need("--gain-db"));
-        else if (a == "--trigger-chip") args.trigger_chip = need("--trigger-chip");
-        else if (a == "--trigger-line") args.trigger_line = static_cast<unsigned int>(std::atoi(need("--trigger-line")));
-        else if (a == "--pwm-hz") args.pwm_hz = std::atof(need("--pwm-hz"));
-        else if (a == "--no-pwm") args.start_pwm = false;
-        else if (a == "-h" || a == "--help") {
-            usage(argv[0]);
-            return false;
-        } else {
-            std::fprintf(stderr, "Unknown argument: %s\n", a.c_str());
-            usage(argv[0]);
-            return false;
-        }
-    }
-    return true;
 }
 
 uint64_t devTimestamp(const MV_FRAME_OUT_INFO_EX& info) {
@@ -444,7 +389,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
 
     Args args;
-    if (!parseArgs(argc, argv, args)) return 2;
+    if (!hik_metadata_probe::parseArgs(argc, argv, args)) return 2;
 
     MV_CC_DEVICE_INFO_LIST list{};
     int ret = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &list);
