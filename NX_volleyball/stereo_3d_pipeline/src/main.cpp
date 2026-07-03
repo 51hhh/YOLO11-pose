@@ -11,13 +11,13 @@
 #include "utils/baseline_clip_recorder.h"
 #include "utils/logger.h"
 #include "main_realtime_debug_dump.h"
+#include "main_cli_options.h"
 #include "main_config_loaders.h"
 #include "main_display_helpers.h"
 
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
 #include <csignal>
-#include <cstdio>
 #include <cmath>
 #include <atomic>
 #include <chrono>
@@ -59,191 +59,30 @@ static void mouseCallback(int event, int x, int y, int /*flags*/, void*) {
 
 int main(int argc, char* argv[]) {
     // 解析命令行
-    std::string config_path = "config/pipeline.yaml";
-    bool enable_display = false;
-    bool debug_feature_matches = false;
-    std::string debug_feature_matches_dir = "test_logs/feature_match_debug";
-    std::string recording_out_override;
-    bool baseline_clip_cli = false;
-    std::string baseline_out_override;
-    double baseline_duration_override = -1.0;
-    int baseline_frames_override = 0;
-    int baseline_clips_override = 0;
-    double baseline_gap_override = -1.0;
-    std::string baseline_format_override;
-    std::string baseline_image_mode_override;
-    bool baseline_start_immediately = false;
-    bool debug_realtime_dump_cli = false;
-    std::string debug_realtime_dump_dir_override;
-    int debug_realtime_dump_stride_override = -1;
-    int debug_realtime_dump_max_override = -1;
-    std::vector<std::string> unknown_args;
-    const char* usage =
-        "Usage: %s [--config <path>] [--visualize] "
-        "[--debug-feature-matches] [--debug-feature-matches-dir <dir>] "
-        "[--debug-realtime-dump] [--debug-realtime-dump-dir <dir>] "
-        "[--debug-realtime-dump-stride <n>] [--debug-realtime-dump-max <n>] "
-        "[--recording-out <csv>] "
-        "[--record-baseline-clip] [--baseline-out <dir>] "
-        "[--baseline-duration <sec>] [--baseline-frames <n>] "
-        "[--baseline-clips <n>] [--baseline-gap <sec>] "
-        "[--baseline-format <png|pgm>] [--baseline-image-mode <gray|bgr|both>] "
-        "[--baseline-start-immediately]\n";
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if ((arg == "--config" || arg == "-c") &&
-            i + 1 < argc && argv[i + 1][0] != '-') {
-            config_path = argv[++i];
-        } else if (arg == "--config" || arg == "-c") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
-            enable_display = true;
-        } else if (arg == "--debug-feature-matches") {
-            debug_feature_matches = true;
-        } else if (arg == "--debug-feature-matches-dir" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            debug_feature_matches = true;
-            debug_feature_matches_dir = argv[++i];
-        } else if (arg == "--debug-feature-matches-dir") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--debug-realtime-dump") {
-            debug_realtime_dump_cli = true;
-        } else if (arg == "--debug-realtime-dump-dir" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            debug_realtime_dump_cli = true;
-            debug_realtime_dump_dir_override = argv[++i];
-        } else if (arg == "--debug-realtime-dump-dir") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--debug-realtime-dump-stride" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            debug_realtime_dump_cli = true;
-            debug_realtime_dump_stride_override = std::stoi(argv[++i]);
-        } else if (arg == "--debug-realtime-dump-stride") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--debug-realtime-dump-max" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            debug_realtime_dump_cli = true;
-            debug_realtime_dump_max_override = std::stoi(argv[++i]);
-        } else if (arg == "--debug-realtime-dump-max") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--recording-out" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            recording_out_override = argv[++i];
-        } else if (arg == "--recording-out") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--record-baseline-clip") {
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-out" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_out_override = argv[++i];
-        } else if (arg == "--baseline-out") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-duration" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_duration_override = std::stod(argv[++i]);
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-duration") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-frames" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_frames_override = std::stoi(argv[++i]);
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-frames") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-clips" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_clips_override = std::stoi(argv[++i]);
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-clips") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-gap" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_gap_override = std::stod(argv[++i]);
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-gap") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-format" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_format_override = argv[++i];
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-format") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-image-mode" &&
-                   i + 1 < argc && argv[i + 1][0] != '-') {
-            baseline_image_mode_override = argv[++i];
-            baseline_clip_cli = true;
-        } else if (arg == "--baseline-image-mode") {
-            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
-            fprintf(stderr, usage, argv[0]);
-            return 1;
-        } else if (arg == "--baseline-start-immediately") {
-            baseline_start_immediately = true;
-            baseline_clip_cli = true;
-        } else if (arg == "--visualizels") {
-            // 兼容常见拼写误写，避免静默关闭可视化
-            fprintf(stderr, "Warning: unknown option '--visualizels', treating as '--visualize'.\n");
-            enable_display = true;
-        } else if (arg == "--help" || arg == "-h") {
-            printf(usage, argv[0]);
-            printf("  --config, -c                  Pipeline configuration YAML\n");
-            printf("  --visualize, -v               Show detection + distance overlay window\n");
-            printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
-            printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
-            printf("  --debug-realtime-dump         Low-rate realtime zoom PNG/JSON dump (background writer)\n");
-            printf("  --debug-realtime-dump-dir     Output directory for realtime debug dump\n");
-            printf("  --debug-realtime-dump-stride  Dump every N frames; 0 disables periodic dumps\n");
-            printf("  --debug-realtime-dump-max     Stop dumping after N frames; 0 means unlimited\n");
-            printf("  --recording-out <csv>         Override trajectory recorder CSV output path\n");
-            printf("  --record-baseline-clip        Record one fixed-length left/right image sequence + CSV after ball detection\n");
-            printf("  --baseline-out                Output root directory for baseline clips\n");
-            printf("  --baseline-duration           Clip duration in seconds, converted by trigger frequency\n");
-            printf("  --baseline-frames             Exact number of frames to record\n");
-            printf("  --baseline-clips              Number of clips to record\n");
-            printf("  --baseline-gap                Gap between clips in seconds\n");
-            printf("  --baseline-format             Lossless image format: png or pgm\n");
-            printf("  --baseline-image-mode         Image mode: gray, bgr, or both\n");
-            printf("  --baseline-start-immediately  Record without waiting for detections\n");
-            return 0;
-        } else if (!arg.empty() && arg[0] == '-') {
-            unknown_args.push_back(arg);
-        } else {
-            unknown_args.push_back(arg);
-        }
-    }
+    const MainCliOptions cli = parseMainCliOptions(argc, argv);
+    if (cli.should_exit) return cli.exit_code;
 
-    if (!unknown_args.empty()) {
-        fprintf(stderr, "Error: unknown option(s):");
-        for (const auto& opt : unknown_args) {
-            fprintf(stderr, " %s", opt.c_str());
-        }
-        fprintf(stderr, "\n");
-        fprintf(stderr, "Hint: use --help to see supported options.\n");
-        return 1;
-    }
+    std::string config_path = cli.config_path;
+    bool enable_display = cli.enable_display;
+    bool debug_feature_matches = cli.debug_feature_matches;
+    std::string debug_feature_matches_dir = cli.debug_feature_matches_dir;
+    std::string recording_out_override = cli.recording_out_override;
+    bool baseline_clip_cli = cli.baseline_clip_cli;
+    std::string baseline_out_override = cli.baseline_out_override;
+    double baseline_duration_override = cli.baseline_duration_override;
+    int baseline_frames_override = cli.baseline_frames_override;
+    int baseline_clips_override = cli.baseline_clips_override;
+    double baseline_gap_override = cli.baseline_gap_override;
+    std::string baseline_format_override = cli.baseline_format_override;
+    std::string baseline_image_mode_override = cli.baseline_image_mode_override;
+    bool baseline_start_immediately = cli.baseline_start_immediately;
+    bool debug_realtime_dump_cli = cli.debug_realtime_dump_cli;
+    std::string debug_realtime_dump_dir_override =
+        cli.debug_realtime_dump_dir_override;
+    int debug_realtime_dump_stride_override =
+        cli.debug_realtime_dump_stride_override;
+    int debug_realtime_dump_max_override =
+        cli.debug_realtime_dump_max_override;
 
     // 注册信号
     signal(SIGINT,  signalHandler);
