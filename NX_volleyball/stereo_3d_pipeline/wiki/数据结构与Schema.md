@@ -41,6 +41,7 @@
 | ROI sparse | `z_roi_corner_points`, `z_roi_texture_points`, `z_roi_binary_points` |
 | 描述子/近似描述子 | `z_roi_orb_points`, `z_roi_brisk_points`, `z_roi_akaze_points`, `z_roi_sift_points` |
 | 彩色 IoU/patch | `z_roi_iou_region_color_patch`, `z_roi_patch_iou_color_edge` |
+| OpenCV CUDA P2 | `z_roi_cuda_template_match`, `z_roi_cuda_stereo_bm`, `z_roi_cuda_stereo_sgm` |
 | 神经特征 | `z_roi_neural_feature` |
 | patch/subpixel | `z_roi_center_patch`, `z_roi_multi_point` |
 | fallback | `z_fallback`, `z_fallback_template`, `z_fallback_feature_points` |
@@ -51,6 +52,8 @@
 `z_stereo` 和 `z` 也是兼容字段，不是新增候选方法。当前实时管线用 `buildDepthCandidateObservations()` 收集候选，并由 `selectLegacyDepthOutputCandidate()` 从 P0 几何/bbox 和退化 fallback 中选择兼容输出，写入 `z_stereo/z/raw_z/stereo_depth_source`。训练可靠性模型时应读取各个原始 `z_*` 候选字段；`z_stereo/z` 只作为旧在线 baseline 或诊断字段。
 
 直接左右 YOLO pair 的误匹配诊断字段为: `pair_initial_disparity`, `pair_epipolar_dy`, `pair_y_tolerance`, `pair_size_ratio`, `pair_shifted_iou`, `pair_score`, `pair_bbox_prior_penalty`, `pair_positive_disparity`。这些字段从 `DEPTH_CANDIDATES` 记录级别开始写入；fallback 行保持 `-1/0`，用 `stereo_match_source` 区分匹配来源。
+
+左右 YOLO 直接配对、单侧 fallback、circle source 和 `z_fallback`/`z_circle_center` 的完整字段语义见 [YOLO左右匹配分支与字段语义](YOLO左右匹配分支与字段语义.md)。
 
 `stereo_depth_source` 当前注释映射:
 
