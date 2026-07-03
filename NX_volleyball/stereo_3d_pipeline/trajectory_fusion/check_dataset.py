@@ -13,55 +13,26 @@ from typing import Any, Dict, List, Sequence
 
 try:
     from .dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
+    from .check_dataset_fields import (
+        DEPTH_KEYS,
+        FRAME_SUMMARY_FIELDS,
+        JUMP_DEPTH_KEYS,
+        MATCH_SOURCE_NAMES,
+        OPTIONAL_FRAME_SUMMARY_FIELDS,
+        REQUIRED_FIELDS,
+    )
+    from .check_dataset_print import print_report
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
-
-
-P0_DEPTH_KEYS = (
-    "z_bbox_center",
-    "z_circle_center",
-    "z_roi_edge_centroid",
-    "z_roi_radial_center",
-    "z_roi_edge_pair_center",
-)
-P1_DEPTH_KEYS = (
-    "z_roi_multi_point",
-    "z_roi_center_patch",
-)
-DEPTH_KEYS = P0_DEPTH_KEYS + P1_DEPTH_KEYS
-JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback_epipolar",)
-REQUIRED_FIELDS = (
-    "frame_id",
-    "timestamp",
-    "track_id",
-    "frame_counter_delta",
-    "frame_number_delta",
-    "stereo_match_source",
-    "pair_positive_disparity",
-    *DEPTH_KEYS,
-)
-FRAME_SUMMARY_FIELDS = (
-    "frame_id",
-    "result_count",
-    "raw_observation_count",
-    "stereo_observation_count",
-    "direct_pair_count",
-    "fallback_l2r_count",
-    "fallback_r2l_count",
-)
-OPTIONAL_FRAME_SUMMARY_FIELDS = (
-    "p2_candidate_observed_count",
-    "p2_candidate_valid_count",
-    "p2_feature_valid_count",
-    "p2_cuda_valid_count",
-    "p2_neural_valid_count",
-)
-MATCH_SOURCE_NAMES = {
-    0: "none",
-    1: "direct_pair",
-    2: "fallback_l2r",
-    3: "fallback_r2l",
-}
+    from check_dataset_fields import (
+        DEPTH_KEYS,
+        FRAME_SUMMARY_FIELDS,
+        JUMP_DEPTH_KEYS,
+        MATCH_SOURCE_NAMES,
+        OPTIONAL_FRAME_SUMMARY_FIELDS,
+        REQUIRED_FIELDS,
+    )
+    from check_dataset_print import print_report
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -389,54 +360,6 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
         "frame_summary": frame_summary,
         "known_z": known_z,
     }
-
-
-def _fmt(value: Any, digits: int = 4) -> str:
-    if value is None:
-        return "nan"
-    if isinstance(value, float):
-        return f"{value:.{digits}f}"
-    return str(value)
-
-
-def print_report(report: Dict[str, Any]) -> None:
-    print(f"csv={report['csv']}")
-    print(f"metadata={report['metadata']}")
-    print(
-        f"rows={report['rows']} duration={_fmt(report['duration_sec'], 3)}s "
-        f"fps_rows={_fmt(report['fps_rows'], 3)} fps_intervals={_fmt(report['fps_intervals'], 3)} "
-        f"timing_source={report['timing_source']}"
-    )
-    print(f"missing_fields={report['missing_fields']}")
-    print(f"frame_gaps={report['frame_gaps']['count']} first={report['frame_gaps']['first']}")
-    for key, stats in report["watermarks"].items():
-        print(f"{key}: present={stats['present']} nonzero={stats.get('nonzero')} unique={stats.get('unique')}")
-    source = report["source_breakdown"]
-    print(f"match_source={source['match_source']}")
-    print(
-        "epipolar_fallback: "
-        f"valid={source['epipolar_fallback']['valid']} "
-        f"by_direction={source['epipolar_fallback']['by_direction']} "
-        f"median={_fmt(source['epipolar_fallback']['median'])} "
-        f"mad={_fmt(source['epipolar_fallback']['mad'])}"
-    )
-    for key in DEPTH_KEYS:
-        stats = report["depth"][key]
-        jumps = report["depth_jump"].get(key, {})
-        print(
-            f"{key}: valid={stats['valid']}/{stats['total']} "
-            f"hit={stats['hit_rate'] * 100.0:.1f}% "
-            f"median={_fmt(stats['median'])} mad={_fmt(stats['mad'])} "
-            f"known_z_bias={_fmt(stats['known_z_bias'])} known_z_mad={_fmt(stats['known_z_mad'])} "
-            f"jump_p95={_fmt(jumps.get('p95_abs_delta'))}"
-        )
-    frame_summary = report["frame_summary"]
-    print(
-        f"frame_summary: present={frame_summary['present']} "
-        f"path={frame_summary['path']} rows={frame_summary.get('rows')}"
-    )
-    if frame_summary["present"]:
-        print(f"frame_summary_totals={frame_summary['totals']}")
 
 
 def main() -> int:
