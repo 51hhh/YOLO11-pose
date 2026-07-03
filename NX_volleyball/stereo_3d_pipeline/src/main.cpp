@@ -564,6 +564,7 @@ int main(int argc, char* argv[]) {
     bool enable_display = false;
     bool debug_feature_matches = false;
     std::string debug_feature_matches_dir = "test_logs/feature_match_debug";
+    std::string recording_out_override;
     bool baseline_clip_cli = false;
     std::string baseline_out_override;
     double baseline_duration_override = -1.0;
@@ -577,6 +578,7 @@ int main(int argc, char* argv[]) {
     const char* usage =
         "Usage: %s [--config <path>] [--visualize] "
         "[--debug-feature-matches] [--debug-feature-matches-dir <dir>] "
+        "[--recording-out <csv>] "
         "[--record-baseline-clip] [--baseline-out <dir>] "
         "[--baseline-duration <sec>] [--baseline-frames <n>] "
         "[--baseline-clips <n>] [--baseline-gap <sec>] "
@@ -600,6 +602,13 @@ int main(int argc, char* argv[]) {
             debug_feature_matches = true;
             debug_feature_matches_dir = argv[++i];
         } else if (arg == "--debug-feature-matches-dir") {
+            fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
+            fprintf(stderr, usage, argv[0]);
+            return 1;
+        } else if (arg == "--recording-out" &&
+                   i + 1 < argc && argv[i + 1][0] != '-') {
+            recording_out_override = argv[++i];
+        } else if (arg == "--recording-out") {
             fprintf(stderr, "Error: %s requires a value.\n", arg.c_str());
             fprintf(stderr, usage, argv[0]);
             return 1;
@@ -673,6 +682,7 @@ int main(int argc, char* argv[]) {
             printf("  --visualize, -v               Show detection + distance overlay window\n");
             printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
             printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
+            printf("  --recording-out               Override trajectory recorder CSV output path\n");
             printf("  --record-baseline-clip        Record one fixed-length left/right image sequence + CSV after ball detection\n");
             printf("  --baseline-out                Output root directory for baseline clips\n");
             printf("  --baseline-duration           Clip duration in seconds, converted by trigger frequency\n");
@@ -778,7 +788,12 @@ int main(int argc, char* argv[]) {
         baseline_recorder.init(baseline_cfg);
     } else {
         predictor.init(loadPredictorConfig(config_path));
-        recorder.init(loadRecorderConfig(config_path));
+        auto recorder_cfg = loadRecorderConfig(config_path);
+        if (!recording_out_override.empty()) {
+            recorder_cfg.output_path = recording_out_override;
+            recorder_cfg.frame_summary_path.clear();
+        }
+        recorder.init(recorder_cfg);
     }
 
     // === ROS2 Bridge 初始化 ===
