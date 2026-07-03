@@ -4,15 +4,14 @@
  */
 
 #include "baseline_clip_recorder.h"
+#include "baseline_clip_recorder_io.h"
 #include "logger.h"
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
-#include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -25,60 +24,6 @@ namespace {
 double nowSeconds() {
     const auto now = std::chrono::system_clock::now();
     return std::chrono::duration<double>(now.time_since_epoch()).count();
-}
-
-std::string timestampName() {
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
-    localtime_r(&t, &tm);
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
-    return oss.str();
-}
-
-std::string frameName(int frame_id, const std::string& ext) {
-    std::ostringstream oss;
-    oss << std::setw(6) << std::setfill('0') << frame_id << "." << ext;
-    return oss.str();
-}
-
-std::string normalizeImageFormat(std::string fmt) {
-    std::transform(fmt.begin(), fmt.end(), fmt.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (!fmt.empty() && fmt[0] == '.') {
-        fmt.erase(fmt.begin());
-    }
-    if (fmt != "png" && fmt != "pgm") {
-        LOG_WARN("BaselineClipRecorder: unsupported image_format=%s, using png", fmt.c_str());
-        return "png";
-    }
-    return fmt;
-}
-
-std::string normalizeImageMode(std::string mode) {
-    std::transform(mode.begin(), mode.end(), mode.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (mode != "gray" && mode != "bgr" && mode != "both") {
-        LOG_WARN("BaselineClipRecorder: unsupported image_mode=%s, using gray",
-                 mode.c_str());
-        return "gray";
-    }
-    return mode;
-}
-
-void writeDetectionColumns(std::ofstream& csv, const Detection* det) {
-    if (!det) {
-        csv << "-1,-1,-1,-1,0,-1";
-        return;
-    }
-    csv << std::fixed << std::setprecision(3)
-        << det->cx << ','
-        << det->cy << ','
-        << det->width << ','
-        << det->height << ','
-        << std::setprecision(5) << det->confidence << ','
-        << det->class_id;
 }
 
 }  // namespace
@@ -96,8 +41,8 @@ void BaselineClipRecorder::init(const BaselineClipRecorderConfig& config) {
     copy_failures_ = 0;
     queue_.clear();
     clip_dir_.clear();
-    image_ext_ = normalizeImageFormat(cfg_.image_format);
-    image_mode_ = normalizeImageMode(cfg_.image_mode);
+    image_ext_ = normalizeBaselineImageFormat(cfg_.image_format);
+    image_mode_ = normalizeBaselineImageMode(cfg_.image_mode);
     if (image_mode_ != "gray" && image_ext_ == "pgm") {
         LOG_WARN("BaselineClipRecorder: image_mode=%s needs color-capable output; using png",
                  image_mode_.c_str());
@@ -157,7 +102,7 @@ bool BaselineClipRecorder::startClip() {
     const fs::path root(cfg_.output_dir);
     const int clip_number = completed_clips_.load() + 1;
     std::ostringstream clip_name;
-    clip_name << "clip_" << timestampName() << "_"
+    clip_name << "clip_" << baselineClipTimestampName() << "_"
               << std::setw(2) << std::setfill('0') << clip_number;
     const fs::path clip = root / clip_name.str();
     const fs::path left_dir = clip / "left";
@@ -188,33 +133,15 @@ bool BaselineClipRecorder::startClip() {
     }
     csv.close();
     clip_dir_ = clip.string();
-    writeHeader(clip_dir_);
-
-    std::ofstream meta((clip / "metadata.yaml").string(), std::ios::out | std::ios::trunc);
-    if (meta.is_open()) {
-        meta << "format: image_sequence_csv\n"
-             << "clip_index: " << clip_number << "\n"
-             << "clip_count: " << cfg_.clip_count << "\n"
-             << "image_format: " << image_ext_ << "\n"
-             << "image_mode: " << image_mode_ << "\n"
-             << "duration_sec: " << std::fixed << std::setprecision(3) << cfg_.duration_sec << "\n"
-             << "target_frames: " << target_frames_ << "\n"
-             << "trigger_hz: " << cfg_.trigger_hz << "\n"
-             << "clip_gap_sec: " << cfg_.clip_gap_sec << "\n"
-             << "clip_gap_frames: " << gap_frames_ << "\n"
-             << "require_left_detection: " << (cfg_.require_left_detection ? "true" : "false") << "\n"
-             << "require_right_detection: " << (cfg_.require_right_detection ? "true" : "false") << "\n"
-             << "require_pair_gate: " << (cfg_.require_pair_gate ? "true" : "false") << "\n"
-             << "min_confidence: " << cfg_.min_confidence << "\n"
-             << "pair_y_tolerance_px: " << cfg_.pair_y_tolerance_px << "\n"
-             << "pair_max_size_ratio: " << cfg_.pair_max_size_ratio << "\n"
-             << "pair_min_disparity_px: " << cfg_.pair_min_disparity_px << "\n"
-             << "write_after_capture: " << (cfg_.write_after_capture ? "true" : "false") << "\n"
-             << "max_queue_frames: " << cfg_.max_queue_frames << "\n";
-        if (effective_max_queue_frames_ != cfg_.max_queue_frames) {
-            meta << "effective_max_queue_frames: " << effective_max_queue_frames_ << "\n";
-        }
-    }
+    writeBaselineClipHeader(clip_dir_);
+    writeBaselineClipMetadata(clip_dir_,
+                              clip_number,
+                              cfg_,
+                              image_ext_,
+                              image_mode_,
+                              target_frames_,
+                              gap_frames_,
+                              effective_max_queue_frames_);
 
     current_clip_index_ = clip_number;
     clip_frame_count_ = 0;
@@ -222,26 +149,6 @@ bool BaselineClipRecorder::startClip() {
     LOG_INFO("BaselineClipRecorder: started clip %d/%d %s",
              clip_number, cfg_.clip_count, clip_dir_.c_str());
     return true;
-}
-
-void BaselineClipRecorder::writeHeader(const std::string& clip_dir) {
-    namespace fs = std::filesystem;
-    std::ofstream csv((fs::path(clip_dir) / "frames.csv").string(),
-                      std::ios::out | std::ios::trunc);
-    if (!csv.is_open()) return;
-    csv << "clip_frame_id,pipeline_frame_id,timestamp_s,fps,"
-        << "left_image,right_image,left_bgr_image,right_bgr_image,"
-        << "left_count,right_count,"
-        << "best_left_idx,best_right_idx,pair_valid,pair_score,"
-        << "pair_disparity_px,pair_dy_px,pair_size_ratio,"
-        << "left_cx,left_cy,left_w,left_h,left_conf,left_class_id,"
-        << "right_cx,right_cy,right_w,right_h,right_conf,right_class_id,"
-        << "left_timestamp_us,right_timestamp_us,"
-        << "left_frame_number,right_frame_number,"
-        << "left_frame_counter,right_frame_counter,"
-        << "left_trigger_index,right_trigger_index,"
-        << "frame_counter_delta,frame_number_delta,timestamp_delta_us,"
-        << "grab_failed,is_detect_frame\n";
 }
 
 int BaselineClipRecorder::bestDetectionIndex(
@@ -467,7 +374,8 @@ void BaselineClipRecorder::writerLoop() {
 
 void BaselineClipRecorder::writeFrame(const QueuedFrame& frame) {
     namespace fs = std::filesystem;
-    const std::string name = frameName(frame.clip_frame_id, image_ext_);
+    const std::string name = baselineClipFrameName(frame.clip_frame_id,
+                                                   image_ext_);
     const std::string left_rel = "left/" + name;
     const std::string right_rel = "right/" + name;
     std::string left_bgr_rel;
@@ -538,9 +446,9 @@ void BaselineClipRecorder::writeFrame(const QueuedFrame& frame) {
          << std::setprecision(3) << frame.pair.disparity_px << ','
          << frame.pair.dy_px << ','
          << frame.pair.size_ratio << ',';
-    writeDetectionColumns(csv, left_det);
+    writeBaselineDetectionColumns(csv, left_det);
     csv << ',';
-    writeDetectionColumns(csv, right_det);
+    writeBaselineDetectionColumns(csv, right_det);
     csv << ','
          << frame.metadata.left_timestamp_us << ','
          << frame.metadata.right_timestamp_us << ','

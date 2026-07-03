@@ -200,6 +200,7 @@ set(PIPELINE_SOURCES
   src/utils/trajectory_recorder.cpp
   src/utils/trajectory_recorder_summary.cpp
   src/utils/baseline_clip_recorder.cpp
+  src/utils/baseline_clip_recorder_io.cpp
   src/track/nanotrack_trt.cpp
   src/track/mixformer_trt.cpp
 )

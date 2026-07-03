@@ -132,7 +132,6 @@ private:
                      const PairSelection& pair) const;
     bool startClip();
     void writerLoop();
-    void writeHeader(const std::string& clip_dir);
     void writeFrame(const QueuedFrame& frame);
 
     int bestDetectionIndex(const std::vector<Detection>& detections) const;
