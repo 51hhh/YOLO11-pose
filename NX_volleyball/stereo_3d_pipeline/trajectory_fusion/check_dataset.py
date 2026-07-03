@@ -29,7 +29,7 @@ P1_DEPTH_KEYS = (
     "z_roi_center_patch",
 )
 DEPTH_KEYS = P0_DEPTH_KEYS + P1_DEPTH_KEYS
-JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback",)
+JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback_epipolar",)
 REQUIRED_FIELDS = (
     "frame_id",
     "timestamp",
@@ -120,7 +120,17 @@ def _metadata_float(metadata: Dict[str, Any], *keys: str) -> float | None:
 
 
 def _valid_depths(rows: Sequence[Dict[str, str]], key: str) -> List[float]:
-    return [_safe_float(row.get(key), -1.0) for row in rows if _safe_float(row.get(key), -1.0) > 0.1]
+    return [
+        _safe_float(_depth_value(row, key), -1.0)
+        for row in rows
+        if _safe_float(_depth_value(row, key), -1.0) > 0.1
+    ]
+
+
+def _depth_value(row: Dict[str, str], key: str) -> object:
+    if key == "z_fallback_epipolar":
+        return row.get("z_fallback_epipolar", row.get("z_fallback"))
+    return row.get(key)
 
 
 def _field_set(rows: Sequence[Dict[str, str]]) -> set[str]:
@@ -213,12 +223,15 @@ def _source_breakdown(rows: Sequence[Dict[str, str]]) -> Dict[str, Any]:
         if (
             match_source in (2, 3)
             and (left_source == 3 or right_source == 3)
-            and _safe_float(row.get("z_fallback"), -1.0) > 0.1
+            and _safe_float(row.get("z_fallback_epipolar", row.get("z_fallback")), -1.0) > 0.1
         ):
             fallback_epipolar_rows.append(row)
             fallback_by_direction[MATCH_SOURCE_NAMES[match_source]] += 1
 
-    fallback_values = [_safe_float(row.get("z_fallback"), -1.0) for row in fallback_epipolar_rows]
+    fallback_values = [
+        _safe_float(row.get("z_fallback_epipolar", row.get("z_fallback")), -1.0)
+        for row in fallback_epipolar_rows
+    ]
     return {
         "rows": len(rows),
         "raw_rows": len(raw),
@@ -236,12 +249,12 @@ def _source_breakdown(rows: Sequence[Dict[str, str]]) -> Dict[str, Any]:
 
 
 def _depth_jump_stats(rows: Sequence[Dict[str, str]], key: str) -> Dict[str, Any]:
-    if not rows or key not in rows[0]:
+    if not rows or (key not in rows[0] and not (key == "z_fallback_epipolar" and "z_fallback" in rows[0])):
         return {"present": False}
 
     by_track: Dict[str, List[tuple[int, float]]] = {}
     for row in rows:
-        value = _safe_float(row.get(key), -1.0)
+        value = _safe_float(_depth_value(row, key), -1.0)
         if value <= 0.1:
             continue
         track_id = row.get("track_id") or "0"

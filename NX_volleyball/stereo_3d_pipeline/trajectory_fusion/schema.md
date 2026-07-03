@@ -103,7 +103,8 @@
 | z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
 | z_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差三角测距 |
-| z_fallback | float | 极线 fallback 测距 |
+| z_fallback | float | fallback 测距兼容汇总字段，优先 feature，其次 epipolar/template |
+| z_fallback_epipolar | float | 单侧漏检时极线搜索 fallback 测距 |
 | z_fallback_template | float | 单侧漏检时极线模板搜索 fallback 测距 |
 | z_fallback_feature_points | float | 单侧漏检时极线特征点搜索 fallback 测距 |
 | z_stereo | float | 当前在线 first-usable 兼容选择的双目测距观测，不是独立取点方法；训练候选不要读取它 |
@@ -129,6 +130,7 @@
 | disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
 | disparity_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差 |
+| disparity_fallback_epipolar | float | 极线搜索 fallback 视差 |
 | disparity_fallback_template | float | 极线模板搜索 fallback 视差 |
 | disparity_fallback_feature_points | float | 极线特征点搜索 fallback 视差 |
 | z_yolo_bbox_pair,z_circle,z_subpixel | float | 旧兼容别名，分别对应 bbox_center/circle_center/roi_multi_point |
@@ -229,7 +231,7 @@ disparity_roi_orb_points,disparity_roi_brisk_points,disparity_roi_akaze_points,
 disparity_roi_sift_points,disparity_roi_iou_region_color_patch,
 disparity_roi_patch_iou_color_edge,disparity_roi_neural_feature,
 disparity_roi_center_patch,
-disparity_roi_multi_point,disparity_fallback_template,
+disparity_roi_multi_point,disparity_fallback_epipolar,disparity_fallback_template,
 disparity_fallback_feature_points,
 z_mono,z_bbox_center,z_bbox_left_edge,z_bbox_right_edge,
 z_circle_center,z_circle_left_edge,z_circle_right_edge,
@@ -237,7 +239,7 @@ z_roi_edge_centroid,z_roi_radial_center,z_roi_edge_pair_center,
 z_roi_corner_points,z_roi_texture_points,z_roi_binary_points,
 z_roi_orb_points,z_roi_brisk_points,z_roi_akaze_points,z_roi_sift_points,
 z_roi_iou_region_color_patch,z_roi_patch_iou_color_edge,z_roi_neural_feature,z_roi_center_patch,z_roi_multi_point,
-z_fallback,z_fallback_template,z_fallback_feature_points,z,
+z_fallback,z_fallback_epipolar,z_fallback_template,z_fallback_feature_points,z,
 epipolar_dy,size_ratio,subpixel_valid,subpixel_attempted,subpixel_support,
 subpixel_std_px,subpixel_confidence,subpixel_gate_px,
 roi_corner_points_support,roi_corner_points_std_px,roi_corner_points_confidence,

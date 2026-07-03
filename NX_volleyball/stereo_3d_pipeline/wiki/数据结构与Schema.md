@@ -44,7 +44,7 @@
 | OpenCV CUDA P2 | `z_roi_cuda_template_match`, `z_roi_cuda_stereo_bm`, `z_roi_cuda_stereo_sgm` |
 | 神经特征 | `z_roi_neural_feature` |
 | patch/subpixel | `z_roi_center_patch`, `z_roi_multi_point` |
-| fallback | `z_fallback`, `z_fallback_template`, `z_fallback_feature_points` |
+| fallback | `z_fallback`, `z_fallback_epipolar`, `z_fallback_template`, `z_fallback_feature_points` |
 | 诊断 | disparity、support、confidence、std、bbox/circle、`pair_*`、sync watermark |
 
 兼容旧 CSV 的 alias 字段仍存在: `z_yolo_bbox_pair`、`z_circle`、`z_subpixel`、`disparity_yolo`、`disparity_circle`、`disparity_subpixel`。它们分别对应 bbox center、circle center 和 ROI multi-point/subpixel，不应按新增测距方法重复统计。

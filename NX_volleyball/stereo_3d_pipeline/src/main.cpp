@@ -335,6 +335,7 @@ private:
                 " tmpl=" + fmt(obj.z_roi_cuda_template_match), 2);
         putLine(panel, "cuda_bm=" + fmt(obj.z_roi_cuda_stereo_bm) +
                 " cuda_sgm=" + fmt(obj.z_roi_cuda_stereo_sgm) +
+                " fb_epi=" + fmt(obj.z_fallback_epipolar) +
                 " fb=" + fmt(obj.z_fallback), 3);
         putLine(panel,
                 " pair_iou=" + fmt(obj.pair_shifted_iou) +
@@ -411,6 +412,7 @@ private:
                 << ", \"z_roi_cuda_template_match\": " << obj.z_roi_cuda_template_match
                 << ", \"z_roi_cuda_stereo_bm\": " << obj.z_roi_cuda_stereo_bm
                 << ", \"z_roi_cuda_stereo_sgm\": " << obj.z_roi_cuda_stereo_sgm
+                << ", \"z_fallback_epipolar\": " << obj.z_fallback_epipolar
                 << ", \"z_fallback\": " << obj.z_fallback
                 << ", \"pair_shifted_iou\": " << obj.pair_shifted_iou
                 << "}";

@@ -433,6 +433,7 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.z_circle = roi.z_circle;
             obj.z_subpixel = roi.z_subpixel;
             obj.z_fallback = roi.z_fallback;
+            obj.z_fallback_epipolar = roi.z_fallback_epipolar;
             obj.z_fallback_template = roi.z_fallback_template;
             obj.z_fallback_feature_points = roi.z_fallback_feature_points;
             obj.disparity_bbox_center = roi.disparity_bbox_center;
@@ -459,6 +460,7 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
                 roi.disparity_roi_neural_feature;
             obj.disparity_roi_center_patch = roi.disparity_roi_center_patch;
             obj.disparity_roi_multi_point = roi.disparity_roi_multi_point;
+            obj.disparity_fallback_epipolar = roi.disparity_fallback_epipolar;
             obj.disparity_fallback_template = roi.disparity_fallback_template;
             obj.disparity_fallback_feature_points = roi.disparity_fallback_feature_points;
             obj.disparity_yolo = roi.disparity_yolo;

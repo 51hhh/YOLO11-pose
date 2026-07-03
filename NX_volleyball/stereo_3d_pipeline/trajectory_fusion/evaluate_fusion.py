@@ -42,7 +42,7 @@ CANDIDATE_DEPTH_KEYS = [
     "z_roi_neural_feature",
     "z_roi_center_patch",
     "z_roi_multi_point",
-    "z_fallback",
+    "z_fallback_epipolar",
     "z_fallback_template",
     "z_fallback_feature_points",
 ]
@@ -77,7 +77,14 @@ def _series(rows: List[Dict[str, str]], key: str) -> List[float]:
 
 
 def _valid_depth_series(rows: List[Dict[str, str]], key: str) -> List[float]:
-    return [_f(row, key) for row in rows if key in row and _f(row, key, -1.0) > 0.1]
+    values = []
+    for row in rows:
+        source_key = key
+        if key == "z_fallback_epipolar" and key not in row:
+            source_key = "z_fallback"
+        if source_key in row and _f(row, source_key, -1.0) > 0.1:
+            values.append(_f(row, source_key))
+    return values
 
 
 def _diff(values: List[float]) -> List[float]:

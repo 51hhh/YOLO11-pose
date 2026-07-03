@@ -3512,6 +3512,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.z_yolo_bbox_pair = z_yolo;
         obj.z_circle = circle_candidate_valid ? z_circle_raw : -1.0f;
         obj.z_subpixel = z_subpixel;
+        obj.z_fallback_epipolar =
+            epipolar_fallback_depth_valid ? z_circle_raw : -1.0f;
         obj.z_fallback = z_fallback_feature_points > 0.0f
             ? z_fallback_feature_points
             : (any_fallback_depth_valid ? z_circle_raw : -1.0f);
@@ -3576,6 +3578,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             center_patch_valid_for_obj ? center_patch_result.disparity : -1.0f;
         obj.disparity_roi_multi_point =
             subpixel_valid_for_obj ? subpixel_result.disparity : -1.0f;
+        obj.disparity_fallback_epipolar =
+            epipolar_fallback_depth_valid ? circle_disparity : -1.0f;
         obj.disparity_fallback_template =
             fallback_template_depth_valid ? circle_disparity : -1.0f;
         obj.disparity_fallback_feature_points =

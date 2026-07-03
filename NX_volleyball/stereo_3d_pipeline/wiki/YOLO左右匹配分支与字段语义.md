@@ -133,8 +133,8 @@ z_circle_raw = focal * baseline / circle_disparity
 
 | fallback 类型 | match source | circle source 组合 | 深度字段 | 视差字段 | 说明 |
 |---|---:|---|---|---|---|
-| 左到右 epipolar | `2` | left `2/1`, right `3` | `z_fallback` | 无独立 `disparity_fallback_epipolar` | `z_circle_center=-1`; 候选 method 是 `fallback_epipolar` |
-| 右到左 epipolar | `3` | left `3`, right `2/1` | `z_fallback` | 无独立 `disparity_fallback_epipolar` | `z_circle_center=-1`; 候选 method 是 `fallback_epipolar` |
+| 左到右 epipolar | `2` | left `2/1`, right `3` | `z_fallback_epipolar`, `z_fallback` | `disparity_fallback_epipolar` | `z_circle_center=-1`; 候选 method 是 `fallback_epipolar` |
+| 右到左 epipolar | `3` | left `3`, right `2/1` | `z_fallback_epipolar`, `z_fallback` | `disparity_fallback_epipolar` | `z_circle_center=-1`; 候选 method 是 `fallback_epipolar` |
 | 左到右 template | `2` | left `2/1`, right `4` | `z_fallback`, `z_fallback_template` | `disparity_fallback_template` | 100fps 默认关闭 |
 | 右到左 template | `3` | left `4`, right `2/1` | `z_fallback`, `z_fallback_template` | `disparity_fallback_template` | 100fps 默认关闭 |
 | fallback feature | `2/3` | 搜索侧可能是 `5` feature proxy | `z_fallback_feature_points`, `z_fallback` | `disparity_fallback_feature_points` | 只有 feature 匹配本身有效时才输出 |
@@ -154,10 +154,12 @@ z_fallback = z_fallback_feature_points if valid
 - `right_circle_source`
 - `z_fallback_template`
 - `z_fallback_feature_points`
+- `z_fallback_epipolar`
+- `disparity_fallback_epipolar`
 - `disparity_fallback_template`
 - `disparity_fallback_feature_points`
 
-当前没有显式 `z_fallback_epipolar` 和 `disparity_fallback_epipolar` 字段。需要干净区分 epipolar fallback 时，用 `z_fallback` 加 `stereo_match_source in (2,3)` 且任一 circle source 为 `3` 过滤。
+旧 CSV 可能没有显式 `z_fallback_epipolar` 和 `disparity_fallback_epipolar` 字段。读取旧数据时，用 `z_fallback` 加 `stereo_match_source in (2,3)` 且任一 circle source 为 `3` 过滤。
 
 ## 全部分支情况
 
@@ -226,6 +228,7 @@ field_valid = {
         "z_roi_multi_point",
         "z_roi_center_patch",
         "z_fallback",
+        "z_fallback_epipolar",
         "z_fallback_template",
         "z_fallback_feature_points",
     ]
@@ -235,7 +238,7 @@ field_valid = {
 epipolar_fallback = raw[
     raw["stereo_match_source"].isin([2, 3]) &
     ((raw["left_circle_source"] == 3) | (raw["right_circle_source"] == 3)) &
-    (raw["z_fallback"] > 0)
+    (raw.get("z_fallback_epipolar", raw["z_fallback"]) > 0)
 ]
 ```
 
@@ -278,7 +281,7 @@ frame sidecar 用于统计每帧是否退化:
 ## 设计结论
 
 - 正常 P0 圆心观测是 `stereo_match_source=1` 且左右 circle source 都为 `2` 的 `z_circle_center`。
-- 极线搜索得到的是圆心视差数值，但语义是 `fallback_epipolar`，字段落在 `z_fallback`，不是 `z_circle_center`。
+- 极线搜索得到的是圆心视差数值，但语义是 `fallback_epipolar`，字段落在 `z_fallback_epipolar` 和兼容汇总 `z_fallback`，不是 `z_circle_center`。
 - `stereo_depth_source=1` 是兼容 source id，不足以区分正常圆心和 fallback epipolar。
-- 若后续要训练可靠性模型或做质量报表，最好新增显式 `z_fallback_epipolar` 和 `disparity_fallback_epipolar` 字段；在新增前必须用 source 组合过滤。
+- 训练可靠性模型或做质量报表时优先使用 `z_fallback_epipolar` 和 `disparity_fallback_epipolar`；旧 CSV 再用 source 组合过滤。
 - 后续功能记录见 [深度后续TODO](深度后续TODO.md)。

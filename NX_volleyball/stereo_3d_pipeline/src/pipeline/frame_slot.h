@@ -89,7 +89,8 @@ struct Object3D {
     float z_yolo_bbox_pair; ///< 左右 YOLO bbox 中心视差测距, -1=无效
     float z_circle;        ///< 左右圆心视差测距, -1=无效
     float z_subpixel;      ///< ROI 多点亚像素视差测距, -1=无效
-    float z_fallback;      ///< 极线 fallback 测距, -1=无效
+    float z_fallback;      ///< fallback 测距兼容汇总, -1=无效
+    float z_fallback_epipolar; ///< 极线 fallback 测距, -1=无效
     float z_fallback_template; ///< 极线模板搜索 fallback 测距, -1=无效
     float z_fallback_feature_points; ///< 极线特征点 fallback 测距, -1=无效
     float disparity_bbox_center; ///< bbox 中心视差, -1=无效
@@ -116,6 +117,7 @@ struct Object3D {
     float disparity_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差, -1=无效
     float disparity_roi_center_patch; ///< ROI 中心 patch ZNCC 视差, -1=无效
     float disparity_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差, -1=无效
+    float disparity_fallback_epipolar; ///< 极线 fallback 视差, -1=无效
     float disparity_fallback_template; ///< 极线模板搜索 fallback 视差, -1=无效
     float disparity_fallback_feature_points; ///< 极线特征点 fallback 视差, -1=无效
     float disparity_yolo;  ///< 左右 YOLO bbox 中心视差, -1=无效
@@ -227,8 +229,8 @@ struct Object3D {
                  z_roi_center_patch(-1),
                  z_roi_multi_point(-1),
                  z_yolo_bbox_pair(-1), z_circle(-1), z_subpixel(-1),
-                 z_fallback(-1), z_fallback_template(-1),
-                 z_fallback_feature_points(-1),
+                 z_fallback(-1), z_fallback_epipolar(-1),
+                 z_fallback_template(-1), z_fallback_feature_points(-1),
                  disparity_bbox_center(-1), disparity_bbox_left_edge(-1),
                  disparity_bbox_right_edge(-1), disparity_circle_center(-1),
                  disparity_circle_left_edge(-1), disparity_circle_right_edge(-1),
@@ -244,7 +246,8 @@ struct Object3D {
                  disparity_roi_cuda_stereo_sgm(-1),
                  disparity_roi_neural_feature(-1),
                  disparity_roi_center_patch(-1),
-                 disparity_roi_multi_point(-1), disparity_fallback_template(-1),
+                 disparity_roi_multi_point(-1), disparity_fallback_epipolar(-1),
+                 disparity_fallback_template(-1),
                  disparity_fallback_feature_points(-1),
                  disparity_yolo(-1), disparity_circle(-1), disparity_subpixel(-1),
                  left_bbox_cx(-1), left_bbox_cy(-1), left_bbox_w(-1),
