@@ -25,7 +25,7 @@
 - [x] profiler 增加 p50/p90/p95/p99，用于 P2 准入；drop/accepted ratio 继续由矩阵脚本统计。
 - [ ] debug 特殊情况才下载 score map、disparity map、keypoint/match 可视化数据。
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
-- [ ] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
+- [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。
 - [ ] 实测 ROI ring/edge profile matcher。
 - [ ] 复测 `roi_iou_region_color_patch_offline_tuned`。

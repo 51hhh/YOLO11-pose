@@ -910,6 +910,12 @@ def classify_case_result(row: dict[str, str]) -> str:
         return "late_or_deadline_dropped"
     if infrastructure_drop > 0:
         return "async_queue_or_buffer_drop"
+    if (
+        row_int(row, "cpu_fallback_count") > 0
+        or row_int(row, "async_need_host_gray_count") > 0
+        or row_int(row, "async_host_gray_submit_count") > 0
+    ):
+        return "realtime_path_used_cpu_or_host_gray"
     if row_int(row, "async_no_detections_count") > 0 and row_int(row, "target_rows") == 0:
         return "no_detections"
     if row_int(row, "target_rows") == 0 and row_int(row, "async_accepted_count") == 0:
@@ -1101,6 +1107,7 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "cpu_opencv_sift_avg_ms": cpu_opencv_sift[0],
         "cpu_fallback_avg_ms": cpu_fallback[0],
         "cpu_fallback_max_ms": cpu_fallback[2],
+        "cpu_fallback_count": cpu_fallback[3],
         "async_worker_avg_ms": async_worker[0],
         "async_worker_max_ms": async_worker[2],
         "async_worker_p95_ms": async_worker[6],
@@ -1121,6 +1128,7 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "async_need_host_gray_count": async_need_host_gray[3],
         "async_need_bgr_count": async_need_bgr[3],
         "async_host_gray_submit_avg_ms": async_host_gray_submit[0],
+        "async_host_gray_submit_count": async_host_gray_submit[3],
         "async_gray_submit_avg_ms": async_gray_submit[0],
         "async_bgr_submit_avg_ms": async_bgr_submit[0],
         "async_copy_wait_avg_ms": async_copy_wait[0],
@@ -1197,6 +1205,7 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "cpu_opencv_sift_avg_ms": "",
         "cpu_fallback_avg_ms": "",
         "cpu_fallback_max_ms": "",
+        "cpu_fallback_count": "",
         "async_worker_avg_ms": "",
         "async_worker_max_ms": "",
         "async_worker_p95_ms": "",
@@ -1217,6 +1226,7 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "async_need_host_gray_count": "",
         "async_need_bgr_count": "",
         "async_host_gray_submit_avg_ms": "",
+        "async_host_gray_submit_count": "",
         "async_gray_submit_avg_ms": "",
         "async_bgr_submit_avg_ms": "",
         "async_copy_wait_avg_ms": "",
@@ -1330,6 +1340,7 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
         "- mode: isolated true algorithms; all dual-YOLO depth modes are disabled before each case enables its own candidate",
         "- `algo_*` is the profiler stage selected for this case; `async_worker_*` is full async Stage2. `p95` is the main tail-latency gate.",
         "- `late_or_deadline_dropped` means the worker finished late or the result was discarded after the next-frame deadline; CUDA/CPU work is not killed mid-kernel.",
+        "- `realtime_path_used_cpu_or_host_gray` means the supposedly realtime P2 run triggered CPU fallback or host gray D2H and must be rerun with those paths disabled.",
         "- `debug_dirs` is populated only when `--debug-on-failure` is used.",
         "",
         "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
@@ -1371,7 +1382,7 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
             row.get("support_median", ""),
             row.get("async_accepted_count", ""),
             row.get("async_frame_callback_skipped_count", ""),
-            row.get("async_need_host_gray_count", ""),
+            f'{row.get("async_need_host_gray_count", "")}/{row.get("async_host_gray_submit_count", "")}',
             debug_dirs,
             row.get("note", ""),
             row.get("last_error_or_warn", "").replace("|", "\\|"),
