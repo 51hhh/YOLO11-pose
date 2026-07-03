@@ -198,6 +198,7 @@ set(PIPELINE_SOURCES
   src/stereo/neural_feature_matcher_fused.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
+  src/fusion/hybrid_depth_candidate_copy.cpp
   src/fusion/hybrid_depth.cpp
   src/fusion/hybrid_depth_track.cpp
   src/fusion/trajectory_predictor.cpp
