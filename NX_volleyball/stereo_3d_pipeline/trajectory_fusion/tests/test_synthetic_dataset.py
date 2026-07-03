@@ -25,6 +25,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     read_metadata,
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
+from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 
 
 HEADER = [
@@ -204,6 +205,41 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(clips[0].metadata, root / "traj_p0p1_001.metadata.yaml")
             self.assertEqual(clips[0].split, "train")
             self.assertEqual(clips[0].name, "static_3m")
+
+    def test_train_reliability_resolves_manifest_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = _write_synthetic_clip(root)
+            second = root / "traj_p0p1_002.csv"
+            second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+            (root / "traj_p0p1_002.metadata.yaml").write_text(
+                "known_z: 3.1\nstatic: true\n",
+                encoding="utf-8",
+            )
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                        "  - csv: traj_p0p1_002.csv",
+                        "    metadata: traj_p0p1_002.metadata.yaml",
+                        "    split: val",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            clips = resolve_input_clips([str(manifest_path)], metadata=None)
+            train_items, heldout_items = load_sequences_from_clips(clips, train_split="train")
+            self.assertEqual(len(clips), 2)
+            self.assertEqual(len(train_items), 1)
+            self.assertEqual(len(heldout_items), 1)
+            self.assertEqual(train_items[0][0].split, "train")
+            self.assertEqual(heldout_items[0][0].split, "val")
 
 
 if __name__ == "__main__":

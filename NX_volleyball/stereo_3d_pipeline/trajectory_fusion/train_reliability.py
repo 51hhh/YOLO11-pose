@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 try:
     import torch
@@ -22,6 +22,7 @@ try:
         load_legacy_sequences,
         weak_label_names,
     )
+    from .manifest import DatasetClip, is_manifest_path, load_manifest
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import (
         METHOD_NAMES,
@@ -32,6 +33,7 @@ except ImportError:  # pragma: no cover - direct script execution
         load_legacy_sequences,
         weak_label_names,
     )
+    from manifest import DatasetClip, is_manifest_path, load_manifest
 
 
 def _require_torch() -> None:
@@ -39,10 +41,47 @@ def _require_torch() -> None:
         raise SystemExit("PyTorch is required for train_reliability.py")
 
 
+def resolve_input_clips(inputs: List[str], metadata: str | None) -> List[DatasetClip]:
+    """Resolve CSV inputs or one manifest into DatasetClip objects."""
+
+    if len(inputs) == 1 and is_manifest_path(inputs[0]):
+        if metadata:
+            raise SystemExit("--metadata cannot be used with a manifest")
+        return load_manifest(inputs[0])
+    if metadata and len(inputs) != 1:
+        raise SystemExit("--metadata can only be used with a single CSV input")
+    metadata_path = Path(metadata) if metadata else None
+    return [
+        DatasetClip(
+            csv=Path(item),
+            metadata=metadata_path if len(inputs) == 1 else None,
+            split="train",
+            name=Path(item).stem,
+        )
+        for item in inputs
+    ]
+
+
+def load_sequences_from_clips(
+    clips: List[DatasetClip],
+    train_split: str,
+) -> Tuple[List[Tuple[DatasetClip, object]], List[Tuple[DatasetClip, object]]]:
+    """Load train and held-out sequences from resolved clips."""
+
+    train_items: List[Tuple[DatasetClip, object]] = []
+    heldout_items: List[Tuple[DatasetClip, object]] = []
+    for clip in clips:
+        sequences = load_legacy_sequences(clip.csv, metadata_path=clip.metadata)
+        target = train_items if clip.split == train_split else heldout_items
+        target.extend((clip, sequence) for sequence in sequences)
+    return train_items, heldout_items
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", help="TrajectoryRecorder CSV, legacy or extended")
-    parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
+    parser.add_argument("inputs", nargs="+", help="TrajectoryRecorder CSV(s), or one dataset manifest YAML/JSON")
+    parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels for a single CSV")
+    parser.add_argument("--train-split", default="train", help="Manifest split name used for optimization")
     parser.add_argument("-o", "--output", default="reliability_net.pt")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -75,9 +114,10 @@ def main() -> int:
         )
         from models import MeasurementReliabilityNet, weighted_depth_consensus
 
-    sequences = load_legacy_sequences(args.input, metadata_path=args.metadata)
-    if not sequences:
-        raise SystemExit(f"no valid sequences in {args.input}")
+    clips = resolve_input_clips(args.inputs, args.metadata)
+    train_items, heldout_items = load_sequences_from_clips(clips, args.train_split)
+    if not train_items:
+        raise SystemExit(f"no valid sequences in train split '{args.train_split}'")
 
     feature_dim = len(legacy_feature_names())
     model = MeasurementReliabilityNet(feature_dim, num_methods=len(METHOD_NAMES), hidden_dim=args.hidden).to(args.device)
@@ -85,9 +125,9 @@ def main() -> int:
 
     sequence_arrays: List[dict] = []
     all_features: List[List[float]] = []
-    for seq in sequences:
+    for clip, seq in train_items:
         arrays = build_legacy_arrays(seq)
-        sequence_arrays.append({"track_id": seq.track_id, **arrays})
+        sequence_arrays.append({"clip": clip.name, "track_id": seq.track_id, **arrays})
         all_features.extend(arrays["features"])
 
     feature_mean, feature_std = compute_feature_normalizer(all_features)
@@ -157,6 +197,17 @@ def main() -> int:
         "feature_std": feature_std,
         "method_names": METHOD_NAMES,
         "weak_label_names": weak_label_names(),
+        "train_split": args.train_split,
+        "source_clips": [
+            {
+                "csv": str(clip.csv),
+                "metadata": str(clip.metadata) if clip.metadata else None,
+                "split": clip.split,
+                "name": clip.name,
+            }
+            for clip in clips
+        ],
+        "heldout_sequence_count": len(heldout_items),
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
