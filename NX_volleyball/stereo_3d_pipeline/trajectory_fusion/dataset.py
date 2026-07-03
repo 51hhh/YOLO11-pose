@@ -137,6 +137,15 @@ def find_metadata_for_csv(path: str | Path) -> Path | None:
     return None
 
 
+def derive_frame_summary_path(path: str | Path) -> Path:
+    """Derive the recorder sidecar path matching the C++ recorder."""
+
+    csv_path = Path(path)
+    if csv_path.name.endswith(".csv"):
+        return csv_path.with_name(csv_path.name[:-4] + ".frames.csv")
+    return Path(str(csv_path) + ".frames.csv")
+
+
 def read_csv_rows(path: str | Path) -> List[Dict[str, str]]:
     """Read CSV rows while tolerating accidental NUL bytes in log files."""
 
