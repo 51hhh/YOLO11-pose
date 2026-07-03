@@ -20,6 +20,7 @@
 - [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
 - [ ] 增加 P2 选择性触发: P0/P1 分歧、pair gate 变差、fallback、帧间跳变或运动残差异常时才运行。
 - [ ] 增加 P2 attempted/not_attempted/valid/reject reason 统计，避免把未触发当成无效。
+  - 矩阵报告层已有 `candidate_attempted`、`candidate_not_attempted`、`candidate_valid` 和粗粒度 `candidate_reject_reason`；精确逐帧 reject reason 仍需新增实时字段。
 - [ ] 将整帧 async snapshot 优化为 realtime ROI pack / diagnostic full snapshot 分层。
 - [ ] 评估固定自研 CUDA P2 pipeline 是否适合 CUDA Graph 降低 launch overhead。
 - [x] profiler 增加 p50/p90/p95/p99，用于 P2 准入；drop/accepted ratio 继续由矩阵脚本统计。

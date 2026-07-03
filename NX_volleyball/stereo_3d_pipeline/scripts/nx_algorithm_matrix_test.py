@@ -233,12 +233,15 @@ def should_debug_case(row: dict[str, str]) -> bool:
 def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> dict[str, str]:
     empty = {
         "candidate_rows": "",
+        "candidate_attempted": "",
+        "candidate_not_attempted": "",
         "candidate_valid": "",
         "candidate_rate": "",
         "candidate_median_m": "",
         "candidate_mad_m": "",
         "support_median": "",
         "field_valids": "",
+        "candidate_reject_reason": "",
         "target_rows": "",
     }
     frame_total = count_frame_rows(frames_path)
@@ -255,6 +258,7 @@ def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> di
     valid_depths: list[float] = []
     field_counts: dict[str, int] = {field: 0 for field in case.candidate_fields}
     supports: list[float] = []
+    attempted = 0
     for row in rows:
         row_values = []
         for field in case.candidate_fields:
@@ -262,14 +266,31 @@ def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> di
             if value is not None and value > 0.0:
                 field_counts[field] += 1
                 row_values.append(value)
+        row_attempted = False
+        if case.support_field:
+            support = parse_float(row.get(case.support_field))
+            if support is not None and support >= 0.0:
+                supports.append(support)
+                row_attempted = True
+        else:
+            row_attempted = any(row.get(field) not in (None, "") for field in case.candidate_fields)
+        if row_attempted:
+            attempted += 1
         if row_values:
             valid_depths.append(row_values[0])
-            if case.support_field:
-                support = parse_float(row.get(case.support_field))
-                if support is not None and support >= 0.0:
-                    supports.append(support)
 
     valid = len(valid_depths)
+    not_attempted = max(0, total - attempted)
+    if target_total == 0:
+        reject_reason = "no_candidate_rows"
+    elif attempted == 0:
+        reject_reason = "not_attempted"
+    elif valid == 0:
+        reject_reason = "attempted_no_valid_depth"
+    elif valid < attempted:
+        reject_reason = "partial_valid"
+    else:
+        reject_reason = "ok"
     if valid_depths:
         med = median(valid_depths)
         mad = median(abs(v - med) for v in valid_depths)
@@ -282,12 +303,15 @@ def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> di
     field_valids = ";".join(f"{k}={v}/{total}" for k, v in field_counts.items())
     return {
         "candidate_rows": str(total),
+        "candidate_attempted": str(attempted),
+        "candidate_not_attempted": str(not_attempted),
         "candidate_valid": str(valid),
         "candidate_rate": f"{valid / total:.3f}" if total else "",
         "candidate_median_m": med_s,
         "candidate_mad_m": mad_s,
         "support_median": support_s,
         "field_valids": field_valids,
+        "candidate_reject_reason": reject_reason,
         "target_rows": str(target_total),
     }
 
@@ -432,12 +456,15 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "async_worker_busy_count": async_worker_busy[3],
         "stage2_drop_stale_roi_count": stage2_drop_stale_roi[3],
         "candidate_rows": "",
+        "candidate_attempted": "",
+        "candidate_not_attempted": "",
         "candidate_valid": "",
         "candidate_rate": "",
         "candidate_median_m": "",
         "candidate_mad_m": "",
         "support_median": "",
         "field_valids": "",
+        "candidate_reject_reason": "",
         "target_rows": "",
         "diagnosis": "",
         "debug_feature_dir": "",
@@ -530,12 +557,15 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "async_worker_busy_count": "",
         "stage2_drop_stale_roi_count": "",
         "candidate_rows": "",
+        "candidate_attempted": "",
+        "candidate_not_attempted": "",
         "candidate_valid": "",
         "candidate_rate": "",
         "candidate_median_m": "",
         "candidate_mad_m": "",
         "support_median": "",
         "field_valids": "",
+        "candidate_reject_reason": reason,
         "target_rows": "",
         "diagnosis": "skipped_missing_dependency",
         "debug_feature_dir": "",
