@@ -9,7 +9,6 @@ matches against a patch IoU/ZNCC epipolar search.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import time
 from pathlib import Path
@@ -62,6 +61,10 @@ from offline_volleyball_probe_matching import (
     draw_overlap_debug,
     iou_region_color_patch_match,
     patch_iou_zncc_match,
+)
+from offline_volleyball_keypoint_report import (
+    write_keypoint_summary,
+    write_match_contact_sheets,
 )
 
 def main() -> int:
@@ -369,42 +372,8 @@ def main() -> int:
         "right_roi": {"bbox": rroi.bbox, "center": rroi.center, "radius": rroi.radius, "source": rroi.source},
         "results": rows,
     }
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    with (out_dir / "summary.csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-    # Contact sheet, cropped around the ball for quick visual inspection.
-    sheets = []
-    for res in results:
-        img = cv2.imread(str(out_dir / f"{res.name}_matches.png"))
-        if img is not None:
-            sheets.append(img)
-    if sheets:
-        target_w = sheets[0].shape[1]
-        normalized = []
-        for img in sheets:
-            if img.shape[1] != target_w:
-                scale = target_w / img.shape[1]
-                img = cv2.resize(img, (target_w, max(1, round(img.shape[0] * scale))))
-            normalized.append(img)
-        cv2.imwrite(str(out_dir / "contact_sheet.png"), cv2.vconcat(normalized))
-
-    zoom_sheets = []
-    for res in results:
-        img = cv2.imread(str(out_dir / f"{res.name}_matches_zoom.png"))
-        if img is not None:
-            zoom_sheets.append(img)
-    if zoom_sheets:
-        target_w = zoom_sheets[0].shape[1]
-        normalized = []
-        for img in zoom_sheets:
-            if img.shape[1] != target_w:
-                scale = target_w / img.shape[1]
-                img = cv2.resize(img, (target_w, max(1, round(img.shape[0] * scale))))
-            normalized.append(img)
-        cv2.imwrite(str(out_dir / "zoom_contact_sheet.png"), cv2.vconcat(normalized))
+    write_keypoint_summary(out_dir, summary, rows)
+    write_match_contact_sheets(out_dir, results)
 
     if not args.quiet:
         print(json.dumps(summary, indent=2))
