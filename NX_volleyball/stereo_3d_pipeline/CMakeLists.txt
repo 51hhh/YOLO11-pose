@@ -344,6 +344,10 @@ install(TARGETS stereo_pipeline DESTINATION bin)
 if(HIK_FOUND)
   set(VIEWER_SOURCES
     src/stereo_depth_viewer.cpp
+    src/stereo_depth_viewer_args.cpp
+    src/stereo_depth_viewer_benchmark.cpp
+    src/stereo_depth_viewer_models.cpp
+    src/stereo_depth_viewer_ui.cpp
     src/calibration/stereo_calibration.cpp
     src/capture/hikvision_camera.cpp
   )
