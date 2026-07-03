@@ -554,6 +554,10 @@ __device__ float reverseSparseMatchError(
     int left_pitch,
     const uint8_t* right_img,
     int right_pitch,
+    const uint8_t* left_bgr,
+    int left_bgr_pitch,
+    const uint8_t* right_bgr,
+    int right_bgr_pitch,
     int img_w,
     int img_h,
     float left_x,
@@ -587,8 +591,14 @@ __device__ float reverseSparseMatchError(
             const float score = mode == 2
                 ? binaryPatchScore(right_img, right_pitch, left_img, left_pitch,
                                    rx, ry, lx, ly, patch_radius)
-                : znccScore(right_img, right_pitch, left_img, left_pitch,
-                            rx, ry, lx, ly, patch_radius);
+                : (mode >= 3
+                    ? colorPatchScore(right_img, right_pitch,
+                                      left_img, left_pitch,
+                                      right_bgr, right_bgr_pitch,
+                                      left_bgr, left_bgr_pitch,
+                                      rx, ry, lx, ly, patch_radius)
+                    : znccScore(right_img, right_pitch, left_img, left_pitch,
+                                rx, ry, lx, ly, patch_radius));
             if (score > best_score) {
                 best_score = score;
                 best_lx = lx;
@@ -1048,14 +1058,25 @@ __device__ void matchSparsePoints(
         const int grid = max(2, static_cast<int>(ceilf(sqrtf(static_cast<float>(max_points)))));
         const int gx = point_idx % grid;
         const int gy = point_idx / grid;
-        const float rx = fmaxf(4.0f, fminf(radius * 0.82f, left_det.width * 0.42f));
-        const float ry = fmaxf(4.0f, fminf(radius * 0.82f, left_det.height * 0.42f));
-        const float u = grid > 1 ? (static_cast<float>(gx) / static_cast<float>(grid - 1)) : 0.5f;
-        const float v = grid > 1 ? (static_cast<float>(gy) / static_cast<float>(grid - 1)) : 0.5f;
-        const float x_f = center_x + (u - 0.5f) * 2.0f * rx;
-        const float y_f = center_y + (v - 0.5f) * 2.0f * ry;
-        const float nx = (x_f - center_x) / fmaxf(rx, 1.0f);
-        const float ny = (y_f - center_y) / fmaxf(ry, 1.0f);
+        float sample_cx = center_x;
+        float sample_cy = center_y;
+        float rx = fmaxf(4.0f, fminf(radius * 0.82f, left_det.width * 0.42f));
+        float ry = fmaxf(4.0f, fminf(radius * 0.82f, left_det.height * 0.42f));
+        if (mode >= 3) {
+            const float projected_right_cx = right_det.cx + initial_disp;
+            sample_cx = 0.5f * (left_det.cx + projected_right_cx);
+            sample_cy = 0.5f * (left_det.cy + right_det.cy);
+            rx = fmaxf(4.0f, fminf(radius * 0.90f,
+                                   fminf(left_det.width, right_det.width) * 0.42f));
+            ry = fmaxf(4.0f, fminf(radius * 0.90f,
+                                   fminf(left_det.height, right_det.height) * 0.42f));
+        }
+        const float u = (static_cast<float>(gx) + 0.5f) / static_cast<float>(grid);
+        const float v = (static_cast<float>(gy) + 0.5f) / static_cast<float>(grid);
+        const float x_f = sample_cx + (u - 0.5f) * 2.0f * rx;
+        const float y_f = sample_cy + (v - 0.5f) * 2.0f * ry;
+        const float nx = (x_f - sample_cx) / fmaxf(rx, 1.0f);
+        const float ny = (y_f - sample_cy) / fmaxf(ry, 1.0f);
         const int x = static_cast<int>(rintf(x_f));
         const int y = static_cast<int>(rintf(y_f));
         if (nx * nx + ny * ny <= 0.92f * 0.92f &&
@@ -1066,7 +1087,7 @@ __device__ void matchSparsePoints(
                 : sparseResponse(left_img, left_pitch, x, y, mode);
             const float response_floor =
                 mode == 3 ? 24.0f : (mode == 4 ? 12.0f : (mode == 1 ? 20.0f : 8.0f));
-            if (response > response_floor) {
+            if (mode >= 3 || response > response_floor) {
                 const int d0 = static_cast<int>(rintf(initial_disp));
                 const int d_start = max(1, d0 - search_radius);
                 const int d_end = min(max_disparity, d0 + search_radius);
@@ -1078,10 +1099,11 @@ __device__ void matchSparsePoints(
                     const float expected_y = expectedFeatureYDelta(
                         static_cast<float>(x), left_det,
                         feature_y_slope, feature_y_offset_px);
-                    const int y_radius = clampInt(
-                        static_cast<int>(ceilf(
-                            clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
-                        1, 3);
+                    const int y_radius = mode >= 3
+                        ? 1
+                        : clampInt(static_cast<int>(ceilf(
+                                       clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                                   1, 3);
                     const int dy_center = static_cast<int>(rintf(-expected_y));
                     float best_score = -2.0f;
                     float best_disp = -1.0f;
@@ -1137,7 +1159,7 @@ __device__ void matchSparsePoints(
         const float min_score = mode == 2
             ? fmaxf(0.58f, 0.50f + min_confidence * 0.35f)
             : (mode >= 3
-                ? fmaxf(0.48f, 0.42f + min_confidence * 0.35f)
+                ? fmaxf(0.40f, 0.36f + min_confidence * 0.30f)
                 : fmaxf(0.12f, min_confidence * 0.60f));
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
@@ -1166,13 +1188,16 @@ __device__ void matchSparsePoints(
                 const int d0 = static_cast<int>(rintf(initial_disp));
                 const int d_start = max(1, d0 - search_radius);
                 const int d_end = min(max_disparity, d0 + search_radius);
-                const int reverse_y_radius = clampInt(
-                    static_cast<int>(ceilf(
-                        clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
-                    1, 3);
+                const int reverse_y_radius = mode >= 3
+                    ? 1
+                    : clampInt(static_cast<int>(ceilf(
+                                   clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+                               1, 3);
                 const float reverse_err = feature_reverse_check_px >= 0.0f
                     ? reverseSparseMatchError(left_img, left_pitch,
                                               right_img, right_pitch,
+                                              left_bgr, left_bgr_pitch,
+                                              right_bgr, right_bgr_pitch,
                                               img_w, img_h,
                                               left_x, left_y,
                                               right_x, right_y,
@@ -1202,6 +1227,7 @@ __device__ void matchSparsePoints(
     if (tid == 0) {
         const int n = min(*valid_count, kMaxFeaturePoints);
         out->attempted = max_points;
+        out->support = n;
         if (n < min_points) {
             out->low_confidence = 1;
         } else {
@@ -1228,7 +1254,7 @@ __device__ void matchSparsePoints(
                     const float min_score = mode == 2
                         ? fmaxf(0.58f, 0.50f + min_confidence * 0.35f)
                         : (mode >= 3
-                            ? fmaxf(0.48f, 0.42f + min_confidence * 0.35f)
+                            ? fmaxf(0.40f, 0.36f + min_confidence * 0.30f)
                             : fmaxf(0.12f, min_confidence * 0.60f));
                     const float score_conf =
                         clampFloat((avg_score - min_score) /
@@ -1437,6 +1463,8 @@ __device__ void matchMultiPointPatch(
                 const float reverse_err = feature_reverse_check_px >= 0.0f
                     ? reverseSparseMatchError(left_img, left_pitch,
                                               right_img, right_pitch,
+                                              nullptr, 0,
+                                              nullptr, 0,
                                               img_w, img_h,
                                               left_x, left_y,
                                               right_x, right_y,
@@ -1466,6 +1494,7 @@ __device__ void matchMultiPointPatch(
     if (tid == 0) {
         const int n = min(*valid_count, kMaxFeaturePoints);
         out->attempted = max_points;
+        out->support = n;
         if (n < min_points) {
             out->low_confidence = 1;
         } else {
@@ -1646,8 +1675,9 @@ __global__ void dualYoloDepthCandidatesKernel(
     const int fast_points = clampInt(max_points, 4, 6);
     const int fast_min_points = clampInt(min_points, 2, fast_points);
     const int fast_search_radius = clampInt(search_radius_px, 2, 3);
-    const int color_points = 4;
-    const int color_min_points = 3;
+    const int color_points = clampInt(max_points * 2, 16, 24);
+    const int color_min_points = clampInt(max(min_points, 4), 3, color_points);
+    const int color_search_radius = clampInt((search_radius_px + 2) / 3, 2, 3);
     if (initial_disp <= 0.5f ||
         initial_disp > static_cast<float>(max_disparity) ||
         fabsf(left_cy - (out->right_circle.valid ? out->right_circle.cy : pair.right.cy)) >
@@ -1966,7 +1996,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           initial_disp,
                           3,
                           min(patch_radius, 2),
-                          fast_search_radius,
+                          color_search_radius,
                           color_points,
                           color_min_points,
                           max_disparity,
@@ -2001,10 +2031,10 @@ __global__ void dualYoloDepthCandidatesKernel(
                           left_cx, left_cy, left_r,
                           initial_disp,
                           4,
-                          min(patch_radius, 3),
-                          fast_search_radius,
-                          fast_points,
-                          fast_min_points,
+                          min(patch_radius, 2),
+                          color_search_radius,
+                          color_points,
+                          color_min_points,
                           max_disparity,
                           min_confidence,
                           max_delta,

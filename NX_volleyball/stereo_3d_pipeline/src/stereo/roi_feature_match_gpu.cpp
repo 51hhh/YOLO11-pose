@@ -17,6 +17,47 @@
 
 namespace stereo3d {
 
+#ifdef HAS_OPENCV_CUDAFEATURES2D
+namespace {
+
+struct OpenCVCudaOrbScratch {
+    int max_points = 0;
+    int edge_threshold = 0;
+    int patch_size = 0;
+    cv::Ptr<cv::cuda::ORB> orb;
+    cv::Ptr<cv::cuda::DescriptorMatcher> matcher;
+    cv::cuda::GpuMat left_proc;
+    cv::cuda::GpuMat right_proc;
+    cv::cuda::GpuMat left_keypoints;
+    cv::cuda::GpuMat right_keypoints;
+    cv::cuda::GpuMat left_desc;
+    cv::cuda::GpuMat right_desc;
+    cv::cuda::GpuMat knn;
+    cv::cuda::GpuMat reverse_knn;
+
+    void ensure(int requested_max_points,
+                int requested_edge_threshold,
+                int requested_patch_size) {
+        if (!orb ||
+            max_points != requested_max_points ||
+            edge_threshold != requested_edge_threshold ||
+            patch_size != requested_patch_size) {
+            max_points = requested_max_points;
+            edge_threshold = requested_edge_threshold;
+            patch_size = requested_patch_size;
+            orb = cv::cuda::ORB::create(
+                max_points, 1.2f, 1, edge_threshold, 0, 2,
+                cv::ORB::HARRIS_SCORE, patch_size, 12, false);
+        }
+        if (!matcher) {
+            matcher = cv::cuda::DescriptorMatcher::createBFMatcher(cv::NORM_HAMMING);
+        }
+    }
+};
+
+}  // namespace
+#endif
+
 SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
     const uint8_t* left_gpu, int left_pitch,
     const uint8_t* right_gpu, int right_pitch,
@@ -86,57 +127,47 @@ SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
         cv::cuda::GpuMat right_full(img_h, img_w, CV_8UC1,
                                     const_cast<uint8_t*>(right_gpu),
                                     static_cast<size_t>(right_pitch));
-        cv::cuda::GpuMat left_view(left_full, left_roi);
-        cv::cuda::GpuMat right_view(right_full, right_roi);
-        cv::cuda::GpuMat left_proc;
-        cv::cuda::GpuMat right_proc;
-        left_view.copyTo(left_proc, cv_stream);
-        right_view.copyTo(right_proc, cv_stream);
-
         const int patch_size = std::max(9, patch_radius * 2 + 1);
         const int edge_threshold = std::clamp(patch_radius + 3, 5, 16);
-        cv::Ptr<cv::cuda::ORB> orb = cv::cuda::ORB::create(
-            max_points, 1.2f, 3, edge_threshold, 0, 2,
-            cv::ORB::HARRIS_SCORE, patch_size, 12, false);
-        cv::cuda::GpuMat left_keypoints_gpu;
-        cv::cuda::GpuMat right_keypoints_gpu;
-        cv::cuda::GpuMat left_desc_gpu;
-        cv::cuda::GpuMat right_desc_gpu;
-        orb->detectAndComputeAsync(left_proc, cv::noArray(),
-                                   left_keypoints_gpu, left_desc_gpu,
-                                   false, cv_stream);
-        orb->detectAndComputeAsync(right_proc, cv::noArray(),
-                                   right_keypoints_gpu, right_desc_gpu,
-                                   false, cv_stream);
+        thread_local OpenCVCudaOrbScratch scratch;
+        scratch.ensure(max_points, edge_threshold, patch_size);
+
+        cv::cuda::GpuMat left_view(left_full, left_roi);
+        cv::cuda::GpuMat right_view(right_full, right_roi);
+        left_view.copyTo(scratch.left_proc, cv_stream);
+        right_view.copyTo(scratch.right_proc, cv_stream);
+
+        scratch.orb->detectAndComputeAsync(scratch.left_proc, cv::noArray(),
+                                           scratch.left_keypoints, scratch.left_desc,
+                                           false, cv_stream);
+        scratch.orb->detectAndComputeAsync(scratch.right_proc, cv::noArray(),
+                                           scratch.right_keypoints, scratch.right_desc,
+                                           false, cv_stream);
         cv_stream.waitForCompletion();
 
         std::vector<cv::KeyPoint> left_keypoints;
         std::vector<cv::KeyPoint> right_keypoints;
-        orb->convert(left_keypoints_gpu, left_keypoints);
-        orb->convert(right_keypoints_gpu, right_keypoints);
+        scratch.orb->convert(scratch.left_keypoints, left_keypoints);
+        scratch.orb->convert(scratch.right_keypoints, right_keypoints);
         if (left_keypoints.size() < static_cast<size_t>(min_points) ||
             right_keypoints.size() < static_cast<size_t>(min_points) ||
-            left_desc_gpu.empty() || right_desc_gpu.empty() ||
-            left_desc_gpu.type() != CV_8U || right_desc_gpu.type() != CV_8U) {
+            scratch.left_desc.empty() || scratch.right_desc.empty() ||
+            scratch.left_desc.type() != CV_8U || scratch.right_desc.type() != CV_8U) {
             result.low_confidence = true;
             result.attempted = static_cast<int>(left_keypoints.size());
             return result;
         }
 
-        cv::Ptr<cv::cuda::DescriptorMatcher> matcher =
-            cv::cuda::DescriptorMatcher::createBFMatcher(cv::NORM_HAMMING);
-        cv::cuda::GpuMat knn_gpu;
-        cv::cuda::GpuMat reverse_knn_gpu;
-        matcher->knnMatchAsync(left_desc_gpu, right_desc_gpu,
-                               knn_gpu, 2, cv::noArray(), cv_stream);
-        matcher->knnMatchAsync(right_desc_gpu, left_desc_gpu,
-                               reverse_knn_gpu, 2, cv::noArray(), cv_stream);
+        scratch.matcher->knnMatchAsync(scratch.left_desc, scratch.right_desc,
+                                       scratch.knn, 2, cv::noArray(), cv_stream);
+        scratch.matcher->knnMatchAsync(scratch.right_desc, scratch.left_desc,
+                                       scratch.reverse_knn, 2, cv::noArray(), cv_stream);
         cv_stream.waitForCompletion();
 
         std::vector<std::vector<cv::DMatch>> knn_matches;
         std::vector<std::vector<cv::DMatch>> reverse_knn_matches;
-        matcher->knnMatchConvert(knn_gpu, knn_matches);
-        matcher->knnMatchConvert(reverse_knn_gpu, reverse_knn_matches);
+        scratch.matcher->knnMatchConvert(scratch.knn, knn_matches);
+        scratch.matcher->knnMatchConvert(scratch.reverse_knn, reverse_knn_matches);
         result.attempted = static_cast<int>(knn_matches.size());
         if (result.attempted < min_points) {
             result.low_confidence = true;
@@ -161,7 +192,7 @@ SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
         }
 
         const float max_hamming = static_cast<float>(
-            std::max(1, left_desc_gpu.cols * 8));
+            std::max(1, scratch.left_desc.cols * 8));
         const float min_score = std::max(
             0.45f,
             0.35f + cfg.subpixel_min_confidence * 0.45f);

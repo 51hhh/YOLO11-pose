@@ -390,6 +390,10 @@ private:
         float subpixel_gate_max_px = 0.0f;
         int depth_reject = 0;
         int image_lock_fail = 0;
+        int iou_color_support_max = 0;
+        int iou_color_attempted_max = 0;
+        int iou_edge_support_max = 0;
+        int iou_edge_attempted_max = 0;
     };
     struct DualYoloMatchOutput {
         std::vector<Detection> detections;

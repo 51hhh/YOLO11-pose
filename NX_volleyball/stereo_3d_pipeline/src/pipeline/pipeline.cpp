@@ -4029,6 +4029,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const auto& right = right_detections[best_idx];
         const DualYoloGpuCandidate* gpu_candidate =
             find_gpu_candidate(li, best_idx);
+        if (gpu_candidate) {
+            local_stats.iou_color_support_max =
+                std::max(local_stats.iou_color_support_max,
+                         gpu_candidate->iou_region_color_patch.support);
+            local_stats.iou_color_attempted_max =
+                std::max(local_stats.iou_color_attempted_max,
+                         gpu_candidate->iou_region_color_patch.attempted);
+            local_stats.iou_edge_support_max =
+                std::max(local_stats.iou_edge_support_max,
+                         gpu_candidate->patch_iou_color_edge.support);
+            local_stats.iou_edge_attempted_max =
+                std::max(local_stats.iou_edge_attempted_max,
+                         gpu_candidate->patch_iou_color_edge.attempted);
+        }
         CircleFit2D left_circle = gpu_candidate
             ? circleFromGpuCandidate(gpu_candidate->left_circle, left)
             : refine_detection(left_cpu, left_pitch, left);
@@ -4480,7 +4494,8 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
                      "missL=%d missR=%d fb=%d/%d fail=%d prior=%d l2r=%d r2l=%d "
                      "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
                      "size=%d iou=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
-                     "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d",
+                     "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d "
+                     "iouSup=%d/%d iouEdgeSup=%d/%d",
                      input.frame_id,
                      match_stats.left_count,
                      match_stats.right_count,
@@ -4515,7 +4530,11 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
                      match_stats.subpixel_gate_min_px,
                      match_stats.subpixel_gate_max_px,
                      match_stats.depth_reject,
-                     match_stats.image_lock_fail);
+                     match_stats.image_lock_fail,
+                     match_stats.iou_color_support_max,
+                     match_stats.iou_color_attempted_max,
+                     match_stats.iou_edge_support_max,
+                     match_stats.iou_edge_attempted_max);
         }
 
         fusion_detections = std::move(semantic_match.detections);

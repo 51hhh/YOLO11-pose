@@ -69,8 +69,8 @@ detector:
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
       roi_iou_region_color_patch: false # GPU color region IoU + patch candidate; requires BGR pipeline
       roi_patch_iou_color_edge: false # GPU color edge IoU + patch candidate; requires BGR pipeline
-      roi_center_patch: false  # heavier ZNCC refinement; enable for offline/quality A/B tests
-      roi_subpixel: false      # heavier multi-point ZNCC refinement; enable for offline/quality A/B tests
+      roi_center_patch: true   # P1 100fps training candidate; record z_roi_center_patch
+      roi_subpixel: true       # P1 CUDA multi-point candidate; record z_roi_multi_point
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
       fallback_template: false # CPU fallback; keep off in 100fps realtime config
       fallback_feature_points: false # CPU fallback; keep off in 100fps realtime config
@@ -81,7 +81,7 @@ detector:
     roi_denoise: true                  # local 3x3 denoise only inside ROI
     log_matches: true
     depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match
-    subpixel_enabled: false            # ROI multi-point ZNCC + parabolic subpixel disparity (offline/quality A/B)
+    subpixel_enabled: true             # enables z_roi_multi_point P1 candidate for model training
     subpixel_patch_radius: 5
     subpixel_search_radius_px: 8
     subpixel_max_points: 12
