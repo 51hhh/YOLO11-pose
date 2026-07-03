@@ -188,6 +188,9 @@ set(PIPELINE_SOURCES
   src/stereo/roi_feature_match_cpu_debug.cpp
   src/stereo/roi_feature_match_gpu.cpp
   src/stereo/neural_feature_matcher.cpp
+  src/stereo/neural_feature_matcher_xfeat.cpp
+  src/stereo/neural_feature_matcher_direct.cpp
+  src/stereo/neural_feature_matcher_fused.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
   src/fusion/hybrid_depth.cpp
