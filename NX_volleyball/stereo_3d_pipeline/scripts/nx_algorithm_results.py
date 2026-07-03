@@ -11,6 +11,32 @@ from statistics import median
 from nx_algorithm_cases import Case
 
 
+SKIPPED_ROW_FIELDS = """
+case status return_code fps_last stale_drop_last
+gpu_candidates_avg_ms gpu_candidates_max_ms dual_yolo_match_avg_ms dual_yolo_match_max_ms
+subpixel_avg_ms subpixel_max_ms subpixel_p95_ms subpixel_p99_ms
+neural_avg_ms neural_max_ms neural_p95_ms neural_p99_ms
+algo_stage algo_avg_ms algo_max_ms algo_p95_ms algo_p99_ms algo_count
+opencv_cuda_orb_avg_ms opencv_cuda_orb_max_ms opencv_cuda_orb_p95_ms opencv_cuda_orb_p99_ms
+opencv_cuda_template_avg_ms opencv_cuda_template_max_ms opencv_cuda_template_p95_ms opencv_cuda_template_p99_ms
+opencv_cuda_stereo_bm_avg_ms opencv_cuda_stereo_bm_max_ms opencv_cuda_stereo_bm_p95_ms opencv_cuda_stereo_bm_p99_ms
+opencv_cuda_stereo_sgm_avg_ms opencv_cuda_stereo_sgm_max_ms opencv_cuda_stereo_sgm_p95_ms opencv_cuda_stereo_sgm_p99_ms
+cpu_opencv_avg_ms cpu_opencv_max_ms cpu_opencv_orb_avg_ms cpu_opencv_brisk_avg_ms cpu_opencv_akaze_avg_ms cpu_opencv_sift_avg_ms
+cpu_fallback_avg_ms cpu_fallback_max_ms cpu_fallback_count
+async_worker_avg_ms async_worker_max_ms async_worker_p95_ms async_worker_p99_ms async_worker_count
+async_over_deadline_count async_drop_stale_count async_drop_stale_ready_count async_drop_expired_pending_count
+async_drop_pending_count async_drop_no_buffer_count async_submit_drop_count async_no_detections_count
+async_submitted_count async_accepted_count async_accepted_reused_count async_frame_callback_skipped_count
+async_need_host_gray_count async_need_bgr_count async_host_gray_submit_avg_ms async_host_gray_submit_count
+async_gray_submit_avg_ms async_bgr_submit_avg_ms async_copy_wait_avg_ms async_slot_copy_wait_avg_ms
+async_worker_busy_count stage2_drop_stale_roi_count
+candidate_rows candidate_attempted candidate_not_attempted candidate_valid candidate_rate candidate_median_m candidate_mad_m
+support_median field_valids candidate_reject_reason target_rows diagnosis
+debug_feature_dir debug_realtime_dir debug_feature_rc debug_realtime_rc
+neural_stub_or_unbound log note last_error_or_warn
+""".split()
+
+
 def parse_float(value: str | None) -> float | None:
     if value is None or value == "":
         return None
@@ -359,100 +385,16 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
 
 def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
     log_path.write_text(reason + "\n")
-    return {
+    row = {field: "" for field in SKIPPED_ROW_FIELDS}
+    row.update({
         "case": case.name,
         "status": "skipped_missing_engine",
-        "return_code": "",
-        "fps_last": "",
-        "stale_drop_last": "",
-        "gpu_candidates_avg_ms": "",
-        "gpu_candidates_max_ms": "",
-        "dual_yolo_match_avg_ms": "",
-        "dual_yolo_match_max_ms": "",
-        "subpixel_avg_ms": "",
-        "subpixel_max_ms": "",
-        "subpixel_p95_ms": "",
-        "subpixel_p99_ms": "",
-        "neural_avg_ms": "",
-        "neural_max_ms": "",
-        "neural_p95_ms": "",
-        "neural_p99_ms": "",
         "algo_stage": profile_stage_for_case(case),
-        "algo_avg_ms": "",
-        "algo_max_ms": "",
-        "algo_p95_ms": "",
-        "algo_p99_ms": "",
-        "algo_count": "",
-        "opencv_cuda_orb_avg_ms": "",
-        "opencv_cuda_orb_max_ms": "",
-        "opencv_cuda_orb_p95_ms": "",
-        "opencv_cuda_orb_p99_ms": "",
-        "opencv_cuda_template_avg_ms": "",
-        "opencv_cuda_template_max_ms": "",
-        "opencv_cuda_template_p95_ms": "",
-        "opencv_cuda_template_p99_ms": "",
-        "opencv_cuda_stereo_bm_avg_ms": "",
-        "opencv_cuda_stereo_bm_max_ms": "",
-        "opencv_cuda_stereo_bm_p95_ms": "",
-        "opencv_cuda_stereo_bm_p99_ms": "",
-        "opencv_cuda_stereo_sgm_avg_ms": "",
-        "opencv_cuda_stereo_sgm_max_ms": "",
-        "opencv_cuda_stereo_sgm_p95_ms": "",
-        "opencv_cuda_stereo_sgm_p99_ms": "",
-        "cpu_opencv_avg_ms": "",
-        "cpu_opencv_max_ms": "",
-        "cpu_opencv_orb_avg_ms": "",
-        "cpu_opencv_brisk_avg_ms": "",
-        "cpu_opencv_akaze_avg_ms": "",
-        "cpu_opencv_sift_avg_ms": "",
-        "cpu_fallback_avg_ms": "",
-        "cpu_fallback_max_ms": "",
-        "cpu_fallback_count": "",
-        "async_worker_avg_ms": "",
-        "async_worker_max_ms": "",
-        "async_worker_p95_ms": "",
-        "async_worker_p99_ms": "",
-        "async_worker_count": "",
-        "async_over_deadline_count": "",
-        "async_drop_stale_count": "",
-        "async_drop_stale_ready_count": "",
-        "async_drop_expired_pending_count": "",
-        "async_drop_pending_count": "",
-        "async_drop_no_buffer_count": "",
-        "async_submit_drop_count": "",
-        "async_no_detections_count": "",
-        "async_submitted_count": "",
-        "async_accepted_count": "",
-        "async_accepted_reused_count": "",
-        "async_frame_callback_skipped_count": "",
-        "async_need_host_gray_count": "",
-        "async_need_bgr_count": "",
-        "async_host_gray_submit_avg_ms": "",
-        "async_host_gray_submit_count": "",
-        "async_gray_submit_avg_ms": "",
-        "async_bgr_submit_avg_ms": "",
-        "async_copy_wait_avg_ms": "",
-        "async_slot_copy_wait_avg_ms": "",
-        "async_worker_busy_count": "",
-        "stage2_drop_stale_roi_count": "",
-        "candidate_rows": "",
-        "candidate_attempted": "",
-        "candidate_not_attempted": "",
-        "candidate_valid": "",
-        "candidate_rate": "",
-        "candidate_median_m": "",
-        "candidate_mad_m": "",
-        "support_median": "",
-        "field_valids": "",
         "candidate_reject_reason": reason,
-        "target_rows": "",
         "diagnosis": "skipped_missing_dependency",
-        "debug_feature_dir": "",
-        "debug_realtime_dir": "",
-        "debug_feature_rc": "",
-        "debug_realtime_rc": "",
         "neural_stub_or_unbound": "no",
         "log": str(log_path),
         "note": case.note,
         "last_error_or_warn": reason,
-    }
+    })
+    return row
