@@ -70,6 +70,46 @@ def physics_depth_loss(depth: torch.Tensor, dt: torch.Tensor | float, weight_jer
     return accel_loss + weight_jerk * jerk_loss
 
 
+def known_z_loss(
+    depth: torch.Tensor,
+    known_z: torch.Tensor,
+    valid: torch.Tensor,
+    delta: float = 0.05,
+) -> torch.Tensor:
+    """Huber loss for clips with a known static/weak distance label."""
+
+    residual = depth.squeeze(-1) - known_z
+    loss = F.huber_loss(residual, torch.zeros_like(residual), delta=delta, reduction="none")
+    weighted = loss * valid
+    return weighted.sum() / valid.sum().clamp_min(1.0)
+
+
+def known_z_range_loss(
+    depth: torch.Tensor,
+    z_min: torch.Tensor,
+    z_max: torch.Tensor,
+    valid: torch.Tensor,
+) -> torch.Tensor:
+    """Penalty for weak labels that only constrain depth to a range."""
+
+    z = depth.squeeze(-1)
+    below = F.relu(z_min - z)
+    above = F.relu(z - z_max)
+    loss = (below * below + above * above) * valid
+    return loss.sum() / valid.sum().clamp_min(1.0)
+
+
+def static_depth_jitter_loss(depth: torch.Tensor, static_valid: torch.Tensor, delta: float = 0.01) -> torch.Tensor:
+    """Short-window jitter prior for clips marked static in metadata."""
+
+    if depth.shape[1] < 2:
+        return depth.new_tensor(0.0)
+    dz = depth[:, 1:, 0] - depth[:, :-1, 0]
+    valid = static_valid[:, 1:] * static_valid[:, :-1]
+    loss = F.huber_loss(dz, torch.zeros_like(dz), delta=delta, reduction="none") * valid
+    return loss.sum() / valid.sum().clamp_min(1.0)
+
+
 def ballistic_position_loss(
     positions: torch.Tensor,
     dt: torch.Tensor | float,

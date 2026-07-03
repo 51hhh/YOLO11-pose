@@ -10,10 +10,15 @@ import math
 from pathlib import Path
 from statistics import mean, pstdev
 from collections import Counter
-from typing import Dict, List
+from typing import Any, Dict, List
+
+try:
+    from .dataset import find_metadata_for_csv, read_metadata
+except ImportError:  # pragma: no cover - direct script execution
+    from dataset import find_metadata_for_csv, read_metadata
 
 
-DEPTH_KEYS = [
+CANDIDATE_DEPTH_KEYS = [
     "z_mono",
     "z_bbox_center",
     "z_bbox_left_edge",
@@ -39,8 +44,17 @@ DEPTH_KEYS = [
     "z_fallback",
     "z_fallback_template",
     "z_fallback_feature_points",
+]
+LEGACY_DEPTH_KEYS = [
     "z_stereo",
     "z",
+]
+P0_DEPTH_KEYS = [
+    "z_bbox_center",
+    "z_circle_center",
+    "z_roi_edge_centroid",
+    "z_roi_radial_center",
+    "z_roi_edge_pair_center",
 ]
 
 
@@ -73,6 +87,35 @@ def _rms(values: List[float]) -> float:
     if not values:
         return 0.0
     return math.sqrt(sum(v * v for v in values) / len(values))
+
+
+def _median(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return 0.5 * (ordered[mid - 1] + ordered[mid])
+
+
+def _mad(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    med = _median(values)
+    return _median([abs(value - med) for value in values])
+
+
+def _metadata_float(metadata: Dict[str, Any], *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        value = metadata.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
 
 
 def _metrics(rows: List[Dict[str, str]], prefix: str = "") -> Dict[str, float]:
@@ -120,7 +163,7 @@ def _print_metrics(name: str, metrics: Dict[str, float]) -> None:
 
 
 def _print_depth_candidate_metrics(track_id: str, rows: List[Dict[str, str]]) -> None:
-    for key in DEPTH_KEYS:
+    for key in CANDIDATE_DEPTH_KEYS:
         if not rows or key not in rows[0]:
             continue
         values = _valid_depth_series(rows, key)
@@ -131,8 +174,56 @@ def _print_depth_candidate_metrics(track_id: str, rows: List[Dict[str, str]]) ->
             f"track={track_id} {key}: valid={len(values)}/{len(rows)} "
             f"hit={hit_rate * 100:.1f}% mean={mean(values):.4f} "
             f"std={pstdev(values) if len(values) > 1 else 0.0:.4f} "
-            f"p2p={(max(values) - min(values)) if values else 0.0:.4f}"
+            f"mad={_mad(values):.4f} p2p={(max(values) - min(values)) if values else 0.0:.4f}"
         )
+    for key in LEGACY_DEPTH_KEYS:
+        if not rows or key not in rows[0]:
+            continue
+        values = _valid_depth_series(rows, key)
+        if not values:
+            continue
+        print(
+            f"track={track_id} legacy {key}: valid={len(values)}/{len(rows)} "
+            f"mean={mean(values):.4f} std={pstdev(values) if len(values) > 1 else 0.0:.4f} "
+            f"mad={_mad(values):.4f}"
+        )
+
+
+def _print_known_distance_metrics(track_id: str, rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> None:
+    known_z = _metadata_float(metadata, "known_z_m", "known_z", "known_distance_m")
+    if known_z <= 0.0:
+        return
+    print(f"track={track_id} known_z={known_z:.4f}m")
+    for key in CANDIDATE_DEPTH_KEYS + LEGACY_DEPTH_KEYS:
+        if not rows or key not in rows[0]:
+            continue
+        values = _valid_depth_series(rows, key)
+        if not values:
+            continue
+        errors = [value - known_z for value in values]
+        print(
+            f"track={track_id} {key} known_z: bias={mean(errors):+.4f}m "
+            f"mad={_mad(errors):.4f}m valid={len(values)}/{len(rows)}"
+        )
+
+
+def _print_p0_median_metrics(track_id: str, rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> None:
+    medians: List[float] = []
+    for row in rows:
+        values = [_f(row, key, -1.0) for key in P0_DEPTH_KEYS if key in row and _f(row, key, -1.0) > 0.1]
+        if values:
+            medians.append(_median(values))
+    if not medians:
+        return
+    print(
+        f"track={track_id} p0_median: valid={len(medians)}/{len(rows)} "
+        f"mean={mean(medians):.4f} std={pstdev(medians) if len(medians) > 1 else 0.0:.4f} "
+        f"mad={_mad(medians):.4f}"
+    )
+    known_z = _metadata_float(metadata, "known_z_m", "known_z", "known_distance_m")
+    if known_z > 0.0:
+        errors = [value - known_z for value in medians]
+        print(f"track={track_id} p0_median known_z: bias={mean(errors):+.4f}m mad={_mad(errors):.4f}m")
 
 
 def _print_sync_and_source_metrics(track_id: str, rows: List[Dict[str, str]]) -> None:
@@ -161,20 +252,48 @@ def _print_sync_and_source_metrics(track_id: str, rows: List[Dict[str, str]]) ->
             f"std={pstdev(values) if len(values) > 1 else 0.0:.3f} "
             f"min={min(values):.0f} max={max(values):.0f}"
         )
+    pair_keys = (
+        "pair_initial_disparity",
+        "pair_epipolar_dy",
+        "pair_y_tolerance",
+        "pair_size_ratio",
+        "pair_shifted_iou",
+        "pair_score",
+        "pair_bbox_prior_penalty",
+        "pair_positive_disparity",
+    )
+    for key in pair_keys:
+        if not rows or key not in rows[0]:
+            continue
+        if key == "pair_score":
+            values = [_f(row, key, 0.0) for row in rows if row.get(key, "") != ""]
+        else:
+            values = [_f(row, key, -1.0) for row in rows if _f(row, key, -1.0) >= 0.0]
+        if not values:
+            continue
+        print(
+            f"track={track_id} {key}: mean={mean(values):.3f} "
+            f"std={pstdev(values) if len(values) > 1 else 0.0:.3f} "
+            f"min={min(values):.3f} max={max(values):.3f}"
+        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="Raw or smoothed CSV")
+    parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
     args = parser.parse_args()
 
     rows = _read(args.input)
+    metadata = read_metadata(args.metadata or find_metadata_for_csv(args.input))
     grouped = _group_by_track(rows)
     has_smooth = bool(rows and "smooth_z" in rows[0])
     for track_id, track_rows in grouped.items():
         raw = _metrics(track_rows)
         _print_metrics(f"track={track_id} raw", raw)
         _print_depth_candidate_metrics(track_id, track_rows)
+        _print_p0_median_metrics(track_id, track_rows, metadata)
+        _print_known_distance_metrics(track_id, track_rows, metadata)
         _print_sync_and_source_metrics(track_id, track_rows)
         if has_smooth:
             smooth = _metrics(track_rows, prefix="smooth_")

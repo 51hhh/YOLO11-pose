@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-supervised training scaffold for measurement reliability."""
+"""Semi-supervised training scaffold for measurement reliability."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ try:
         legacy_feature_names,
         load_legacy_sequences,
         normalize_features,
+        weak_label_names,
     )
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import (
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - direct script execution
         legacy_feature_names,
         load_legacy_sequences,
         normalize_features,
+        weak_label_names,
     )
 
 
@@ -36,24 +38,42 @@ def _require_torch() -> None:
 
 
 def main() -> int:
-    _require_torch()
-    try:
-        from .losses import measurement_consistency_loss, physics_depth_loss, uncertainty_regularizer
-        from .models import MeasurementReliabilityNet, weighted_depth_consensus
-    except ImportError:  # pragma: no cover - direct script execution
-        from losses import measurement_consistency_loss, physics_depth_loss, uncertainty_regularizer
-        from models import MeasurementReliabilityNet, weighted_depth_consensus
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="TrajectoryRecorder CSV, legacy or extended")
+    parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
     parser.add_argument("-o", "--output", default="reliability_net.pt")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--known-z-weight", type=float, default=1.0)
+    parser.add_argument("--known-z-range-weight", type=float, default=0.5)
+    parser.add_argument("--static-jitter-weight", type=float, default=0.1)
     args = parser.parse_args()
 
-    sequences = load_legacy_sequences(args.input)
+    _require_torch()
+    try:
+        from .losses import (
+            known_z_loss,
+            known_z_range_loss,
+            measurement_consistency_loss,
+            physics_depth_loss,
+            static_depth_jitter_loss,
+            uncertainty_regularizer,
+        )
+        from .models import MeasurementReliabilityNet, weighted_depth_consensus
+    except ImportError:  # pragma: no cover - direct script execution
+        from losses import (
+            known_z_loss,
+            known_z_range_loss,
+            measurement_consistency_loss,
+            physics_depth_loss,
+            static_depth_jitter_loss,
+            uncertainty_regularizer,
+        )
+        from models import MeasurementReliabilityNet, weighted_depth_consensus
+
+    sequences = load_legacy_sequences(args.input, metadata_path=args.metadata)
     if not sequences:
         raise SystemExit(f"no valid sequences in {args.input}")
 
@@ -71,8 +91,10 @@ def main() -> int:
                 "features": torch.tensor(features, dtype=torch.float32, device=args.device).unsqueeze(0),
                 "measurements": torch.tensor(arrays["measurements"], dtype=torch.float32, device=args.device).unsqueeze(0),
                 "valid": torch.tensor(arrays["valid"], dtype=torch.float32, device=args.device).unsqueeze(0),
+                "labels": torch.tensor(arrays["labels"], dtype=torch.float32, device=args.device).unsqueeze(0),
             }
         )
+    label_index = {name: idx for idx, name in enumerate(weak_label_names())}
 
     for epoch in range(args.epochs):
         total = 0.0
@@ -91,7 +113,26 @@ def main() -> int:
             )
             loss_phys = physics_depth_loss(learned_consensus, dt=0.01)
             loss_reg = uncertainty_regularizer(output.log_sigma, output.outlier_logit, batch["valid"])
+            labels = batch["labels"]
+            loss_known_z = known_z_loss(
+                learned_consensus,
+                labels[..., label_index["known_z"]],
+                labels[..., label_index["known_z_valid"]],
+            )
+            loss_known_range = known_z_range_loss(
+                learned_consensus,
+                labels[..., label_index["known_z_min"]],
+                labels[..., label_index["known_z_max"]],
+                labels[..., label_index["known_z_range_valid"]],
+            )
+            loss_static = static_depth_jitter_loss(
+                learned_consensus,
+                labels[..., label_index["static"]],
+            )
             loss = loss_obs + 0.25 * loss_phys + loss_reg
+            loss = loss + args.known_z_weight * loss_known_z
+            loss = loss + args.known_z_range_weight * loss_known_range
+            loss = loss + args.static_jitter_weight * loss_static
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             opt.step()
@@ -104,6 +145,7 @@ def main() -> int:
         "model": model.state_dict(),
         "feature_names": legacy_feature_names(),
         "method_names": METHOD_NAMES,
+        "weak_label_names": weak_label_names(),
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
