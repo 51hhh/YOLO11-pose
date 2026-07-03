@@ -160,6 +160,7 @@ set(PIPELINE_SOURCES
   src/main.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
+  src/pipeline/pipeline_depth_modes.cpp
   src/pipeline/pipeline_loops.cpp
   src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
