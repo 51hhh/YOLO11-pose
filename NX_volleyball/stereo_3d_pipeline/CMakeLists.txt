@@ -159,6 +159,7 @@ endif()
 set(PIPELINE_SOURCES
   src/main.cpp
   src/main_config_loaders.cpp
+  src/main_recording_config_loaders.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
   src/pipeline/pipeline_debug.cpp
