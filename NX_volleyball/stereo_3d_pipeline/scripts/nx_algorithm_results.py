@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
-from statistics import median
 
+from nx_algorithm_candidate_summary import count_frame_rows, parse_float, summarize_candidate_csv
 from nx_algorithm_cases import Case
+from nx_algorithm_diagnosis import classify_case_result, parse_int, row_int, should_debug_case
 
 
 SKIPPED_ROW_FIELDS = """
@@ -37,23 +37,6 @@ neural_stub_or_unbound log note last_error_or_warn
 """.split()
 
 
-def parse_float(value: str | None) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        v = float(value)
-    except ValueError:
-        return None
-    return v
-
-
-def count_frame_rows(frames_path: Path) -> int:
-    if not frames_path.exists():
-        return 0
-    with frames_path.open(newline="") as f:
-        return sum(1 for _ in csv.DictReader(f))
-
-
 def profile_stage_for_case(case: Case) -> str:
     if case.neural_backend:
         return "Stage2_NeuralFeatureMatch"
@@ -74,152 +57,6 @@ def profile_stage_for_case(case: Case) -> str:
     if case.modes.get("roi_subpixel"):
         return "Stage2_SubpixelMatch"
     return "Stage2_DualYoloGpuCandidates"
-
-
-def parse_int(value: str | None) -> int:
-    if value is None or value == "":
-        return 0
-    try:
-        return int(float(value))
-    except ValueError:
-        return 0
-
-
-def row_int(row: dict[str, str], key: str) -> int:
-    return parse_int(row.get(key))
-
-
-def classify_case_result(row: dict[str, str]) -> str:
-    status = row.get("status", "")
-    if status.startswith("skipped"):
-        return "skipped_missing_dependency"
-    if status == "failed":
-        return "pipeline_failed"
-
-    stale_or_expired = (
-        row_int(row, "async_drop_stale_count") +
-        row_int(row, "async_drop_stale_ready_count") +
-        row_int(row, "async_drop_expired_pending_count") +
-        row_int(row, "stage2_drop_stale_roi_count")
-    )
-    infrastructure_drop = (
-        row_int(row, "async_drop_pending_count") +
-        row_int(row, "async_drop_no_buffer_count") +
-        row_int(row, "async_submit_drop_count")
-    )
-    if row_int(row, "async_over_deadline_count") > 0 or stale_or_expired > 0:
-        return "late_or_deadline_dropped"
-    if infrastructure_drop > 0:
-        return "async_queue_or_buffer_drop"
-    if (
-        row_int(row, "cpu_fallback_count") > 0
-        or row_int(row, "async_need_host_gray_count") > 0
-        or row_int(row, "async_host_gray_submit_count") > 0
-    ):
-        return "realtime_path_used_cpu_or_host_gray"
-    if row_int(row, "async_no_detections_count") > 0 and row_int(row, "target_rows") == 0:
-        return "no_detections"
-    if row_int(row, "target_rows") == 0 and row_int(row, "async_accepted_count") == 0:
-        return "no_accepted_results"
-    if row_int(row, "candidate_rows") > 0 and row_int(row, "candidate_valid") == 0:
-        return "ran_but_no_valid_candidate"
-    if row_int(row, "candidate_valid") > 0:
-        return "ok"
-    return "needs_log_review"
-
-
-def should_debug_case(row: dict[str, str]) -> bool:
-    return classify_case_result(row) not in {
-        "ok",
-        "skipped_missing_dependency",
-    }
-
-
-def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> dict[str, str]:
-    empty = {
-        "candidate_rows": "",
-        "candidate_attempted": "",
-        "candidate_not_attempted": "",
-        "candidate_valid": "",
-        "candidate_rate": "",
-        "candidate_median_m": "",
-        "candidate_mad_m": "",
-        "support_median": "",
-        "field_valids": "",
-        "candidate_reject_reason": "",
-        "target_rows": "",
-    }
-    frame_total = count_frame_rows(frames_path)
-    if not case.candidate_fields or not csv_path.exists():
-        return empty
-
-    with csv_path.open(newline="") as f:
-        rows = list(csv.DictReader(f))
-    target_total = len(rows)
-    total = frame_total if frame_total > 0 else target_total
-    if target_total == 0 and total == 0:
-        return {**empty, "candidate_rows": "0", "target_rows": "0"}
-
-    valid_depths: list[float] = []
-    field_counts: dict[str, int] = {field: 0 for field in case.candidate_fields}
-    supports: list[float] = []
-    attempted = 0
-    for row in rows:
-        row_values = []
-        for field in case.candidate_fields:
-            value = parse_float(row.get(field))
-            if value is not None and value > 0.0:
-                field_counts[field] += 1
-                row_values.append(value)
-        row_attempted = False
-        if case.support_field:
-            support = parse_float(row.get(case.support_field))
-            if support is not None and support >= 0.0:
-                supports.append(support)
-                row_attempted = True
-        else:
-            row_attempted = any(row.get(field) not in (None, "") for field in case.candidate_fields)
-        if row_attempted:
-            attempted += 1
-        if row_values:
-            valid_depths.append(row_values[0])
-
-    valid = len(valid_depths)
-    not_attempted = max(0, total - attempted)
-    if target_total == 0:
-        reject_reason = "no_candidate_rows"
-    elif attempted == 0:
-        reject_reason = "not_attempted"
-    elif valid == 0:
-        reject_reason = "attempted_no_valid_depth"
-    elif valid < attempted:
-        reject_reason = "partial_valid"
-    else:
-        reject_reason = "ok"
-    if valid_depths:
-        med = median(valid_depths)
-        mad = median(abs(v - med) for v in valid_depths)
-        med_s = f"{med:.4f}"
-        mad_s = f"{mad:.4f}"
-    else:
-        med_s = ""
-        mad_s = ""
-    support_s = f"{median(supports):.1f}" if supports else ""
-    field_valids = ";".join(f"{k}={v}/{total}" for k, v in field_counts.items())
-    return {
-        "candidate_rows": str(total),
-        "candidate_attempted": str(attempted),
-        "candidate_not_attempted": str(not_attempted),
-        "candidate_valid": str(valid),
-        "candidate_rate": f"{valid / total:.3f}" if total else "",
-        "candidate_median_m": med_s,
-        "candidate_mad_m": mad_s,
-        "support_median": support_s,
-        "field_valids": field_valids,
-        "candidate_reject_reason": reject_reason,
-        "target_rows": str(target_total),
-    }
-
 
 def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
     fps_matches = re.findall(r"\[ROI\] FPS:\s*([0-9.]+).*?stale_drop=([0-9]+)", log)
