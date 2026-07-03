@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="${ROOT_DIR:-/home/nvidia/NX_volleyball/stereo_3d_pipeline}"
 XFEAT_REPO="${XFEAT_REPO:-/home/nvidia/neural_repos/accelerated_features}"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/models/neural}"
-ROI_SIZE="${ROI_SIZE:-224}"
+ROI_SIZE="${ROI_SIZE:-128}"
 OPSET="${OPSET:-17}"
 TRT_FP16="${TRT_FP16:-1}"
 
