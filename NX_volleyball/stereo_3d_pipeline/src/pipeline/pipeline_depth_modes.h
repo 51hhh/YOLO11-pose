@@ -2,6 +2,7 @@
 #define STEREO_3D_PIPELINE_PIPELINE_DEPTH_MODES_H_
 
 #include "pipeline.h"
+#include "../stereo/depth_match_contract.h"
 #include "../stereo/roi_feature_contract.h"
 #include "../stereo/roi_geometry_cpu.h"
 
@@ -53,6 +54,8 @@ ROIFeatureMatchConfig makeROIFeatureMatchConfig(
     const HybridDepthConfig& depth_cfg);
 ROICircleSearchConfig makeROICircleSearchConfig(
     const PipelineConfig::DualYoloConfig& cfg);
+StereoRoiPairGateConfig makeStereoRoiPairGateConfig(
+    const PipelineConfig& config);
 
 }  // namespace stereo3d
 

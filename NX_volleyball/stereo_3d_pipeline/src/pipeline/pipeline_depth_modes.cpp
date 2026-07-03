@@ -241,4 +241,15 @@ ROICircleSearchConfig makeROICircleSearchConfig(
     return out;
 }
 
+StereoRoiPairGateConfig makeStereoRoiPairGateConfig(
+    const PipelineConfig& config) {
+    StereoRoiPairGateConfig gate;
+    gate.max_disparity = config.max_disparity;
+    gate.epipolar_y_tolerance = config.dual_yolo.epipolar_y_tolerance;
+    gate.max_size_ratio = config.dual_yolo.max_size_ratio;
+    gate.adaptive_y_ratio = 0.35f;
+    gate.min_shifted_iou = config.dual_yolo.min_shifted_iou;
+    return gate;
+}
+
 }  // namespace stereo3d
