@@ -16,9 +16,13 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 
 
-def _clip_pairs(clip: Path, max_frames: int, stride: int) -> List[Tuple[str, Path, Path]]:
+def _clip_pairs(
+    clip: Path,
+    max_frames: int,
+    stride: int,
+) -> List[Tuple[str, Path, Path, Dict[str, str]]]:
     frames_csv = clip / "frames.csv"
-    pairs: List[Tuple[str, Path, Path]] = []
+    pairs: List[Tuple[str, Path, Path, Dict[str, str]]] = []
     if frames_csv.exists():
         with frames_csv.open(newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
@@ -28,14 +32,14 @@ def _clip_pairs(clip: Path, max_frames: int, stride: int) -> List[Tuple[str, Pat
             right_rel = row.get("right_image", "")
             if not left_rel or not right_rel:
                 continue
-            pairs.append((frame_id, clip / left_rel, clip / right_rel))
+            pairs.append((frame_id, clip / left_rel, clip / right_rel, row))
     else:
         left_dir = clip / "left"
         right_dir = clip / "right"
         left_images = sorted([p for p in left_dir.iterdir() if p.is_file()])
         right_images = sorted([p for p in right_dir.iterdir() if p.is_file()])
         for idx, (left, right) in enumerate(zip(left_images, right_images)):
-            pairs.append((f"{idx:06d}", left, right))
+            pairs.append((f"{idx:06d}", left, right, {}))
 
     stride = max(1, stride)
     pairs = pairs[::stride]
@@ -49,6 +53,34 @@ def _read_csv(path: Path) -> List[Dict[str, str]]:
         return []
     with path.open(newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def _manual_circle_args(row: Dict[str, str]) -> List[str]:
+    try:
+        if int(float(row.get("left_count", "1"))) <= 0:
+            return []
+        if int(float(row.get("right_count", "1"))) <= 0:
+            return []
+        lx = float(row["left_cx"])
+        ly = float(row["left_cy"])
+        lw = float(row["left_w"])
+        lh = float(row["left_h"])
+        rx = float(row["right_cx"])
+        ry = float(row["right_cy"])
+        rw = float(row["right_w"])
+        rh = float(row["right_h"])
+    except (KeyError, TypeError, ValueError):
+        return []
+    lr = 0.5 * max(lw, lh)
+    rr = 0.5 * max(rw, rh)
+    if lr <= 1.0 or rr <= 1.0:
+        return []
+    return [
+        "--left-circle",
+        f"{lx:.3f},{ly:.3f},{lr:.3f}",
+        "--right-circle",
+        f"{rx:.3f},{ry:.3f},{rr:.3f}",
+    ]
 
 
 def _write_csv(path: Path, rows: Sequence[Dict[str, object]]) -> None:
@@ -187,7 +219,7 @@ def main() -> int:
 
     per_frame_rows: List[Dict[str, object]] = []
     per_method_rows: List[Dict[str, object]] = []
-    for frame_index, (frame_id, left, right) in enumerate(pairs):
+    for frame_index, (frame_id, left, right, frame_row) in enumerate(pairs):
         frame_out = frames_dir / f"{frame_index:06d}"
         cmd = [
             sys.executable,
@@ -201,6 +233,7 @@ def main() -> int:
             "--out",
             str(frame_out),
             "--quiet",
+            *_manual_circle_args(frame_row),
             *extra_args,
         ]
         start = time.perf_counter()
@@ -213,6 +246,10 @@ def main() -> int:
                 "frame_id": frame_id,
                 "left_image": str(left),
                 "right_image": str(right),
+                "pair_valid": frame_row.get("pair_valid", ""),
+                "pair_disparity_px": frame_row.get("pair_disparity_px", ""),
+                "pair_dy_px": frame_row.get("pair_dy_px", ""),
+                "pair_size_ratio": frame_row.get("pair_size_ratio", ""),
                 "ok": ok,
                 "elapsed_total_ms": total_ms,
                 "stderr": proc.stderr.strip()[-500:],

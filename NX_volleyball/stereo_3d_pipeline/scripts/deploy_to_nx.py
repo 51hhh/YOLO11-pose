@@ -13,6 +13,14 @@ NX_USER = "nvidia"
 NX_PASS = "nvidia"
 NX_DIR  = "/home/nvidia/NX_volleyball/stereo_3d_pipeline"
 LOCAL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SYNC_ALL_CONFIGS = os.environ.get("DEPLOY_SYNC_ALL_CONFIGS", "0") == "1"
+CONFIG_SYNC_ALLOWLIST = {
+    "pipeline.yaml",
+    "pipeline_roi.yaml",
+    "pipeline_dla.yaml",
+    "pipeline_yolo26_gpu.yaml",
+    "pipeline_dual_yolo_roi.yaml",
+}
 
 def get_ssh():
     ssh = paramiko.SSHClient()
@@ -57,45 +65,24 @@ def sync_files(ssh):
     # Create tar in memory
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
-        sync_list = [
-            "src/pipeline/pipeline.h",
-            "src/pipeline/pipeline.cpp",
-            "src/pipeline/pipeline_async_roi.cpp",
-            "src/pipeline/pipeline_loops.cpp",
-            "src/pipeline/frame_slot.h",
-            "src/pipeline/sync.h",
-            "src/stereo/vpi_stereo.h",
-            "src/stereo/vpi_stereo.cpp",
-            "src/stereo/roi_stereo_matcher.h",
-            "src/stereo/roi_stereo_matcher.cpp",
-            "src/stereo/roi_stereo_match.cu",
-            "src/stereo/onnx_stereo.h",
-            "src/stereo/onnx_stereo.cpp",
-            "src/detect/trt_detector.h",
-            "src/detect/trt_detector.cpp",
-            "src/detect/detect_preprocess.cu",
-            "src/fusion/coordinate_3d.h",
-            "src/fusion/coordinate_3d.cpp",
-            "src/fusion/depth_extract.cu",
-            "src/calibration/stereo_calibration.h",
-            "src/calibration/stereo_calibration.cpp",
-            "src/calibration/stereo_calibrate.cpp",
-            "src/calibration/capture_chessboard.cpp",
-            "src/calibration/pwm_trigger.h",
-            "src/rectify/vpi_rectifier.h",
-            "src/rectify/vpi_rectifier.cpp",
-            "src/capture/hikvision_camera.h",
-            "src/capture/hikvision_camera.cpp",
-            "src/utils/profiler.h",
-            "src/utils/logger.h",
-            "src/utils/zero_copy_alloc.h",
-            "src/main.cpp",
-            "src/stereo_depth_viewer.cpp",
-            "CMakeLists.txt",
-            "config/pipeline.yaml",
-            "config/pipeline_roi.yaml",
-            "config/pipeline_dla.yaml",
-        ]
+        sync_list = ["CMakeLists.txt"]
+        for root in ("src", "config"):
+            root_dir = os.path.join(LOCAL_DIR, root)
+            if not os.path.isdir(root_dir):
+                continue
+            for dirpath, dirnames, filenames in os.walk(root_dir):
+                dirnames[:] = sorted(
+                    d for d in dirnames
+                    if d not in ("__pycache__", ".pytest_cache", "build"))
+                for name in sorted(filenames):
+                    if root == "config" and not SYNC_ALL_CONFIGS:
+                        if os.path.relpath(dirpath, root_dir) != ".":
+                            continue
+                        if name not in CONFIG_SYNC_ALLOWLIST:
+                            continue
+                    rel = os.path.relpath(os.path.join(dirpath, name), LOCAL_DIR)
+                    sync_list.append(rel)
+        sync_list = sorted(set(sync_list))
         count = 0
         for rel in sync_list:
             full = os.path.join(LOCAL_DIR, rel)

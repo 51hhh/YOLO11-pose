@@ -38,6 +38,13 @@ from stereo_feature_matching.visualization import (
 )
 
 
+def _parse_circle(value: str) -> Tuple[float, float, float]:
+    parts = [float(v.strip()) for v in value.split(",")]
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("circle must be x,y,r")
+    return parts[0], parts[1], parts[2]
+
+
 def _build_match_result(
     name: str,
     left_features,
@@ -86,6 +93,9 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=128)
     parser.add_argument("--roi-size", type=int, default=224)
     parser.add_argument("--crop-pad", type=int, default=24)
+    parser.add_argument("--left-circle", type=_parse_circle, help="rectified left ball circle: x,y,r")
+    parser.add_argument("--right-circle", type=_parse_circle, help="rectified right ball circle: x,y,r")
+    parser.add_argument("--mask-margin", type=float, default=10.0)
     parser.add_argument("--ratio", type=float, default=1.0)
     parser.add_argument("--max-y-error-px", type=float, default=2.0)
     parser.add_argument("--max-disp-delta-px", type=float, default=32.0)
@@ -114,7 +124,17 @@ def main() -> int:
 
     focal_px = float(np.asarray(calib["P1"])[0, 0])
     baseline_m = float(calib["baseline_m"])
-    lroi, rroi = probe.detect_ball_rois(left_rect, right_rect, focal_px, baseline_m, 10.0, 0.210)
+    if (args.left_circle is None) != (args.right_circle is None):
+        raise ValueError("--left-circle and --right-circle must be provided together")
+    if args.left_circle is not None and args.right_circle is not None:
+        lx, ly, lr = args.left_circle
+        rx, ry, rr = args.right_circle
+        lroi = probe._circle_roi(left_rect.shape[:2], (lx, ly), lr, "manual", args.mask_margin)
+        rroi = probe._circle_roi(right_rect.shape[:2], (rx, ry), rr, "manual", args.mask_margin)
+    else:
+        lroi, rroi = probe.detect_ball_rois(
+            left_rect, right_rect, focal_px, baseline_m, args.mask_margin, 0.210
+        )
     initial_disp = float(lroi.center[0] - rroi.center[0])
     initial_depth = probe.depth_from_disparity(initial_disp, focal_px, baseline_m)
     cv2.imwrite(str(out_dir / "rectified_roi_debug.png"), probe.draw_roi_debug(left_rect, right_rect, lroi, rroi))
