@@ -16,11 +16,7 @@ from typing import Dict, List
 import cv2
 import numpy as np
 
-from stereo_feature_matching.realtime_contract import (
-    DEPTH_CANDIDATE_PRIORITY,
-    STEREO_DEPTH_SOURCE,
-    evaluate_stereo_roi_pair,
-)
+from stereo_feature_matching.realtime_contract import evaluate_stereo_roi_pair
 
 from offline_volleyball_keypoint_config import (
     build_feature_gate,
@@ -40,10 +36,7 @@ from offline_volleyball_probe_roi import (
 from offline_volleyball_probe_triangulation import (
     depth_from_disparity,
     estimate_ball_center_3d,
-    method_validation_status,
-    runtime_feature_geometry_status,
     triangulate_match_rows,
-    triangulation_stats,
     validate_triangulated_rows,
     write_triangulated_points,
 )
@@ -64,6 +57,8 @@ from offline_volleyball_probe_matching import (
     patch_iou_zncc_match,
 )
 from offline_volleyball_keypoint_report import (
+    build_probe_summary,
+    build_result_rows,
     write_keypoint_summary,
     write_match_contact_sheets,
 )
@@ -211,110 +206,34 @@ def main() -> int:
         write_triangulated_points(out_dir / f"{res.name}_triangulated_points.csv", tri_rows)
     write_triangulated_points(out_dir / "triangulated_points.csv", all_triangulated_rows)
 
-    rows = []
-    for res in results:
-        tri_stats = triangulation_stats(triangulated_rows_by_method.get(res.name, []))
-        validation_status, validation_fail_reasons = method_validation_status(tri_stats, thresholds)
-        runtime_feature_ok, runtime_anchor_x, runtime_anchor_y = (
-            runtime_feature_geometry_status(
-                res,
-                lroi,
-                rroi,
-                initial_disp,
-                focal_px,
-                baseline_m,
-                feature_gate,
-            )
-        )
-        rows.append({
-            "method": res.name,
-            "left_keypoints": len(res.left_keypoints),
-            "right_keypoints": len(res.right_keypoints),
-            "candidates": res.candidates,
-            "matches": len(res.matches),
-            "disparity_px": res.disparity,
-            "std_px": res.std_px,
-            "depth_m": res.depth_m,
-            "confidence": res.confidence,
-            "elapsed_ms": method_elapsed_ms.get(res.name, 0.0),
-            "validation_status": validation_status,
-            "validation_fail_reasons": validation_fail_reasons,
-            "runtime_feature_geometry_ok": runtime_feature_ok,
-            "runtime_feature_anchor_x": runtime_anchor_x,
-            "runtime_feature_anchor_y": runtime_anchor_y,
-            **tri_stats,
-        })
-
-    summary = {
-        "left_image": args.left,
-        "right_image": args.right,
-        "calibration": args.calib,
-        "focal_px": focal_px,
-        "baseline_m": baseline_m,
-        "ball_diameter_m": args.ball_diameter_m,
-        "ball_center_3d_m": {
-            "x": ball_center_3d[0],
-            "y": ball_center_3d[1],
-            "z": ball_center_3d[2],
-            "source": "roi_center_disparity",
-        },
-        "validation_thresholds": {
-            "min_valid_matches": thresholds.min_valid_matches,
-            "max_y_error_px": thresholds.max_y_error_px,
-            "max_disparity_mad_px": thresholds.max_disparity_mad_px,
-            "max_disparity_range_px": thresholds.max_disparity_range_px,
-            "max_z_mad_m": thresholds.max_z_mad_m,
-            "max_z_range_m": thresholds.max_z_range_m,
-            "max_sphere_residual_m": thresholds.max_sphere_residual_m,
-            "max_depth_vs_center_m": thresholds.max_depth_vs_center_m,
-        },
-        "runtime_contract": {
-            "roi_pair_gate": {
-                "max_disparity": pair_gate.max_disparity,
-                "epipolar_y_tolerance": pair_gate.epipolar_y_tolerance,
-                "max_size_ratio": pair_gate.max_size_ratio,
-                "adaptive_y_ratio": pair_gate.adaptive_y_ratio,
-                "min_shifted_iou": pair_gate.min_shifted_iou,
-                "min_depth_m": args.min_depth_m,
-                "max_depth_m": args.max_depth_m,
-            },
-            "roi_pair": {
-                "valid": runtime_pair is not None,
-                "reject_reason": runtime_pair_reject,
-                "initial_disparity_px": runtime_pair.initial_disparity if runtime_pair else initial_disp,
-                "epipolar_dy_px": runtime_pair.epipolar_dy if runtime_pair else abs(lroi.center[1] - rroi.center[1]),
-                "shifted_bbox_iou": runtime_pair.shifted_bbox_iou if runtime_pair else 0.0,
-                "score": runtime_pair.score if runtime_pair else None,
-            },
-            "depth_candidate_priority": list(DEPTH_CANDIDATE_PRIORITY),
-            "stereo_depth_source": STEREO_DEPTH_SOURCE,
-            "feature_validation_gate": {
-                "min_support": feature_gate.min_support,
-                "max_stddev_px": feature_gate.max_stddev_px,
-                "feature_y_tolerance_px": feature_gate.feature_y_tolerance_px,
-                "feature_y_slope": feature_gate.feature_y_slope,
-                "feature_y_offset_px": feature_gate.feature_y_offset_px,
-                "feature_overlap_scale": feature_gate.feature_overlap_scale,
-                "feature_sphere_radius_m": feature_gate.feature_sphere_radius_m,
-                "feature_sphere_radius_scale": feature_gate.feature_sphere_radius_scale,
-                "feature_sphere_margin_m": feature_gate.feature_sphere_margin_m,
-            },
-        },
-        "matcher_params": {
-            "edge_percentile": args.edge_percentile,
-            "iou_patch_radius": args.iou_patch_radius,
-            "iou_search_radius": args.iou_search_radius,
-            "iou_y_radius": args.iou_y_radius,
-            "iou_min_score": args.iou_min_score,
-            "iou_reverse_tolerance_px": args.iou_reverse_tolerance_px,
-            "iou_max_points": args.iou_max_points,
-        },
-        "initial_disparity_px": initial_disp,
-        "initial_depth_m": initial_depth,
-        "left_roi": {"bbox": lroi.bbox, "center": lroi.center, "radius": lroi.radius, "source": lroi.source},
-        "right_roi": {"bbox": rroi.bbox, "center": rroi.center, "radius": rroi.radius, "source": rroi.source},
-        "results": rows,
-    }
+    rows = build_result_rows(
+        results,
+        triangulated_rows_by_method,
+        thresholds,
+        feature_gate,
+        lroi,
+        rroi,
+        initial_disp,
+        focal_px,
+        baseline_m,
+        method_elapsed_ms,
+    )
+    summary = build_probe_summary(
+        args,
+        focal_px,
+        baseline_m,
+        ball_center_3d,
+        thresholds,
+        pair_gate,
+        runtime_pair,
+        runtime_pair_reject,
+        initial_disp,
+        initial_depth,
+        lroi,
+        rroi,
+        feature_gate,
+        rows,
+    )
     write_keypoint_summary(out_dir, summary, rows)
     write_match_contact_sheets(out_dir, results)
 
