@@ -1,5 +1,7 @@
 # Neural ROI Feature Matching
 
+历史说明(2026-07-03): 本页记录神经 ROI 特征匹配的实现形态和早期实测。当前实时结论优先看 `wiki/模型与推理.md`、`wiki/特征匹配实现.md`、`wiki/实时特征算法矩阵.md` 和 `wiki/稳定100fps深度方法与训练入口.md`。训练和默认配置不要把早期单项高有效率表当作当前稳定主路径结论。
+
 目标是只在排球 IoU/ROI 小图上提取少量可靠点，用于双目三角测距。Python 只用于本地离线验证；NX 实时路径必须使用 TensorRT engine。
 
 ## 本地 CPU 验证
@@ -49,12 +51,20 @@ NX_volleyball/stereo_3d_pipeline/scripts/setup_neural_feature_env.sh
 
 ## NX TensorRT 实测
 
-实测数据位于 `test_logs/nx_true_gpu_features_20260702/` 和 `test_logs/nx_xfeat_trt_pipeline_fast_20260702/`。
+早期实测数据位于 `test_logs/nx_true_gpu_features_20260702/` 和 `test_logs/nx_xfeat_trt_pipeline_fast_20260702/`。这些结果主要证明 XFeat TensorRT 路径能跑，不能代表当前默认可用性。
 
 | engine | ROI FPS | `Stage2_NeuralFeatureMatch` | 有效候选 | 深度数据 |
 | --- | ---: | ---: | ---: | --- |
 | XFeat 224/top128 | 75 | avg `3.92ms` | `496/496` | median `3.5537m`, MAD `2.3mm`, support median `44` |
 | XFeat 160/top64 | 86 | avg `2.24ms` | `568/602` | median `3.5299m`, MAD `3.8mm`, support median `20` |
 | XFeat 128/top64 | 89-90 | avg `1.89ms` | `582/582` | median `3.5316m`, MAD `4.2mm`, support median `19` |
+
+2026-07-03 clean rerun 后的当前判断:
+
+| engine | 实时状态 | 当前结论 |
+| --- | --- | --- |
+| XFeat 128/top64 | 约 `90.3fps`; strict 有效 `20/583`, relaxed `0/575` | TensorRT 路径可跑，但不能作为默认深度源 |
+| SuperPoint fixed extractor | engine 可加载；约 `8.6fps`, `5/114` 有效 | 超实时预算，只作质量对照 |
+| ALIKED n16/t16 | vanilla ONNX/trtexec 受 `torchvision::deform_conv2d` 阻塞 | 当前无可用 TensorRT engine |
 
 `trtexec` 裸 extractor 不是瓶颈:128/160 的 GPU compute mean 分别约 `0.467ms`/`0.546ms`。管线内慢在左右各跑一次 extractor、输出 D2H 拷贝、CPU 后处理和 Stage2 同步等待。当前 async ROI Stage2 已把重特征从主线程移出，下一帧 YOLO ready 后过期旧结果；后续要进一步提高命中率和降低 GPU 争用，仍需要 GPU 后处理或 fused matcher。
