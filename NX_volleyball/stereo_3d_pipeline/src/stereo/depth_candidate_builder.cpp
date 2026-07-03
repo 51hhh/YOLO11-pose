@@ -342,7 +342,7 @@ DepthCandidateBuildResult buildDepthCandidateObservations(
         bbox_right_edge_anchor_x,
         in.left_detection.cy);
 
-    out.selection = selectFirstUsableDepthCandidate(out.candidates);
+    out.selection = selectLegacyDepthOutputCandidate(out.candidates);
     return out;
 }
 

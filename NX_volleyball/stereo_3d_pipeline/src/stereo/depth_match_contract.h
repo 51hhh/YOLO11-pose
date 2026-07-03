@@ -127,7 +127,8 @@ DepthCandidateObservation makeDepthCandidateObservation(
     float anchor_left_y = 0.0f);
 
 bool isUsableDepthCandidate(const DepthCandidateObservation& candidate);
-DepthCandidateSelection selectFirstUsableDepthCandidate(
+bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate);
+DepthCandidateSelection selectLegacyDepthOutputCandidate(
     const std::vector<DepthCandidateObservation>& candidates);
 
 bool evaluateStereoRoiPair(

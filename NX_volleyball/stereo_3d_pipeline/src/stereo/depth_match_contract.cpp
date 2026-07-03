@@ -162,10 +162,44 @@ bool isUsableDepthCandidate(const DepthCandidateObservation& candidate) {
            candidate.depth_m > 0.0f;
 }
 
-DepthCandidateSelection selectFirstUsableDepthCandidate(
+bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate) {
+    if (!isUsableDepthCandidate(candidate)) return false;
+    switch (candidate.method) {
+    case DepthCandidateMethod::CIRCLE_CENTER:
+    case DepthCandidateMethod::FALLBACK_EPIPOLAR:
+    case DepthCandidateMethod::ROI_RADIAL_CENTER:
+    case DepthCandidateMethod::ROI_EDGE_PAIR_CENTER:
+    case DepthCandidateMethod::ROI_EDGE_CENTROID:
+    case DepthCandidateMethod::CIRCLE_LEFT_EDGE:
+    case DepthCandidateMethod::CIRCLE_RIGHT_EDGE:
+    case DepthCandidateMethod::BBOX_CENTER:
+    case DepthCandidateMethod::BBOX_EDGES:
+    case DepthCandidateMethod::BBOX_LEFT_EDGE:
+    case DepthCandidateMethod::BBOX_RIGHT_EDGE:
+    case DepthCandidateMethod::FALLBACK_TEMPLATE:
+    case DepthCandidateMethod::FALLBACK_FEATURE_POINTS:
+        return true;
+    case DepthCandidateMethod::ROI_CENTER_PATCH:
+    case DepthCandidateMethod::ROI_MULTI_POINT:
+    case DepthCandidateMethod::ROI_CORNER_POINTS:
+    case DepthCandidateMethod::ROI_TEXTURE_POINTS:
+    case DepthCandidateMethod::ROI_BINARY_POINTS:
+    case DepthCandidateMethod::ROI_ORB_POINTS:
+    case DepthCandidateMethod::ROI_BRISK_POINTS:
+    case DepthCandidateMethod::ROI_AKAZE_POINTS:
+    case DepthCandidateMethod::ROI_SIFT_POINTS:
+    case DepthCandidateMethod::ROI_IOU_REGION_COLOR_PATCH:
+    case DepthCandidateMethod::ROI_PATCH_IOU_COLOR_EDGE:
+    case DepthCandidateMethod::ROI_NEURAL_FEATURE:
+        return false;
+    }
+    return false;
+}
+
+DepthCandidateSelection selectLegacyDepthOutputCandidate(
     const std::vector<DepthCandidateObservation>& candidates) {
     for (const auto& candidate : candidates) {
-        if (!isUsableDepthCandidate(candidate)) continue;
+        if (!isLegacyDepthOutputCandidate(candidate)) continue;
         DepthCandidateSelection selection;
         selection.valid = true;
         selection.observation = candidate;
