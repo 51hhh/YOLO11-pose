@@ -24,6 +24,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     legacy_feature_names,
     read_metadata,
 )
+from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
 
 
 HEADER = [
@@ -176,6 +177,33 @@ class SyntheticDatasetTest(unittest.TestCase):
         valid = torch.tensor([[1.0, 1.0]])
         loss = known_z_loss(depth, known_z, valid)
         self.assertTrue(torch.isfinite(loss).item())
+
+    def test_dataset_manifest_paths_are_relative_to_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_synthetic_clip(root)
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                        "    name: static_3m",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            clips = load_manifest(manifest_path)
+            self.assertTrue(is_manifest_path(manifest_path))
+            self.assertEqual(len(clips), 1)
+            self.assertEqual(clips[0].csv, root / "traj_p0p1_001.csv")
+            self.assertEqual(clips[0].metadata, root / "traj_p0p1_001.metadata.yaml")
+            self.assertEqual(clips[0].split, "train")
+            self.assertEqual(clips[0].name, "static_3m")
 
 
 if __name__ == "__main__":
