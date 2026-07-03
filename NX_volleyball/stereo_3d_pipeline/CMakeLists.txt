@@ -299,6 +299,7 @@ target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
 if(HIK_FOUND)
   add_executable(capture_chessboard
     src/calibration/capture_chessboard.cpp
+    src/calibration/capture_chessboard_args.cpp
     src/capture/hikvision_camera.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
