@@ -9,6 +9,7 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
+from offline_volleyball_depth_math import depth_from_disparity
 from stereo_feature_matching.realtime_contract import (
     FeatureValidationConfig,
     SparseFeatureObservation,
@@ -21,12 +22,6 @@ from offline_volleyball_probe_roi import (
     ValidationThresholds,
     _roi_to_runtime_detection,
 )
-
-
-def depth_from_disparity(disparity: float, focal_px: float, baseline_m: float) -> float:
-    if disparity <= 0.0:
-        return -1.0
-    return focal_px * baseline_m / disparity
 
 
 def triangulate_match_rows(
