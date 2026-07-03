@@ -12,8 +12,8 @@
 #include "utils/logger.h"
 #include "main_realtime_debug_dump.h"
 #include "main_config_loaders.h"
+#include "main_display_helpers.h"
 
-#include <vpi/Image.h>
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
 #include <csignal>
@@ -27,7 +27,6 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
-#include <cuda_runtime.h>
 
 #ifdef HAS_ROS2
 #include <rclcpp/rclcpp.hpp>
@@ -43,17 +42,6 @@ static void signalHandler(int sig) {
     (void)sig;
     g_shutdown.store(true);
 }
-
-// ==================== 点击测距 ====================
-
-struct ClickMeasureState {
-    std::mutex mtx;
-    int click_u = -1;  ///< 点击像素 u
-    int click_v = -1;  ///< 点击像素 v
-    float click_x = 0, click_y = 0, click_z = 0;  ///< 3D 坐标
-    bool has_click = false;
-    int display_frames = 0;  ///< 剩余显示帧数
-};
 
 static ClickMeasureState g_click;
 
@@ -512,61 +500,15 @@ int main(int argc, char* argv[]) {
 
     LOG_INFO("Pipeline initialized, starting...");
 
-    // (display variables moved to DisplayJob below)
-
     // 构建彩色校正映射表 (用于可视化: raw Bayer → demosaic → remap → 彩色校正图)
     cv::Mat vis_map1, vis_map2;
     bool has_color_remap = false;
     if (enable_display) {
-        try {
-            cv::FileStorage fs(cfg.calibration_file, cv::FileStorage::READ);
-            if (fs.isOpened()) {
-                cv::Mat K1, D1, R1, P1;
-                fs["camera_matrix_left"]           >> K1;
-                fs["distortion_coefficients_left"] >> D1;
-                fs["rectification_left"]           >> R1;
-                fs["projection_left"]              >> P1;
-
-                // 缩放 P1 以适配 rect_width x rect_height (标定在 raw 分辨率)
-                int cal_w = 0, cal_h = 0;
-                fs["image_width"]  >> cal_w;
-                fs["image_height"] >> cal_h;
-                if (cal_w > 0 && cal_h > 0 &&
-                    (cfg.rect_width != cal_w || cfg.rect_height != cal_h)) {
-                    double sx = (double)cfg.rect_width  / cal_w;
-                    double sy = (double)cfg.rect_height / cal_h;
-                    P1 = P1.clone();
-                    P1.at<double>(0, 0) *= sx;
-                    P1.at<double>(1, 1) *= sy;
-                    P1.at<double>(0, 2) *= sx;
-                    P1.at<double>(1, 2) *= sy;
-                    P1.at<double>(0, 3) *= sx;
-                }
-
-                cv::initUndistortRectifyMap(K1, D1, R1, P1,
-                    cv::Size(cfg.rect_width, cfg.rect_height),
-                    CV_16SC2, vis_map1, vis_map2);
-                has_color_remap = true;
-                LOG_INFO("Color remap built for visualization (%dx%d -> %dx%d)",
-                         cfg.camera.width, cfg.camera.height, cfg.rect_width, cfg.rect_height);
-            }
-        } catch (const std::exception& e) {
-            LOG_WARN("Failed to build color remap: %s (visualization will be grayscale)", e.what());
-        }
+        buildVisualizationColorRemap(cfg, vis_map1, vis_map2, has_color_remap);
     }
 
     const bool use_bgr = (cfg.detector_input_format == "bgr");
 
-    // 显示数据: 管线线程仅做GPU→CPU拷贝, 绘制在主线程完成
-    struct DisplayJob {
-        cv::Mat frame;
-        std::vector<stereo3d::Detection> detections;
-        std::vector<stereo3d::Object3D> results;
-        std::vector<stereo3d::LandingPrediction> preds;
-        float fps;
-        int frame_id;
-        int rec_frames;
-    };
     std::mutex display_job_mutex;
     DisplayJob display_job;
     bool display_job_ready = false;
@@ -606,41 +548,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 cv::Mat frame;
-
-                if (use_bgr) {
-                    VPIImage rectL = frame_data.rect_bgr_left;
-                    VPIImageData imgData;
-                    VPIStatus st = vpiImageLockData(rectL, VPI_LOCK_READ,
-                        VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
-                    if (st == VPI_SUCCESS) {
-                        int h = imgData.buffer.pitch.planes[0].height;
-                        int w = imgData.buffer.pitch.planes[0].width;
-                        int gpuPitch = imgData.buffer.pitch.planes[0].pitchBytes;
-                        const void* gpuPtr = imgData.buffer.pitch.planes[0].data;
-                        frame.create(h, w, CV_8UC3);
-                        cudaMemcpy2D(frame.data, frame.step[0],
-                                     gpuPtr, gpuPitch,
-                                     w * 3, h,
-                                     cudaMemcpyDeviceToHost);
-                        vpiImageUnlock(rectL);
-                    }
-                }
-
-                // 灰度快速路径 (跳过 CPU debayer+remap, 避免 10ms 阻塞)
-                if (frame.empty()) {
-                    VPIImage rectL = frame_data.rect_gray_left;
-                    VPIImageData imgData;
-                    if (vpiImageLockData(rectL, VPI_LOCK_READ,
-                        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData) != VPI_SUCCESS)
-                        return;
-                    int h = imgData.buffer.pitch.planes[0].height;
-                    int w = imgData.buffer.pitch.planes[0].width;
-                    int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
-                    cv::Mat gray(h, w, CV_8UC1,
-                                 imgData.buffer.pitch.planes[0].data, pitch);
-                    cv::cvtColor(gray, frame, cv::COLOR_GRAY2BGR);
-                    vpiImageUnlock(rectL);
-                }
+                if (!captureDisplayFrame(frame_data, use_bgr, frame)) return;
 
                 // 仅存数据, 绘制交给主线程
                 std::lock_guard<std::mutex> lock(display_job_mutex);
@@ -664,13 +572,7 @@ int main(int argc, char* argv[]) {
     pipeline.start();
 
     // 主线程等待退出信号 / 可视化显示
-    // 计算显示尺寸: 保持原始 4:3 比例 (raw_width:raw_height)
-    int disp_w = cfg.rect_width;
-    int disp_h = cfg.rect_height;
-    if (cfg.camera.width > 0 && cfg.camera.height > 0) {
-        // 以 rect_height 为基准，按原始宽高比确定宽度
-        disp_w = cfg.rect_height * cfg.camera.width / cfg.camera.height;
-    }
+    auto [disp_w, disp_h] = computeDisplaySize(cfg);
 
     if (enable_display) {
         LOG_INFO("Visualization enabled - press ESC to quit, click for depth");
@@ -699,124 +601,8 @@ int main(int argc, char* argv[]) {
                 }
             }
             if (has_job) {
-                cv::Mat& frame = job.frame;
-
-                // 处理点击测距
-                {
-                    std::lock_guard<std::mutex> clik(g_click.mtx);
-                    if (g_click.has_click) {
-                        g_click.has_click = false;
-                        g_click.click_z = 0;
-                        float min_dist = 1e9f;
-                        for (size_t i = 0; i < job.detections.size() && i < job.results.size(); ++i) {
-                            float dx = job.detections[i].cx - g_click.click_u;
-                            float dy = job.detections[i].cy - g_click.click_v;
-                            float dist = dx*dx + dy*dy;
-                            if (dist < min_dist && job.results[i].z > 0) {
-                                min_dist = dist;
-                                g_click.click_x = job.results[i].x;
-                                g_click.click_y = job.results[i].y;
-                                g_click.click_z = job.results[i].z;
-                            }
-                        }
-                    }
-                }
-
-                // 绘制检测框 + 距离
-                for (size_t i = 0; i < job.detections.size(); ++i) {
-                    const auto& d = job.detections[i];
-                    int x1 = static_cast<int>(d.cx - d.width / 2);
-                    int y1 = static_cast<int>(d.cy - d.height / 2);
-                    int bw = static_cast<int>(d.width);
-                    int bh = static_cast<int>(d.height);
-                    cv::Scalar color(0, 255, 0);
-                    cv::rectangle(frame, cv::Rect(x1, y1, bw, bh), color, 2);
-
-                    char label[128];
-                    if (i < job.results.size()) {
-                        snprintf(label, sizeof(label),
-                                 "%.2fm (%.0f%%)", job.results[i].z, d.confidence * 100);
-                    } else {
-                        snprintf(label, sizeof(label),
-                                 "conf=%.0f%%", d.confidence * 100);
-                    }
-                    cv::putText(frame, label, cv::Point(x1, y1 - 8),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
-
-                    if (i < job.results.size() && job.results[i].z > 0) {
-                        const auto& r = job.results[i];
-                        float speed = std::sqrt(r.vx*r.vx + r.vy*r.vy + r.vz*r.vz);
-                        char pos[160];
-                        snprintf(pos, sizeof(pos), "X=%.3f Y=%.3f Z=%.3f |v|=%.1f",
-                                 r.x, r.y, r.z, speed);
-                        cv::putText(frame, pos, cv::Point(x1, y1 + bh + 20),
-                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                    cv::Scalar(255, 200, 0), 1);
-                        char depth_info[160];
-                        const char* mstr = r.depth_method == 0 ? "M" :
-                                           r.depth_method == 1 ? "S" : "B";
-                        snprintf(depth_info, sizeof(depth_info),
-                                 "zm=%.3f zs=%.3f [%s]",
-                                 r.z_mono, r.z_stereo, mstr);
-                        cv::putText(frame, depth_info, cv::Point(x1, y1 + bh + 40),
-                                    cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                    cv::Scalar(0, 255, 255), 1);
-
-                        if (i < job.preds.size() && job.preds[i].valid) {
-                            const auto& p = job.preds[i];
-                            char pred_text[128];
-                            snprintf(pred_text, sizeof(pred_text),
-                                     "LAND(%.1f,%.1f) %.2fs %s",
-                                     p.x, p.y, p.time_to_land,
-                                     p.method == 0 ? "B" : "P");
-                            cv::putText(frame, pred_text,
-                                        cv::Point(x1, y1 + bh + 60),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                        cv::Scalar(0, 100, 255), 2);
-                        }
-                    }
-                }
-
-                // 点击测距显示
-                {
-                    std::lock_guard<std::mutex> clik(g_click.mtx);
-                    if (g_click.display_frames > 0) {
-                        cv::drawMarker(frame,
-                            cv::Point(g_click.click_u, g_click.click_v),
-                            cv::Scalar(0, 255, 255), cv::MARKER_CROSS, 20, 2);
-                        if (g_click.click_z > 0) {
-                            char click_text[128];
-                            snprintf(click_text, sizeof(click_text),
-                                     "(%.2f, %.2f, %.2f)m",
-                                     g_click.click_x, g_click.click_y, g_click.click_z);
-                            cv::putText(frame, click_text,
-                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
-                                        cv::Scalar(0, 255, 255), 2);
-                        } else {
-                            cv::putText(frame, "No depth",
-                                        cv::Point(g_click.click_u + 12, g_click.click_v - 12),
-                                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
-                                        cv::Scalar(0, 0, 255), 2);
-                        }
-                        g_click.display_frames--;
-                    }
-                }
-
-                // FPS + 帧号 + 记录状态
-                char hud[128];
-                if (job.rec_frames > 0) {
-                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d  REC: %d",
-                             job.fps, job.frame_id, job.rec_frames);
-                } else {
-                    snprintf(hud, sizeof(hud), "FPS: %.1f  Frame: %d",
-                             job.fps, job.frame_id);
-                }
-                cv::putText(frame, hud, cv::Point(10, 30),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.8,
-                            cv::Scalar(0, 200, 255), 2);
-
-                cv::imshow("Pipeline", frame);
+                renderPipelineDisplayFrame(job, g_click);
+                cv::imshow("Pipeline", job.frame);
             }
             int key = cv::waitKey(5);
             if (key == 27) {  // ESC
