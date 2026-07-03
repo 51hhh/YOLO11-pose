@@ -164,6 +164,7 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_debug_utils.cpp
   src/pipeline/pipeline_detection.cpp
   src/pipeline/pipeline_depth_modes.cpp
+  src/pipeline/pipeline_lifecycle.cpp
   src/pipeline/pipeline_loops.cpp
   src/pipeline/pipeline_roi_match_helpers.cpp
   src/pipeline/pipeline_roi_stage2.cpp
