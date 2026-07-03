@@ -1,21 +1,14 @@
 #pragma once
 
 #include "pipeline/pipeline.h"
-#include "utils/logger.h"
 
 #include <vpi/Image.h>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
 
 #include <atomic>
-#include <cmath>
 #include <condition_variable>
-#include <cstdint>
 #include <deque>
-#include <filesystem>
-#include <fstream>
-#include <iomanip>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,6 +23,7 @@ struct RealtimeDebugDumpConfig {
     int max_queue = 4;
     bool dump_fallback = true;
 };
+
 struct RealtimeDebugDumpJob {
     int frame_id = 0;
     float fps = 0.0f;
@@ -43,371 +37,19 @@ struct RealtimeDebugDumpJob {
 
 class RealtimeDebugDumper {
 public:
-    ~RealtimeDebugDumper() { close(); }
+    ~RealtimeDebugDumper();
 
-    void init(const RealtimeDebugDumpConfig& cfg) {
-        cfg_ = cfg;
-        if (!cfg_.enabled) return;
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::create_directories(cfg_.output_dir, ec);
-        if (ec) {
-            LOG_WARN("RealtimeDebugDumper: failed to create %s: %s",
-                     cfg_.output_dir.c_str(), ec.message().c_str());
-            cfg_.enabled = false;
-            return;
-        }
-        running_ = true;
-        writer_ = std::thread(&RealtimeDebugDumper::writerLoop, this);
-        LOG_INFO("RealtimeDebugDumper: output=%s stride=%d max_frames=%d",
-                 cfg_.output_dir.c_str(), cfg_.stride, cfg_.max_frames);
-    }
-
-    bool enabled() const { return cfg_.enabled && running_; }
-
-    void record(const stereo3d::FrameCallbackData& frame) {
-        if (!enabled()) return;
-        if (cfg_.max_frames > 0 && captured_count_.load() >= cfg_.max_frames) {
-            return;
-        }
-
-        bool has_fallback = false;
-        for (const auto& obj : frame.results) {
-            if (obj.stereo_match_source == 2 || obj.stereo_match_source == 3) {
-                has_fallback = true;
-                break;
-            }
-        }
-        const bool stride_hit =
-            cfg_.stride > 0 && (frame.frame_id % cfg_.stride) == 0;
-        if (!stride_hit && !(cfg_.dump_fallback && has_fallback)) {
-            return;
-        }
-        if (!reserveSlot()) {
-            return;
-        }
-
-        RealtimeDebugDumpJob job;
-        job.frame_id = frame.frame_id;
-        job.fps = frame.fps;
-        job.left_detections = frame.detections_left;
-        job.right_detections = frame.detections_right;
-        job.results = frame.results;
-        job.metadata = frame.metadata;
-        if (!copyGray(frame.rect_gray_left, job.left_gray) ||
-            !copyGray(frame.rect_gray_right, job.right_gray)) {
-            releaseReservedSlot(false, nullptr);
-            return;
-        }
-        releaseReservedSlot(true, &job);
-        cv_.notify_one();
-    }
-
-    void close() {
-        if (!cfg_.enabled && !writer_.joinable()) return;
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            running_ = false;
-        }
-        cv_.notify_all();
-        if (writer_.joinable()) writer_.join();
-        if (cfg_.enabled) {
-            LOG_INFO("RealtimeDebugDumper: saved=%d dropped=%d",
-                     saved_count_.load(), dropped_count_.load());
-        }
-        cfg_.enabled = false;
-    }
+    void init(const RealtimeDebugDumpConfig& cfg);
+    bool enabled() const;
+    void record(const stereo3d::FrameCallbackData& frame);
+    void close();
 
 private:
-    bool reserveSlot() {
-        std::lock_guard<std::mutex> lock(mtx_);
-        const int reserved = reserved_count_;
-        if (cfg_.max_frames > 0 &&
-            captured_count_.load() + reserved >= cfg_.max_frames) {
-            return false;
-        }
-        if (cfg_.max_queue > 0 &&
-            queue_.size() + static_cast<size_t>(reserved) >=
-                static_cast<size_t>(cfg_.max_queue)) {
-            ++dropped_count_;
-            return false;
-        }
-        ++reserved_count_;
-        return true;
-    }
-
-    void releaseReservedSlot(bool enqueue, RealtimeDebugDumpJob* job) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (reserved_count_ > 0) --reserved_count_;
-        if (enqueue && job) {
-            queue_.push_back(std::move(*job));
-            ++captured_count_;
-        }
-    }
-
-    static bool copyGray(VPIImage img, cv::Mat& out) {
-        VPIImageData data;
-        const VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
-                                              VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                              &data);
-        if (st != VPI_SUCCESS) return false;
-        try {
-            const int w = data.buffer.pitch.planes[0].width;
-            const int h = data.buffer.pitch.planes[0].height;
-            const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-            cv::Mat view(h, w, CV_8UC1,
-                         data.buffer.pitch.planes[0].data, pitch);
-            view.copyTo(out);
-        } catch (const cv::Exception&) {
-            vpiImageUnlock(img);
-            return false;
-        }
-        vpiImageUnlock(img);
-        return !out.empty();
-    }
-
-    static bool validBox(float cx, float cy, float w, float h) {
-        return std::isfinite(cx) && std::isfinite(cy) &&
-               std::isfinite(w) && std::isfinite(h) &&
-               w > 1.0f && h > 1.0f;
-    }
-
-    static cv::Rect cropAround(float cx, float cy, float w, float h,
-                               const cv::Size& size) {
-        const float scale = 1.8f;
-        const int crop_w = std::max(32, static_cast<int>(std::round(w * scale)));
-        const int crop_h = std::max(32, static_cast<int>(std::round(h * scale)));
-        const int x = static_cast<int>(std::round(cx - crop_w * 0.5f));
-        const int y = static_cast<int>(std::round(cy - crop_h * 0.5f));
-        return cv::Rect(x, y, crop_w, crop_h) & cv::Rect(0, 0, size.width, size.height);
-    }
-
-    static void drawBox(cv::Mat& image, const cv::Rect& crop,
-                        float cx, float cy, float w, float h,
-                        const cv::Scalar& color) {
-        if (!validBox(cx, cy, w, h)) return;
-        cv::Rect box(
-            static_cast<int>(std::round(cx - w * 0.5f)) - crop.x,
-            static_cast<int>(std::round(cy - h * 0.5f)) - crop.y,
-            static_cast<int>(std::round(w)),
-            static_cast<int>(std::round(h)));
-        cv::rectangle(image, box & cv::Rect(0, 0, image.cols, image.rows),
-                      color, 1, cv::LINE_AA);
-    }
-
-    static void drawCircle(cv::Mat& image, const cv::Rect& crop,
-                           float cx, float cy, float r,
-                           const cv::Scalar& color) {
-        if (!std::isfinite(cx) || !std::isfinite(cy) ||
-            !std::isfinite(r) || r <= 1.0f) {
-            return;
-        }
-        cv::circle(image,
-                   cv::Point(static_cast<int>(std::round(cx)) - crop.x,
-                             static_cast<int>(std::round(cy)) - crop.y),
-                   static_cast<int>(std::round(r)),
-                   color, 1, cv::LINE_AA);
-    }
-
-    static std::string fmt(float value, int digits = 3) {
-        if (!std::isfinite(value)) return "nan";
-        std::ostringstream ss;
-        ss << std::fixed << std::setprecision(digits) << value;
-        return ss.str();
-    }
-
-    static void putLine(cv::Mat& image, const std::string& text, int line) {
-        cv::putText(image, text, cv::Point(8, 18 + line * 18),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.48,
-                    cv::Scalar(0, 220, 255), 1, cv::LINE_AA);
-    }
-
-    static cv::Mat makePanel(const RealtimeDebugDumpJob& job,
-                             const stereo3d::Object3D& obj,
-                             int index) {
-        cv::Mat left_bgr;
-        cv::Mat right_bgr;
-        cv::cvtColor(job.left_gray, left_bgr, cv::COLOR_GRAY2BGR);
-        cv::cvtColor(job.right_gray, right_bgr, cv::COLOR_GRAY2BGR);
-
-        cv::Rect left_crop = validBox(obj.left_bbox_cx, obj.left_bbox_cy,
-                                      obj.left_bbox_w, obj.left_bbox_h)
-            ? cropAround(obj.left_bbox_cx, obj.left_bbox_cy,
-                         obj.left_bbox_w, obj.left_bbox_h, left_bgr.size())
-            : cv::Rect(0, 0, left_bgr.cols, left_bgr.rows);
-        cv::Rect right_crop = validBox(obj.right_bbox_cx, obj.right_bbox_cy,
-                                       obj.right_bbox_w, obj.right_bbox_h)
-            ? cropAround(obj.right_bbox_cx, obj.right_bbox_cy,
-                         obj.right_bbox_w, obj.right_bbox_h, right_bgr.size())
-            : (left_crop & cv::Rect(0, 0, right_bgr.cols, right_bgr.rows));
-        if (left_crop.empty()) left_crop = cv::Rect(0, 0, left_bgr.cols, left_bgr.rows);
-        if (right_crop.empty()) right_crop = cv::Rect(0, 0, right_bgr.cols, right_bgr.rows);
-
-        cv::Mat left = left_bgr(left_crop).clone();
-        cv::Mat right = right_bgr(right_crop).clone();
-        drawBox(left, left_crop, obj.left_bbox_cx, obj.left_bbox_cy,
-                obj.left_bbox_w, obj.left_bbox_h, cv::Scalar(0, 255, 0));
-        drawBox(right, right_crop, obj.right_bbox_cx, obj.right_bbox_cy,
-                obj.right_bbox_w, obj.right_bbox_h, cv::Scalar(0, 255, 0));
-        drawCircle(left, left_crop, obj.left_circle_cx, obj.left_circle_cy,
-                   obj.left_circle_r, cv::Scalar(255, 255, 0));
-        drawCircle(right, right_crop, obj.right_circle_cx, obj.right_circle_cy,
-                   obj.right_circle_r, cv::Scalar(255, 0, 255));
-
-        const int target_h = 220;
-        const double left_scale = static_cast<double>(target_h) /
-                                  static_cast<double>(std::max(1, left.rows));
-        const double right_scale = static_cast<double>(target_h) /
-                                   static_cast<double>(std::max(1, right.rows));
-        cv::resize(left, left, cv::Size(std::max(1, static_cast<int>(left.cols * left_scale)), target_h));
-        cv::resize(right, right, cv::Size(std::max(1, static_cast<int>(right.cols * right_scale)), target_h));
-        if (left.rows != right.rows) {
-            cv::resize(right, right, cv::Size(right.cols, left.rows));
-        }
-
-        cv::Mat panel;
-        cv::hconcat(std::vector<cv::Mat>{left, right}, panel);
-        putLine(panel, "frame=" + std::to_string(job.frame_id) +
-                " obj=" + std::to_string(index) +
-                " match=" + std::to_string(obj.stereo_match_source) +
-                " depth=" + std::to_string(obj.stereo_depth_source), 0);
-        putLine(panel, "bbox=" + fmt(obj.z_bbox_center) +
-                " circle=" + fmt(obj.z_circle_center) +
-                " edge=" + fmt(obj.z_roi_edge_centroid) +
-                " radial=" + fmt(obj.z_roi_radial_center), 1);
-        putLine(panel, "edgepair=" + fmt(obj.z_roi_edge_pair_center) +
-                " multi=" + fmt(obj.z_roi_multi_point) +
-                " patch=" + fmt(obj.z_roi_center_patch) +
-                " tmpl=" + fmt(obj.z_roi_cuda_template_match), 2);
-        putLine(panel, "cuda_bm=" + fmt(obj.z_roi_cuda_stereo_bm) +
-                " cuda_sgm=" + fmt(obj.z_roi_cuda_stereo_sgm) +
-                " fb_epi=" + fmt(obj.z_fallback_epipolar) +
-                " fb=" + fmt(obj.z_fallback), 3);
-        putLine(panel,
-                " pair_iou=" + fmt(obj.pair_shifted_iou) +
-                " Lsrc=" + std::to_string(obj.left_circle_source) +
-                " Rsrc=" + std::to_string(obj.right_circle_source), 4);
-        putLine(panel, "dy=" + fmt(obj.epipolar_dy, 2), 5);
-        return panel;
-    }
-
-    static cv::Mat makeDetectionPanel(const RealtimeDebugDumpJob& job) {
-        cv::Mat left_bgr;
-        cv::Mat right_bgr;
-        cv::cvtColor(job.left_gray, left_bgr, cv::COLOR_GRAY2BGR);
-        cv::cvtColor(job.right_gray, right_bgr, cv::COLOR_GRAY2BGR);
-        auto draw_dets = [](cv::Mat& image,
-                            const std::vector<stereo3d::Detection>& detections) {
-            for (size_t i = 0; i < detections.size(); ++i) {
-                const auto& d = detections[i];
-                cv::Rect box(
-                    static_cast<int>(std::round(d.cx - d.width * 0.5f)),
-                    static_cast<int>(std::round(d.cy - d.height * 0.5f)),
-                    static_cast<int>(std::round(d.width)),
-                    static_cast<int>(std::round(d.height)));
-                cv::rectangle(image, box & cv::Rect(0, 0, image.cols, image.rows),
-                              cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
-                cv::putText(image, "#" + std::to_string(i),
-                            cv::Point(std::max(0, box.x), std::max(18, box.y - 4)),
-                            cv::FONT_HERSHEY_SIMPLEX, 0.55,
-                            cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
-            }
-        };
-        draw_dets(left_bgr, job.left_detections);
-        draw_dets(right_bgr, job.right_detections);
-        cv::Mat panel;
-        cv::hconcat(std::vector<cv::Mat>{left_bgr, right_bgr}, panel);
-        putLine(panel, "frame=" + std::to_string(job.frame_id) +
-                " detections L=" + std::to_string(job.left_detections.size()) +
-                " R=" + std::to_string(job.right_detections.size()), 0);
-        return panel;
-    }
-
-    void writeSummaryJson(const RealtimeDebugDumpJob& job,
-                          const std::filesystem::path& path) {
-        std::ofstream out(path.string());
-        if (!out.is_open()) return;
-        out << "{\n";
-        out << "  \"frame_id\": " << job.frame_id << ",\n";
-        out << "  \"fps\": " << job.fps << ",\n";
-        out << "  \"left_count\": " << job.left_detections.size() << ",\n";
-        out << "  \"right_count\": " << job.right_detections.size() << ",\n";
-        out << "  \"result_count\": " << job.results.size() << ",\n";
-        out << "  \"frame_counter_delta\": "
-            << (static_cast<int64_t>(job.metadata.left_frame_counter) -
-                static_cast<int64_t>(job.metadata.right_frame_counter)) << ",\n";
-        out << "  \"frame_number_delta\": "
-            << (static_cast<int64_t>(job.metadata.left_frame_number) -
-                static_cast<int64_t>(job.metadata.right_frame_number)) << ",\n";
-        out << "  \"results\": [\n";
-        for (size_t i = 0; i < job.results.size(); ++i) {
-            const auto& obj = job.results[i];
-            out << "    {";
-            out << "\"index\": " << i
-                << ", \"match_source\": " << obj.stereo_match_source
-                << ", \"depth_source\": " << obj.stereo_depth_source
-                << ", \"left_circle_source\": " << obj.left_circle_source
-                << ", \"right_circle_source\": " << obj.right_circle_source
-                << ", \"z_bbox_center\": " << obj.z_bbox_center
-                << ", \"z_circle_center\": " << obj.z_circle_center
-                << ", \"z_roi_edge_centroid\": " << obj.z_roi_edge_centroid
-                << ", \"z_roi_radial_center\": " << obj.z_roi_radial_center
-                << ", \"z_roi_edge_pair_center\": " << obj.z_roi_edge_pair_center
-                << ", \"z_roi_multi_point\": " << obj.z_roi_multi_point
-                << ", \"z_roi_center_patch\": " << obj.z_roi_center_patch
-                << ", \"z_roi_cuda_template_match\": " << obj.z_roi_cuda_template_match
-                << ", \"z_roi_cuda_stereo_bm\": " << obj.z_roi_cuda_stereo_bm
-                << ", \"z_roi_cuda_stereo_sgm\": " << obj.z_roi_cuda_stereo_sgm
-                << ", \"z_fallback_epipolar\": " << obj.z_fallback_epipolar
-                << ", \"z_fallback\": " << obj.z_fallback
-                << ", \"pair_shifted_iou\": " << obj.pair_shifted_iou
-                << "}";
-            if (i + 1 < job.results.size()) out << ",";
-            out << "\n";
-        }
-        out << "  ]\n";
-        out << "}\n";
-    }
-
-    void writeJob(const RealtimeDebugDumpJob& job) {
-        namespace fs = std::filesystem;
-        std::ostringstream prefix;
-        prefix << "frame_" << std::setw(6) << std::setfill('0') << job.frame_id;
-        const fs::path root(cfg_.output_dir);
-
-        cv::Mat panel;
-        if (!job.results.empty()) {
-            std::vector<cv::Mat> panels;
-            for (size_t i = 0; i < job.results.size(); ++i) {
-                panels.push_back(makePanel(job, job.results[i], static_cast<int>(i)));
-            }
-            cv::vconcat(panels, panel);
-        } else {
-            panel = makeDetectionPanel(job);
-        }
-        cv::imwrite((root / (prefix.str() + "_zoom.png")).string(), panel);
-        writeSummaryJson(job, root / (prefix.str() + "_summary.json"));
-        ++saved_count_;
-    }
-
-    void writerLoop() {
-        while (true) {
-            RealtimeDebugDumpJob job;
-            {
-                std::unique_lock<std::mutex> lock(mtx_);
-                cv_.wait(lock, [this] { return !queue_.empty() || !running_; });
-                if (!running_ && queue_.empty()) break;
-                job = std::move(queue_.front());
-                queue_.pop_front();
-            }
-            try {
-                writeJob(job);
-            } catch (const cv::Exception& e) {
-                LOG_WARN("RealtimeDebugDumper: write failed frame=%d: %s",
-                         job.frame_id, e.what());
-            }
-        }
-    }
+    bool reserveSlot();
+    void releaseReservedSlot(bool enqueue, RealtimeDebugDumpJob* job);
+    static bool copyGray(VPIImage img, cv::Mat& out);
+    void writeJob(const RealtimeDebugDumpJob& job);
+    void writerLoop();
 
     RealtimeDebugDumpConfig cfg_;
     std::atomic<bool> running_{false};
