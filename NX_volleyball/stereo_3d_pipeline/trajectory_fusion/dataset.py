@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 
 METHOD_COLUMNS = (
@@ -36,8 +36,6 @@ METHOD_COLUMNS = (
     ("epipolar_fallback", "z_fallback"),
     ("fallback_template", "z_fallback_template"),
     ("fallback_feature_points", "z_fallback_feature_points"),
-    ("stereo", "z_stereo"),
-    ("online", "z"),
 )
 METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
 
@@ -48,6 +46,7 @@ class LegacySequence:
 
     track_id: int
     rows: List[Dict[str, float]]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def length(self) -> int:
@@ -72,6 +71,72 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _parse_metadata_value(value: str) -> Any:
+    value = value.strip()
+    if value == "" or value.lower() in {"null", "none", "~"}:
+        return None
+    if value.lower() in {"true", "yes", "on"}:
+        return True
+    if value.lower() in {"false", "no", "off"}:
+        return False
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    try:
+        if any(ch in value for ch in (".", "e", "E")):
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def read_metadata(path: str | Path | None) -> Dict[str, Any]:
+    """Read optional weak-label metadata.
+
+    PyYAML is used when present. A minimal key/value parser is kept as a
+    dependency-free fallback for the flat metadata files recommended in the
+    wiki.
+    """
+
+    if path is None:
+        return {}
+    meta_path = Path(path)
+    if not meta_path.exists():
+        return {}
+    text = meta_path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(text)
+        return dict(loaded or {}) if isinstance(loaded, dict) else {}
+    except ImportError:
+        pass
+
+    metadata: Dict[str, Any] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = _parse_metadata_value(value)
+    return metadata
+
+
+def find_metadata_for_csv(path: str | Path) -> Path | None:
+    """Find a sidecar metadata file for a trajectory CSV."""
+
+    csv_path = Path(path)
+    candidates = (
+        csv_path.with_suffix(".metadata.yaml"),
+        csv_path.with_suffix(".metadata.yml"),
+        csv_path.parent / "metadata.yaml",
+        csv_path.parent / "metadata.yml",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def read_csv_rows(path: str | Path) -> List[Dict[str, str]]:
     """Read CSV rows while tolerating accidental NUL bytes in log files."""
 
@@ -80,9 +145,14 @@ def read_csv_rows(path: str | Path) -> List[Dict[str, str]]:
     return list(csv.DictReader(io.StringIO(text)))
 
 
-def load_legacy_sequences(path: str | Path, min_track_len: int = 3) -> List[LegacySequence]:
+def load_legacy_sequences(
+    path: str | Path,
+    min_track_len: int = 3,
+    metadata_path: str | Path | None = None,
+) -> List[LegacySequence]:
     """Load current trajectory recorder CSV and group rows by track_id."""
 
+    metadata = read_metadata(metadata_path or find_metadata_for_csv(path))
     grouped: Dict[int, List[Dict[str, float]]] = {}
     for row in read_csv_rows(path):
         track_id = _safe_int(row.get("track_id"), -1)
@@ -129,6 +199,7 @@ def load_legacy_sequences(path: str | Path, min_track_len: int = 3) -> List[Lega
             "z_fallback_template": _safe_float(row.get("z_fallback_template"), -1.0),
             "z_fallback_feature_points": _safe_float(row.get("z_fallback_feature_points"), -1.0),
             "z_stereo": _safe_float(row.get("z_stereo"), -1.0),
+            "z": _safe_float(row.get("z"), -1.0),
             "depth_method": _safe_float(row.get("depth_method")),
             "confidence": _safe_float(row.get("confidence"), 1.0),
             "class_id": _safe_float(row.get("class_id"), 0.0),
@@ -160,6 +231,14 @@ def load_legacy_sequences(path: str | Path, min_track_len: int = 3) -> List[Lega
             "disparity_subpixel": _safe_float(row.get("disparity_subpixel"), -1.0),
             "epipolar_dy": _safe_float(row.get("epipolar_dy"), -1.0),
             "size_ratio": _safe_float(row.get("size_ratio"), -1.0),
+            "pair_initial_disparity": _safe_float(row.get("pair_initial_disparity"), -1.0),
+            "pair_epipolar_dy": _safe_float(row.get("pair_epipolar_dy"), -1.0),
+            "pair_y_tolerance": _safe_float(row.get("pair_y_tolerance"), -1.0),
+            "pair_size_ratio": _safe_float(row.get("pair_size_ratio"), -1.0),
+            "pair_shifted_iou": _safe_float(row.get("pair_shifted_iou"), -1.0),
+            "pair_score": _safe_float(row.get("pair_score"), 0.0),
+            "pair_bbox_prior_penalty": _safe_float(row.get("pair_bbox_prior_penalty"), 0.0),
+            "pair_positive_disparity": _safe_float(row.get("pair_positive_disparity"), 0.0),
             "left_circle_conf": _safe_float(row.get("left_circle_conf"), 0.0),
             "right_circle_conf": _safe_float(row.get("right_circle_conf"), 0.0),
             "subpixel_valid": _safe_float(row.get("subpixel_valid"), 0.0),
@@ -236,7 +315,7 @@ def load_legacy_sequences(path: str | Path, min_track_len: int = 3) -> List[Lega
     for track_id, rows in grouped.items():
         rows.sort(key=lambda r: (r["timestamp"], r["frame_id"]))
         if len(rows) >= min_track_len:
-            sequences.append(LegacySequence(track_id=track_id, rows=rows))
+            sequences.append(LegacySequence(track_id=track_id, rows=rows, metadata=metadata))
     sequences.sort(key=lambda seq: seq.track_id)
     return sequences
 
@@ -246,12 +325,11 @@ def legacy_feature_names() -> List[str]:
 
     return [
         "dt",
-        "x",
-        "y",
-        "z",
-        "vx",
-        "vy",
-        "vz",
+        "candidate_median_z",
+        "candidate_mad_z",
+        "candidate_valid_count",
+        "candidate_dz",
+        "candidate_ddz",
         "z_mono",
         "z_bbox_center",
         "z_bbox_left_edge",
@@ -277,7 +355,6 @@ def legacy_feature_names() -> List[str]:
         "z_fallback",
         "z_fallback_template",
         "z_fallback_feature_points",
-        "z_stereo",
         "confidence",
         "class_id",
         "disparity_bbox_center",
@@ -305,6 +382,14 @@ def legacy_feature_names() -> List[str]:
         "disparity_fallback_feature_points",
         "epipolar_dy",
         "size_ratio",
+        "pair_initial_disparity",
+        "pair_epipolar_dy",
+        "pair_y_tolerance",
+        "pair_size_ratio",
+        "pair_shifted_iou",
+        "pair_score",
+        "pair_bbox_prior_penalty",
+        "pair_positive_disparity",
         "left_circle_conf",
         "right_circle_conf",
         "subpixel_valid",
@@ -347,14 +432,9 @@ def legacy_feature_names() -> List[str]:
         "fallback_feature_points_std_px",
         "fallback_feature_points_confidence",
         "raw_observation_valid",
-        "predicted_z",
-        "innovation_z",
-        "innovation_norm",
-        "kalman_sigma_z",
         "left_circle_source",
         "right_circle_source",
         "stereo_match_source",
-        "stereo_depth_source",
         "frame_counter_delta",
         "frame_number_delta",
         "timestamp_delta_us",
@@ -374,10 +454,57 @@ def legacy_feature_names() -> List[str]:
         "right_circle_cx",
         "right_circle_cy",
         "right_circle_r",
-        "method_is_mono",
-        "method_is_stereo",
-        "method_is_blend",
         *[f"{name}_valid" for name in METHOD_NAMES],
+    ]
+
+
+def _metadata_float(metadata: Dict[str, Any], keys: Sequence[str], default: float = 0.0) -> float:
+    for key in keys:
+        value = metadata.get(key)
+        if value is not None:
+            return _safe_float(value, default)
+    return default
+
+
+def _metadata_bool(metadata: Dict[str, Any], keys: Sequence[str], default: bool = False) -> bool:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().lower() in {"1", "true", "yes", "on", "static"}
+    return default
+
+
+def _median(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return 0.5 * (ordered[mid - 1] + ordered[mid])
+
+
+def _mad(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    med = _median(values)
+    return _median([abs(value - med) for value in values])
+
+
+def weak_label_names() -> List[str]:
+    """Weak-label tensor order used by build_legacy_arrays()."""
+
+    return [
+        "known_z",
+        "known_z_valid",
+        "known_z_min",
+        "known_z_max",
+        "known_z_range_valid",
+        "static",
+        "landing_frame",
+        "landing_frame_valid",
     ]
 
 
@@ -390,7 +517,24 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
     features: List[List[float]] = []
     measurements: List[List[float]] = []
     valid: List[List[float]] = []
+    labels: List[List[float]] = []
     prev_ts = None
+    prev_median_z = 0.0
+    prev_candidate_dz = 0.0
+    have_prev_median = False
+    metadata = sequence.metadata
+    known_z = _metadata_float(metadata, ("known_z_m", "known_z", "known_distance_m"), 0.0)
+    known_z_tol = _metadata_float(metadata, ("known_z_tolerance_m", "known_z_tolerance"), 0.0)
+    known_z_min = _metadata_float(metadata, ("known_z_min_m", "known_z_min"), 0.0)
+    known_z_max = _metadata_float(metadata, ("known_z_max_m", "known_z_max"), 0.0)
+    if known_z > 0.0 and known_z_tol > 0.0 and (known_z_min <= 0.0 or known_z_max <= 0.0):
+        known_z_min = known_z - known_z_tol
+        known_z_max = known_z + known_z_tol
+    known_z_valid = 1.0 if known_z > 0.0 else 0.0
+    known_z_range_valid = 1.0 if known_z_min > 0.0 and known_z_max > known_z_min else 0.0
+    static_flag = 1.0 if _metadata_bool(metadata, ("static", "is_static"), False) else 0.0
+    landing_frame = _metadata_float(metadata, ("landing_frame",), -1.0)
+    landing_frame_valid = 1.0 if landing_frame >= 0.0 else 0.0
 
     for row in sequence.rows:
         ts = row["timestamp"]
@@ -400,7 +544,6 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
             dt = max(1e-4, min(0.2, ts - prev_ts))
         prev_ts = ts
 
-        method = int(row["depth_method"])
         measurements_row = []
         valid_row = []
         for _, key in METHOD_COLUMNS:
@@ -411,16 +554,29 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
         valid_by_key = {
             key: valid_row[idx] for idx, (_, key) in enumerate(METHOD_COLUMNS)
         }
+        candidate_values = [value for value, is_valid in zip(measurements_row, valid_row) if is_valid > 0.0]
+        candidate_median_z = _median(candidate_values)
+        candidate_mad_z = _mad(candidate_values)
+        candidate_valid_count = float(len(candidate_values))
+        if have_prev_median:
+            candidate_dz = (candidate_median_z - prev_median_z) / dt
+            candidate_ddz = (candidate_dz - prev_candidate_dz) / dt
+        else:
+            candidate_dz = 0.0
+            candidate_ddz = 0.0
+        if candidate_valid_count > 0.0:
+            prev_median_z = candidate_median_z
+            prev_candidate_dz = candidate_dz
+            have_prev_median = True
 
         features.append(
             [
                 dt,
-                row["x"],
-                row["y"],
-                row["z"],
-                row["vx"],
-                row["vy"],
-                row["vz"],
+                candidate_median_z,
+                candidate_mad_z,
+                candidate_valid_count,
+                candidate_dz,
+                candidate_ddz,
                 row["z_mono"] if valid_by_key["z_mono"] else 0.0,
                 row["z_bbox_center"] if valid_by_key["z_bbox_center"] else 0.0,
                 row["z_bbox_left_edge"] if valid_by_key["z_bbox_left_edge"] else 0.0,
@@ -446,7 +602,6 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["z_fallback"] if valid_by_key["z_fallback"] else 0.0,
                 row["z_fallback_template"] if valid_by_key["z_fallback_template"] else 0.0,
                 row["z_fallback_feature_points"] if valid_by_key["z_fallback_feature_points"] else 0.0,
-                row["z_stereo"] if valid_by_key["z_stereo"] else 0.0,
                 row["confidence"],
                 row["class_id"],
                 row["disparity_bbox_center"],
@@ -474,6 +629,14 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["disparity_fallback_feature_points"],
                 row["epipolar_dy"],
                 row["size_ratio"],
+                row["pair_initial_disparity"],
+                row["pair_epipolar_dy"],
+                row["pair_y_tolerance"],
+                row["pair_size_ratio"],
+                row["pair_shifted_iou"],
+                row["pair_score"],
+                row["pair_bbox_prior_penalty"],
+                row["pair_positive_disparity"],
                 row["left_circle_conf"],
                 row["right_circle_conf"],
                 row["subpixel_valid"],
@@ -516,14 +679,9 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["fallback_feature_points_std_px"],
                 row["fallback_feature_points_confidence"],
                 row["raw_observation_valid"],
-                row["predicted_z"] if row["predicted_z"] > 0.0 else 0.0,
-                row["innovation_z"],
-                row["innovation_norm"],
-                row["kalman_sigma_z"] if row["kalman_sigma_z"] > 0.0 else 0.0,
                 row["left_circle_source"],
                 row["right_circle_source"],
                 row["stereo_match_source"],
-                row["stereo_depth_source"],
                 row["frame_counter_delta"],
                 row["frame_number_delta"],
                 row["timestamp_delta_us"],
@@ -543,16 +701,25 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["right_circle_cx"],
                 row["right_circle_cy"],
                 row["right_circle_r"],
-                1.0 if method == 0 else 0.0,
-                1.0 if method == 1 else 0.0,
-                1.0 if method == 2 else 0.0,
                 *valid_row,
             ]
         )
         measurements.append(measurements_row)
         valid.append(valid_row)
+        labels.append(
+            [
+                known_z,
+                known_z_valid,
+                known_z_min,
+                known_z_max,
+                known_z_range_valid,
+                static_flag,
+                landing_frame,
+                landing_frame_valid,
+            ]
+        )
 
-    return {"features": features, "measurements": measurements, "valid": valid}
+    return {"features": features, "measurements": measurements, "valid": valid, "labels": labels}
 
 
 def iter_extended_rows(path: str | Path) -> Iterable[Dict[str, str]]:

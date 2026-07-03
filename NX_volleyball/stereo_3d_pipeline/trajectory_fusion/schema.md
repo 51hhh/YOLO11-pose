@@ -33,7 +33,7 @@
 | x,y,z | float | 当前在线输出位置；`raw_mode=true` 时为未滤波观测，否则为滤波后状态 |
 | vx,vy,vz | float | 当前速度估计 |
 | ax,ay,az | float | 当前加速度估计 |
-| depth_method | int | 在线最终深度融合方法，0=单目,1=双目,2=融合 |
+| depth_method | int | 在线 legacy 输出的深度来源方法，0=单目,1=双目,2=融合；训练候选不要把它当标签 |
 | confidence | float | 当前 3D 观测或融合置信度 |
 
 ## 检测和几何字段
@@ -106,8 +106,8 @@
 | z_fallback | float | 极线 fallback 测距 |
 | z_fallback_template | float | 单侧漏检时极线模板搜索 fallback 测距 |
 | z_fallback_feature_points | float | 单侧漏检时极线特征点搜索 fallback 测距 |
-| z_stereo | float | 当前在线选择的双目测距观测，不是独立取点方法 |
-| z | float | 当前在线 HybridDepth 输出；基础状态字段中也会写出，用于兼容宽表读取 |
+| z_stereo | float | 当前在线 first-usable 兼容选择的双目测距观测，不是独立取点方法；训练候选不要读取它 |
+| z | float | 当前在线输出/状态字段；基础状态字段中也会写出，用于兼容宽表读取；不要作为训练候选或标签 |
 | disparity_bbox_center | float | bbox 中心视差 |
 | disparity_bbox_left_edge | float | bbox 左边缘视差 |
 | disparity_bbox_right_edge | float | bbox 右边缘视差 |
@@ -173,8 +173,8 @@
 | fallback_feature_points_std_px | float | 单侧漏检特征 fallback 视差标准差 |
 | fallback_feature_points_confidence | float | 单侧漏检特征 fallback 置信度 |
 | stereo_match_source | int | 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback |
-| stereo_depth_source | int | 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT-lite,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征 |
-| depth_method | int | 在线最终选择的方法，0=单目,1=双目,2=融合 |
+| stereo_depth_source | int | legacy `z_stereo` first-usable 选择来源；0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征 |
+| depth_method | int | 在线 legacy 输出的深度来源方法，0=单目,1=双目,2=融合；只用于诊断/baseline |
 
 ## 训练标签/诊断字段
 
