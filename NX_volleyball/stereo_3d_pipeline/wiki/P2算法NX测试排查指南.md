@@ -71,8 +71,8 @@ logs/<case>.debug_realtime_dump.log
 |---|---|---|
 | `diagnosis` | 脚本按日志和 CSV 给出的第一层归因 | 先看这一列 |
 | `algo_stage` | 当前 case 对应的算法 profiler 名 | 例如 `Stage2_OpenCVCudaStereoSGM` |
-| `algo avg/max` | 当前算法本身平均/最大耗时 | 判断算法是否慢 |
-| `worker avg/max` | 完整 async ROI Stage2 耗时 | 判断算法之外的 gate/拷贝/整理是否慢 |
+| `algo avg/p95/max` | 当前算法本身平均、p95 和最大耗时 | 判断算法是否慢，准入优先看 p95 |
+| `worker avg/p95/max` | 完整 async ROI Stage2 平均、p95 和最大耗时 | 判断算法之外的 gate/拷贝/整理是否慢 |
 | `over_deadline` | worker 超过 `async_roi_deadline_ms` 的次数 | 大于 0 表示结果可能迟到 |
 | `stale/expired` | stale result、stale ready、expired pending、主线程 stale ROI 之和 | 大于 0 表示架构丢弃了过期结果 |
 | `queue_drop` | pending/no-buffer/submit drop 之和 | 大于 0 表示 async 队列或 buffer 不够 |
@@ -93,8 +93,8 @@ logs/<case>.debug_realtime_dump.log
 
 判断方法:
 
-- `algo avg/max` 高，`worker avg/max` 也高: 算法本身慢。
-- `algo avg/max` 低，`worker avg/max` 高: 问题在图像拷贝、CPU gate、候选整理、写回或其他 stage。
+- `algo avg/p95/max` 高，`worker avg/p95/max` 也高: 算法本身慢。
+- `algo avg/p95/max` 低，`worker avg/p95/max` 高: 问题在图像拷贝、CPU gate、候选整理、写回或其他 stage。
 - `over_deadline > 0`: worker 有实际超时。
 - `stale/expired > 0`: 结果被 deadline/stale 规则丢弃。
 - `fps` 接近 100 但 `candidate_valid` 很低: 主循环没被拖死，但候选迟到或 gate 后无效。
@@ -228,9 +228,9 @@ python3 tools/neural_feature_probe.py \
 
 | 现象 | 首看字段 | 下一步 |
 |---|---|---|
-| FPS 低 | `worker avg/max`, `algo avg/max` | 如果 `algo` 高，缩 ROI/top-k/点数；如果 worker 高，看 host gray、copy wait、CPU gate |
+| FPS 低 | `worker avg/p95/max`, `algo avg/p95/max` | 如果 `algo` 高，缩 ROI/top-k/点数；如果 worker 高，看 host gray、copy wait、CPU gate |
 | FPS 正常但无候选 | `candidate_valid`, `accepted`, `diagnosis` | 跑 `--debug-on-failure`，看检测框和 ROI |
-| `over_deadline` 高 | `algo max`, `worker max`, `stale/expired` | 算法进 diagnostic lane 或优化 GPU 后处理 |
+| `over_deadline` 高 | `algo p95/max`, `worker p95/max`, `stale/expired` | 算法进 diagnostic lane 或优化 GPU 后处理 |
 | `host_gray` 非 0 | `async_need_host_gray_count` | 确认是否误开 CPU BRISK/AKAZE/SIFT/fallback |
 | `accepted` 高、zoom 少 | `frame_cb_skip` | 正常 slot 复用现象；看 CSV，不用 frame callback 判断结果 |
 | no engine | `status=skipped_missing_engine` | 先用模型转换脚本生成对应 TensorRT engine |

@@ -22,7 +22,7 @@
 - [ ] 增加 P2 attempted/not_attempted/valid/reject reason 统计，避免把未触发当成无效。
 - [ ] 将整帧 async snapshot 优化为 realtime ROI pack / diagnostic full snapshot 分层。
 - [ ] 评估固定自研 CUDA P2 pipeline 是否适合 CUDA Graph 降低 launch overhead。
-- [ ] profiler 增加 p50/p90/p95/p99 和 drop/accepted ratio，用于 P2 准入。
+- [x] profiler 增加 p50/p90/p95/p99，用于 P2 准入；drop/accepted ratio 继续由矩阵脚本统计。
 - [ ] debug 特殊情况才下载 score map、disparity map、keypoint/match 可视化数据。
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
 - [ ] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。

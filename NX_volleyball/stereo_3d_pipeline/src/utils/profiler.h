@@ -16,6 +16,8 @@
 #include <unordered_map>
 #include <mutex>
 #include <cmath>
+#include <algorithm>
+#include <vector>
 
 // NVTX 标记 (仅在安装 nsys 时启用)
 #ifdef USE_NVTX
@@ -75,8 +77,22 @@ public:
         double max_ms    = 0.0;
         double min_ms    = 1e9;
         int count        = 0;
+        std::vector<double> samples_ms;
 
         double avgMs() const { return count > 0 ? sum_ms / count : 0.0; }
+
+        double percentile(double q) const {
+            if (samples_ms.empty()) return 0.0;
+            std::vector<double> sorted = samples_ms;
+            std::sort(sorted.begin(), sorted.end());
+            const double clamped = std::clamp(q, 0.0, 1.0);
+            const double pos = clamped * static_cast<double>(sorted.size() - 1);
+            const size_t lo = static_cast<size_t>(std::floor(pos));
+            const size_t hi = static_cast<size_t>(std::ceil(pos));
+            if (lo == hi) return sorted[lo];
+            const double frac = pos - static_cast<double>(lo);
+            return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
+        }
     };
 
     void record(const std::string& name, double ms) {
@@ -86,16 +102,25 @@ public:
         s.count++;
         if (ms > s.max_ms) s.max_ms = ms;
         if (ms < s.min_ms) s.min_ms = ms;
+        if (s.samples_ms.size() < kMaxSamplesPerStage) {
+            s.samples_ms.push_back(ms);
+        } else {
+            s.samples_ms[static_cast<size_t>(s.count) % kMaxSamplesPerStage] = ms;
+        }
     }
 
     void printReport() const {
         std::lock_guard<std::mutex> lock(mu_);
         fprintf(stderr, "\n===== Pipeline Performance Report =====\n");
-        fprintf(stderr, "%-25s %8s %8s %8s %8s\n", "Stage", "Avg(ms)", "Min(ms)", "Max(ms)", "Count");
-        fprintf(stderr, "--------------------------------------------------------------\n");
+        fprintf(stderr, "%-25s %8s %8s %8s %8s %8s %8s %8s %8s\n",
+                "Stage", "Avg(ms)", "Min(ms)", "Max(ms)", "Count",
+                "P50", "P90", "P95", "P99");
+        fprintf(stderr, "------------------------------------------------------------------------------------------------\n");
         for (const auto& [name, s] : stats_) {
-            fprintf(stderr, "%-25s %8.2f %8.2f %8.2f %8d\n",
-                    name.c_str(), s.avgMs(), s.min_ms, s.max_ms, s.count);
+            fprintf(stderr, "%-25s %8.2f %8.2f %8.2f %8d %8.2f %8.2f %8.2f %8.2f\n",
+                    name.c_str(), s.avgMs(), s.min_ms, s.max_ms, s.count,
+                    s.percentile(0.50), s.percentile(0.90),
+                    s.percentile(0.95), s.percentile(0.99));
         }
         fprintf(stderr, "==============================================\n\n");
     }
@@ -106,6 +131,7 @@ public:
     }
 
 private:
+    static constexpr size_t kMaxSamplesPerStage = 50000;
     mutable std::mutex mu_;
     std::unordered_map<std::string, Stats> stats_;
 };
