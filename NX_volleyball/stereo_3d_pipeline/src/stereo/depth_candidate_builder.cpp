@@ -149,6 +149,48 @@ DepthCandidateBuildResult buildDepthCandidateObservations(
         in.patch_iou_color_edge_result.anchor_cy);
     addCandidate(
         &out.candidates,
+        DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH,
+        in.cuda_template_match_result.valid
+            ? in.cuda_template_match_result.disparity
+            : -1.0f,
+        in.z_roi_cuda_template_match,
+        in.cuda_template_match_result.confidence,
+        confidenceBlend(0.58f, 0.30f,
+                        in.cuda_template_match_result.confidence),
+        in.cuda_template_match_result.stddev,
+        in.cuda_template_match_result.support,
+        in.cuda_template_match_result.anchor_cx,
+        in.cuda_template_match_result.anchor_cy);
+    addCandidate(
+        &out.candidates,
+        DepthCandidateMethod::ROI_CUDA_STEREO_BM,
+        in.cuda_stereo_bm_result.valid
+            ? in.cuda_stereo_bm_result.disparity
+            : -1.0f,
+        in.z_roi_cuda_stereo_bm,
+        in.cuda_stereo_bm_result.confidence,
+        confidenceBlend(0.54f, 0.28f,
+                        in.cuda_stereo_bm_result.confidence),
+        in.cuda_stereo_bm_result.stddev,
+        in.cuda_stereo_bm_result.support,
+        in.cuda_stereo_bm_result.anchor_cx,
+        in.cuda_stereo_bm_result.anchor_cy);
+    addCandidate(
+        &out.candidates,
+        DepthCandidateMethod::ROI_CUDA_STEREO_SGM,
+        in.cuda_stereo_sgm_result.valid
+            ? in.cuda_stereo_sgm_result.disparity
+            : -1.0f,
+        in.z_roi_cuda_stereo_sgm,
+        in.cuda_stereo_sgm_result.confidence,
+        confidenceBlend(0.56f, 0.30f,
+                        in.cuda_stereo_sgm_result.confidence),
+        in.cuda_stereo_sgm_result.stddev,
+        in.cuda_stereo_sgm_result.support,
+        in.cuda_stereo_sgm_result.anchor_cx,
+        in.cuda_stereo_sgm_result.anchor_cy);
+    addCandidate(
+        &out.candidates,
         DepthCandidateMethod::ROI_NEURAL_FEATURE,
         in.neural_feature_result.valid ? in.neural_feature_result.disparity
                                        : -1.0f,

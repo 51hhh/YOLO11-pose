@@ -44,6 +44,12 @@ struct DepthCandidateBuilderInput {
     float z_roi_iou_region_color_patch = -1.0f;
     SparseFeatureDisparityResult patch_iou_color_edge_result;
     float z_roi_patch_iou_color_edge = -1.0f;
+    SparseFeatureDisparityResult cuda_template_match_result;
+    float z_roi_cuda_template_match = -1.0f;
+    SparseFeatureDisparityResult cuda_stereo_bm_result;
+    float z_roi_cuda_stereo_bm = -1.0f;
+    SparseFeatureDisparityResult cuda_stereo_sgm_result;
+    float z_roi_cuda_stereo_sgm = -1.0f;
     SparseFeatureDisparityResult neural_feature_result;
     float z_roi_neural_feature = -1.0f;
     SparseFeatureDisparityResult corner_points_result;

@@ -61,6 +61,9 @@ const char* depthCandidateMethodName(DepthCandidateMethod method) {
     case DepthCandidateMethod::ROI_SIFT_POINTS: return "roi_sift_points";
     case DepthCandidateMethod::ROI_IOU_REGION_COLOR_PATCH: return "roi_iou_region_color_patch";
     case DepthCandidateMethod::ROI_PATCH_IOU_COLOR_EDGE: return "roi_patch_iou_color_edge";
+    case DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH: return "roi_cuda_template_match";
+    case DepthCandidateMethod::ROI_CUDA_STEREO_BM: return "roi_cuda_stereo_bm";
+    case DepthCandidateMethod::ROI_CUDA_STEREO_SGM: return "roi_cuda_stereo_sgm";
     case DepthCandidateMethod::ROI_NEURAL_FEATURE: return "roi_neural_feature";
     case DepthCandidateMethod::ROI_CENTER_PATCH: return "roi_center_patch";
     case DepthCandidateMethod::ROI_MULTI_POINT: return "roi_multi_point";
@@ -114,6 +117,12 @@ int stereoDepthSourceForMethod(DepthCandidateMethod method) {
         return 18;
     case DepthCandidateMethod::ROI_PATCH_IOU_COLOR_EDGE:
         return 19;
+    case DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH:
+        return 21;
+    case DepthCandidateMethod::ROI_CUDA_STEREO_BM:
+        return 22;
+    case DepthCandidateMethod::ROI_CUDA_STEREO_SGM:
+        return 23;
     case DepthCandidateMethod::ROI_NEURAL_FEATURE:
         return 20;
     case DepthCandidateMethod::CIRCLE_LEFT_EDGE:
@@ -190,6 +199,9 @@ bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate) {
     case DepthCandidateMethod::ROI_SIFT_POINTS:
     case DepthCandidateMethod::ROI_IOU_REGION_COLOR_PATCH:
     case DepthCandidateMethod::ROI_PATCH_IOU_COLOR_EDGE:
+    case DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH:
+    case DepthCandidateMethod::ROI_CUDA_STEREO_BM:
+    case DepthCandidateMethod::ROI_CUDA_STEREO_SGM:
     case DepthCandidateMethod::ROI_NEURAL_FEATURE:
         return false;
     }

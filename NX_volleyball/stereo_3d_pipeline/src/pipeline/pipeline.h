@@ -144,6 +144,9 @@ struct PipelineConfig {
         bool depth_roi_sift_points = false; ///< 计算 ROI OpenCV CPU SIFT 特征点视差候选
         bool depth_roi_iou_region_color_patch = false; ///< 计算 ROI 彩色区域 IoU/patch 视差候选
         bool depth_roi_patch_iou_color_edge = false; ///< 计算 ROI 彩色边缘 IoU/patch 视差候选
+        bool depth_roi_cuda_template_match = false; ///< 计算 OpenCV CUDA TemplateMatching 小 ROI 极线视差候选
+        bool depth_roi_cuda_stereo_bm = false; ///< 计算 OpenCV CUDA StereoBM 小 ROI dense 视差候选
+        bool depth_roi_cuda_stereo_sgm = false; ///< 计算 OpenCV CUDA StereoSGM 小 ROI dense 视差候选
         bool depth_roi_center_patch = false; ///< 计算 ROI 中心 patch ZNCC 视差候选
         bool depth_roi_subpixel = true;    ///< 计算 ROI 多点亚像素视差候选
         bool depth_epipolar_fallback = true; ///< 单目漏检时启用有界极线搜索候选

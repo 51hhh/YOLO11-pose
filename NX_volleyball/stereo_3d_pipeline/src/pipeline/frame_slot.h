@@ -80,6 +80,9 @@ struct Object3D {
     float z_roi_sift_points;///< ROI SIFT 特征点视差测距, -1=无效
     float z_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差测距, -1=无效
     float z_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差测距, -1=无效
+    float z_roi_cuda_template_match;///< OpenCV CUDA TemplateMatching ROI 极线视差测距, -1=无效
+    float z_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差测距, -1=无效
+    float z_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差测距, -1=无效
     float z_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差测距, -1=无效
     float z_roi_center_patch; ///< ROI 中心 patch ZNCC 视差测距, -1=无效
     float z_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差测距, -1=无效
@@ -107,6 +110,9 @@ struct Object3D {
     float disparity_roi_sift_points;///< ROI SIFT 特征点视差, -1=无效
     float disparity_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差, -1=无效
     float disparity_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差, -1=无效
+    float disparity_roi_cuda_template_match;///< OpenCV CUDA TemplateMatching ROI 极线视差, -1=无效
+    float disparity_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差, -1=无效
+    float disparity_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差, -1=无效
     float disparity_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差, -1=无效
     float disparity_roi_center_patch; ///< ROI 中心 patch ZNCC 视差, -1=无效
     float disparity_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差, -1=无效
@@ -158,6 +164,15 @@ struct Object3D {
     int roi_patch_iou_color_edge_support; ///< ROI 彩色边缘有效匹配点数
     float roi_patch_iou_color_edge_std_px; ///< ROI 彩色边缘视差标准差
     float roi_patch_iou_color_edge_confidence; ///< ROI 彩色边缘匹配置信度
+    int roi_cuda_template_match_support; ///< OpenCV CUDA TemplateMatching 有效匹配点数
+    float roi_cuda_template_match_std_px; ///< OpenCV CUDA TemplateMatching 视差标准差
+    float roi_cuda_template_match_confidence; ///< OpenCV CUDA TemplateMatching 匹配置信度
+    int roi_cuda_stereo_bm_support; ///< OpenCV CUDA StereoBM 有效采样点数
+    float roi_cuda_stereo_bm_std_px; ///< OpenCV CUDA StereoBM 视差标准差
+    float roi_cuda_stereo_bm_confidence; ///< OpenCV CUDA StereoBM 匹配置信度
+    int roi_cuda_stereo_sgm_support; ///< OpenCV CUDA StereoSGM 有效采样点数
+    float roi_cuda_stereo_sgm_std_px; ///< OpenCV CUDA StereoSGM 视差标准差
+    float roi_cuda_stereo_sgm_confidence; ///< OpenCV CUDA StereoSGM 匹配置信度
     int roi_neural_feature_support; ///< ROI 神经特征有效匹配点数
     float roi_neural_feature_std_px; ///< ROI 神经特征视差标准差
     float roi_neural_feature_confidence; ///< ROI 神经特征匹配置信度
@@ -173,7 +188,7 @@ struct Object3D {
     float pair_bbox_prior_penalty; ///< bbox 物理视差一致性排序惩罚
     int pair_positive_disparity; ///< 1=直接 pair 正视差且未超过 max_disparity
     int stereo_match_source; ///< 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback
-    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征
+    int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征,21=CUDA模板匹配,22=CUDA StereoBM,23=CUDA StereoSGM
     uint64_t left_timestamp_us;  ///< 左目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint64_t right_timestamp_us; ///< 右目 SDK 时间戳原值, 海康 USB 当前实测为 ns
     uint32_t left_frame_number;  ///< 左目 SDK 帧号
@@ -205,6 +220,9 @@ struct Object3D {
                  z_roi_akaze_points(-1), z_roi_sift_points(-1),
                  z_roi_iou_region_color_patch(-1),
                  z_roi_patch_iou_color_edge(-1),
+                 z_roi_cuda_template_match(-1),
+                 z_roi_cuda_stereo_bm(-1),
+                 z_roi_cuda_stereo_sgm(-1),
                  z_roi_neural_feature(-1),
                  z_roi_center_patch(-1),
                  z_roi_multi_point(-1),
@@ -221,6 +239,9 @@ struct Object3D {
                  disparity_roi_akaze_points(-1), disparity_roi_sift_points(-1),
                  disparity_roi_iou_region_color_patch(-1),
                  disparity_roi_patch_iou_color_edge(-1),
+                 disparity_roi_cuda_template_match(-1),
+                 disparity_roi_cuda_stereo_bm(-1),
+                 disparity_roi_cuda_stereo_sgm(-1),
                  disparity_roi_neural_feature(-1),
                  disparity_roi_center_patch(-1),
                  disparity_roi_multi_point(-1), disparity_fallback_template(-1),
@@ -257,6 +278,15 @@ struct Object3D {
                  roi_patch_iou_color_edge_support(0),
                  roi_patch_iou_color_edge_std_px(-1),
                  roi_patch_iou_color_edge_confidence(0),
+                 roi_cuda_template_match_support(0),
+                 roi_cuda_template_match_std_px(-1),
+                 roi_cuda_template_match_confidence(0),
+                 roi_cuda_stereo_bm_support(0),
+                 roi_cuda_stereo_bm_std_px(-1),
+                 roi_cuda_stereo_bm_confidence(0),
+                 roi_cuda_stereo_sgm_support(0),
+                 roi_cuda_stereo_sgm_std_px(-1),
+                 roi_cuda_stereo_sgm_confidence(0),
                  roi_neural_feature_support(0), roi_neural_feature_std_px(-1),
                  roi_neural_feature_confidence(0),
                  fallback_feature_points_support(0), fallback_feature_points_std_px(-1),

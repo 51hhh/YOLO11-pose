@@ -332,11 +332,15 @@ private:
         putLine(panel, "edgepair=" + fmt(obj.z_roi_edge_pair_center) +
                 " multi=" + fmt(obj.z_roi_multi_point) +
                 " patch=" + fmt(obj.z_roi_center_patch) +
-                " fb=" + fmt(obj.z_fallback), 2);
-        putLine(panel, "pair_iou=" + fmt(obj.pair_shifted_iou) +
+                " tmpl=" + fmt(obj.z_roi_cuda_template_match), 2);
+        putLine(panel, "cuda_bm=" + fmt(obj.z_roi_cuda_stereo_bm) +
+                " cuda_sgm=" + fmt(obj.z_roi_cuda_stereo_sgm) +
+                " fb=" + fmt(obj.z_fallback), 3);
+        putLine(panel,
+                " pair_iou=" + fmt(obj.pair_shifted_iou) +
                 " Lsrc=" + std::to_string(obj.left_circle_source) +
-                " Rsrc=" + std::to_string(obj.right_circle_source) +
-                " dy=" + fmt(obj.epipolar_dy, 2), 3);
+                " Rsrc=" + std::to_string(obj.right_circle_source), 4);
+        putLine(panel, "dy=" + fmt(obj.epipolar_dy, 2), 5);
         return panel;
     }
 
@@ -404,6 +408,9 @@ private:
                 << ", \"z_roi_edge_pair_center\": " << obj.z_roi_edge_pair_center
                 << ", \"z_roi_multi_point\": " << obj.z_roi_multi_point
                 << ", \"z_roi_center_patch\": " << obj.z_roi_center_patch
+                << ", \"z_roi_cuda_template_match\": " << obj.z_roi_cuda_template_match
+                << ", \"z_roi_cuda_stereo_bm\": " << obj.z_roi_cuda_stereo_bm
+                << ", \"z_roi_cuda_stereo_sgm\": " << obj.z_roi_cuda_stereo_sgm
                 << ", \"z_fallback\": " << obj.z_fallback
                 << ", \"pair_shifted_iou\": " << obj.pair_shifted_iou
                 << "}";
@@ -619,6 +626,15 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 if (modes["roi_patch_iou_color_edge"])
                     cfg.dual_yolo.depth_roi_patch_iou_color_edge =
                         modes["roi_patch_iou_color_edge"].as<bool>();
+                if (modes["roi_cuda_template_match"])
+                    cfg.dual_yolo.depth_roi_cuda_template_match =
+                        modes["roi_cuda_template_match"].as<bool>();
+                if (modes["roi_cuda_stereo_bm"])
+                    cfg.dual_yolo.depth_roi_cuda_stereo_bm =
+                        modes["roi_cuda_stereo_bm"].as<bool>();
+                if (modes["roi_cuda_stereo_sgm"])
+                    cfg.dual_yolo.depth_roi_cuda_stereo_sgm =
+                        modes["roi_cuda_stereo_sgm"].as<bool>();
                 if (modes["roi_center_patch"])
                     cfg.dual_yolo.depth_roi_center_patch = modes["roi_center_patch"].as<bool>();
                 if (modes["roi_subpixel"])

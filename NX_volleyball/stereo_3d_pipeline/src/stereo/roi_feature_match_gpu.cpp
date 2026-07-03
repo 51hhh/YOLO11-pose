@@ -3,9 +3,12 @@
 #include "roi_feature_match_common.h"
 #include "../utils/logger.h"
 
-#ifdef HAS_OPENCV_CUDAFEATURES2D
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudastereo.hpp>
+
+#ifdef HAS_OPENCV_CUDAFEATURES2D
 #include <opencv2/cudafeatures2d.hpp>
 #include <opencv2/features2d.hpp>
 #endif
@@ -16,6 +19,267 @@
 #include <vector>
 
 namespace stereo3d {
+
+namespace {
+
+cv::Rect clampRectToImage(int x, int y, int w, int h, int img_w, int img_h)
+{
+    return cv::Rect(x, y, w, h) & cv::Rect(0, 0, img_w, img_h);
+}
+
+enum class CudaDenseStereoMode {
+    BM,
+    SGM,
+};
+
+struct CudaDenseStereoWorkRects {
+    cv::Rect left;
+    cv::Rect right;
+    int min_disparity = 0;
+    int num_disparities = 64;
+};
+
+struct CudaDenseStereoScratch {
+    int bm_num_disparities = 0;
+    int bm_block_size = 0;
+    int sgm_num_disparities = 0;
+    cv::Ptr<cv::cuda::StereoBM> bm;
+    cv::Ptr<cv::cuda::StereoSGM> sgm;
+    cv::cuda::GpuMat left_work;
+    cv::cuda::GpuMat right_work;
+    cv::cuda::GpuMat disparity;
+
+    void ensureBM(int num_disparities, int block_size) {
+        if (!bm || bm_num_disparities != num_disparities ||
+            bm_block_size != block_size) {
+            bm_num_disparities = num_disparities;
+            bm_block_size = block_size;
+            bm = cv::cuda::createStereoBM(num_disparities, block_size);
+            bm->setMinDisparity(0);
+            bm->setTextureThreshold(0);
+            bm->setUniquenessRatio(5);
+        }
+    }
+
+    void ensureSGM(int num_disparities) {
+        if (!sgm || sgm_num_disparities != num_disparities) {
+            sgm_num_disparities = num_disparities;
+            sgm = cv::cuda::createStereoSGM(0, num_disparities, 10, 120, 5);
+        }
+    }
+};
+
+int denseStereoNumDisparities(float initial_disp)
+{
+    (void)initial_disp;
+    // Keep the real-time P2 test bounded. The global disparity prior is folded
+    // into the crop offset, so the CUDA matcher only searches a local range.
+    return 64;
+}
+
+bool buildDenseStereoWorkRects(
+    const Detection& left_det,
+    float initial_disp,
+    int img_w,
+    int img_h,
+    int num_disparities,
+    int block_size,
+    CudaDenseStereoWorkRects& out)
+{
+    if (num_disparities <= 0 || block_size <= 0 ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f) {
+        return false;
+    }
+
+    const int block_margin = block_size / 2 + 4;
+    const cv::Rect ball_roi = featureROIFromDetectionCPU(
+        left_det, img_w, img_h, block_margin, 0.62f, 0);
+    if (ball_roi.empty()) return false;
+
+    const int min_disp = std::max(
+        0,
+        static_cast<int>(std::floor(initial_disp -
+                                    static_cast<float>(num_disparities) * 0.5f)));
+    const int pad_left = num_disparities + block_margin;
+    const int pad_right = block_margin;
+    const int x = ball_roi.x - pad_left;
+    const int y = ball_roi.y - block_margin;
+    const int w = ball_roi.width + pad_left + pad_right;
+    const int h = ball_roi.height + block_margin * 2;
+    const cv::Rect full(0, 0, img_w, img_h);
+    const cv::Rect left_rect(x, y, w, h);
+    const cv::Rect right_rect(x - min_disp, y, w, h);
+    if ((left_rect & full) != left_rect ||
+        (right_rect & full) != right_rect ||
+        left_rect.width <= num_disparities + block_size ||
+        left_rect.height <= block_size) {
+        return false;
+    }
+
+    out.left = left_rect;
+    out.right = right_rect;
+    out.min_disparity = min_disp;
+    out.num_disparities = num_disparities;
+    return true;
+}
+
+float readDenseLocalDisparity(const cv::Mat& disparity, int x, int y)
+{
+    if (disparity.empty() || x < 0 || y < 0 ||
+        x >= disparity.cols || y >= disparity.rows) {
+        return -1.0f;
+    }
+    switch (disparity.type()) {
+    case CV_8UC1:
+        return static_cast<float>(disparity.at<uint8_t>(y, x));
+    case CV_16SC1:
+        return static_cast<float>(disparity.at<int16_t>(y, x)) * (1.0f / 16.0f);
+    case CV_32FC1:
+        return disparity.at<float>(y, x);
+    default:
+        return -1.0f;
+    }
+}
+
+SparseFeatureDisparityResult aggregateDenseStereoDisparity(
+    const cv::Mat& disparity_cpu,
+    const CudaDenseStereoWorkRects& rects,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline)
+{
+    SparseFeatureDisparityResult result;
+    if (disparity_cpu.empty()) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const float max_delta = computeFeatureDeltaGate(
+        initial_disp, focal, baseline, cfg);
+    const float max_stddev = std::max(0.05f, cfg.subpixel_max_stddev_px);
+    const int max_samples = std::clamp(
+        std::max(cfg.subpixel_max_points * 4, 24), 16, 96);
+    const int min_points = std::clamp(
+        std::max(4, cfg.subpixel_min_points), 4, max_samples);
+    const int ball_w = std::max(1, static_cast<int>(std::round(left_det.width)));
+    const int ball_h = std::max(1, static_cast<int>(std::round(left_det.height)));
+    const int approx_area = std::max(1, ball_w * ball_h);
+    const int sample_step = std::max(
+        1,
+        static_cast<int>(std::ceil(std::sqrt(
+            static_cast<double>(approx_area) /
+            static_cast<double>(max_samples)))));
+
+    std::vector<RobustMatchSample> samples;
+    samples.reserve(static_cast<size_t>(max_samples) * 2U);
+    int attempted = 0;
+    for (int y = 0; y < disparity_cpu.rows; y += sample_step) {
+        const float left_y = static_cast<float>(rects.left.y + y);
+        if (left_y < left_det.cy - left_det.height * 0.65f ||
+            left_y > left_det.cy + left_det.height * 0.65f) {
+            continue;
+        }
+        for (int x = 0; x < disparity_cpu.cols; x += sample_step) {
+            const float left_x = static_cast<float>(rects.left.x + x);
+            if (!pointInsideDetectionEllipse(left_det, left_x, left_y, 0.62f)) {
+                continue;
+            }
+            ++attempted;
+            const float local_disp = readDenseLocalDisparity(disparity_cpu, x, y);
+            if (!std::isfinite(local_disp) ||
+                local_disp <= 0.5f ||
+                local_disp >= static_cast<float>(rects.num_disparities) - 1.0f) {
+                continue;
+            }
+            const float disparity =
+                static_cast<float>(rects.min_disparity) + local_disp;
+            if (disparity <= 0.5f ||
+                disparity > static_cast<float>(max_disparity) ||
+                std::abs(disparity - initial_disp) > max_delta) {
+                continue;
+            }
+
+            RobustMatchSample sample;
+            sample.left_x = left_x;
+            sample.left_y = left_y;
+            sample.right_x = left_x - disparity;
+            sample.right_y = left_y;
+            sample.disparity = disparity;
+            sample.score = 1.0f - std::min(
+                1.0f,
+                std::abs(disparity - initial_disp) /
+                    std::max(1.0f, max_delta));
+            sample.score = std::max(0.15f, sample.score);
+            if (std::abs(featureYResidual(sample, left_det, cfg)) >
+                    strictFeatureYTolerance(cfg) ||
+                !passesFeatureOverlapGate(sample, left_det, right_det,
+                                          initial_disp, cfg) ||
+                !passesSphereRadiusGate(sample, left_det, initial_disp,
+                                        focal, baseline, cfg)) {
+                continue;
+            }
+            samples.push_back(sample);
+        }
+    }
+    result.attempted = attempted;
+    if (static_cast<int>(samples.size()) < min_points) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    if (static_cast<int>(samples.size()) > max_samples) {
+        std::vector<RobustMatchSample> limited;
+        limited.reserve(static_cast<size_t>(max_samples));
+        for (int i = 0; i < max_samples; ++i) {
+            const size_t idx =
+                static_cast<size_t>(i) * samples.size() /
+                static_cast<size_t>(max_samples);
+            limited.push_back(samples[std::min(idx, samples.size() - 1U)]);
+        }
+        samples.swap(limited);
+    }
+
+    const RobustAggregate robust = aggregateRobustMatches(
+        samples, min_points, max_samples, initial_disp, max_delta,
+        max_stddev, cfg);
+    if (!robust.valid) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const float support_ratio =
+        static_cast<float>(robust.support) /
+        static_cast<float>(std::max(1, max_samples));
+    const float consistency = std::clamp(
+        1.0f / (1.0f + robust.stddev), 0.0f, 1.0f);
+    const float delta_conf = 1.0f -
+        std::min(1.0f, std::abs(robust.disparity - initial_disp) /
+                           std::max(0.25f, max_delta));
+    result.valid = true;
+    result.disparity = robust.disparity;
+    result.anchor_cx = robust.anchor_x;
+    result.anchor_cy = robust.anchor_y;
+    result.right_anchor_cx = robust.right_anchor_x;
+    result.right_anchor_cy = robust.right_anchor_y;
+    result.support = robust.support;
+    result.stddev = robust.stddev;
+    result.confidence = std::clamp(
+        0.35f * support_ratio +
+        0.40f * consistency +
+        0.25f * delta_conf,
+        0.0f, 1.0f);
+    if (result.confidence < cfg.subpixel_min_confidence) {
+        result.valid = false;
+        result.low_confidence = true;
+    }
+    return result;
+}
+
+}  // namespace
 
 #ifdef HAS_OPENCV_CUDAFEATURES2D
 namespace {
@@ -304,6 +568,252 @@ SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
         return result;
     }
 #endif
+}
+
+SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream)
+{
+    SparseFeatureDisparityResult result;
+    if (!left_gpu || !right_gpu || left_pitch <= 0 || right_pitch <= 0 ||
+        img_w <= 0 || img_h <= 0 || !stream ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        left_det.width < 6.0f || left_det.height < 6.0f ||
+        right_det.width < 6.0f || right_det.height < 6.0f) {
+        return result;
+    }
+
+    const int patch_radius = std::clamp(cfg.subpixel_patch_radius, 3, 16);
+    const int patch_size = patch_radius * 2 + 1;
+    const int search_radius = std::clamp(cfg.subpixel_search_radius_px, 2, 64);
+    const int y_radius = std::max(
+        1,
+        static_cast<int>(std::ceil(strictFeatureYTolerance(cfg))));
+    const float max_delta = computeFeatureDeltaGate(initial_disp, focal, baseline, cfg);
+    const float anchor_x = left_det.cx;
+    const float anchor_y = left_det.cy;
+    const int templ_x = static_cast<int>(std::round(anchor_x)) - patch_radius;
+    const int templ_y = static_cast<int>(std::round(anchor_y)) - patch_radius;
+    const cv::Rect templ_rect =
+        clampRectToImage(templ_x, templ_y, patch_size, patch_size, img_w, img_h);
+    if (templ_rect.width != patch_size || templ_rect.height != patch_size) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const float predicted_right_x = anchor_x - initial_disp;
+    const int search_x = static_cast<int>(std::round(predicted_right_x)) -
+                         patch_radius - search_radius;
+    const int search_y = static_cast<int>(std::round(anchor_y)) -
+                         patch_radius - y_radius;
+    const int search_w = patch_size + search_radius * 2;
+    const int search_h = patch_size + y_radius * 2;
+    const cv::Rect search_rect =
+        clampRectToImage(search_x, search_y, search_w, search_h, img_w, img_h);
+    if (search_rect.width != search_w || search_rect.height != search_h ||
+        search_rect.width < patch_size || search_rect.height < patch_size) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    try {
+        cv::cuda::Stream cv_stream = cv::cuda::StreamAccessor::wrapStream(stream);
+        cv::cuda::GpuMat left_full(img_h, img_w, CV_8UC1,
+                                   const_cast<uint8_t*>(left_gpu),
+                                   static_cast<size_t>(left_pitch));
+        cv::cuda::GpuMat right_full(img_h, img_w, CV_8UC1,
+                                    const_cast<uint8_t*>(right_gpu),
+                                    static_cast<size_t>(right_pitch));
+        cv::cuda::GpuMat templ(left_full, templ_rect);
+        cv::cuda::GpuMat search(right_full, search_rect);
+
+        thread_local cv::Ptr<cv::cuda::TemplateMatching> matcher;
+        if (!matcher) {
+            matcher = cv::cuda::createTemplateMatching(
+                CV_8UC1, cv::TM_CCOEFF_NORMED);
+        }
+        thread_local cv::cuda::GpuMat score_gpu;
+        matcher->match(search, templ, score_gpu, cv_stream);
+
+        cv::Mat score_cpu;
+        score_gpu.download(score_cpu, cv_stream);
+        cv_stream.waitForCompletion();
+        if (score_cpu.empty()) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        double min_val = 0.0;
+        double max_val = 0.0;
+        cv::Point min_loc;
+        cv::Point max_loc;
+        cv::minMaxLoc(score_cpu, &min_val, &max_val, &min_loc, &max_loc);
+        (void)min_val;
+        (void)min_loc;
+
+        const float right_anchor_x =
+            static_cast<float>(search_rect.x + max_loc.x + patch_radius);
+        const float right_anchor_y =
+            static_cast<float>(search_rect.y + max_loc.y + patch_radius);
+        const float disparity = anchor_x - right_anchor_x;
+        RobustMatchSample sample;
+        sample.left_x = anchor_x;
+        sample.left_y = anchor_y;
+        sample.right_x = right_anchor_x;
+        sample.right_y = right_anchor_y;
+        sample.disparity = disparity;
+        sample.score = static_cast<float>(std::clamp(max_val, 0.0, 1.0));
+
+        result.attempted = 1;
+        if (sample.score < std::max(0.05f, cfg.subpixel_min_confidence) ||
+            disparity <= 0.5f ||
+            disparity > static_cast<float>(max_disparity) ||
+            std::abs(disparity - initial_disp) > max_delta ||
+            std::abs(featureYResidual(sample, left_det, cfg)) >
+                strictFeatureYTolerance(cfg) ||
+            !passesFeatureOverlapGate(sample, left_det, right_det,
+                                      initial_disp, cfg) ||
+            !passesSphereRadiusGate(sample, left_det, initial_disp,
+                                    focal, baseline, cfg)) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        result.valid = true;
+        result.disparity = disparity;
+        result.confidence = sample.score;
+        result.stddev = 0.0f;
+        result.anchor_cx = anchor_x;
+        result.anchor_cy = anchor_y;
+        result.right_anchor_cx = right_anchor_x;
+        result.right_anchor_cy = right_anchor_y;
+        result.support = 1;
+        return result;
+    } catch (const cv::Exception& e) {
+        LOG_WARN("OpenCV CUDA TemplateMatching ROI match failed: %s", e.what());
+        return result;
+    }
+}
+
+namespace {
+
+SparseFeatureDisparityResult matchCudaDenseStereoDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream,
+    CudaDenseStereoMode mode)
+{
+    SparseFeatureDisparityResult result;
+    if (!left_gpu || !right_gpu || left_pitch <= 0 || right_pitch <= 0 ||
+        img_w <= 0 || img_h <= 0 || !stream ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        left_det.width < 8.0f || left_det.height < 8.0f ||
+        right_det.width < 8.0f || right_det.height < 8.0f) {
+        return result;
+    }
+
+    const int num_disparities = denseStereoNumDisparities(initial_disp);
+    const int block_size = std::clamp(
+        std::max(5, cfg.subpixel_patch_radius * 2 + 1), 5, 15) | 1;
+    CudaDenseStereoWorkRects rects;
+    if (!buildDenseStereoWorkRects(left_det, initial_disp, img_w, img_h,
+                                   num_disparities, block_size, rects)) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    try {
+        cv::cuda::Stream cv_stream = cv::cuda::StreamAccessor::wrapStream(stream);
+        cv::cuda::GpuMat left_full(img_h, img_w, CV_8UC1,
+                                   const_cast<uint8_t*>(left_gpu),
+                                   static_cast<size_t>(left_pitch));
+        cv::cuda::GpuMat right_full(img_h, img_w, CV_8UC1,
+                                    const_cast<uint8_t*>(right_gpu),
+                                    static_cast<size_t>(right_pitch));
+        cv::cuda::GpuMat left_view(left_full, rects.left);
+        cv::cuda::GpuMat right_view(right_full, rects.right);
+
+        thread_local CudaDenseStereoScratch scratch;
+        left_view.copyTo(scratch.left_work, cv_stream);
+        right_view.copyTo(scratch.right_work, cv_stream);
+
+        if (mode == CudaDenseStereoMode::BM) {
+            scratch.ensureBM(num_disparities, block_size);
+            scratch.bm->compute(scratch.left_work, scratch.right_work,
+                                scratch.disparity, cv_stream);
+        } else {
+            scratch.ensureSGM(num_disparities);
+            scratch.sgm->compute(scratch.left_work, scratch.right_work,
+                                 scratch.disparity, cv_stream);
+        }
+
+        cv::Mat disparity_cpu;
+        scratch.disparity.download(disparity_cpu, cv_stream);
+        cv_stream.waitForCompletion();
+        return aggregateDenseStereoDisparity(
+            disparity_cpu, rects, left_det, right_det,
+            initial_disp, cfg, max_disparity, focal, baseline);
+    } catch (const cv::Exception& e) {
+        LOG_WARN("OpenCV CUDA dense ROI stereo match failed: %s", e.what());
+        return result;
+    }
+}
+
+}  // namespace
+
+SparseFeatureDisparityResult matchCudaStereoBMDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream)
+{
+    return matchCudaDenseStereoDisparityGPU(
+        left_gpu, left_pitch, right_gpu, right_pitch,
+        img_w, img_h, left_det, right_det, initial_disp, cfg,
+        max_disparity, focal, baseline, stream, CudaDenseStereoMode::BM);
+}
+
+SparseFeatureDisparityResult matchCudaStereoSGMDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream)
+{
+    return matchCudaDenseStereoDisparityGPU(
+        left_gpu, left_pitch, right_gpu, right_pitch,
+        img_w, img_h, left_det, right_det, initial_disp, cfg,
+        max_disparity, focal, baseline, stream, CudaDenseStereoMode::SGM);
 }
 
 }  // namespace stereo3d
