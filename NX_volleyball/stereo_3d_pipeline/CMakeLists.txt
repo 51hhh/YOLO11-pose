@@ -166,6 +166,7 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_detection.cpp
   src/pipeline/pipeline_depth_modes.cpp
   src/pipeline/pipeline_dual_yolo_match.cpp
+  src/pipeline/pipeline_dual_yolo_host.cpp
   src/pipeline/pipeline_lifecycle.cpp
   src/pipeline/pipeline_loops.cpp
   src/pipeline/pipeline_roi_match_helpers.cpp
