@@ -199,6 +199,14 @@ recording:
   frame_summary_enabled: true       # writes dual_yolo_observation_data.frames.csv for frame-level miss/pair metrics
   max_queue_frames: 1000           # CSV 写入落后时丢记录，不阻塞 100fps 实时线程
 
+debug_realtime_dump:
+  enabled: false
+  output_dir: "debug_realtime_dumps"
+  stride: 100                       # dump every N frames; 0 disables periodic dump
+  max_frames: 0                     # 0 means unlimited while enabled
+  max_queue: 4                      # writer backlog limit; drop debug dumps instead of blocking realtime
+  dump_fallback: true               # always dump fallback frames even when stride does not hit
+
 baseline_recording:
   enabled: false
   output_dir: "baseline_clips"
