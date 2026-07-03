@@ -4,9 +4,8 @@
  */
 
 #include "trajectory_recorder.h"
+#include "trajectory_recorder_summary.h"
 #include "logger.h"
-#include <algorithm>
-#include <cmath>
 #include <filesystem>
 #include <iomanip>
 
@@ -40,15 +39,6 @@ bool ensureParentDirectory(const std::string& output_path) {
         return false;
     }
     return true;
-}
-
-bool validDepth(float z) {
-    return std::isfinite(z) && z > 0.0f;
-}
-
-bool observedCandidate(float z, int support, float confidence) {
-    return validDepth(z) || support > 0 ||
-           (std::isfinite(confidence) && confidence > 0.0f);
 }
 
 }  // namespace
@@ -185,16 +175,7 @@ void TrajectoryRecorder::writeHeader() {
 
 void TrajectoryRecorder::writeFrameSummaryHeader() {
     if (!frame_file_.is_open()) return;
-    frame_file_
-        << "frame_id,timestamp,result_count,tracked_count,raw_observation_count,"
-        << "stereo_observation_count,direct_pair_count,fallback_l2r_count,"
-        << "fallback_r2l_count,pair_positive_count,pair_shifted_iou_min,"
-        << "pair_shifted_iou_mean,pair_score_mean,pair_bbox_prior_penalty_mean,"
-        << "pair_epipolar_dy_max,roi_iou_region_color_patch_support_max,"
-        << "roi_patch_iou_color_edge_support_max,roi_neural_feature_support_max,"
-        << "p2_candidate_observed_count,p2_candidate_valid_count,"
-        << "p2_feature_valid_count,p2_cuda_valid_count,p2_neural_valid_count,"
-        << "best_confidence\n";
+    writeTrajectoryFrameSummaryHeader(frame_file_);
 }
 
 void TrajectoryRecorder::record(
@@ -245,170 +226,12 @@ void TrajectoryRecorder::writerLoop() {
 void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
     if (!frame_file_.is_open()) return;
 
-    int tracked_count = 0;
-    int raw_count = 0;
-    int stereo_count = 0;
-    int direct_count = 0;
-    int fallback_l2r_count = 0;
-    int fallback_r2l_count = 0;
-    int pair_positive_count = 0;
-    int pair_count = 0;
-    int pair_score_count = 0;
-    int pair_penalty_count = 0;
-    float pair_iou_min = -1.0f;
-    double pair_iou_sum = 0.0;
-    double pair_score_sum = 0.0;
-    double pair_penalty_sum = 0.0;
-    float pair_epipolar_dy_max = -1.0f;
-    int iou_color_support_max = 0;
-    int iou_edge_support_max = 0;
-    int neural_support_max = 0;
-    int p2_candidate_observed_count = 0;
-    int p2_candidate_valid_count = 0;
-    int p2_feature_valid_count = 0;
-    int p2_cuda_valid_count = 0;
-    int p2_neural_valid_count = 0;
-    float best_confidence = 0.0f;
-
-    for (const auto& r : entry.results) {
-        if (r.track_id >= 0) ++tracked_count;
-        if (r.raw_observation_valid) ++raw_count;
-        if (r.z_stereo > 0.0f) ++stereo_count;
-        if (r.stereo_match_source == 1) ++direct_count;
-        if (r.stereo_match_source == 2) ++fallback_l2r_count;
-        if (r.stereo_match_source == 3) ++fallback_r2l_count;
-        if (r.pair_positive_disparity) ++pair_positive_count;
-        if (r.pair_shifted_iou >= 0.0f) {
-            ++pair_count;
-            pair_iou_min = pair_iou_min < 0.0f
-                ? r.pair_shifted_iou
-                : std::min(pair_iou_min, r.pair_shifted_iou);
-            pair_iou_sum += r.pair_shifted_iou;
-            if (std::isfinite(r.pair_score)) {
-                pair_score_sum += r.pair_score;
-                ++pair_score_count;
-            }
-            if (std::isfinite(r.pair_bbox_prior_penalty)) {
-                pair_penalty_sum += r.pair_bbox_prior_penalty;
-                ++pair_penalty_count;
-            }
-            if (r.pair_epipolar_dy >= 0.0f) {
-                pair_epipolar_dy_max =
-                    std::max(pair_epipolar_dy_max, r.pair_epipolar_dy);
-            }
-        }
-        iou_color_support_max = std::max(
-            iou_color_support_max, r.roi_iou_region_color_patch_support);
-        iou_edge_support_max = std::max(
-            iou_edge_support_max, r.roi_patch_iou_color_edge_support);
-        neural_support_max = std::max(
-            neural_support_max, r.roi_neural_feature_support);
-
-        auto count_candidate = [&](float z, int support, float confidence,
-                                   int* group_valid) {
-            if (observedCandidate(z, support, confidence)) {
-                ++p2_candidate_observed_count;
-            }
-            if (validDepth(z)) {
-                ++p2_candidate_valid_count;
-                if (group_valid) ++(*group_valid);
-            }
-        };
-        count_candidate(r.z_roi_corner_points,
-                        r.roi_corner_points_support,
-                        r.roi_corner_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_texture_points,
-                        r.roi_texture_points_support,
-                        r.roi_texture_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_binary_points,
-                        r.roi_binary_points_support,
-                        r.roi_binary_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_orb_points,
-                        r.roi_orb_points_support,
-                        r.roi_orb_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_brisk_points,
-                        r.roi_brisk_points_support,
-                        r.roi_brisk_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_akaze_points,
-                        r.roi_akaze_points_support,
-                        r.roi_akaze_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_sift_points,
-                        r.roi_sift_points_support,
-                        r.roi_sift_points_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_iou_region_color_patch,
-                        r.roi_iou_region_color_patch_support,
-                        r.roi_iou_region_color_patch_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_patch_iou_color_edge,
-                        r.roi_patch_iou_color_edge_support,
-                        r.roi_patch_iou_color_edge_confidence,
-                        &p2_feature_valid_count);
-        count_candidate(r.z_roi_cuda_template_match,
-                        r.roi_cuda_template_match_support,
-                        r.roi_cuda_template_match_confidence,
-                        &p2_cuda_valid_count);
-        count_candidate(r.z_roi_cuda_stereo_bm,
-                        r.roi_cuda_stereo_bm_support,
-                        r.roi_cuda_stereo_bm_confidence,
-                        &p2_cuda_valid_count);
-        count_candidate(r.z_roi_cuda_stereo_sgm,
-                        r.roi_cuda_stereo_sgm_support,
-                        r.roi_cuda_stereo_sgm_confidence,
-                        &p2_cuda_valid_count);
-        count_candidate(r.z_roi_neural_feature,
-                        r.roi_neural_feature_support,
-                        r.roi_neural_feature_confidence,
-                        &p2_neural_valid_count);
-        count_candidate(r.z_fallback_feature_points,
-                        r.fallback_feature_points_support,
-                        r.fallback_feature_points_confidence,
-                        &p2_feature_valid_count);
-        best_confidence = std::max(best_confidence, r.confidence);
-    }
-
-    const double pair_iou_mean =
-        pair_count > 0 ? pair_iou_sum / static_cast<double>(pair_count) : -1.0;
-    const double pair_score_mean =
-        pair_score_count > 0
-            ? pair_score_sum / static_cast<double>(pair_score_count)
-            : -1.0;
-    const double pair_penalty_mean =
-        pair_penalty_count > 0
-            ? pair_penalty_sum / static_cast<double>(pair_penalty_count)
-            : -1.0;
-
-    frame_file_ << entry.frame_id << ","
-                << std::fixed << std::setprecision(6) << entry.timestamp << ","
-                << entry.results.size() << ","
-                << tracked_count << ","
-                << raw_count << ","
-                << stereo_count << ","
-                << direct_count << ","
-                << fallback_l2r_count << ","
-                << fallback_r2l_count << ","
-                << pair_positive_count << ","
-                << std::setprecision(4)
-                << pair_iou_min << ","
-                << pair_iou_mean << ","
-                << pair_score_mean << ","
-                << pair_penalty_mean << ","
-                << pair_epipolar_dy_max << ","
-                << iou_color_support_max << ","
-                << iou_edge_support_max << ","
-                << neural_support_max << ","
-                << p2_candidate_observed_count << ","
-                << p2_candidate_valid_count << ","
-                << p2_feature_valid_count << ","
-                << p2_cuda_valid_count << ","
-                << p2_neural_valid_count << ","
-                << best_confidence << "\n";
+    const auto stats = summarizeTrajectoryFrame(entry.results);
+    writeTrajectoryFrameSummaryRow(frame_file_,
+                                   entry.frame_id,
+                                   entry.timestamp,
+                                   entry.results.size(),
+                                   stats);
 }
 
 void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
