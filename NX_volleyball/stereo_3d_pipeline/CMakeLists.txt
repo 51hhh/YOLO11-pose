@@ -183,6 +183,9 @@ set(PIPELINE_SOURCES
   src/stereo/roi_patch_match_cpu.cpp
   src/stereo/roi_geometry_cpu.cpp
   src/stereo/roi_feature_match_cpu.cpp
+  src/stereo/roi_feature_match_cpu_sparse.cpp
+  src/stereo/roi_feature_match_cpu_opencv.cpp
+  src/stereo/roi_feature_match_cpu_debug.cpp
   src/stereo/roi_feature_match_gpu.cpp
   src/stereo/neural_feature_matcher.cpp
   src/detect/trt_detector.cpp
