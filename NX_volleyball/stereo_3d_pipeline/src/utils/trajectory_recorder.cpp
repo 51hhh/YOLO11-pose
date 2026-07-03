@@ -5,9 +5,27 @@
 
 #include "trajectory_recorder.h"
 #include "logger.h"
+#include <algorithm>
+#include <cmath>
 #include <iomanip>
 
 namespace stereo3d {
+
+namespace {
+
+std::string deriveFrameSummaryPath(const std::string& output_path) {
+    const std::string suffix = ".csv";
+    if (output_path.size() >= suffix.size() &&
+        output_path.compare(output_path.size() - suffix.size(),
+                            suffix.size(),
+                            suffix) == 0) {
+        return output_path.substr(0, output_path.size() - suffix.size()) +
+               ".frames.csv";
+    }
+    return output_path + ".frames.csv";
+}
+
+}  // namespace
 
 void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
     cfg_ = config;
@@ -21,6 +39,20 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
     }
 
     writeHeader();
+    if (cfg_.frame_summary_enabled) {
+        const std::string frame_path = cfg_.frame_summary_path.empty()
+            ? deriveFrameSummaryPath(cfg_.output_path)
+            : cfg_.frame_summary_path;
+        frame_file_.open(frame_path, std::ios::out | std::ios::trunc);
+        if (!frame_file_.is_open()) {
+            LOG_WARN("TrajectoryRecorder: failed to open frame summary %s",
+                     frame_path.c_str());
+        } else {
+            writeFrameSummaryHeader();
+            LOG_INFO("TrajectoryRecorder: frame summary to %s",
+                     frame_path.c_str());
+        }
+    }
     frame_count_ = 0;
     dropped_frame_count_ = 0;
     running_ = true;
@@ -85,6 +117,9 @@ void TrajectoryRecorder::writeHeader() {
               << "roi_neural_feature_confidence,"
               << "fallback_feature_points_support,"
               << "fallback_feature_points_std_px,fallback_feature_points_confidence,"
+              << "pair_initial_disparity,pair_epipolar_dy,pair_y_tolerance,"
+              << "pair_size_ratio,pair_shifted_iou,pair_score,"
+              << "pair_bbox_prior_penalty,pair_positive_disparity,"
               << "raw_observation_valid,predicted_z,innovation_z,"
               << "innovation_norm,kalman_sigma_z,"
               << "left_circle_source,right_circle_source,"
@@ -103,6 +138,18 @@ void TrajectoryRecorder::writeHeader() {
     }
     file_ << "landing_x,landing_y,landing_t\n";
     header_written_ = true;
+}
+
+void TrajectoryRecorder::writeFrameSummaryHeader() {
+    if (!frame_file_.is_open()) return;
+    frame_file_
+        << "frame_id,timestamp,result_count,tracked_count,raw_observation_count,"
+        << "stereo_observation_count,direct_pair_count,fallback_l2r_count,"
+        << "fallback_r2l_count,pair_positive_count,pair_shifted_iou_min,"
+        << "pair_shifted_iou_mean,pair_score_mean,pair_bbox_prior_penalty_mean,"
+        << "pair_epipolar_dy_max,roi_iou_region_color_patch_support_max,"
+        << "roi_patch_iou_color_edge_support_max,roi_neural_feature_support_max,"
+        << "best_confidence\n";
 }
 
 void TrajectoryRecorder::record(
@@ -139,11 +186,107 @@ void TrajectoryRecorder::writerLoop() {
             batch.swap(queue_);
         }
         for (const auto& entry : batch) {
+            writeFrameSummary(entry);
             writeEntry(entry);
         }
         batch.clear();
         file_.flush();
+        if (frame_file_.is_open()) {
+            frame_file_.flush();
+        }
     }
+}
+
+void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
+    if (!frame_file_.is_open()) return;
+
+    int tracked_count = 0;
+    int raw_count = 0;
+    int stereo_count = 0;
+    int direct_count = 0;
+    int fallback_l2r_count = 0;
+    int fallback_r2l_count = 0;
+    int pair_positive_count = 0;
+    int pair_count = 0;
+    int pair_score_count = 0;
+    int pair_penalty_count = 0;
+    float pair_iou_min = -1.0f;
+    double pair_iou_sum = 0.0;
+    double pair_score_sum = 0.0;
+    double pair_penalty_sum = 0.0;
+    float pair_epipolar_dy_max = -1.0f;
+    int iou_color_support_max = 0;
+    int iou_edge_support_max = 0;
+    int neural_support_max = 0;
+    float best_confidence = 0.0f;
+
+    for (const auto& r : entry.results) {
+        if (r.track_id >= 0) ++tracked_count;
+        if (r.raw_observation_valid) ++raw_count;
+        if (r.z_stereo > 0.0f) ++stereo_count;
+        if (r.stereo_match_source == 1) ++direct_count;
+        if (r.stereo_match_source == 2) ++fallback_l2r_count;
+        if (r.stereo_match_source == 3) ++fallback_r2l_count;
+        if (r.pair_positive_disparity) ++pair_positive_count;
+        if (r.pair_shifted_iou >= 0.0f) {
+            ++pair_count;
+            pair_iou_min = pair_iou_min < 0.0f
+                ? r.pair_shifted_iou
+                : std::min(pair_iou_min, r.pair_shifted_iou);
+            pair_iou_sum += r.pair_shifted_iou;
+            if (std::isfinite(r.pair_score)) {
+                pair_score_sum += r.pair_score;
+                ++pair_score_count;
+            }
+            if (std::isfinite(r.pair_bbox_prior_penalty)) {
+                pair_penalty_sum += r.pair_bbox_prior_penalty;
+                ++pair_penalty_count;
+            }
+            if (r.pair_epipolar_dy >= 0.0f) {
+                pair_epipolar_dy_max =
+                    std::max(pair_epipolar_dy_max, r.pair_epipolar_dy);
+            }
+        }
+        iou_color_support_max = std::max(
+            iou_color_support_max, r.roi_iou_region_color_patch_support);
+        iou_edge_support_max = std::max(
+            iou_edge_support_max, r.roi_patch_iou_color_edge_support);
+        neural_support_max = std::max(
+            neural_support_max, r.roi_neural_feature_support);
+        best_confidence = std::max(best_confidence, r.confidence);
+    }
+
+    const double pair_iou_mean =
+        pair_count > 0 ? pair_iou_sum / static_cast<double>(pair_count) : -1.0;
+    const double pair_score_mean =
+        pair_score_count > 0
+            ? pair_score_sum / static_cast<double>(pair_score_count)
+            : -1.0;
+    const double pair_penalty_mean =
+        pair_penalty_count > 0
+            ? pair_penalty_sum / static_cast<double>(pair_penalty_count)
+            : -1.0;
+
+    frame_file_ << entry.frame_id << ","
+                << std::fixed << std::setprecision(6) << entry.timestamp << ","
+                << entry.results.size() << ","
+                << tracked_count << ","
+                << raw_count << ","
+                << stereo_count << ","
+                << direct_count << ","
+                << fallback_l2r_count << ","
+                << fallback_r2l_count << ","
+                << pair_positive_count << ","
+                << std::setprecision(4)
+                << pair_iou_min << ","
+                << pair_iou_mean << ","
+                << pair_score_mean << ","
+                << pair_penalty_mean << ","
+                << pair_epipolar_dy_max << ","
+                << iou_color_support_max << ","
+                << iou_edge_support_max << ","
+                << neural_support_max << ","
+                << best_confidence << "\n";
 }
 
 void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
@@ -258,6 +401,14 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                   << r.fallback_feature_points_support << ","
                   << r.fallback_feature_points_std_px << ","
                   << r.fallback_feature_points_confidence << ","
+                  << r.pair_initial_disparity << ","
+                  << r.pair_epipolar_dy << ","
+                  << r.pair_y_tolerance << ","
+                  << r.pair_size_ratio << ","
+                  << r.pair_shifted_iou << ","
+                  << r.pair_score << ","
+                  << r.pair_bbox_prior_penalty << ","
+                  << r.pair_positive_disparity << ","
                   << r.raw_observation_valid << ","
                   << r.predicted_z << ","
                   << r.innovation_z << ","
@@ -310,6 +461,10 @@ void TrajectoryRecorder::close() {
             LOG_INFO("TrajectoryRecorder: saved %d frames (dropped=%d)",
                      frame_count_.load(), dropped_frame_count_.load());
         }
+    }
+    if (frame_file_.is_open()) {
+        frame_file_.flush();
+        frame_file_.close();
     }
 }
 

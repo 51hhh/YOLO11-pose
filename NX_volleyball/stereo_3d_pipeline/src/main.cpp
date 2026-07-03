@@ -442,6 +442,12 @@ static stereo3d::TrajectoryRecorderConfig loadRecorderConfig(const std::string& 
             if (rec["enabled"])     rcfg.enabled     = rec["enabled"].as<bool>();
             if (rec["output_path"]) rcfg.output_path = rec["output_path"].as<std::string>();
             if (rec["raw_mode"])    rcfg.raw_mode    = rec["raw_mode"].as<bool>();
+            if (rec["frame_summary_enabled"])
+                rcfg.frame_summary_enabled =
+                    rec["frame_summary_enabled"].as<bool>();
+            if (rec["frame_summary_path"])
+                rcfg.frame_summary_path =
+                    rec["frame_summary_path"].as<std::string>();
             if (rec["max_queue_frames"])
                 rcfg.max_queue_frames = rec["max_queue_frames"].as<size_t>();
             if (rec["detail_level"]) {

@@ -438,6 +438,7 @@ private:
                                   const std::vector<Detection>& right_detections) const;
     RoiStage2Output runRoiStage2Core(const RoiStage2Input& input);
     void applyRoiStage2Output(FrameSlot& slot, RoiStage2Output&& output);
+    void publishRoiResultCallback(FrameSlot& slot);
     void publishRoiFrameCallbacks(FrameSlot& slot);
 
     struct AsyncRoiBuffer {
@@ -463,12 +464,15 @@ private:
         bool host_gray_valid = false;
         bool bgr_valid = false;
         bool copy_event_recorded = false;
+        FrameMetadata metadata;
         RoiStage2Input input;
     };
     struct AsyncRoiResult {
         int frame_id = -1;
         int slot_index = -1;
         double elapsed_ms = 0.0;
+        FrameMetadata metadata;
+        std::vector<Detection> right_detections;
         RoiStage2Output output;
     };
     bool asyncRoiStage2Configured() const;

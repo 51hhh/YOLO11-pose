@@ -2838,6 +2838,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                             int match_source,
                             float yolo_disparity,
                             const Detection* right_det,
+                            const StereoRoiPair* pair_info,
                             const DualYoloGpuCandidate* gpu_candidate,
                             Object3D& obj) -> bool {
         const float fb = focal * baseline;
@@ -3866,6 +3867,29 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.fallback_feature_points_std_px =
             fallback_feature_result.valid ? fallback_feature_result.stddev : -1.0f;
         obj.fallback_feature_points_confidence = fallback_feature_result.confidence;
+        if (pair_info && direct_yolo_match && right_det) {
+            obj.pair_initial_disparity = pair_info->initial_disparity;
+            obj.pair_epipolar_dy = pair_info->epipolar_dy;
+            obj.pair_y_tolerance = pair_info->y_tolerance;
+            obj.pair_size_ratio = pair_info->size_ratio;
+            obj.pair_shifted_iou = pair_info->shifted_bbox_iou;
+            obj.pair_score = pair_info->score;
+            obj.pair_bbox_prior_penalty =
+                bboxDisparityConsistencyPenaltyCPU(
+                    left_det,
+                    *right_det,
+                    pair_info->initial_disparity,
+                    baseline,
+                    config_.depth,
+                    config_.dual_yolo,
+                    config_.max_disparity);
+            obj.pair_positive_disparity =
+                (pair_info->initial_disparity > 0.0f &&
+                 pair_info->initial_disparity <=
+                     static_cast<float>(config_.max_disparity))
+                    ? 1
+                    : 0;
+        }
         obj.stereo_match_source = match_source;
         obj.stereo_depth_source = depth_source;
         obj.confidence = semantic_conf *
@@ -4027,7 +4051,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const float semantic_conf = best_pair.semantic_confidence;
         const float bbox_disparity = best_pair.initial_disparity;
         if (!build_object(left, left_circle, right_circle, semantic_conf,
-                          1, bbox_disparity, &right, gpu_candidate, obj)) {
+                          1, bbox_disparity, &right, &best_pair,
+                          gpu_candidate, obj)) {
             continue;
         }
 
@@ -4117,7 +4142,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
             Object3D obj;
             if (!build_object(left, left_circle, right_circle, left.confidence,
-                              2, -1.0f, nullptr, nullptr, obj)) {
+                              2, -1.0f, nullptr, nullptr, nullptr, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
@@ -4204,7 +4229,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             Detection left_proxy = detectionFromCircleCPU(left_circle, right);
             Object3D obj;
             if (!build_object(left_proxy, left_circle, right_circle,
-                              right.confidence, 3, -1.0f, &right, nullptr, obj)) {
+                              right.confidence, 3, -1.0f, &right, nullptr,
+                              nullptr, obj)) {
                 ++local_stats.fallback_failed;
                 continue;
             }
@@ -4607,13 +4633,16 @@ void Pipeline::applyRoiStage2Output(FrameSlot& slot,
     }
 }
 
-void Pipeline::publishRoiFrameCallbacks(FrameSlot& slot) {
+void Pipeline::publishRoiResultCallback(FrameSlot& slot) {
     if (result_callback_) {
         ScopedTimer trc("Stage2_ResultCB");
         result_callback_(slot.frame_id, slot.results);
         globalPerf().record("Stage2_ResultCB", trc.elapsedMs());
     }
+}
 
+void Pipeline::publishRoiFrameCallbacks(FrameSlot& slot) {
+    publishRoiResultCallback(slot);
     if (frame_callback_) {
         ScopedTimer tfc("Stage2_FrameCB");
         FrameCallbackData frame{

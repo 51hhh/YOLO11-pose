@@ -198,6 +198,7 @@ recording:
   # extended: add sync watermark + bbox/circle geometry for model training.
   detail_level: "extended"
   raw_mode: true
+  frame_summary_enabled: true       # writes dual_yolo_observation_data.frames.csv for frame-level miss/pair metrics
   max_queue_frames: 1000           # CSV 写入落后时丢记录，不阻塞 100fps 实时线程
 
 baseline_recording:

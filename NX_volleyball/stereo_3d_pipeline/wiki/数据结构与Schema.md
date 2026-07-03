@@ -1,6 +1,6 @@
 # 数据结构与 Schema
 
-最后核对: 2026-07-02
+最后核对: 2026-07-03
 
 本页连接实时 C++ 数据结构、CSV 记录器和离线训练 schema。字段新增不能只改一个位置。
 
@@ -44,9 +44,11 @@
 | 神经特征 | `z_roi_neural_feature` |
 | patch/subpixel | `z_roi_center_patch`, `z_roi_multi_point` |
 | fallback | `z_fallback`, `z_fallback_template`, `z_fallback_feature_points` |
-| 诊断 | disparity、support、confidence、std、bbox/circle、sync watermark |
+| 诊断 | disparity、support、confidence、std、bbox/circle、`pair_*`、sync watermark |
 
 兼容旧 CSV 的 alias 字段仍存在: `z_yolo_bbox_pair`、`z_circle`、`z_subpixel`、`disparity_yolo`、`disparity_circle`、`disparity_subpixel`。它们分别对应 bbox center、circle center 和 ROI multi-point/subpixel，不应按新增测距方法重复统计。
+
+直接左右 YOLO pair 的误匹配诊断字段为: `pair_initial_disparity`, `pair_epipolar_dy`, `pair_y_tolerance`, `pair_size_ratio`, `pair_shifted_iou`, `pair_score`, `pair_bbox_prior_penalty`, `pair_positive_disparity`。这些字段从 `DEPTH_CANDIDATES` 记录级别开始写入；fallback 行保持 `-1/0`，用 `stereo_match_source` 区分匹配来源。
 
 `stereo_depth_source` 当前注释映射:
 

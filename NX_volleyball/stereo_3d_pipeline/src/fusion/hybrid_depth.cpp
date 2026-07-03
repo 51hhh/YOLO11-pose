@@ -534,6 +534,14 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             obj.fallback_feature_points_support = roi.fallback_feature_points_support;
             obj.fallback_feature_points_std_px = roi.fallback_feature_points_std_px;
             obj.fallback_feature_points_confidence = roi.fallback_feature_points_confidence;
+            obj.pair_initial_disparity = roi.pair_initial_disparity;
+            obj.pair_epipolar_dy = roi.pair_epipolar_dy;
+            obj.pair_y_tolerance = roi.pair_y_tolerance;
+            obj.pair_size_ratio = roi.pair_size_ratio;
+            obj.pair_shifted_iou = roi.pair_shifted_iou;
+            obj.pair_score = roi.pair_score;
+            obj.pair_bbox_prior_penalty = roi.pair_bbox_prior_penalty;
+            obj.pair_positive_disparity = roi.pair_positive_disparity;
             obj.stereo_match_source = roi.stereo_match_source;
             obj.stereo_depth_source = roi.stereo_depth_source;
         }

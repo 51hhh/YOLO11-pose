@@ -61,6 +61,19 @@ bool asyncRoiNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
            cpu_fallback;
 }
 
+void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
+    slot.left_timestamp_us = meta.left_timestamp_us;
+    slot.right_timestamp_us = meta.right_timestamp_us;
+    slot.left_frame_number = meta.left_frame_number;
+    slot.right_frame_number = meta.right_frame_number;
+    slot.left_frame_counter = meta.left_frame_counter;
+    slot.right_frame_counter = meta.right_frame_counter;
+    slot.left_trigger_index = meta.left_trigger_index;
+    slot.right_trigger_index = meta.right_trigger_index;
+    slot.grab_failed = meta.grab_failed;
+    slot.is_detect_frame = meta.is_detect_frame;
+}
+
 }  // namespace
 
 bool Pipeline::asyncRoiStage2Configured() const {
@@ -690,6 +703,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.host_gray_valid = need_host_gray;
     task.bgr_valid = need_bgr;
     task.copy_event_recorded = buffer.copy_event_recorded;
+    task.metadata = makeFrameMetadata(slot);
     task.input.frame_id = slot.frame_id;
     task.input.left_detections = slot.detections;
     task.input.right_detections = slot.detections_right;
@@ -812,6 +826,8 @@ void Pipeline::asyncRoiWorkerLoop() {
                 result.frame_id = task.frame_id;
                 result.slot_index = task.slot_index;
                 result.elapsed_ms = elapsed_ms;
+                result.metadata = task.metadata;
+                result.right_detections = task.input.right_detections;
                 result.output = std::move(output);
                 async_roi_completed_.push_back(std::move(result));
             }
@@ -838,25 +854,37 @@ std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
                                 result.elapsed_ms);
             continue;
         }
-        if (result.slot_index < 0 ||
-            result.slot_index >= RING_BUFFER_SIZE) {
-            globalPerf().record("Stage2_AsyncRoiDropBadSlot", 0.0);
-            continue;
+
+        FrameSlot* live_slot = nullptr;
+        if (result.slot_index >= 0 &&
+            result.slot_index < RING_BUFFER_SIZE) {
+            FrameSlot& candidate = slots_[result.slot_index];
+            if (candidate.frame_id == result.frame_id) {
+                live_slot = &candidate;
+            }
+        } else {
+            globalPerf().record("Stage2_AsyncRoiBadSlotResult", 0.0);
         }
 
-        FrameSlot& slot = slots_[result.slot_index];
-        if (slot.frame_id != result.frame_id) {
-            globalPerf().record("Stage2_AsyncRoiDropReusedSlot",
+        if (live_slot) {
+            applyRoiStage2Output(*live_slot, std::move(result.output));
+            live_slot->bbox_source = BboxSource::YOLO;
+            publishRoiFrameCallbacks(*live_slot);
+            accepted.push_back(live_slot->frame_id);
+        } else {
+            FrameSlot shadow;
+            shadow.frame_id = result.frame_id;
+            restoreFrameMetadata(shadow, result.metadata);
+            shadow.detections_right = std::move(result.right_detections);
+            shadow.bbox_source = BboxSource::YOLO;
+            applyRoiStage2Output(shadow, std::move(result.output));
+            publishRoiResultCallback(shadow);
+            accepted.push_back(shadow.frame_id);
+            globalPerf().record("Stage2_AsyncRoiAcceptedReusedSlot",
                                 result.elapsed_ms);
-            LOG_WARN("[AsyncROI] Drop frame=%d: slot %d already reused by frame=%d",
-                     result.frame_id, result.slot_index, slot.frame_id);
-            continue;
+            globalPerf().record("Stage2_AsyncRoiFrameCallbackSkippedReusedSlot",
+                                result.elapsed_ms);
         }
-
-        applyRoiStage2Output(slot, std::move(result.output));
-        slot.bbox_source = BboxSource::YOLO;
-        publishRoiFrameCallbacks(slot);
-        accepted.push_back(slot.frame_id);
         globalPerf().record("Stage2_AsyncRoiAccepted", result.elapsed_ms);
     }
     return accepted;

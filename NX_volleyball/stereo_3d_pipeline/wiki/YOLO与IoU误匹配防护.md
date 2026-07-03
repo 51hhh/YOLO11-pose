@@ -62,6 +62,25 @@ detector:
 
 `bbox_disparity_*` 是排序惩罚，不是硬拒绝。单候选正常帧不会因为这个惩罚被直接丢弃；多候选时会优先选择物理视差更合理的左右框。
 
+## 实时记录字段
+
+连续运行时需要把 `recording.detail_level` 设为 `depth_candidates` 或 `extended`，否则 CSV 只写旧版轨迹字段。实时 recorder 会为直接 YOLO pair 写出:
+
+| 字段 | 含义 |
+|---|---|
+| `pair_initial_disparity` | 直接左右 YOLO bbox 中心初始视差 |
+| `pair_epipolar_dy` | bbox 中心 y 残差 |
+| `pair_y_tolerance` | 当前自适应 y gate |
+| `pair_size_ratio` | 左右 bbox 宽高最大比例 |
+| `pair_shifted_iou` | 右 bbox 按视差平移后的 IoU |
+| `pair_score` | 全局一对一排序分数，已含物理视差惩罚 |
+| `pair_bbox_prior_penalty` | bbox 宽度反推视差与中心视差不一致时的惩罚 |
+| `pair_positive_disparity` | 是否为正视差且未超过 `max_disparity` |
+
+这些字段只描述最终被采用的直接左右 pair。单侧 fallback 行中它们保持 `-1/0`，需要结合 `stereo_match_source` 区分: `1=左右YOLO`, `2=左到右fallback`, `3=右到左fallback`。
+
+连续运行的 miss/退化统计看 recorder 生成的 `*.frames.csv` sidecar。它对每个进入实时 recorder 的结果回调帧写一行，包含 `result_count`, `direct_pair_count`, `fallback_l2r_count`, `fallback_r2l_count`, `pair_shifted_iou_min/mean`, `pair_score_mean`, `pair_bbox_prior_penalty_mean` 和关键特征 support 最大值。目标级 CSV 用于看每个输出球的深度候选；sidecar 用于看已发布结果帧里的无输出和整体退化趋势。调度层 stale/async 丢弃帧不会进入该文件，按采集帧统计时需要结合性能日志或额外调度计数。
+
 ## 离线退化测试
 
 灰度连续 clip 用于测试 YOLO/IoU 退化稳定性:

@@ -50,6 +50,14 @@
 | epipolar_dy | float | 校正后左右中心 y 差 |
 | size_ratio | float | 左右 bbox 或圆半径比例 |
 | positive_disparity | int | 是否正视差 |
+| pair_initial_disparity | float | 直接 YOLO pair 的 bbox 中心初始视差，fallback 为 `-1` |
+| pair_epipolar_dy | float | 直接 YOLO pair 的 bbox 中心 y 残差，fallback 为 `-1` |
+| pair_y_tolerance | float | 当前 pair gate 的自适应 y 容差，fallback 为 `-1` |
+| pair_size_ratio | float | 直接 YOLO pair 的 bbox 宽高最大比例，fallback 为 `-1` |
+| pair_shifted_iou | float | 把右框按中心视差平移到左目坐标后的 bbox IoU，fallback 为 `-1` |
+| pair_score | float | 直接 YOLO pair 全局排序分数，已包含 bbox 物理视差惩罚 |
+| pair_bbox_prior_penalty | float | bbox 宽度反推视差与中心视差不一致时的排序惩罚 |
+| pair_positive_disparity | int | 1=直接 pair 视差为正且不超过 `max_disparity` |
 
 ## 圆心和 ROI 质量字段
 
@@ -181,6 +189,28 @@
 | rejected_reason | str | 候选级被拒原因；当前 recorder 尚未写入，需先把 pipeline 内 gate 失败原因结构化 |
 | landing_x,landing_y,landing_t | float | 当前落点预测 |
 
+## Frame Summary Sidecar
+
+实时 recorder 会从 `output_path` 派生 `*.frames.csv`，对每个进入 `TrajectoryRecorder::record()` 的结果回调帧写一行。这个文件不替代目标级 trajectory CSV；它提供的是已发布结果帧内的无输出和误匹配退化统计，不是 USB/触发采集帧总数。被 `drop_stale_roi_frames`、async ROI stale result 或 recorder 队列满丢弃的帧不会出现在这个 sidecar 中。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| result_count | int | 本帧输出目标数，0 表示实时管线没有可记录目标 |
+| tracked_count | int | `track_id>=0` 的目标数 |
+| raw_observation_count | int | 有未滤波观测的目标数 |
+| stereo_observation_count | int | 有有效双目深度的目标数 |
+| direct_pair_count | int | `stereo_match_source=1` 的目标数 |
+| fallback_l2r_count | int | 左到右 fallback 目标数 |
+| fallback_r2l_count | int | 右到左 fallback 目标数 |
+| pair_positive_count | int | selected pair 正视差数量 |
+| pair_shifted_iou_min, pair_shifted_iou_mean | float | selected pair shifted IoU 质量 |
+| pair_score_mean, pair_bbox_prior_penalty_mean | float | selected pair 排序分数和物理视差惩罚 |
+| pair_epipolar_dy_max | float | selected pair 最大 y 残差 |
+| roi_iou_region_color_patch_support_max | int | 彩色区域 IoU/patch 最大支撑点数 |
+| roi_patch_iou_color_edge_support_max | int | 彩色边缘 IoU/patch 最大支撑点数 |
+| roi_neural_feature_support_max | int | 神经特征最大支撑点数 |
+| best_confidence | float | 本帧最高输出置信度 |
+
 ## 最小可用版本
 
 如果先不想大改记录器，最低限度应补：
@@ -222,7 +252,10 @@ roi_iou_region_color_patch_confidence,roi_patch_iou_color_edge_support,
 roi_patch_iou_color_edge_std_px,roi_patch_iou_color_edge_confidence,
 roi_neural_feature_support,roi_neural_feature_std_px,roi_neural_feature_confidence,
 fallback_feature_points_support,fallback_feature_points_std_px,
-fallback_feature_points_confidence,raw_observation_valid,
+fallback_feature_points_confidence,
+pair_initial_disparity,pair_epipolar_dy,pair_y_tolerance,pair_size_ratio,
+pair_shifted_iou,pair_score,pair_bbox_prior_penalty,pair_positive_disparity,
+raw_observation_valid,
 predicted_z,innovation_z,innovation_norm,kalman_sigma_z,
 left_circle_source,right_circle_source,stereo_match_source,stereo_depth_source,
 depth_method,confidence

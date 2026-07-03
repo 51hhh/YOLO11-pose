@@ -164,6 +164,14 @@ struct Object3D {
     int fallback_feature_points_support; ///< fallback 特征有效匹配点数
     float fallback_feature_points_std_px; ///< fallback 特征视差标准差
     float fallback_feature_points_confidence; ///< fallback 特征匹配置信度
+    float pair_initial_disparity; ///< 左右 YOLO pair 初始中心视差, -1=非直接 pair
+    float pair_epipolar_dy; ///< 左右 YOLO pair bbox 中心 y 差, -1=非直接 pair
+    float pair_y_tolerance; ///< 当前 pair gate y 容差, -1=非直接 pair
+    float pair_size_ratio; ///< 左右 YOLO pair bbox 宽高最大比例, -1=非直接 pair
+    float pair_shifted_iou; ///< 右框平移到左目坐标后的 bbox IoU, -1=非直接 pair
+    float pair_score; ///< pair gate 排序分数, 已含 bbox 物理视差惩罚
+    float pair_bbox_prior_penalty; ///< bbox 物理视差一致性排序惩罚
+    int pair_positive_disparity; ///< 1=直接 pair 正视差且未超过 max_disparity
     int stereo_match_source; ///< 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback
     int stereo_depth_source; ///< 0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征
     uint64_t left_timestamp_us;  ///< 左目 SDK 时间戳原值, 海康 USB 当前实测为 ns
@@ -253,6 +261,10 @@ struct Object3D {
                  roi_neural_feature_confidence(0),
                  fallback_feature_points_support(0), fallback_feature_points_std_px(-1),
                  fallback_feature_points_confidence(0),
+                 pair_initial_disparity(-1), pair_epipolar_dy(-1),
+                 pair_y_tolerance(-1), pair_size_ratio(-1),
+                 pair_shifted_iou(-1), pair_score(-1),
+                 pair_bbox_prior_penalty(-1), pair_positive_disparity(0),
                  stereo_match_source(0), stereo_depth_source(0),
                  left_timestamp_us(0), right_timestamp_us(0),
                  left_frame_number(0), right_frame_number(0),

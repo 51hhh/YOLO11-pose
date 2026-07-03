@@ -35,6 +35,8 @@ struct TrajectoryRecorderConfig {
     bool raw_mode = false; ///< true=写未滤波观测, false=写 Kalman 后轨迹
     TrajectoryRecordDetail detail_level = TrajectoryRecordDetail::LEGACY;
     size_t max_queue_frames = 1000; ///< 0=无限队列；实时路径建议保留上限，避免 IO 慢拖垮内存
+    bool frame_summary_enabled = true; ///< 每帧 sidecar CSV, 用于统计无输出/误匹配退化
+    std::string frame_summary_path; ///< 空=从 output_path 自动派生 *.frames.csv
 
     bool recordDepthCandidates() const {
         return static_cast<int>(detail_level) >=
@@ -75,6 +77,7 @@ private:
 
     TrajectoryRecorderConfig cfg_;
     std::ofstream file_;
+    std::ofstream frame_file_;
     std::atomic<int> frame_count_{0};
     std::atomic<int> dropped_frame_count_{0};
     bool header_written_ = false;
@@ -87,8 +90,10 @@ private:
     std::atomic<bool> running_{false};
 
     void writeHeader();
+    void writeFrameSummaryHeader();
     void writerLoop();
     void writeEntry(const RecordEntry& entry);
+    void writeFrameSummary(const RecordEntry& entry);
 };
 
 }  // namespace stereo3d
