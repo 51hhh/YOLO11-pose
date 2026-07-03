@@ -165,6 +165,7 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_detection.cpp
   src/pipeline/pipeline_depth_modes.cpp
   src/pipeline/pipeline_loops.cpp
+  src/pipeline/pipeline_roi_match_helpers.cpp
   src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
