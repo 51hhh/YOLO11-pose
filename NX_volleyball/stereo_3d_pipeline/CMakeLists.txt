@@ -160,6 +160,7 @@ set(PIPELINE_SOURCES
   src/main.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
+  src/pipeline/pipeline_debug.cpp
   src/pipeline/pipeline_debug_utils.cpp
   src/pipeline/pipeline_detection.cpp
   src/pipeline/pipeline_depth_modes.cpp
