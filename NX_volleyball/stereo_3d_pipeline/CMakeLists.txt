@@ -187,6 +187,7 @@ set(PIPELINE_SOURCES
   src/stereo/roi_feature_match_common.cpp
   src/stereo/roi_patch_match_cpu.cpp
   src/stereo/roi_geometry_cpu.cpp
+  src/stereo/roi_geometry_circle_cpu.cpp
   src/stereo/roi_feature_match_cpu.cpp
   src/stereo/roi_feature_match_cpu_sparse.cpp
   src/stereo/roi_feature_match_cpu_opencv.cpp
