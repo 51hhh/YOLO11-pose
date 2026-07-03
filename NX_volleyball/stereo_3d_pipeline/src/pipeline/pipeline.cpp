@@ -2170,19 +2170,19 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             left_circle.source == kCircleSourceRoiFit &&
             right_circle.source == kCircleSourceRoiFit &&
             circle_depth_valid;
-        const bool epipolar_fallback_depth_valid =
+        bool epipolar_fallback_depth_valid =
             is_fallback_match &&
             epipolar_fallback_enabled &&
             circle_depth_valid &&
             (left_circle.source == kCircleSourceEpipolarSearch ||
              right_circle.source == kCircleSourceEpipolarSearch);
-        const bool fallback_template_depth_valid =
+        bool fallback_template_depth_valid =
             is_fallback_match &&
             fallback_template_enabled &&
             circle_depth_valid &&
             (left_circle.source == kCircleSourceTemplateSearch ||
              right_circle.source == kCircleSourceTemplateSearch);
-        const bool any_fallback_depth_valid =
+        bool any_fallback_depth_valid =
             epipolar_fallback_depth_valid || fallback_template_depth_valid;
 
         float disparity_circle_left_edge = -1.0f;
@@ -2222,7 +2222,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             }
             center_patch_valid_for_obj = center_patch_result.valid;
         }
-        const float z_roi_center_patch =
+        float z_roi_center_patch =
             center_patch_valid_for_obj
                 ? depth_from_disparity(center_patch_result.disparity)
                 : -1.0f;
@@ -2288,8 +2288,49 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             ++local_stats.subpixel_budget_skip;
         }
 
-        const float z_subpixel =
+        float z_subpixel =
             subpixel_valid_for_obj ? fb / subpixel_result.disparity : -1.0f;
+
+        if (is_fallback_match && any_fallback_depth_valid) {
+            const float consistency_gate_px = computeSubpixelDispDeltaGateCPU(
+                circle_disparity,
+                focal,
+                baseline,
+                config_.dual_yolo.subpixel_max_disp_delta_px,
+                config_.dual_yolo.subpixel_max_disp_delta_ratio,
+                config_.dual_yolo.subpixel_max_depth_delta_m);
+            bool has_consistency_check = false;
+            bool any_consistency_passed = false;
+
+            auto check_fallback_disparity = [&](bool* valid,
+                                                const SubpixelDisparityResult& result) {
+                if (!*valid || !result.valid) return;
+                has_consistency_check = true;
+                const bool consistent =
+                    std::abs(result.disparity - circle_disparity) <= consistency_gate_px;
+                if (consistent) {
+                    any_consistency_passed = true;
+                } else {
+                    *valid = false;
+                }
+            };
+
+            check_fallback_disparity(&center_patch_valid_for_obj, center_patch_result);
+            check_fallback_disparity(&subpixel_valid_for_obj, subpixel_result);
+            if (!center_patch_valid_for_obj) {
+                z_roi_center_patch = -1.0f;
+            }
+            if (!subpixel_valid_for_obj) {
+                z_subpixel = -1.0f;
+                disparity = -1.0f;
+                disparity_conf = 1.0f;
+            }
+            if (has_consistency_check && !any_consistency_passed) {
+                epipolar_fallback_depth_valid = false;
+                fallback_template_depth_valid = false;
+                any_fallback_depth_valid = false;
+            }
+        }
 
         DepthCandidateBuilderInput depth_candidate_input;
         depth_candidate_input.left_detection = left_det;

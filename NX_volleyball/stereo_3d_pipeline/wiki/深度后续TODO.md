@@ -9,7 +9,7 @@
 - [x] 同步更新 `Object3D`、TrajectoryRecorder CSV、`schema.md`、`dataset.py` 和 `check_dataset.py` 的 fallback epipolar 字段读取与统计。
 - [x] fallback 命中球后，降低在线深度更新权重。
 - [x] fallback 圆心深度不写入 `z_circle_center`。
-- [ ] 增加 fallback center patch / multi-point 一致性检查。
+- [x] 增加 fallback center patch / multi-point 一致性检查。
 
 ## P2 CUDA 候选
 
