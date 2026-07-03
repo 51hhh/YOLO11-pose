@@ -7,7 +7,7 @@ import csv
 import io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 
 METHOD_COLUMNS = (
@@ -519,6 +519,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
     valid: List[List[float]] = []
     labels: List[List[float]] = []
     prev_ts = None
+    prev_valid_ts = None
     prev_median_z = 0.0
     prev_candidate_dz = 0.0
     have_prev_median = False
@@ -558,15 +559,24 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
         candidate_median_z = _median(candidate_values)
         candidate_mad_z = _mad(candidate_values)
         candidate_valid_count = float(len(candidate_values))
-        if have_prev_median:
-            candidate_dz = (candidate_median_z - prev_median_z) / dt
-            candidate_ddz = (candidate_dz - prev_candidate_dz) / dt
+        if candidate_valid_count <= 0.0:
+            candidate_dz = 0.0
+            candidate_ddz = 0.0
+        elif have_prev_median and prev_valid_ts is not None:
+            raw_valid_dt = ts - prev_valid_ts
+            valid_dt = max(1e-4, min(0.5, raw_valid_dt))
+            candidate_dz = (candidate_median_z - prev_median_z) / valid_dt
+            if raw_valid_dt > dt * 1.5:
+                candidate_ddz = 0.0
+            else:
+                candidate_ddz = (candidate_dz - prev_candidate_dz) / dt
         else:
             candidate_dz = 0.0
             candidate_ddz = 0.0
         if candidate_valid_count > 0.0:
             prev_median_z = candidate_median_z
             prev_candidate_dz = candidate_dz
+            prev_valid_ts = ts
             have_prev_median = True
 
         features.append(
@@ -728,11 +738,11 @@ def iter_extended_rows(path: str | Path) -> Iterable[Dict[str, str]]:
     yield from read_csv_rows(path)
 
 
-def normalize_features(features: Sequence[Sequence[float]]) -> List[List[float]]:
-    """Simple per-sequence normalization for small offline experiments."""
+def compute_feature_normalizer(features: Sequence[Sequence[float]]) -> Tuple[List[float], List[float]]:
+    """Compute a fixed feature normalizer for training/deployment."""
 
     if not features:
-        return []
+        return [], []
     cols = len(features[0])
     means = [0.0] * cols
     for row in features:
@@ -746,5 +756,26 @@ def normalize_features(features: Sequence[Sequence[float]]) -> List[List[float]]
             diff = value - means[i]
             stds[i] += diff * diff
     stds = [(value / len(features)) ** 0.5 for value in stds]
+    stds = [max(value, 1e-6) for value in stds]
+    return means, stds
 
+
+def apply_feature_normalizer(
+    features: Sequence[Sequence[float]],
+    means: Sequence[float],
+    stds: Sequence[float],
+) -> List[List[float]]:
+    """Apply a fixed feature normalizer."""
+
+    if not features:
+        return []
+    if len(means) != len(features[0]) or len(stds) != len(features[0]):
+        raise ValueError("feature normalizer dimension mismatch")
     return [[(value - means[i]) / max(stds[i], 1e-6) for i, value in enumerate(row)] for row in features]
+
+
+def normalize_features(features: Sequence[Sequence[float]]) -> List[List[float]]:
+    """Backward-compatible helper using a normalizer fit on the input."""
+
+    means, stds = compute_feature_normalizer(features)
+    return apply_feature_normalizer(features, means, stds)

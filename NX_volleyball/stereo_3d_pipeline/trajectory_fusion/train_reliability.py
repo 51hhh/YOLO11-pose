@@ -15,19 +15,21 @@ except ImportError:  # pragma: no cover - runtime environment dependent
 try:
     from .dataset import (
         METHOD_NAMES,
+        apply_feature_normalizer,
         build_legacy_arrays,
+        compute_feature_normalizer,
         legacy_feature_names,
         load_legacy_sequences,
-        normalize_features,
         weak_label_names,
     )
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import (
         METHOD_NAMES,
+        apply_feature_normalizer,
         build_legacy_arrays,
+        compute_feature_normalizer,
         legacy_feature_names,
         load_legacy_sequences,
-        normalize_features,
         weak_label_names,
     )
 
@@ -81,13 +83,20 @@ def main() -> int:
     model = MeasurementReliabilityNet(feature_dim, num_methods=len(METHOD_NAMES), hidden_dim=args.hidden).to(args.device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
-    batches: List[dict] = []
+    sequence_arrays: List[dict] = []
+    all_features: List[List[float]] = []
     for seq in sequences:
         arrays = build_legacy_arrays(seq)
-        features = normalize_features(arrays["features"])
+        sequence_arrays.append({"track_id": seq.track_id, **arrays})
+        all_features.extend(arrays["features"])
+
+    feature_mean, feature_std = compute_feature_normalizer(all_features)
+    batches: List[dict] = []
+    for arrays in sequence_arrays:
+        features = apply_feature_normalizer(arrays["features"], feature_mean, feature_std)
         batches.append(
             {
-                "track_id": seq.track_id,
+                "track_id": arrays["track_id"],
                 "features": torch.tensor(features, dtype=torch.float32, device=args.device).unsqueeze(0),
                 "measurements": torch.tensor(arrays["measurements"], dtype=torch.float32, device=args.device).unsqueeze(0),
                 "valid": torch.tensor(arrays["valid"], dtype=torch.float32, device=args.device).unsqueeze(0),
@@ -144,6 +153,8 @@ def main() -> int:
     checkpoint = {
         "model": model.state_dict(),
         "feature_names": legacy_feature_names(),
+        "feature_mean": feature_mean,
+        "feature_std": feature_std,
         "method_names": METHOD_NAMES,
         "weak_label_names": weak_label_names(),
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",

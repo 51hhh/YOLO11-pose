@@ -134,6 +134,22 @@ def _method_sigma_scale(name: str) -> float:
     return 1.50
 
 
+def _method_group(name: str) -> str:
+    if name == "mono":
+        return "mono"
+    if name.startswith("bbox"):
+        return "bbox"
+    if name.startswith("circle"):
+        return "circle"
+    if name in {"roi_edge_centroid", "roi_radial_center", "roi_edge_pair_center"}:
+        return "roi_geometry"
+    if name in {"roi_multi_point", "roi_center_patch"}:
+        return "roi_patch"
+    if "fallback" in name:
+        return "fallback"
+    return "roi_sparse"
+
+
 def _quality_scale(row: Dict[str, float], name: str) -> float:
     support_key = f"{name}_support"
     std_key = f"{name}_std_px"
@@ -169,13 +185,24 @@ def _quality_scale(row: Dict[str, float], name: str) -> float:
 def _z_measurements(row: Dict[str, float], cfg: SmootherConfig) -> List[Tuple[float, float, str]]:
     if not cfg.use_method_depths:
         return []
-    out: List[Tuple[float, float, str]] = []
+    grouped: Dict[str, List[Tuple[float, float]]] = {}
     for name, key in METHOD_COLUMNS:
         z_value = row.get(key, -1.0)
         if z_value <= 0.1:
             continue
         sigma = cfg.base_sigma_z * _method_sigma_scale(name) * _quality_scale(row, name) * max(1.0, z_value)
-        out.append((z_value, sigma * sigma, name))
+        grouped.setdefault(_method_group(name), []).append((z_value, sigma * sigma))
+
+    out: List[Tuple[float, float, str]] = []
+    for group, values in grouped.items():
+        zs = [item[0] for item in values]
+        variances = [item[1] for item in values]
+        z_group = _median(zs)
+        spread = _median([abs(value - z_group) for value in zs])
+        # Candidates in a group are highly correlated, so do not divide the
+        # variance by N. Add observed disagreement as extra uncertainty.
+        variance = max(min(variances), spread * spread, (0.01 * max(1.0, z_group)) ** 2)
+        out.append((z_group, variance, group))
     return out
 
 
