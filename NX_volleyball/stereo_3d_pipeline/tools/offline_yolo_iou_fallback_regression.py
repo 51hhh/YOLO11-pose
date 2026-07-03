@@ -16,15 +16,11 @@ in the realtime pipeline.
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
-from pathlib import Path
 from typing import Dict, List
 
 from stereo_feature_matching.realtime_contract import (
-    BboxDisparityPriorConfig,
-    StereoRoiPairGateConfig,
     bbox_disparity_consistency_penalty,
     evaluate_stereo_roi_pair,
     estimate_bbox_disparity_px,
@@ -32,6 +28,7 @@ from stereo_feature_matching.realtime_contract import (
     score_stereo_roi_pair_with_bbox_prior,
 )
 
+from offline_yolo_iou_config import build_bbox_prior, build_pair_gate, parse_args, parse_fake_scales
 from offline_yolo_iou_inputs import (
     load_baseline_from_calib,
     read_gray,
@@ -48,51 +45,11 @@ from offline_yolo_iou_template_search import template_search_gray
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--clip", type=Path, required=True, help="baseline clip directory with frames.csv")
-    parser.add_argument("--calib", type=Path, default=Path("NX_volleyball/calibration/stereo_calib.yaml"))
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--max-frames", type=int, default=120)
-    parser.add_argument("--object-diameter-m", type=float, default=0.200)
-    parser.add_argument("--bbox-scale", type=float, default=0.95)
-    parser.add_argument("--max-disparity", type=int, default=2048)
-    parser.add_argument("--pair-y-tolerance-px", type=float, default=12.0)
-    parser.add_argument("--pair-max-size-ratio", type=float, default=2.0)
-    parser.add_argument("--pair-min-shifted-iou", type=float, default=0.05)
-    parser.add_argument("--bbox-consistency-ratio", type=float, default=0.30)
-    parser.add_argument("--bbox-consistency-min-px", type=float, default=45.0)
-    parser.add_argument("--bbox-penalty-scale", type=float, default=0.75)
-    parser.add_argument("--fake-disparity-scales", default="0.55,1.45")
-    parser.add_argument("--template-patch-radius", type=int, default=9)
-    parser.add_argument("--template-search-margin-px", type=float, default=72.0)
-    parser.add_argument("--template-y-tolerance-px", type=float, default=24.0)
-    parser.add_argument("--template-min-score", type=float, default=0.20)
-    parser.add_argument("--template-min-score-gap", type=float, default=0.010)
-    parser.add_argument("--template-peak-exclusion-radius", type=int, default=12)
-    parser.add_argument("--max-center-error-px", type=float, default=18.0)
-    parser.add_argument("--max-y-error-px", type=float, default=8.0)
-    parser.add_argument("--max-disparity-error-px", type=float, default=18.0)
-    parser.add_argument("--fail-on-regression", action="store_true")
-    parser.add_argument("--min-pass-rate", type=float, default=0.99)
-    args = parser.parse_args()
-
+    args = parse_args()
     baseline_m = load_baseline_from_calib(args.calib)
-    pair_gate = StereoRoiPairGateConfig(
-        max_disparity=args.max_disparity,
-        epipolar_y_tolerance=args.pair_y_tolerance_px,
-        max_size_ratio=args.pair_max_size_ratio,
-        min_shifted_iou=args.pair_min_shifted_iou,
-    )
-    prior = BboxDisparityPriorConfig(
-        object_diameter_m=args.object_diameter_m,
-        bbox_scale=args.bbox_scale,
-        consistency_ratio=args.bbox_consistency_ratio,
-        consistency_min_px=args.bbox_consistency_min_px,
-        penalty_scale=args.bbox_penalty_scale,
-    )
-    fake_scales = sorted(float(v.strip()) for v in args.fake_disparity_scales.split(",") if v.strip())
-    if len(fake_scales) != 2:
-        raise ValueError("--fake-disparity-scales must contain two comma-separated values")
+    pair_gate = build_pair_gate(args)
+    prior = build_bbox_prior(args)
+    fake_scales = parse_fake_scales(args.fake_disparity_scales)
 
     rows_in = read_rows(args.clip / "frames.csv", args.max_frames)
     args.out.mkdir(parents=True, exist_ok=True)
