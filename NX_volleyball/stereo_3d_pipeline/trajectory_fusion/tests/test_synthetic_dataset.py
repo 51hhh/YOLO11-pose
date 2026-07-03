@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -158,13 +159,27 @@ class SyntheticDatasetTest(unittest.TestCase):
 
             old_argv = sys.argv[:]
             stdout = io.StringIO()
+            json_out = Path(tmp) / "report.json"
+            csv_out = Path(tmp) / "report.csv"
             try:
-                sys.argv = ["evaluate_fusion.py", str(csv_path)]
+                sys.argv = [
+                    "evaluate_fusion.py",
+                    str(csv_path),
+                    "--json-out",
+                    str(json_out),
+                    "--csv-out",
+                    str(csv_out),
+                ]
                 with contextlib.redirect_stdout(stdout):
                     self.assertEqual(evaluate_fusion.main(), 0)
             finally:
                 sys.argv = old_argv
             self.assertIn("known_z=3.0000m", stdout.getvalue())
+            report = json.loads(json_out.read_text(encoding="utf-8"))
+            self.assertIn("0", report["tracks"])
+            self.assertIn("z_circle_center", report["tracks"]["0"]["candidate_depths"])
+            csv_text = csv_out.read_text(encoding="utf-8")
+            self.assertIn("candidate_depths.z_circle_center.known_z_bias", csv_text)
 
     def test_known_z_loss_if_torch_available(self) -> None:
         try:
