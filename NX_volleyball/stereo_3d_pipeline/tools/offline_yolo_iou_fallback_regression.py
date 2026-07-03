@@ -17,17 +17,13 @@ in the realtime pipeline.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 from pathlib import Path
-from typing import Dict, List, Tuple
-
-import cv2
+from typing import Dict, List
 
 from stereo_feature_matching.realtime_contract import (
     BboxDisparityPriorConfig,
-    Detection,
     StereoRoiPairGateConfig,
     bbox_disparity_consistency_penalty,
     evaluate_stereo_roi_pair,
@@ -36,89 +32,19 @@ from stereo_feature_matching.realtime_contract import (
     score_stereo_roi_pair_with_bbox_prior,
 )
 
+from offline_yolo_iou_inputs import (
+    load_baseline_from_calib,
+    read_gray,
+    read_rows,
+    row_detection,
+)
+from offline_yolo_iou_pair_scenarios import (
+    fake_left_detection,
+    fake_right_detection,
+    selected_pair_score,
+)
 from offline_yolo_iou_report import build_summary, write_regression_outputs
 from offline_yolo_iou_template_search import template_search_gray
-
-
-def _load_baseline_from_calib(path: Path) -> float:
-    fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
-    if not fs.isOpened():
-        raise FileNotFoundError(path)
-    try:
-        node = fs.getNode("baseline")
-        if node.empty():
-            raise KeyError("missing calibration key: baseline")
-        return float(node.real()) / 1000.0
-    finally:
-        fs.release()
-
-
-def _read_rows(path: Path, max_frames: int) -> List[Dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if max_frames > 0:
-        rows = rows[:max_frames]
-    return rows
-
-
-def _read_gray(path: Path) -> np.ndarray:
-    img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise FileNotFoundError(path)
-    if img.ndim == 3:
-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img
-
-
-def _det(row: Dict[str, str], side: str) -> Detection | None:
-    try:
-        count = int(float(row[f"{side}_count"]))
-    except (KeyError, ValueError):
-        count = 1
-    if count <= 0:
-        return None
-    try:
-        return Detection(
-            cx=float(row[f"{side}_cx"]),
-            cy=float(row[f"{side}_cy"]),
-            width=float(row[f"{side}_w"]),
-            height=float(row[f"{side}_h"]),
-            confidence=float(row.get(f"{side}_conf", 1.0)),
-            class_id=int(float(row.get(f"{side}_class_id", 0))),
-        )
-    except (KeyError, ValueError):
-        return None
-
-
-def _fake_right_detection(left: Detection, true_right: Detection, scale: float) -> Detection:
-    true_disp = max(1.0, left.cx - true_right.cx)
-    return Detection(
-        cx=left.cx - true_disp * scale,
-        cy=true_right.cy,
-        width=true_right.width,
-        height=true_right.height,
-        confidence=true_right.confidence,
-        class_id=true_right.class_id,
-    )
-
-
-def _fake_left_detection(true_left: Detection, right: Detection, scale: float) -> Detection:
-    true_disp = max(1.0, true_left.cx - right.cx)
-    return Detection(
-        cx=right.cx + true_disp * scale,
-        cy=true_left.cy,
-        width=true_left.width,
-        height=true_left.height,
-        confidence=true_left.confidence,
-        class_id=true_left.class_id,
-    )
-
-
-def _selected_pair_score(selected, left_index: int, right_index: int) -> float:
-    for pair in selected:
-        if pair.left_index == left_index and pair.right_index == right_index:
-            return pair.score
-    return 0.0
 
 
 def main() -> int:
@@ -150,7 +76,7 @@ def main() -> int:
     parser.add_argument("--min-pass-rate", type=float, default=0.99)
     args = parser.parse_args()
 
-    baseline_m = _load_baseline_from_calib(args.calib)
+    baseline_m = load_baseline_from_calib(args.calib)
     pair_gate = StereoRoiPairGateConfig(
         max_disparity=args.max_disparity,
         epipolar_y_tolerance=args.pair_y_tolerance_px,
@@ -168,17 +94,17 @@ def main() -> int:
     if len(fake_scales) != 2:
         raise ValueError("--fake-disparity-scales must contain two comma-separated values")
 
-    rows_in = _read_rows(args.clip / "frames.csv", args.max_frames)
+    rows_in = read_rows(args.clip / "frames.csv", args.max_frames)
     args.out.mkdir(parents=True, exist_ok=True)
     out_rows: List[Dict[str, object]] = []
 
     for row in rows_in:
-        left = _det(row, "left")
-        right = _det(row, "right")
+        left = row_detection(row, "left")
+        right = row_detection(row, "right")
         if left is None or right is None:
             continue
-        left_img = _read_gray(args.clip / row["left_image"])
-        right_img = _read_gray(args.clip / row["right_image"])
+        left_img = read_gray(args.clip / row["left_image"])
+        right_img = read_gray(args.clip / row["right_image"])
         true_disp = left.cx - right.cx
 
         normal_pair, normal_reject = evaluate_stereo_roi_pair(left, right, 0, 0, pair_gate)
@@ -195,7 +121,7 @@ def main() -> int:
 
         fake_results: List[Tuple[bool, float, str]] = []
         for scale in fake_scales:
-            fake = _fake_right_detection(left, right, scale)
+            fake = fake_right_detection(left, right, scale)
             fake_pair, fake_reject = evaluate_stereo_roi_pair(left, fake, 0, 1, pair_gate)
             selected = select_global_stereo_roi_pairs(
                 [left],
@@ -210,7 +136,7 @@ def main() -> int:
                 fake_results.append((False, 0.0, normal_reject))
                 continue
             if fake_pair is None:
-                fake_results.append((selected_true, _selected_pair_score(selected, 0, 1), fake_reject))
+                fake_results.append((selected_true, selected_pair_score(selected, 0, 1), fake_reject))
                 continue
             fake_score = score_stereo_roi_pair_with_bbox_prior(
                 fake_pair, baseline_m, prior, args.max_disparity
@@ -219,7 +145,7 @@ def main() -> int:
 
         fake_left_results: List[Tuple[bool, float, str]] = []
         for scale in fake_scales:
-            fake = _fake_left_detection(left, right, scale)
+            fake = fake_left_detection(left, right, scale)
             fake_pair, fake_reject = evaluate_stereo_roi_pair(fake, right, 1, 0, pair_gate)
             selected = select_global_stereo_roi_pairs(
                 [fake, left],
@@ -234,7 +160,7 @@ def main() -> int:
                 fake_left_results.append((False, 0.0, normal_reject))
                 continue
             if fake_pair is None:
-                fake_left_results.append((selected_true, _selected_pair_score(selected, 1, 0), fake_reject))
+                fake_left_results.append((selected_true, selected_pair_score(selected, 1, 0), fake_reject))
                 continue
             fake_score = score_stereo_roi_pair_with_bbox_prior(
                 fake_pair, baseline_m, prior, args.max_disparity
