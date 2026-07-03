@@ -31,6 +31,47 @@ float bboxDisparityConsistencyPenaltyCPU(
     const PipelineConfig::DualYoloConfig& dual_cfg,
     int max_disparity);
 
+CircleFit2D searchTemplateOnEpipolarCPU(
+    const uint8_t* source_img,
+    int source_pitch,
+    const uint8_t* target_img,
+    int target_pitch,
+    int img_w,
+    int img_h,
+    const CircleFit2D& source_circle,
+    float predicted_cx,
+    float predicted_cy,
+    float y_tolerance,
+    const PipelineConfig::DualYoloConfig& dual_cfg);
+
+SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
+    const uint8_t* left_img,
+    int left_pitch,
+    const uint8_t* right_img,
+    int right_pitch,
+    int img_w,
+    int img_h,
+    const CircleFit2D& left_circle,
+    const CircleFit2D& right_circle,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline);
+
+SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
+    const uint8_t* left_img,
+    int left_pitch,
+    const uint8_t* right_img,
+    int right_pitch,
+    int img_w,
+    int img_h,
+    const CircleFit2D& left_circle,
+    const CircleFit2D& right_circle,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    float focal,
+    float baseline);
+
 void stampFrameMetadata(FrameSlot& slot);
 
 }  // namespace stereo3d
