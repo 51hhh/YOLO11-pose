@@ -2,9 +2,148 @@
 #include "pipeline_roi_match_helpers.h"
 #include "../utils/logger.h"
 
+#include <vpi/algo/ConvertImageFormat.h>
+
 #include <cstdint>
 
+// Custom CUDA Bayer -> BGR8 kernel in detect_preprocess.cu.
+extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
+                                   int width, int height,
+                                   int bayer_pitch, int bgr_pitch,
+                                   cudaStream_t stream);
+
 namespace stereo3d {
+
+void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
+    NVTX_RANGE("Stage0_GrabRect");
+
+#ifdef HIK_CAMERA_ENABLED
+    if (camera_ && !grab_preloaded) {
+        VPIImageData imgDataL, imgDataR;
+        VPIStatus stL = vpiImageLockData(
+            slot.rawL, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataL);
+        VPIStatus stR = vpiImageLockData(
+            slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
+
+        GrabResult resL, resR;
+        bool grab_ok = false;
+        if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+            grab_ok = camera_->grabFramePair(
+                static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
+                static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+                imgDataL.buffer.pitch.planes[0].pitchBytes,
+                imgDataR.buffer.pitch.planes[0].pitchBytes,
+                1000, resL, resR);
+            slot.left_timestamp_us = resL.timestamp_us;
+            slot.right_timestamp_us = resR.timestamp_us;
+            slot.left_frame_number = resL.frame_number;
+            slot.right_frame_number = resR.frame_number;
+            slot.left_frame_counter = resL.frame_counter;
+            slot.right_frame_counter = resR.frame_counter;
+            slot.left_trigger_index = resL.trigger_index;
+            slot.right_trigger_index = resR.trigger_index;
+        } else {
+            LOG_WARN("[Pipeline] stage0 raw lock failed: L=%d R=%d",
+                     (int)stL, (int)stR);
+        }
+
+        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rawL);
+        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rawR);
+
+        if (!grab_ok) {
+            slot.grab_failed = true;
+            LOG_WARN("[Pipeline] Frame %d grab failed, skipping", slot.frame_id);
+        }
+    }
+#endif
+
+    vpiStreamSync(streams_.vpiStreamPVA);
+
+    if (config_.tnr_enabled) {
+        ScopedTimer tt("TNR");
+
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rawL, tnrNV12L_, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rawR, tnrNV12R_, nullptr);
+
+        VPITNRParams tnrParams;
+        vpiInitTemporalNoiseReductionParams(&tnrParams);
+        tnrParams.preset = config_.tnr_preset;
+        tnrParams.strength = config_.tnr_strength;
+
+        VPIImage prevL = tnrFirstFrame_ ? nullptr : tnrOutNV12L_;
+        VPIImage prevR = tnrFirstFrame_ ? nullptr : tnrOutNV12R_;
+
+        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                         tnrPayloadL_, prevL,
+                                         tnrNV12L_, tnrOutNV12L_, &tnrParams);
+        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                         tnrPayloadR_, prevR,
+                                         tnrNV12R_, tnrOutNV12R_, &tnrParams);
+
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    tnrOutNV12L_, slot.rawL, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    tnrOutNV12R_, slot.rawR, nullptr);
+
+        tnrFirstFrame_ = false;
+        globalPerf().record("TNR", tt.elapsedMs());
+    }
+
+    if (colorPipelineEnabled()) {
+        const int rw = config_.camera.width;
+        const int rh = config_.camera.height;
+
+        launchBayerToBGR8(
+            static_cast<const unsigned char*>(slot.rawL_gpu.data),
+            static_cast<unsigned char*>(slot.tempBGR_L_gpu.data),
+            rw, rh,
+            slot.rawL_gpu.pitchBytes,
+            slot.tempBGR_L_gpu.pitchBytes,
+            streams_.cudaStreamBGR);
+
+        launchBayerToBGR8(
+            static_cast<const unsigned char*>(slot.rawR_gpu.data),
+            static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
+            rw, rh,
+            slot.rawR_gpu.pitchBytes,
+            slot.tempBGR_R_gpu.pitchBytes,
+            streams_.cudaStreamBGR);
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            LOG_ERROR("BayerToBGR kernel launch failed: %s",
+                      cudaGetErrorString(err));
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return;
+        }
+        err = cudaStreamSynchronize(streams_.cudaStreamBGR);
+        if (err != cudaSuccess) {
+            LOG_ERROR("BayerToBGR stream sync failed: %s",
+                      cudaGetErrorString(err));
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return;
+        }
+
+        rectifier_->submitBGR(streams_.vpiStreamPVA,
+                              slot.tempBGR_L, slot.tempBGR_R,
+                              slot.rectBGR_vpiL, slot.rectBGR_vpiR);
+
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rectBGR_vpiL, slot.rectGray_vpiL, nullptr);
+        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                                    slot.rectBGR_vpiR, slot.rectGray_vpiR, nullptr);
+    } else {
+        rectifier_->submit(streams_.vpiStreamPVA,
+                           slot.rawL, slot.rawR,
+                           slot.rectGray_vpiL, slot.rectGray_vpiR);
+    }
+
+    NVTX_RANGE_POP();
+}
 
 void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage1_Detect");
