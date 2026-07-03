@@ -166,6 +166,7 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_depth_modes.cpp
   src/pipeline/pipeline_loops.cpp
   src/pipeline/pipeline_roi_match_helpers.cpp
+  src/pipeline/pipeline_roi_stage2.cpp
   src/pipeline/pipeline_stages.cpp
   src/pipeline/pipeline_tracker.cpp
   src/calibration/stereo_calibration.cpp
