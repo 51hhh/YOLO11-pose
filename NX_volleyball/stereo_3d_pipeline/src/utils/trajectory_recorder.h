@@ -64,6 +64,7 @@ public:
 
     void close();
 
+    bool isEnabled() const { return cfg_.enabled; }
     int frameCount() const { return frame_count_.load(); }
     int droppedFrameCount() const { return dropped_frame_count_.load(); }
 

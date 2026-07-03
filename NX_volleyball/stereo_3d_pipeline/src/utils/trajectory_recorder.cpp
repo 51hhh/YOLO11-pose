@@ -7,6 +7,7 @@
 #include "logger.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
 
 namespace stereo3d {
@@ -25,12 +26,29 @@ std::string deriveFrameSummaryPath(const std::string& output_path) {
     return output_path + ".frames.csv";
 }
 
+bool ensureParentDirectory(const std::string& output_path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path parent = fs::path(output_path).parent_path();
+    if (parent.empty()) {
+        return true;
+    }
+    fs::create_directories(parent, ec);
+    if (ec) {
+        LOG_WARN("TrajectoryRecorder: failed to create directory %s: %s",
+                 parent.string().c_str(), ec.message().c_str());
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
     cfg_ = config;
     if (!cfg_.enabled) return;
 
+    ensureParentDirectory(cfg_.output_path);
     file_.open(cfg_.output_path, std::ios::out | std::ios::trunc);
     if (!file_.is_open()) {
         LOG_WARN("TrajectoryRecorder: failed to open %s", cfg_.output_path.c_str());
@@ -43,6 +61,7 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
         const std::string frame_path = cfg_.frame_summary_path.empty()
             ? deriveFrameSummaryPath(cfg_.output_path)
             : cfg_.frame_summary_path;
+        ensureParentDirectory(frame_path);
         frame_file_.open(frame_path, std::ios::out | std::ios::trunc);
         if (!frame_file_.is_open()) {
             LOG_WARN("TrajectoryRecorder: failed to open frame summary %s",

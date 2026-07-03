@@ -682,7 +682,7 @@ int main(int argc, char* argv[]) {
             printf("  --visualize, -v               Show detection + distance overlay window\n");
             printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
             printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
-            printf("  --recording-out               Override trajectory recorder CSV output path\n");
+            printf("  --recording-out <csv>         Override trajectory recorder CSV output path\n");
             printf("  --record-baseline-clip        Record one fixed-length left/right image sequence + CSV after ball detection\n");
             printf("  --baseline-out                Output root directory for baseline clips\n");
             printf("  --baseline-duration           Clip duration in seconds, converted by trigger frequency\n");
@@ -794,6 +794,11 @@ int main(int argc, char* argv[]) {
             recorder_cfg.frame_summary_path.clear();
         }
         recorder.init(recorder_cfg);
+        if (!recording_out_override.empty() && !recorder.isEnabled()) {
+            LOG_ERROR("Trajectory recorder failed for --recording-out=%s",
+                      recording_out_override.c_str());
+            return 1;
+        }
     }
 
     // === ROS2 Bridge 初始化 ===
