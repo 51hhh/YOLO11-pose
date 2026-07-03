@@ -20,6 +20,7 @@
 #define STEREO_3D_PIPELINE_PIPELINE_H_
 
 #include "frame_slot.h"
+#include "pipeline_callbacks.h"
 #include "sync.h"
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
 #ifndef HIK_CAMERA_ENABLED
@@ -233,42 +234,6 @@ struct PipelineConfig {
     float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
     VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
 };
-
-/**
- * @brief 结果回调
- */
-using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
-
-/**
- * @brief 帧回调视图。
- *
- * 回调同步执行, 这些 VPIImage 和 vector 引用只在回调期间有效。
- */
-struct FrameCallbackData {
-    int frame_id;
-    VPIImage rect_gray_left;
-    VPIImage rect_gray_right;
-    VPIImage rect_bgr_left;
-    VPIImage rect_bgr_right;
-    VPIImage raw_left;
-    VPIImage raw_right;
-    const std::vector<Detection>& detections_left;
-    const std::vector<Detection>& detections_right;
-    const std::vector<Object3D>& results;
-    FrameMetadata metadata;
-    float fps;
-};
-
-using FrameCallback = std::function<void(const FrameCallbackData& frame)>;
-
-/**
- * @brief 诊断回调 (深度图 + 检测框 + 3D结果)
- */
-using DiagnosticCallback = std::function<void(
-    int frame_id, const float* depth_gpu, int depth_pitch,
-    int depth_w, int depth_h,
-    const std::vector<Detection>& detections,
-    const std::vector<Object3D>& results)>;
 
 /**
  * @brief 四级流水线主类
