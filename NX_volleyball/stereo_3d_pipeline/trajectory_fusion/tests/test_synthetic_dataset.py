@@ -212,6 +212,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             report = analyze_dataset(csv_path)
             self.assertEqual(report["metadata"], str(Path(tmp) / "traj_p0p1_001.metadata.yaml"))
             self.assertEqual(report["rows"], 4)
+            self.assertEqual(report["timing_source"], "frame_summary")
+            self.assertEqual(report["frame_gaps"]["count"], 0)
             self.assertEqual(report["missing_fields"], [])
             self.assertEqual(report["watermarks"]["frame_counter_delta"]["nonzero"], 0)
             self.assertAlmostEqual(report["depth"]["z_circle_center"]["known_z_bias"], 0.005, places=6)

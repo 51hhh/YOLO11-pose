@@ -137,6 +137,9 @@ public:
         if (!stride_hit && !(cfg_.dump_fallback && has_fallback)) {
             return;
         }
+        if (!reserveSlot()) {
+            return;
+        }
 
         RealtimeDebugDumpJob job;
         job.frame_id = frame.frame_id;
@@ -147,19 +150,10 @@ public:
         job.metadata = frame.metadata;
         if (!copyGray(frame.rect_gray_left, job.left_gray) ||
             !copyGray(frame.rect_gray_right, job.right_gray)) {
+            releaseReservedSlot(false, nullptr);
             return;
         }
-
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            if (cfg_.max_queue > 0 &&
-                queue_.size() >= static_cast<size_t>(cfg_.max_queue)) {
-                ++dropped_count_;
-                return;
-            }
-            queue_.push_back(std::move(job));
-            ++captured_count_;
-        }
+        releaseReservedSlot(true, &job);
         cv_.notify_one();
     }
 
@@ -179,6 +173,32 @@ public:
     }
 
 private:
+    bool reserveSlot() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        const int reserved = reserved_count_;
+        if (cfg_.max_frames > 0 &&
+            captured_count_.load() + reserved >= cfg_.max_frames) {
+            return false;
+        }
+        if (cfg_.max_queue > 0 &&
+            queue_.size() + static_cast<size_t>(reserved) >=
+                static_cast<size_t>(cfg_.max_queue)) {
+            ++dropped_count_;
+            return false;
+        }
+        ++reserved_count_;
+        return true;
+    }
+
+    void releaseReservedSlot(bool enqueue, RealtimeDebugDumpJob* job) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (reserved_count_ > 0) --reserved_count_;
+        if (enqueue && job) {
+            queue_.push_back(std::move(*job));
+            ++captured_count_;
+        }
+    }
+
     static bool copyGray(VPIImage img, cv::Mat& out) {
         VPIImageData data;
         const VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
@@ -442,6 +462,7 @@ private:
     std::mutex mtx_;
     std::condition_variable cv_;
     std::deque<RealtimeDebugDumpJob> queue_;
+    int reserved_count_ = 0;
     std::thread writer_;
 };
 

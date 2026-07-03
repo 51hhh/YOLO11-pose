@@ -139,6 +139,18 @@ def _frame_gaps(rows: Sequence[Dict[str, str]]) -> List[Dict[str, int]]:
     return gaps
 
 
+def _timing_stats(rows: Sequence[Dict[str, str]]) -> Dict[str, Any]:
+    timestamps = [_safe_float(row.get("timestamp"), math.nan) for row in rows]
+    timestamps = [value for value in timestamps if not math.isnan(value)]
+    duration = (timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
+    return {
+        "rows": len(rows),
+        "duration_sec": duration,
+        "fps_rows": len(rows) / duration if duration > 0.0 else None,
+        "fps_intervals": (len(rows) - 1) / duration if duration > 0.0 and len(rows) > 1 else None,
+    }
+
+
 def _delta_stats(rows: Sequence[Dict[str, str]], key: str) -> Dict[str, Any]:
     if not rows or key not in rows[0]:
         return {"present": False}
@@ -259,6 +271,8 @@ def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
     rows = read_csv_rows(frame_path)
     fields = _field_set(rows)
     missing = [field for field in FRAME_SUMMARY_FIELDS if field not in fields]
+    gaps = _frame_gaps(rows)
+    timing = _timing_stats(rows)
 
     def sum_field(key: str) -> int:
         return sum(_safe_int(row.get(key), 0) for row in rows)
@@ -272,6 +286,13 @@ def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
         "path": str(frame_path),
         "present": True,
         "rows": len(rows),
+        "duration_sec": timing["duration_sec"],
+        "fps_rows": timing["fps_rows"],
+        "fps_intervals": timing["fps_intervals"],
+        "frame_gaps": {
+            "count": len(gaps),
+            "first": gaps[:10],
+        },
         "missing_fields": missing,
         "totals": {
             "result_count": sum_field("result_count"),
@@ -301,12 +322,20 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
     fields = _field_set(rows)
     missing_fields = [field for field in REQUIRED_FIELDS if field not in fields]
 
-    timestamps = [_safe_float(row.get("timestamp"), math.nan) for row in rows]
-    timestamps = [value for value in timestamps if not math.isnan(value)]
-    duration = (timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
-    fps_rows = len(rows) / duration if duration > 0.0 else None
-    fps_intervals = (len(rows) - 1) / duration if duration > 0.0 and len(rows) > 1 else None
-    gaps = _frame_gaps(rows)
+    target_timing = _timing_stats(rows)
+    target_gaps = _frame_gaps(rows)
+    frame_summary = _frame_summary_report(csv_path)
+    timing_source = "frame_summary" if frame_summary["present"] else "target_csv"
+    duration = frame_summary.get("duration_sec", target_timing["duration_sec"])
+    fps_rows = frame_summary.get("fps_rows", target_timing["fps_rows"])
+    fps_intervals = frame_summary.get("fps_intervals", target_timing["fps_intervals"])
+    gaps = frame_summary.get(
+        "frame_gaps",
+        {
+            "count": len(target_gaps),
+            "first": target_gaps[:10],
+        },
+    )
     known_z = _metadata_float(metadata, "known_z_m", "known_z", "known_distance_m")
 
     return {
@@ -316,10 +345,12 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
         "duration_sec": duration,
         "fps_rows": fps_rows,
         "fps_intervals": fps_intervals,
+        "timing_source": timing_source,
         "missing_fields": missing_fields,
-        "frame_gaps": {
-            "count": len(gaps),
-            "first": gaps[:10],
+        "frame_gaps": gaps,
+        "target_frame_gaps": {
+            "count": len(target_gaps),
+            "first": target_gaps[:10],
         },
         "watermarks": {
             "frame_counter_delta": _delta_stats(rows, "frame_counter_delta"),
@@ -328,7 +359,7 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
         "source_breakdown": _source_breakdown(rows),
         "depth": {key: _depth_stats(rows, key, known_z) for key in DEPTH_KEYS},
         "depth_jump": {key: _depth_jump_stats(rows, key) for key in JUMP_DEPTH_KEYS},
-        "frame_summary": _frame_summary_report(csv_path),
+        "frame_summary": frame_summary,
         "known_z": known_z,
     }
 
@@ -346,7 +377,8 @@ def print_report(report: Dict[str, Any]) -> None:
     print(f"metadata={report['metadata']}")
     print(
         f"rows={report['rows']} duration={_fmt(report['duration_sec'], 3)}s "
-        f"fps_rows={_fmt(report['fps_rows'], 3)} fps_intervals={_fmt(report['fps_intervals'], 3)}"
+        f"fps_rows={_fmt(report['fps_rows'], 3)} fps_intervals={_fmt(report['fps_intervals'], 3)} "
+        f"timing_source={report['timing_source']}"
     )
     print(f"missing_fields={report['missing_fields']}")
     print(f"frame_gaps={report['frame_gaps']['count']} first={report['frame_gaps']['first']}")
