@@ -6,14 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Sequence
 
 try:
-    from .dataset import find_metadata_for_csv, read_csv_rows, read_metadata
+    from .dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import find_metadata_for_csv, read_csv_rows, read_metadata
+    from dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
 
 
 P0_DEPTH_KEYS = (
@@ -28,6 +29,7 @@ P1_DEPTH_KEYS = (
     "z_roi_center_patch",
 )
 DEPTH_KEYS = P0_DEPTH_KEYS + P1_DEPTH_KEYS
+JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback",)
 REQUIRED_FIELDS = (
     "frame_id",
     "timestamp",
@@ -38,6 +40,21 @@ REQUIRED_FIELDS = (
     "pair_positive_disparity",
     *DEPTH_KEYS,
 )
+FRAME_SUMMARY_FIELDS = (
+    "frame_id",
+    "result_count",
+    "raw_observation_count",
+    "stereo_observation_count",
+    "direct_pair_count",
+    "fallback_l2r_count",
+    "fallback_r2l_count",
+)
+MATCH_SOURCE_NAMES = {
+    0: "none",
+    1: "direct_pair",
+    2: "fallback_l2r",
+    3: "fallback_r2l",
+}
 
 
 def _safe_float(value: object, default: float = 0.0) -> float:
@@ -73,6 +90,21 @@ def _mad(values: Sequence[float]) -> float | None:
     if med is None:
         return None
     return _median([abs(value - med) for value in values])
+
+
+def _percentile(values: Sequence[float], pct: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * pct / 100.0
+    lo = int(math.floor(rank))
+    hi = int(math.ceil(rank))
+    if lo == hi:
+        return ordered[lo]
+    weight = rank - lo
+    return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
 
 
 def _metadata_float(metadata: Dict[str, Any], *keys: str) -> float | None:
@@ -139,6 +171,126 @@ def _depth_stats(rows: Sequence[Dict[str, str]], key: str, known_z: float | None
     }
 
 
+def _raw_rows(rows: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    if not rows or "raw_observation_valid" not in rows[0]:
+        return list(rows)
+    return [row for row in rows if _safe_int(row.get("raw_observation_valid"), 0) == 1]
+
+
+def _source_breakdown(rows: Sequence[Dict[str, str]]) -> Dict[str, Any]:
+    raw = _raw_rows(rows)
+    match_counts: Counter[str] = Counter()
+    combo_counts: Counter[str] = Counter()
+    fallback_epipolar_rows: List[Dict[str, str]] = []
+    fallback_by_direction: Counter[str] = Counter()
+
+    for row in raw:
+        match_source = _safe_int(row.get("stereo_match_source"), 0)
+        match_name = MATCH_SOURCE_NAMES.get(match_source, f"unknown_{match_source}")
+        match_counts[match_name] += 1
+
+        left_source = _safe_int(row.get("left_circle_source"), -1)
+        right_source = _safe_int(row.get("right_circle_source"), -1)
+        depth_source = _safe_int(row.get("stereo_depth_source"), -1)
+        combo_key = (
+            f"match={match_source},left_circle={left_source},"
+            f"right_circle={right_source},depth={depth_source}"
+        )
+        combo_counts[combo_key] += 1
+
+        if (
+            match_source in (2, 3)
+            and (left_source == 3 or right_source == 3)
+            and _safe_float(row.get("z_fallback"), -1.0) > 0.1
+        ):
+            fallback_epipolar_rows.append(row)
+            fallback_by_direction[MATCH_SOURCE_NAMES[match_source]] += 1
+
+    fallback_values = [_safe_float(row.get("z_fallback"), -1.0) for row in fallback_epipolar_rows]
+    return {
+        "rows": len(rows),
+        "raw_rows": len(raw),
+        "match_source": dict(match_counts),
+        "source_combinations": dict(combo_counts),
+        "epipolar_fallback": {
+            "valid": len(fallback_values),
+            "by_direction": dict(fallback_by_direction),
+            "median": _median(fallback_values),
+            "mad": _mad(fallback_values),
+            "min": min(fallback_values) if fallback_values else None,
+            "max": max(fallback_values) if fallback_values else None,
+        },
+    }
+
+
+def _depth_jump_stats(rows: Sequence[Dict[str, str]], key: str) -> Dict[str, Any]:
+    if not rows or key not in rows[0]:
+        return {"present": False}
+
+    by_track: Dict[str, List[tuple[int, float]]] = {}
+    for row in rows:
+        value = _safe_float(row.get(key), -1.0)
+        if value <= 0.1:
+            continue
+        track_id = row.get("track_id") or "0"
+        by_track.setdefault(track_id, []).append((_safe_int(row.get("frame_id"), 0), value))
+
+    deltas: List[float] = []
+    for values in by_track.values():
+        values.sort(key=lambda item: item[0])
+        for (_, prev), (_, cur) in zip(values, values[1:]):
+            deltas.append(abs(cur - prev))
+
+    return {
+        "present": True,
+        "pairs": len(deltas),
+        "median_abs_delta": _median(deltas),
+        "mad_abs_delta": _mad(deltas),
+        "p95_abs_delta": _percentile(deltas, 95.0),
+        "max_abs_delta": max(deltas) if deltas else None,
+    }
+
+
+def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
+    frame_path = derive_frame_summary_path(csv_path)
+    if not frame_path.exists():
+        return {"path": str(frame_path), "present": False}
+
+    rows = read_csv_rows(frame_path)
+    fields = _field_set(rows)
+    missing = [field for field in FRAME_SUMMARY_FIELDS if field not in fields]
+
+    def sum_field(key: str) -> int:
+        return sum(_safe_int(row.get(key), 0) for row in rows)
+
+    def max_field(key: str) -> int | None:
+        if not rows or key not in fields:
+            return None
+        return max(_safe_int(row.get(key), 0) for row in rows)
+
+    return {
+        "path": str(frame_path),
+        "present": True,
+        "rows": len(rows),
+        "missing_fields": missing,
+        "totals": {
+            "result_count": sum_field("result_count"),
+            "raw_observation_count": sum_field("raw_observation_count"),
+            "stereo_observation_count": sum_field("stereo_observation_count"),
+            "direct_pair_count": sum_field("direct_pair_count"),
+            "fallback_l2r_count": sum_field("fallback_l2r_count"),
+            "fallback_r2l_count": sum_field("fallback_r2l_count"),
+        },
+        "max_per_frame": {
+            "result_count": max_field("result_count"),
+            "raw_observation_count": max_field("raw_observation_count"),
+            "stereo_observation_count": max_field("stereo_observation_count"),
+            "fallback_l2r_count": max_field("fallback_l2r_count"),
+            "fallback_r2l_count": max_field("fallback_r2l_count"),
+        },
+    }
+
+
 def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = None) -> Dict[str, Any]:
     """Return quality metrics for one trajectory CSV."""
 
@@ -173,7 +325,10 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
             "frame_counter_delta": _delta_stats(rows, "frame_counter_delta"),
             "frame_number_delta": _delta_stats(rows, "frame_number_delta"),
         },
+        "source_breakdown": _source_breakdown(rows),
         "depth": {key: _depth_stats(rows, key, known_z) for key in DEPTH_KEYS},
+        "depth_jump": {key: _depth_jump_stats(rows, key) for key in JUMP_DEPTH_KEYS},
+        "frame_summary": _frame_summary_report(csv_path),
         "known_z": known_z,
     }
 
@@ -197,14 +352,32 @@ def print_report(report: Dict[str, Any]) -> None:
     print(f"frame_gaps={report['frame_gaps']['count']} first={report['frame_gaps']['first']}")
     for key, stats in report["watermarks"].items():
         print(f"{key}: present={stats['present']} nonzero={stats.get('nonzero')} unique={stats.get('unique')}")
+    source = report["source_breakdown"]
+    print(f"match_source={source['match_source']}")
+    print(
+        "epipolar_fallback: "
+        f"valid={source['epipolar_fallback']['valid']} "
+        f"by_direction={source['epipolar_fallback']['by_direction']} "
+        f"median={_fmt(source['epipolar_fallback']['median'])} "
+        f"mad={_fmt(source['epipolar_fallback']['mad'])}"
+    )
     for key in DEPTH_KEYS:
         stats = report["depth"][key]
+        jumps = report["depth_jump"].get(key, {})
         print(
             f"{key}: valid={stats['valid']}/{stats['total']} "
             f"hit={stats['hit_rate'] * 100.0:.1f}% "
             f"median={_fmt(stats['median'])} mad={_fmt(stats['mad'])} "
-            f"known_z_bias={_fmt(stats['known_z_bias'])} known_z_mad={_fmt(stats['known_z_mad'])}"
+            f"known_z_bias={_fmt(stats['known_z_bias'])} known_z_mad={_fmt(stats['known_z_mad'])} "
+            f"jump_p95={_fmt(jumps.get('p95_abs_delta'))}"
         )
+    frame_summary = report["frame_summary"]
+    print(
+        f"frame_summary: present={frame_summary['present']} "
+        f"path={frame_summary['path']} rows={frame_summary.get('rows')}"
+    )
+    if frame_summary["present"]:
+        print(f"frame_summary_totals={frame_summary['totals']}")
 
 
 def main() -> int:
