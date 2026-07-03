@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import math
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
@@ -48,6 +49,13 @@ class BallCandidate:
     area: int
     score: float
     mask: np.ndarray
+
+
+@dataclass
+class RoughBallROI:
+    roi: BallROI
+    seed: BallCandidate
+    rank: int
 
 
 @dataclass
@@ -343,6 +351,52 @@ def _roi_from_group(image_shape: Tuple[int, int], seed: BallCandidate, candidate
     return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1), (cx, cy), radius, roi_mask)
 
 
+def _rough_rois_from_candidates(
+    image_shape: Tuple[int, int],
+    candidates: Sequence[BallCandidate],
+    max_candidates: int,
+) -> List[RoughBallROI]:
+    """Build de-duplicated ball-sized ROIs from color fragments.
+
+    A single volleyball often appears as several yellow/blue/white components.
+    Pairing those component bboxes directly is too brittle, so the offline
+    probe first groups nearby fragments into a ball-sized ROI and only then
+    applies the same left/right ROI gate as the realtime contract.
+    """
+
+    rough: List[RoughBallROI] = []
+    seen: set[Tuple[int, int, int]] = set()
+    for rank, candidate in enumerate(candidates[:max_candidates]):
+        roi = _roi_from_group(image_shape, candidate, candidates)
+        key = (
+            int(round(roi.center[0] / 6.0)),
+            int(round(roi.center[1] / 6.0)),
+            int(round(roi.radius / 4.0)),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rough.append(RoughBallROI(roi=roi, seed=candidate, rank=rank))
+    return rough
+
+
+def _rough_pair_score(
+    pair,
+    lrough: RoughBallROI,
+    rrough: RoughBallROI,
+    baseline_m: float,
+    ball_diameter_m: float,
+) -> float:
+    expected_radius = 0.5 * ball_diameter_m * pair.initial_disparity / max(1e-6, baseline_m)
+    measured_radius = 0.5 * (lrough.roi.radius + rrough.roi.radius)
+    radius_ratio = max(lrough.roi.radius, rrough.roi.radius) / max(1.0, min(lrough.roi.radius, rrough.roi.radius))
+    rank_penalty = 0.015 * float(lrough.rank + rrough.rank)
+    radius_penalty = 0.025 * abs(measured_radius - expected_radius)
+    ratio_penalty = 0.08 * abs(math.log(max(1e-3, radius_ratio)))
+    confidence_bonus = 0.08 * (_confidence_from_score(lrough.seed.score) + _confidence_from_score(rrough.seed.score))
+    return float(pair.score + rank_penalty + radius_penalty + ratio_penalty - confidence_bonus)
+
+
 def _circle_roi(
     image_shape: Tuple[int, int],
     center: Tuple[float, float],
@@ -519,20 +573,23 @@ def detect_ball_rois(
             f"candidate detection failed: left={len(left_candidates)} right={len(right_candidates)}"
         )
 
-    best_pair: Tuple[float, BallCandidate, BallCandidate] | None = None
-    for lc in left_candidates[:16]:
-        left_det = _candidate_to_runtime_detection(lc)
-        for rc in right_candidates[:24]:
-            right_det = _candidate_to_runtime_detection(rc)
-            pair, _ = evaluate_stereo_roi_pair(left_det, right_det, 0, 0, pair_gate)
+    left_rough = _rough_rois_from_candidates(left.shape[:2], left_candidates, 16)
+    right_rough = _rough_rois_from_candidates(right.shape[:2], right_candidates, 24)
+
+    best_pair: Tuple[float, RoughBallROI, RoughBallROI] | None = None
+    for lr in left_rough:
+        left_det = _roi_to_runtime_detection(lr.roi, _confidence_from_score(lr.seed.score))
+        for rr in right_rough:
+            right_det = _roi_to_runtime_detection(rr.roi, _confidence_from_score(rr.seed.score))
+            pair, _ = evaluate_stereo_roi_pair(left_det, right_det, lr.rank, rr.rank, pair_gate)
             if pair is None:
                 continue
             depth = depth_from_disparity(pair.initial_disparity, focal_px, baseline_m)
             if depth < min_depth_m or depth > max_depth_m:
                 continue
-            score = pair.score
+            score = _rough_pair_score(pair, lr, rr, baseline_m, ball_diameter_m)
             if best_pair is None or score < best_pair[0]:
-                best_pair = (score, lc, rc)
+                best_pair = (score, lr, rr)
 
     if best_pair is None:
         # Keep the old one-sided behavior as a fallback for debugging, but this
@@ -554,8 +611,8 @@ def detect_ball_rois(
         )
 
     _, left_seed, right_seed = best_pair
-    lroi = _roi_from_group(left.shape[:2], left_seed, left_candidates)
-    rroi = _roi_from_group(right.shape[:2], right_seed, right_candidates)
+    lroi = left_seed.roi
+    rroi = right_seed.roi
     return _refine_roi_pair_with_hough(
         left,
         right,
@@ -1647,6 +1704,7 @@ def main() -> int:
     parser.add_argument("--feature-max-stddev-px", type=float, default=1.0)
     parser.add_argument("--feature-sphere-radius-scale", type=float, default=1.8)
     parser.add_argument("--feature-sphere-margin-m", type=float, default=0.02)
+    parser.add_argument("--quiet", action="store_true", help="write files without printing the full JSON summary")
     args = parser.parse_args()
     thresholds = ValidationThresholds(
         min_valid_matches=args.min_valid_matches,
@@ -1741,15 +1799,19 @@ def main() -> int:
                 draw_overlap_debug(left_rect, right_rect, left_overlap, right_overlap))
 
     results: List[MatchResult] = []
+    method_elapsed_ms: Dict[str, float] = {}
     for name in ["orb", "brisk", "akaze", "sift"]:
+        method_start = time.perf_counter()
         res = descriptor_match(left_eq, right_eq, lroi.mask, rroi.mask, name, initial_disp)
         res.depth_m = depth_from_disparity(res.disparity, focal_px, baseline_m)
+        method_elapsed_ms[res.name] = (time.perf_counter() - method_start) * 1000.0
         results.append(res)
 
     corner_kps = _masked_keypoints(left_eq, lroi.mask, "corner", 80)
     edge_kps = _masked_keypoints(left_eq, lroi.mask, "edge", 80)
     color_edge_kps = _masked_color_edge_keypoints(left_rect, lroi.mask, 80, args.edge_percentile)
     iou_region_kps = _masked_color_edge_keypoints(left_rect, left_overlap, args.iou_max_points, args.edge_percentile)
+    method_start = time.perf_counter()
     iou_res = iou_region_color_patch_match(
         left_lab, right_lab,
         left_labels, right_labels,
@@ -1766,6 +1828,7 @@ def main() -> int:
         max_points=args.iou_max_points,
     )
     iou_res.depth_m = depth_from_disparity(iou_res.disparity, focal_px, baseline_m)
+    method_elapsed_ms[iou_res.name] = (time.perf_counter() - method_start) * 1000.0
     results.append(iou_res)
 
     for name, points, lfeat, rfeat, min_score in [
@@ -1773,10 +1836,12 @@ def main() -> int:
         ("patch_iou_zncc_edge", edge_kps, left_eq, right_eq, 0.40),
         ("patch_iou_color_edge", color_edge_kps, left_lab, right_lab, 0.44),
     ]:
+        method_start = time.perf_counter()
         res = patch_iou_zncc_match(
             lfeat, rfeat, lroi.mask, rroi.mask, points, initial_disp, name, min_score=min_score
         )
         res.depth_m = depth_from_disparity(res.disparity, focal_px, baseline_m)
+        method_elapsed_ms[res.name] = (time.perf_counter() - method_start) * 1000.0
         results.append(res)
 
     for res in results:
@@ -1829,6 +1894,7 @@ def main() -> int:
             "std_px": res.std_px,
             "depth_m": res.depth_m,
             "confidence": res.confidence,
+            "elapsed_ms": method_elapsed_ms.get(res.name, 0.0),
             "validation_status": validation_status,
             "validation_fail_reasons": validation_fail_reasons,
             "runtime_feature_geometry_ok": runtime_feature_ok,
@@ -1944,7 +2010,8 @@ def main() -> int:
             normalized.append(img)
         cv2.imwrite(str(out_dir / "zoom_contact_sheet.png"), cv2.vconcat(normalized))
 
-    print(json.dumps(summary, indent=2))
+    if not args.quiet:
+        print(json.dumps(summary, indent=2))
     return 0
 
 

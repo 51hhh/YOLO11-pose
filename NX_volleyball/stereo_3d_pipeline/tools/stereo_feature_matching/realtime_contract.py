@@ -9,7 +9,7 @@ candidate naming, and priority semantics as the realtime pipeline.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
@@ -346,6 +346,62 @@ def score_stereo_roi_pair_with_bbox_prior(
         prior,
         max_disparity,
     )
+
+
+def collect_scored_stereo_roi_pair_candidates(
+    left_detections: Sequence[Detection],
+    right_detections: Sequence[Detection],
+    config: StereoRoiPairGateConfig,
+    baseline_m: float,
+    prior: BboxDisparityPriorConfig,
+    max_disparity: int = 2048,
+) -> List[StereoRoiPair]:
+    pairs: List[StereoRoiPair] = []
+    for li, left in enumerate(left_detections):
+        for ri, right in enumerate(right_detections):
+            pair, _ = evaluate_stereo_roi_pair(left, right, li, ri, config)
+            if pair is None:
+                continue
+            pairs.append(
+                replace(
+                    pair,
+                    score=score_stereo_roi_pair_with_bbox_prior(
+                        pair,
+                        baseline_m,
+                        prior,
+                        max_disparity,
+                    ),
+                )
+            )
+    pairs.sort(key=lambda pair: pair.score)
+    return pairs
+
+
+def select_global_stereo_roi_pairs(
+    left_detections: Sequence[Detection],
+    right_detections: Sequence[Detection],
+    config: StereoRoiPairGateConfig,
+    baseline_m: float,
+    prior: BboxDisparityPriorConfig,
+    max_disparity: int = 2048,
+) -> List[StereoRoiPair]:
+    selected: List[StereoRoiPair] = []
+    left_used: set[int] = set()
+    right_used: set[int] = set()
+    for pair in collect_scored_stereo_roi_pair_candidates(
+        left_detections,
+        right_detections,
+        config,
+        baseline_m,
+        prior,
+        max_disparity,
+    ):
+        if pair.left_index in left_used or pair.right_index in right_used:
+            continue
+        selected.append(pair)
+        left_used.add(pair.left_index)
+        right_used.add(pair.right_index)
+    return selected
 
 
 def select_first_usable_depth_candidate(
