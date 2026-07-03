@@ -51,6 +51,10 @@ struct HybridDepthConfig {
     // IVW 融合权重 (与 Kalman R 分离)
     float ivw_R_mono   = 0.004f;   ///< IVW 单目噪声方差 (σ≈0.063m)
     float ivw_R_stereo = 0.025f;   ///< IVW 双目噪声方差 (实测方差≈单目6倍)
+
+    // fallback 深度只作为低权重在线观测, 避免单侧漏检误匹配强拉轨迹。
+    float fallback_stereo_weight_scale = 0.35f; ///< IVW 中 fallback stereo 权重缩放
+    float fallback_obs_noise_scale = 4.0f;      ///< Kalman 中 fallback Rz/Rxy 放大倍数
 };
 
 /**

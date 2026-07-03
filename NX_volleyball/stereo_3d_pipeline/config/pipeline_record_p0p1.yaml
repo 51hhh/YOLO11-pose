@@ -135,6 +135,8 @@ fusion:
   R_stereo: 0.020
   ivw_R_mono: 0.004
   ivw_R_stereo: 0.025
+  fallback_stereo_weight_scale: 0.35
+  fallback_obs_noise_scale: 4.0
 
 performance:
   pwm_frequency: 100.0

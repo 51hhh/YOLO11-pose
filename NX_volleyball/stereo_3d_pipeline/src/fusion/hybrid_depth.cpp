@@ -316,14 +316,18 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         // Step 3: 查找对应的双目结果 (始终记录原始值供校准)
         float z_stereo = -1.0f;
         bool has_stereo = false;
+        bool stereo_is_fallback = false;
         if (i < roi_results.size()) {
+            const auto& roi = roi_results[i];
             z_stereo = roi_results[i].z;  // 原始值 (可能为-1)
             has_stereo = roi_results[i].confidence > config_.min_confidence && z_stereo > 0;
+            stereo_is_fallback = roi.stereo_match_source == 2 ||
+                                 roi.stereo_match_source == 3;
         }
 
         // Step 3.5: 自适应偏差校正 — EMA 跟踪 zs/zm 比例
         float z_stereo_corrected = z_stereo;
-        if (has_stereo && z_mono > 0.5f) {
+        if (has_stereo && !stereo_is_fallback && z_mono > 0.5f) {
             float ratio = z_stereo / z_mono;
             // 合理范围内更新 EMA (排除异常帧)
             if (ratio > 0.85f && ratio < 1.15f) {
@@ -356,6 +360,10 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
                           (config_.mono_max_z - config_.stereo_min_z);
             blend = std::max(0.0f, std::min(1.0f, blend));
             w_stereo *= blend;  // 近端压制双目权重
+            if (stereo_is_fallback) {
+                w_stereo *= std::clamp(config_.fallback_stereo_weight_scale,
+                                       0.0f, 1.0f);
+            }
             float w_total = w_mono + w_stereo;
             z_obs = (w_mono * z_mono + w_stereo * z_stereo_corrected) / w_total;
             method = 2;
@@ -375,6 +383,9 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
 
         // Step 7: Kalman 更新 (9维, 3D观测)
         float Rz  = getObsNoise(z_obs, method);
+        if (stereo_is_fallback && has_stereo && method != 0) {
+            Rz *= std::max(1.0f, config_.fallback_obs_noise_scale);
+        }
         // xy 噪声与深度关联: sigma_xy = sigma_z * z / f (误差传播)
         float Rxy = Rz * (z_obs * z_obs) / (focal_ * focal_) + 0.001f;
         const float predicted_z = track->z();

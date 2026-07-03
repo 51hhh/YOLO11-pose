@@ -793,6 +793,12 @@ static stereo3d::PipelineConfig loadConfig(const std::string& path) {
         // IVW 融合权重 (与 Kalman R 分离)
         if (fus["ivw_R_mono"])      cfg.depth.ivw_R_mono      = fus["ivw_R_mono"].as<float>();
         if (fus["ivw_R_stereo"])    cfg.depth.ivw_R_stereo    = fus["ivw_R_stereo"].as<float>();
+        if (fus["fallback_stereo_weight_scale"])
+            cfg.depth.fallback_stereo_weight_scale =
+                fus["fallback_stereo_weight_scale"].as<float>();
+        if (fus["fallback_obs_noise_scale"])
+            cfg.depth.fallback_obs_noise_scale =
+                fus["fallback_obs_noise_scale"].as<float>();
     }
 
     // Performance
