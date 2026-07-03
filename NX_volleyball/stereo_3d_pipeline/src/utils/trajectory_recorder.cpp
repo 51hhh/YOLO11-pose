@@ -42,6 +42,15 @@ bool ensureParentDirectory(const std::string& output_path) {
     return true;
 }
 
+bool validDepth(float z) {
+    return std::isfinite(z) && z > 0.0f;
+}
+
+bool observedCandidate(float z, int support, float confidence) {
+    return validDepth(z) || support > 0 ||
+           (std::isfinite(confidence) && confidence > 0.0f);
+}
+
 }  // namespace
 
 void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
@@ -183,6 +192,8 @@ void TrajectoryRecorder::writeFrameSummaryHeader() {
         << "pair_shifted_iou_mean,pair_score_mean,pair_bbox_prior_penalty_mean,"
         << "pair_epipolar_dy_max,roi_iou_region_color_patch_support_max,"
         << "roi_patch_iou_color_edge_support_max,roi_neural_feature_support_max,"
+        << "p2_candidate_observed_count,p2_candidate_valid_count,"
+        << "p2_feature_valid_count,p2_cuda_valid_count,p2_neural_valid_count,"
         << "best_confidence\n";
 }
 
@@ -252,6 +263,11 @@ void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
     int iou_color_support_max = 0;
     int iou_edge_support_max = 0;
     int neural_support_max = 0;
+    int p2_candidate_observed_count = 0;
+    int p2_candidate_valid_count = 0;
+    int p2_feature_valid_count = 0;
+    int p2_cuda_valid_count = 0;
+    int p2_neural_valid_count = 0;
     float best_confidence = 0.0f;
 
     for (const auto& r : entry.results) {
@@ -287,6 +303,73 @@ void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
             iou_edge_support_max, r.roi_patch_iou_color_edge_support);
         neural_support_max = std::max(
             neural_support_max, r.roi_neural_feature_support);
+
+        auto count_candidate = [&](float z, int support, float confidence,
+                                   int* group_valid) {
+            if (observedCandidate(z, support, confidence)) {
+                ++p2_candidate_observed_count;
+            }
+            if (validDepth(z)) {
+                ++p2_candidate_valid_count;
+                if (group_valid) ++(*group_valid);
+            }
+        };
+        count_candidate(r.z_roi_corner_points,
+                        r.roi_corner_points_support,
+                        r.roi_corner_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_texture_points,
+                        r.roi_texture_points_support,
+                        r.roi_texture_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_binary_points,
+                        r.roi_binary_points_support,
+                        r.roi_binary_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_orb_points,
+                        r.roi_orb_points_support,
+                        r.roi_orb_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_brisk_points,
+                        r.roi_brisk_points_support,
+                        r.roi_brisk_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_akaze_points,
+                        r.roi_akaze_points_support,
+                        r.roi_akaze_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_sift_points,
+                        r.roi_sift_points_support,
+                        r.roi_sift_points_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_iou_region_color_patch,
+                        r.roi_iou_region_color_patch_support,
+                        r.roi_iou_region_color_patch_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_patch_iou_color_edge,
+                        r.roi_patch_iou_color_edge_support,
+                        r.roi_patch_iou_color_edge_confidence,
+                        &p2_feature_valid_count);
+        count_candidate(r.z_roi_cuda_template_match,
+                        r.roi_cuda_template_match_support,
+                        r.roi_cuda_template_match_confidence,
+                        &p2_cuda_valid_count);
+        count_candidate(r.z_roi_cuda_stereo_bm,
+                        r.roi_cuda_stereo_bm_support,
+                        r.roi_cuda_stereo_bm_confidence,
+                        &p2_cuda_valid_count);
+        count_candidate(r.z_roi_cuda_stereo_sgm,
+                        r.roi_cuda_stereo_sgm_support,
+                        r.roi_cuda_stereo_sgm_confidence,
+                        &p2_cuda_valid_count);
+        count_candidate(r.z_roi_neural_feature,
+                        r.roi_neural_feature_support,
+                        r.roi_neural_feature_confidence,
+                        &p2_neural_valid_count);
+        count_candidate(r.z_fallback_feature_points,
+                        r.fallback_feature_points_support,
+                        r.fallback_feature_points_confidence,
+                        &p2_feature_valid_count);
         best_confidence = std::max(best_confidence, r.confidence);
     }
 
@@ -320,6 +403,11 @@ void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
                 << iou_color_support_max << ","
                 << iou_edge_support_max << ","
                 << neural_support_max << ","
+                << p2_candidate_observed_count << ","
+                << p2_candidate_valid_count << ","
+                << p2_feature_valid_count << ","
+                << p2_cuda_valid_count << ","
+                << p2_neural_valid_count << ","
                 << best_confidence << "\n";
 }
 

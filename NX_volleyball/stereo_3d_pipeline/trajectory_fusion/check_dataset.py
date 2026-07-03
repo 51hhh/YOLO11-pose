@@ -49,6 +49,13 @@ FRAME_SUMMARY_FIELDS = (
     "fallback_l2r_count",
     "fallback_r2l_count",
 )
+OPTIONAL_FRAME_SUMMARY_FIELDS = (
+    "p2_candidate_observed_count",
+    "p2_candidate_valid_count",
+    "p2_feature_valid_count",
+    "p2_cuda_valid_count",
+    "p2_neural_valid_count",
+)
 MATCH_SOURCE_NAMES = {
     0: "none",
     1: "direct_pair",
@@ -295,6 +302,26 @@ def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
             return None
         return max(_safe_int(row.get(key), 0) for row in rows)
 
+    totals = {
+        "result_count": sum_field("result_count"),
+        "raw_observation_count": sum_field("raw_observation_count"),
+        "stereo_observation_count": sum_field("stereo_observation_count"),
+        "direct_pair_count": sum_field("direct_pair_count"),
+        "fallback_l2r_count": sum_field("fallback_l2r_count"),
+        "fallback_r2l_count": sum_field("fallback_r2l_count"),
+    }
+    max_per_frame = {
+        "result_count": max_field("result_count"),
+        "raw_observation_count": max_field("raw_observation_count"),
+        "stereo_observation_count": max_field("stereo_observation_count"),
+        "fallback_l2r_count": max_field("fallback_l2r_count"),
+        "fallback_r2l_count": max_field("fallback_r2l_count"),
+    }
+    for field in OPTIONAL_FRAME_SUMMARY_FIELDS:
+        if field in fields:
+            totals[field] = sum_field(field)
+            max_per_frame[field] = max_field(field)
+
     return {
         "path": str(frame_path),
         "present": True,
@@ -307,21 +334,8 @@ def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
             "first": gaps[:10],
         },
         "missing_fields": missing,
-        "totals": {
-            "result_count": sum_field("result_count"),
-            "raw_observation_count": sum_field("raw_observation_count"),
-            "stereo_observation_count": sum_field("stereo_observation_count"),
-            "direct_pair_count": sum_field("direct_pair_count"),
-            "fallback_l2r_count": sum_field("fallback_l2r_count"),
-            "fallback_r2l_count": sum_field("fallback_r2l_count"),
-        },
-        "max_per_frame": {
-            "result_count": max_field("result_count"),
-            "raw_observation_count": max_field("raw_observation_count"),
-            "stereo_observation_count": max_field("stereo_observation_count"),
-            "fallback_l2r_count": max_field("fallback_l2r_count"),
-            "fallback_r2l_count": max_field("fallback_r2l_count"),
-        },
+        "totals": totals,
+        "max_per_frame": max_per_frame,
     }
 
 

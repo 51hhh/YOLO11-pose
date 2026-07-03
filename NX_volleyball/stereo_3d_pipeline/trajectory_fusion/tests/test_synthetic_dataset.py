@@ -149,6 +149,11 @@ def _write_synthetic_clip(root: Path) -> Path:
             "roi_iou_region_color_patch_support_max",
             "roi_patch_iou_color_edge_support_max",
             "roi_neural_feature_support_max",
+            "p2_candidate_observed_count",
+            "p2_candidate_valid_count",
+            "p2_feature_valid_count",
+            "p2_cuda_valid_count",
+            "p2_neural_valid_count",
             "best_confidence",
         ]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -174,6 +179,11 @@ def _write_synthetic_clip(root: Path) -> Path:
                     "roi_iou_region_color_patch_support_max": 0,
                     "roi_patch_iou_color_edge_support_max": 0,
                     "roi_neural_feature_support_max": 0,
+                    "p2_candidate_observed_count": 2 if index < 2 else 0,
+                    "p2_candidate_valid_count": 1 if index < 2 else 0,
+                    "p2_feature_valid_count": 1 if index < 2 else 0,
+                    "p2_cuda_valid_count": 0,
+                    "p2_neural_valid_count": 0,
                     "best_confidence": "0.9",
                 }
             )
@@ -227,6 +237,9 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(report["frame_summary"]["totals"]["direct_pair_count"], 2)
             self.assertEqual(report["frame_summary"]["totals"]["fallback_l2r_count"], 1)
             self.assertEqual(report["frame_summary"]["totals"]["fallback_r2l_count"], 1)
+            self.assertEqual(report["frame_summary"]["totals"]["p2_candidate_observed_count"], 4)
+            self.assertEqual(report["frame_summary"]["totals"]["p2_candidate_valid_count"], 2)
+            self.assertEqual(report["frame_summary"]["max_per_frame"]["p2_feature_valid_count"], 1)
             self.assertEqual(report["depth_jump"]["z_bbox_center"]["pairs"], 3)
             self.assertAlmostEqual(
                 report["depth_jump"]["z_bbox_center"]["max_abs_delta"],

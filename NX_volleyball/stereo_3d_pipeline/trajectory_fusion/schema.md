@@ -211,6 +211,11 @@
 | roi_iou_region_color_patch_support_max | int | 彩色区域 IoU/patch 最大支撑点数 |
 | roi_patch_iou_color_edge_support_max | int | 彩色边缘 IoU/patch 最大支撑点数 |
 | roi_neural_feature_support_max | int | 神经特征最大支撑点数 |
+| p2_candidate_observed_count | int | 本帧已写入 `Object3D` 的 P2 候选观测数；由 z/support/confidence 粗判，不代表所有未触发算法 |
+| p2_candidate_valid_count | int | 本帧 P2 候选中有效 z 数量 |
+| p2_feature_valid_count | int | 本帧 CPU/feature/patch/fallback feature 类 P2 有效 z 数量 |
+| p2_cuda_valid_count | int | 本帧 OpenCV CUDA Template/BM/SGM 类 P2 有效 z 数量 |
+| p2_neural_valid_count | int | 本帧神经特征 P2 有效 z 数量 |
 | best_confidence | float | 本帧最高输出置信度 |
 
 ## 最小可用版本
