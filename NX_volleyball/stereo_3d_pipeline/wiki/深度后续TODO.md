@@ -35,13 +35,14 @@
 - [ ] debug 特殊情况才下载 score map、disparity map、keypoint/match 可视化数据。
 - [x] 增加 P2 算法级可视化 artifact 基础能力，不能再用 realtime status zoom 代替特征点/采样点匹配图。
   - 已输出 OpenCV CUDA ORB、OpenCV CUDA GFTT/LK、VPI ORB 点对 overlay。
-  - 已输出 OpenCV CUDA Template、VPI Template 峰值图。
+  - 已输出 OpenCV CUDA Template、VPI Template 峰值图和 score patch。
   - 已输出 OpenCV CUDA StereoSGM 少量 disparity 样本点和 CUDA Hough refined center。
 - [ ] 补齐剩余 P2 artifact。
-  - XFeat 已输出真实左右点对 overlay；SuperPoint 仍需捕获有效 overlay。
-  - Template/VPI Template: 输出 template patch、search window 和完整 score map。
+  - XFeat 和 SuperPoint 160/top64 已输出真实左右点对 overlay；SuperPoint 仍不准入。
+  - Template/VPI Template 已输出 score map；后续只补单独 template patch/search window 裁剪。
   - BM/SGM/libSGM 已输出 32x32 ROI disparity patch；VPI Stereo 已输出 32x32 disparity + confidence patch。
-  - color patch/color edge 已输出 gate 后 inlier samples；ring-edge 仍需输出采样点、候选视差和 gate 结果。
+  - color patch/color edge 已输出 gate 后 inlier samples；ring-edge 已输出采样点和候选视差，仍需 gate 后 inlier/outlier 与 reject reason。
+  - VPI Harris/LK 更新测试仍未捕获有效 artifact。
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
 - [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。

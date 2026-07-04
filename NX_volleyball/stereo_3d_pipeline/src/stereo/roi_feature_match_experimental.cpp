@@ -257,6 +257,80 @@ bool findVpiCudaScorePeak(VPIImage score,
     return true;
 }
 
+void setScoreDebugPatchFromVpiImage(SparseFeatureDisparityResult& result,
+                                    VPIImage score,
+                                    const cv::Rect& search_rect,
+                                    int patch_radius) {
+    if (!score || search_rect.empty()) {
+        return;
+    }
+    VPIImageData score_data{};
+    VPIStatus st = vpiImageLockData(score, VPI_LOCK_READ,
+                                    VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
+                                    &score_data);
+    if (st != VPI_SUCCESS) {
+        return;
+    }
+
+    const int score_w = score_data.buffer.pitch.planes[0].width;
+    const int score_h = score_data.buffer.pitch.planes[0].height;
+    const int pitch = score_data.buffer.pitch.planes[0].pitchBytes;
+    const auto* base = static_cast<const uint8_t*>(
+        score_data.buffer.pitch.planes[0].data);
+    if (!base || score_w <= 0 || score_h <= 0 || pitch <= 0) {
+        vpiImageUnlock(score);
+        return;
+    }
+
+    const int out_w = std::clamp(score_w, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    const int out_h = std::clamp(score_h, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    auto& patch = result.debug_patch;
+    patch = SparseFeatureDebugPatch{};
+    patch.valid = true;
+    patch.disparity_is_score = true;
+    patch.width = out_w;
+    patch.height = out_h;
+    patch.left_x0 = static_cast<float>(search_rect.x + patch_radius);
+    patch.left_y0 = static_cast<float>(search_rect.y + patch_radius);
+    patch.step_x = static_cast<float>(score_w) / static_cast<float>(out_w);
+    patch.step_y = static_cast<float>(score_h) / static_cast<float>(out_h);
+    patch.disparity.assign(static_cast<size_t>(out_w * out_h),
+                           std::numeric_limits<float>::quiet_NaN());
+    patch.disparity_min = std::numeric_limits<float>::max();
+    patch.disparity_max = std::numeric_limits<float>::lowest();
+
+    int finite_count = 0;
+    for (int oy = 0; oy < out_h; ++oy) {
+        const int sy = std::clamp(
+            static_cast<int>(std::floor(
+                (static_cast<float>(oy) + 0.5f) * patch.step_y)),
+            0, score_h - 1);
+        const auto* row = reinterpret_cast<const float*>(
+            base + static_cast<size_t>(sy) * static_cast<size_t>(pitch));
+        for (int ox = 0; ox < out_w; ++ox) {
+            const int sx = std::clamp(
+                static_cast<int>(std::floor(
+                    (static_cast<float>(ox) + 0.5f) * patch.step_x)),
+                0, score_w - 1);
+            const float score_value = row[sx];
+            if (!std::isfinite(score_value)) {
+                continue;
+            }
+            const float clipped = std::clamp(score_value, -1.0f, 1.0f);
+            patch.disparity[static_cast<size_t>(oy * out_w + ox)] = clipped;
+            patch.disparity_min = std::min(patch.disparity_min, clipped);
+            patch.disparity_max = std::max(patch.disparity_max, clipped);
+            ++finite_count;
+        }
+    }
+    vpiImageUnlock(score);
+    if (finite_count == 0) {
+        patch = SparseFeatureDebugPatch{};
+    }
+}
+
 struct VpiTemplateScratch {
     CUstream cuda_stream = nullptr;
     VPIStream stream = nullptr;
@@ -1646,6 +1720,10 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
         result.low_confidence = true;
         return result;
     }
+    if (cfg.debug_patch_enabled) {
+        setScoreDebugPatchFromVpiImage(result, scratch.score,
+                                       search_rect, patch_radius);
+    }
 
     if (best_x < 0 || best < std::max(0.05f, cfg.subpixel_min_confidence)) {
         result.low_confidence = true;
@@ -1661,6 +1739,13 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
     sample.right_y = ry;
     sample.disparity = disparity;
     sample.score = std::clamp(best, 0.0f, 1.0f);
+    result.disparity = disparity;
+    result.confidence = sample.score;
+    result.anchor_cx = left_det.cx;
+    result.anchor_cy = left_det.cy;
+    result.right_anchor_cx = rx;
+    result.right_anchor_cy = ry;
+    setSingleDebugMatch(sample, result);
     result.attempted = 1;
     if (disparity <= 0.5f ||
         disparity > static_cast<float>(max_disparity) ||
@@ -1675,15 +1760,8 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
         return result;
     }
     result.valid = true;
-    result.disparity = disparity;
-    result.confidence = sample.score;
     result.stddev = 0.0f;
     result.support = 1;
-    result.anchor_cx = left_det.cx;
-    result.anchor_cy = left_det.cy;
-    result.right_anchor_cx = rx;
-    result.right_anchor_cy = ry;
-    setSingleDebugMatch(sample, result);
     return result;
 }
 

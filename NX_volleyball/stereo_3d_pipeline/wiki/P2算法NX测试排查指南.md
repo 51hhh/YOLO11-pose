@@ -261,21 +261,22 @@ summary.txt
 - 已有: OpenCV CUDA GFTT/LK 左右点对 overlay。
 - 已有: OpenCV CUDA ORB 左右点对 overlay。
 - 已有: VPI ORB 左右点对 overlay，来自 10:53 debug run；11:08 final 段未复现。
-- 已有: OpenCV CUDA Template 和 VPI Template 单点峰值图。
+- 已有: OpenCV CUDA Template 和 VPI Template 单点峰值图；13:49 更新测试已补 `SCORE PATCH`。
 - 已有: OpenCV CUDA StereoSGM 有效 disparity 样本点和 32x32 disparity patch。
 - 已有: OpenCV CUDA StereoBM、VPI Stereo、Fixstars libSGM 的 32x32 dense patch；VPI Stereo 额外有 confidence patch。
 - 已有: XFeat TensorRT 真实左右 keypoint pair overlay。
+- 已有: SuperPoint TensorRT 160/top64 真实左右 keypoint pair overlay；仅作调试证据，不准入。
 - 已有: 自研 color patch / color-edge gate 后 inlier samples。
+- 已有: CUDA ring-edge profile 最佳候选视差下的三圈采样点；当前候选仍 invalid。
 - 已有: CUDA Hough circle 左右 refined center。
-- 暂无: ring-edge、VPI Harris/LK 本轮没有有效 artifact；CUDA-SIFT 仍是 unsupported。
+- 暂无: VPI Harris/LK 本轮没有有效 artifact；CUDA-SIFT 仍是 unsupported。
 
 仍需继续补的 artifact:
 
-- SuperPoint: 输出真实 left/right keypoint pair overlay。
 - OpenCV CUDA ORB/GFTT-LK、VPI ORB: 已有样张，但还需要更多 failure/low-support 抽样。
-- Template/VPI Template: 输出 template patch、search window、完整 score map；当前只有峰值点。
+- Template/VPI Template: 已有峰值点和 score map；后续只补单独 template patch/search window 裁剪。
 - BM/SGM/VPI Stereo/libSGM: 已有 bounded ROI patch；后续只补更完整的 reject reason 和多帧 failure 抽样。
-- ring-edge: 输出采样点、候选视差、gate 后 inlier/outlier。
+- ring-edge: 已有采样点和候选视差；后续补 gate 后 inlier/outlier 和 reject reason。
 
 手动命令:
 

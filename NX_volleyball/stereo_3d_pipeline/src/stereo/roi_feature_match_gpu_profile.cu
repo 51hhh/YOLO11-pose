@@ -56,7 +56,7 @@ __device__ bool insideDetectionEllipseDevice(
     return dx * dx + dy * dy <= 1.0f;
 }
 
-__device__ float profileRingScale(int ring_idx) {
+__host__ __device__ float profileRingScale(int ring_idx) {
     switch (ring_idx) {
     case 0: return 0.45f;
     case 1: return 0.66f;
@@ -265,6 +265,44 @@ float profileDeltaGate(float initial_disp,
     return std::clamp(gate, 1.0f, 64.0f);
 }
 
+void setRingEdgeDebugMatches(SparseFeatureDisparityResult& result,
+                             const Detection& left_det,
+                             float disparity,
+                             int angle_count,
+                             int ring_count,
+                             float score) {
+    if (!std::isfinite(disparity) || disparity <= 0.5f ||
+        angle_count <= 0 || ring_count <= 0) {
+        return;
+    }
+    const int sample_count = angle_count * ring_count;
+    const int debug_count = std::min(sample_count,
+                                     kMaxSparseFeatureDebugMatches);
+    const float rx = std::max(2.0f, left_det.width * 0.5f);
+    const float ry = std::max(2.0f, left_det.height * 0.5f);
+    result.debug_match_count = debug_count;
+    for (int i = 0; i < debug_count; ++i) {
+        const int sample_idx =
+            static_cast<int>((static_cast<int64_t>(i) * sample_count) /
+                             std::max(1, debug_count));
+        const int angle_idx = sample_idx % angle_count;
+        const int ring_idx = sample_idx / angle_count;
+        const float theta =
+            (static_cast<float>(angle_idx) + 0.5f) *
+            (2.0f * kPi / static_cast<float>(angle_count));
+        const float scale = profileRingScale(ring_idx);
+        const float lx = left_det.cx + std::cos(theta) * rx * scale;
+        const float ly = left_det.cy + std::sin(theta) * ry * scale;
+        auto& dst = result.debug_matches[static_cast<size_t>(i)];
+        dst.left_x = lx;
+        dst.left_y = ly;
+        dst.right_x = lx - disparity;
+        dst.right_y = ly;
+        dst.disparity = disparity;
+        dst.score = score;
+    }
+}
+
 }  // namespace
 
 SparseFeatureDisparityResult matchCudaRingEdgeProfileDisparityGPU(
@@ -402,6 +440,18 @@ SparseFeatureDisparityResult matchCudaRingEdgeProfileDisparityGPU(
             }
         }
     }
+    result.disparity = disparity;
+    result.support = scratch.host_supports[static_cast<size_t>(best_idx)];
+    result.anchor_cx = left_det.cx;
+    result.anchor_cy = left_det.cy;
+    result.right_anchor_cx = left_det.cx - disparity;
+    result.right_anchor_cy = left_det.cy;
+    if (cfg.debug_patch_enabled) {
+        const float debug_score = std::clamp(1.0f - best_cost * 2.5f,
+                                             0.0f, 1.0f);
+        setRingEdgeDebugMatches(result, left_det, disparity,
+                                angle_count, ring_count, debug_score);
+    }
     if (std::abs(disparity - initial_disp) > max_delta ||
         disparity <= 0.5f ||
         disparity > static_cast<float>(max_disparity)) {
@@ -480,13 +530,7 @@ SparseFeatureDisparityResult matchCudaRingEdgeProfileDisparityGPU(
     }
 
     result.valid = true;
-    result.disparity = disparity;
     result.stddev = stddev;
-    result.support = scratch.host_supports[static_cast<size_t>(best_idx)];
-    result.anchor_cx = left_det.cx;
-    result.anchor_cy = left_det.cy;
-    result.right_anchor_cx = left_det.cx - disparity;
-    result.right_anchor_cy = left_det.cy;
     return result;
 }
 

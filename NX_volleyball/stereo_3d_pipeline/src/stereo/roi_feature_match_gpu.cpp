@@ -199,6 +199,64 @@ void setDenseStereoDebugPatch(SparseFeatureDisparityResult& result,
     }
 }
 
+void setScoreDebugPatch(SparseFeatureDisparityResult& result,
+                        const cv::Mat& score_cpu,
+                        const cv::Rect& search_rect,
+                        int patch_radius)
+{
+    if (score_cpu.empty() || search_rect.empty() ||
+        score_cpu.channels() != 1 || score_cpu.depth() != CV_32F) {
+        return;
+    }
+    const int out_w = std::clamp(score_cpu.cols, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    const int out_h = std::clamp(score_cpu.rows, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    auto& patch = result.debug_patch;
+    patch = SparseFeatureDebugPatch{};
+    patch.valid = true;
+    patch.disparity_is_score = true;
+    patch.width = out_w;
+    patch.height = out_h;
+    patch.left_x0 = static_cast<float>(search_rect.x + patch_radius);
+    patch.left_y0 = static_cast<float>(search_rect.y + patch_radius);
+    patch.step_x = static_cast<float>(score_cpu.cols) /
+                   static_cast<float>(out_w);
+    patch.step_y = static_cast<float>(score_cpu.rows) /
+                   static_cast<float>(out_h);
+    patch.disparity.assign(static_cast<size_t>(out_w * out_h),
+                           std::numeric_limits<float>::quiet_NaN());
+    patch.disparity_min = std::numeric_limits<float>::max();
+    patch.disparity_max = std::numeric_limits<float>::lowest();
+
+    int finite_count = 0;
+    for (int oy = 0; oy < out_h; ++oy) {
+        const int sy = std::clamp(
+            static_cast<int>(std::floor(
+                (static_cast<float>(oy) + 0.5f) * patch.step_y)),
+            0, score_cpu.rows - 1);
+        const auto* row = score_cpu.ptr<float>(sy);
+        for (int ox = 0; ox < out_w; ++ox) {
+            const int sx = std::clamp(
+                static_cast<int>(std::floor(
+                    (static_cast<float>(ox) + 0.5f) * patch.step_x)),
+                0, score_cpu.cols - 1);
+            const float score = row[sx];
+            if (!std::isfinite(score)) {
+                continue;
+            }
+            const float clipped = std::clamp(score, -1.0f, 1.0f);
+            patch.disparity[static_cast<size_t>(oy * out_w + ox)] = clipped;
+            patch.disparity_min = std::min(patch.disparity_min, clipped);
+            patch.disparity_max = std::max(patch.disparity_max, clipped);
+            ++finite_count;
+        }
+    }
+    if (finite_count == 0) {
+        patch = SparseFeatureDebugPatch{};
+    }
+}
+
 SparseFeatureDisparityResult aggregateDenseStereoDisparity(
     const cv::Mat& disparity_cpu,
     const CudaDenseStereoWorkRects& rects,
@@ -812,6 +870,12 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
             result.low_confidence = true;
             return result;
         }
+        if (cfg.debug_patch_enabled) {
+            cv::Mat score_cpu;
+            score_gpu.download(score_cpu, cv_stream);
+            cv_stream.waitForCompletion();
+            setScoreDebugPatch(result, score_cpu, search_rect, patch_radius);
+        }
 
         const float right_anchor_x =
             static_cast<float>(search_rect.x + max_loc.x + patch_radius);
@@ -825,6 +889,13 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
         sample.right_y = right_anchor_y;
         sample.disparity = disparity;
         sample.score = static_cast<float>(std::clamp(max_val, 0.0, 1.0));
+        result.disparity = disparity;
+        result.confidence = sample.score;
+        result.anchor_cx = anchor_x;
+        result.anchor_cy = anchor_y;
+        result.right_anchor_cx = right_anchor_x;
+        result.right_anchor_cy = right_anchor_y;
+        setSingleDebugMatch(sample, result);
 
         result.attempted = 1;
         if (sample.score < std::max(0.05f, cfg.subpixel_min_confidence) ||
@@ -842,15 +913,8 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
         }
 
         result.valid = true;
-        result.disparity = disparity;
-        result.confidence = sample.score;
         result.stddev = 0.0f;
-        result.anchor_cx = anchor_x;
-        result.anchor_cy = anchor_y;
-        result.right_anchor_cx = right_anchor_x;
-        result.right_anchor_cy = right_anchor_y;
         result.support = 1;
-        setSingleDebugMatch(sample, result);
         return result;
     } catch (const cv::Exception& e) {
         LOG_WARN("OpenCV CUDA TemplateMatching ROI match failed: %s", e.what());

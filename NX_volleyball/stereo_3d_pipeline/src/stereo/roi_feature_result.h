@@ -21,6 +21,7 @@ constexpr int kMaxSparseFeatureDebugPatchSide = 32;
 
 struct SparseFeatureDebugPatch {
     bool valid = false;
+    bool disparity_is_score = false;
     bool has_confidence = false;
     int width = 0;
     int height = 0;

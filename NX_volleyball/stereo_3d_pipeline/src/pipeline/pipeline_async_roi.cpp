@@ -487,7 +487,8 @@ void drawDebugPatchPanel(cv::Mat& canvas,
                       muted, 1, cv::LINE_AA);
     };
 
-    draw_one("DISPARITY PATCH", patch.disparity,
+    draw_one(patch.disparity_is_score ? "SCORE PATCH" : "DISPARITY PATCH",
+             patch.disparity,
              patch.disparity_min, patch.disparity_max, 0);
     if (draw_conf) {
         draw_one("CONFIDENCE PATCH", patch.confidence,
