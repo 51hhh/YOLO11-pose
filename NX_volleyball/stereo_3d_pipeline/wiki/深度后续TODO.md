@@ -24,7 +24,8 @@
 - [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
   - TemplateMatching 已新增 CUDA score peak reduction，只下载最终 peak 结构；NX `opencv_cuda_template_match_patch9` 实测仍 `0/414` 有效，p95 `3.91ms`、max `43.30ms`，不准入。BM/SGM dense map 聚合仍待迁移。
 - [ ] 增加 P2 选择性触发: P0/P1 分歧、pair gate 变差、fallback、帧间跳变或运动残差异常时才运行。
-  - 已接入 fallback/direct/host-gray/BGR 初始触发开关；P0/P1 分歧、pair gate 变差和运动残差触发仍待实现。
+  - 已接入 fallback/direct/host-gray/BGR 初始触发开关和 direct pair quality 触发；selective no-trigger 会跳过 inline P2、BGR snapshot 和 host gray D2H。
+  - P0/P1 分歧、帧间跳变和运动残差触发仍待实现。
 - [ ] 增加 P2 attempted/not_attempted/valid/reject reason 统计，避免把未触发当成无效。
   - 矩阵报告层已有 `candidate_attempted`、`candidate_not_attempted`、`candidate_valid` 和粗粒度 `candidate_reject_reason`；精确逐帧 reject reason 仍需新增实时字段。
   - TrajectoryRecorder `.frames.csv` 已有 P2 调度状态、`p2_depth_mode_mask`、trigger mask 和 `observed/valid/feature/cuda/neural` 粗统计；仍需补精确 gate reject reason 和 async stale/drop 未发布帧统计。
@@ -36,6 +37,7 @@
 - [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。
 - [ ] 实测 ROI ring/edge profile matcher。
+  - 已接入 `roi_ring_edge_profile` 默认关闭字段、自研 CUDA kernel、TrajectoryRecorder/训练读取和 `cuda_ring_edge_profile_diagnostic_only` 矩阵 case；剩余有球 NX 实测。
 - [ ] 复测 `roi_iou_region_color_patch_offline_tuned`。
 - [x] 复测 `roi_iou_region_color_patch_wide_search`。
 - [ ] 复测 `patch_iou_color_edge_offline_tuned`。
@@ -46,14 +48,14 @@
 - [ ] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
 - [x] 接入 OpenCV CUDA StereoBM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
-- [ ] 实测 `opencv_cuda_stereo_bm_patch9`。
+- [x] 实测 `opencv_cuda_stereo_bm_patch9`。
 - [x] 接入 OpenCV CUDA StereoSGM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoSGM 裁剪 ROI / 小 `numDisparities`。
-- [ ] 实测 `opencv_cuda_stereo_sgm_patch9`。
+- [x] 实测 `opencv_cuda_stereo_sgm_patch9`。
 - [ ] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
 - [ ] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
 - [x] 复测 `opencv_cuda_orb_fast48`。
-- [ ] 复测 `opencv_cuda_orb_wide_y`。
+- [x] 复测 `opencv_cuda_orb_wide_y`。
 - [ ] 核对 NX VPI ORB 是否支持 CUDA backend；若支持则实现 VPI ORB P2 后端。
 - [ ] 实测 VPI CUDA Harris + Pyramidal LK。
 - [ ] 实测 OpenCV CUDA GFTT/Harris + SparsePyrLK。

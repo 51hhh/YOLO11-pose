@@ -99,6 +99,8 @@ logs/<case>.debug_realtime_dump.log
 | `candidate_valid/frames` | 目标 `z_*` 字段有效帧数/帧数 | 判断 gate 后是否真的产出深度 |
 | `diag_valid/rows` | diagnostic 独立 CSV 中有效行/总行数 | diagnostic-only case 看这一列，不看 `candidate_valid` |
 | `diag_over_deadline` | diagnostic worker 超过 `p2_diagnostic_deadline_ms` 的逐帧次数 | 大于 0 表示 diagnostic 结果迟到 |
+| `p2 triggers` | selective trigger 命中计数 | 看 `low_iou/dy/low_conf/no_pair/skip`，区分为什么运行或未运行 P2 |
+| `selective skip` | selective gating 实际跳过计数 | `inline/bgr/host` 分别表示跳过 inline P2、BGR snapshot、host gray D2H |
 | `accepted` | async 结果被主线程接收次数 | 为 0 时先看 detection/drop |
 | `frame_cb_skip` | 原 ring slot 已复用，跳过图像 frame callback | 不影响 CSV 结果，但影响实时图像 debug |
 | `host_gray` | 本 case 触发 host gray D2H 的次数 | GPU-only case 应接近 0 |
@@ -125,7 +127,7 @@ logs/<case>.debug_realtime_dump.log
 常用日志定位:
 
 ```bash
-rg -n "Stage2_OpenCVCuda|Stage2_NeuralFeatureMatch|Stage2_AsyncRoi|Stage2_DropStaleROI|Pipeline Performance" test_logs/<run>/logs/<case>.log
+rg -n "Stage2_OpenCVCuda|Stage2_CudaRingEdge|Stage2_NeuralFeatureMatch|Stage2_AsyncRoi|Stage2_P2FeatureJob|Stage2_DropStaleROI|Pipeline Performance" test_logs/<run>/logs/<case>.log
 ```
 
 ## 没有有效深度
