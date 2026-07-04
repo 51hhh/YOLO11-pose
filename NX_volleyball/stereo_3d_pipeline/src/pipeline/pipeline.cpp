@@ -283,7 +283,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                  "modes[bbox=%d bboxEdge=%d circle=%d circleEdge=%d roiCent=%d "
                  "radial=%d edgePair=%d cornerPts=%d texturePts=%d binaryPts=%d "
                  "orbPts=%d briskPts=%d akazePts=%d siftPts=%d colorPatch=%d "
-                 "colorEdge=%d cudaTmpl=%d cudaBM=%d cudaSGM=%d centerPatch=%d "
+                 "colorEdge=%d cudaTmpl=%d cudaBM=%d cudaSGM=%d ringEdge=%d centerPatch=%d "
                  "subpx=%d fallback=%d tmpl=%d featFb=%d], "
                  "epipolar_fallback=%d, gpu=%d, center_refine=%d, roi_denoise=%d, "
                  "depth_solver=%s, subpx=%d patch=%d search=%d pts=%d "
@@ -310,6 +310,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.dual_yolo.depth_roi_cuda_template_match,
                  config_.dual_yolo.depth_roi_cuda_stereo_bm,
                  config_.dual_yolo.depth_roi_cuda_stereo_sgm,
+                 config_.dual_yolo.depth_roi_ring_edge_profile,
                  config_.dual_yolo.depth_roi_center_patch,
                  config_.dual_yolo.depth_roi_subpixel,
                  config_.dual_yolo.depth_epipolar_fallback,
@@ -457,6 +458,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.dual_yolo.depth_roi_cuda_template_match ||
             config_.dual_yolo.depth_roi_cuda_stereo_bm ||
             config_.dual_yolo.depth_roi_cuda_stereo_sgm ||
+            config_.dual_yolo.depth_roi_ring_edge_profile ||
             config_.neural_features.enabled ||
             (config_.dual_yolo.depth_roi_center_patch &&
              config_.dual_yolo.center_refine) ||
@@ -683,6 +685,7 @@ bool Pipeline::init(const PipelineConfig& config) {
          config_.dual_yolo.depth_roi_cuda_template_match ||
          config_.dual_yolo.depth_roi_cuda_stereo_bm ||
          config_.dual_yolo.depth_roi_cuda_stereo_sgm ||
+         config_.dual_yolo.depth_roi_ring_edge_profile ||
          config_.neural_features.enabled ||
          (config_.dual_yolo.depth_roi_subpixel &&
           config_.dual_yolo.subpixel_enabled) ||

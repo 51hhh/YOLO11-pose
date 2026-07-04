@@ -100,6 +100,11 @@ bool dualYoloROICudaStereoSGMDepthEnabled(
     return cfg.depth_roi_cuda_stereo_sgm;
 }
 
+bool dualYoloROIRingEdgeProfileDepthEnabled(
+    const PipelineConfig::DualYoloConfig& cfg) {
+    return cfg.depth_roi_ring_edge_profile;
+}
+
 bool dualYoloROICenterPatchDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     return cfg.depth_roi_center_patch && cfg.center_refine;
 }
@@ -167,6 +172,7 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
            dualYoloROICudaTemplateMatchDepthEnabled(cfg) ||
            dualYoloROICudaStereoBMDepthEnabled(cfg) ||
            dualYoloROICudaStereoSGMDepthEnabled(cfg) ||
+           dualYoloROIRingEdgeProfileDepthEnabled(cfg) ||
            dualYoloROICenterPatchDepthEnabled(cfg) ||
            dualYoloSubpixelDepthEnabled(cfg) ||
            dualYoloEpipolarFallbackEnabled(cfg) ||

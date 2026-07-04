@@ -229,6 +229,8 @@ set(CUDA_SOURCES
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
   src/stereo/dual_yolo_depth_gpu.cu
+  src/stereo/roi_feature_match_gpu_reduce.cu
+  src/stereo/roi_feature_match_gpu_profile.cu
   src/track/crop_resize.cu
 )
 

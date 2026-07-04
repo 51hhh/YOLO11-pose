@@ -95,6 +95,9 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
                observed(obj.z_roi_cuda_stereo_sgm,
                         obj.roi_cuda_stereo_sgm_support,
                         obj.roi_cuda_stereo_sgm_confidence) ||
+               observed(obj.z_roi_ring_edge_profile,
+                        obj.roi_ring_edge_profile_support,
+                        obj.roi_ring_edge_profile_confidence) ||
                observed(obj.z_roi_neural_feature,
                         obj.roi_neural_feature_support,
                         obj.roi_neural_feature_confidence);
@@ -127,6 +130,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
             input.right_bgr_gpu, input.right_bgr_pitch,
             input.width, input.height,
             input.stream,
+            input.p2_inline_feature_jobs_enabled,
             &match_stats);
 
         int semantic_valid = count_valid(semantic_match.results);
@@ -358,13 +362,13 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     input.height = config_.rect_height;
     input.stream = streams_.cudaStreamFuse;
 
-    const bool need_host_images =
+    const bool requested_host_images =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
         neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
-    const bool need_bgr =
+    const bool requested_bgr =
         colorPipelineEnabled() &&
         has_stereo_detections &&
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
@@ -376,8 +380,29 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         slot.frame_id,
         slot.detections,
         slot.detections_right,
-        need_host_images,
-        need_bgr);
+        requested_host_images,
+        requested_bgr);
+    const bool diagnostic_only_p2 =
+        config_.p2_feature_job_scaffold_enabled &&
+        config_.p2_diagnostic_lane_decision_enabled &&
+        !config_.p2_realtime_lane_decision_enabled;
+    input.p2_inline_feature_jobs_enabled =
+        (!p2_decision.p2_depth_modes_enabled ||
+         !(p2_policy.split_feature_jobs && p2_policy.selective_trigger) ||
+         p2_decision.realtime_requested) &&
+        !diagnostic_only_p2;
+    const bool fallback_needs_host_images =
+        roiStage2FallbackMayNeedHostImages(slot.detections,
+                                           slot.detections_right);
+    const bool need_host_images =
+        requested_host_images &&
+        (input.p2_inline_feature_jobs_enabled ||
+         p2_decision.diagnostic_requested ||
+         fallback_needs_host_images);
+    const bool need_bgr =
+        requested_bgr &&
+        (input.p2_inline_feature_jobs_enabled ||
+         p2_decision.diagnostic_requested);
     const std::vector<P2FeatureJobDescriptor> p2_feature_jobs =
         buildP2FeatureJobDescriptors(
             p2_policy,

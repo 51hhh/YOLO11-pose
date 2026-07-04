@@ -133,6 +133,10 @@ TrajectoryFrameSummaryStats summarizeTrajectoryFrame(
                         r.roi_cuda_stereo_sgm_support,
                         r.roi_cuda_stereo_sgm_confidence,
                         &stats.p2_cuda_valid_count);
+        count_candidate(r.z_roi_ring_edge_profile,
+                        r.roi_ring_edge_profile_support,
+                        r.roi_ring_edge_profile_confidence,
+                        &stats.p2_cuda_valid_count);
         count_candidate(r.z_roi_neural_feature,
                         r.roi_neural_feature_support,
                         r.roi_neural_feature_confidence,

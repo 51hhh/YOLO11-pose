@@ -21,6 +21,10 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
     obj.z_roi_sift_points = roi.z_roi_sift_points;
     obj.z_roi_iou_region_color_patch = roi.z_roi_iou_region_color_patch;
     obj.z_roi_patch_iou_color_edge = roi.z_roi_patch_iou_color_edge;
+    obj.z_roi_cuda_template_match = roi.z_roi_cuda_template_match;
+    obj.z_roi_cuda_stereo_bm = roi.z_roi_cuda_stereo_bm;
+    obj.z_roi_cuda_stereo_sgm = roi.z_roi_cuda_stereo_sgm;
+    obj.z_roi_ring_edge_profile = roi.z_roi_ring_edge_profile;
     obj.z_roi_neural_feature = roi.z_roi_neural_feature;
     obj.z_roi_center_patch = roi.z_roi_center_patch;
     obj.z_roi_multi_point = roi.z_roi_multi_point;
@@ -51,6 +55,12 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
         roi.disparity_roi_iou_region_color_patch;
     obj.disparity_roi_patch_iou_color_edge =
         roi.disparity_roi_patch_iou_color_edge;
+    obj.disparity_roi_cuda_template_match =
+        roi.disparity_roi_cuda_template_match;
+    obj.disparity_roi_cuda_stereo_bm = roi.disparity_roi_cuda_stereo_bm;
+    obj.disparity_roi_cuda_stereo_sgm = roi.disparity_roi_cuda_stereo_sgm;
+    obj.disparity_roi_ring_edge_profile =
+        roi.disparity_roi_ring_edge_profile;
     obj.disparity_roi_neural_feature =
         roi.disparity_roi_neural_feature;
     obj.disparity_roi_center_patch = roi.disparity_roi_center_patch;
@@ -122,6 +132,30 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
         roi.roi_patch_iou_color_edge_std_px;
     obj.roi_patch_iou_color_edge_confidence =
         roi.roi_patch_iou_color_edge_confidence;
+    obj.roi_cuda_template_match_support =
+        roi.roi_cuda_template_match_support;
+    obj.roi_cuda_template_match_std_px =
+        roi.roi_cuda_template_match_std_px;
+    obj.roi_cuda_template_match_confidence =
+        roi.roi_cuda_template_match_confidence;
+    obj.roi_cuda_stereo_bm_support =
+        roi.roi_cuda_stereo_bm_support;
+    obj.roi_cuda_stereo_bm_std_px =
+        roi.roi_cuda_stereo_bm_std_px;
+    obj.roi_cuda_stereo_bm_confidence =
+        roi.roi_cuda_stereo_bm_confidence;
+    obj.roi_cuda_stereo_sgm_support =
+        roi.roi_cuda_stereo_sgm_support;
+    obj.roi_cuda_stereo_sgm_std_px =
+        roi.roi_cuda_stereo_sgm_std_px;
+    obj.roi_cuda_stereo_sgm_confidence =
+        roi.roi_cuda_stereo_sgm_confidence;
+    obj.roi_ring_edge_profile_support =
+        roi.roi_ring_edge_profile_support;
+    obj.roi_ring_edge_profile_std_px =
+        roi.roi_ring_edge_profile_std_px;
+    obj.roi_ring_edge_profile_confidence =
+        roi.roi_ring_edge_profile_confidence;
     obj.roi_neural_feature_support =
         roi.roi_neural_feature_support;
     obj.roi_neural_feature_std_px =

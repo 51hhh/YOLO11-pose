@@ -173,6 +173,20 @@ void appendFeatureDepthCandidates(
         in.cuda_stereo_sgm_result.anchor_cy);
     addCandidate(
         candidates,
+        DepthCandidateMethod::ROI_RING_EDGE_PROFILE,
+        in.ring_edge_profile_result.valid
+            ? in.ring_edge_profile_result.disparity
+            : -1.0f,
+        in.z_roi_ring_edge_profile,
+        in.ring_edge_profile_result.confidence,
+        confidenceBlend(0.56f, 0.30f,
+                        in.ring_edge_profile_result.confidence),
+        in.ring_edge_profile_result.stddev,
+        in.ring_edge_profile_result.support,
+        in.ring_edge_profile_result.anchor_cx,
+        in.ring_edge_profile_result.anchor_cy);
+    addCandidate(
+        candidates,
         DepthCandidateMethod::ROI_NEURAL_FEATURE,
         in.neural_feature_result.valid ? in.neural_feature_result.disparity
                                        : -1.0f,

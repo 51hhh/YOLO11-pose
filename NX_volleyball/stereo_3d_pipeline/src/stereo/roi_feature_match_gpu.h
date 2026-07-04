@@ -63,6 +63,19 @@ SparseFeatureDisparityResult matchCudaStereoSGMDisparityGPU(
     float baseline,
     cudaStream_t stream);
 
+SparseFeatureDisparityResult matchCudaRingEdgeProfileDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream);
+
 }  // namespace stereo3d
 
 #endif  // STEREO_3D_PIPELINE_ROI_FEATURE_MATCH_GPU_H_

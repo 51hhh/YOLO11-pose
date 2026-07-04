@@ -34,7 +34,7 @@ void addCandidate(std::vector<DepthCandidateObservation>* candidates,
 DepthCandidateBuildResult buildDepthCandidateObservations(
     const DepthCandidateBuilderInput& in) {
     DepthCandidateBuildResult out;
-    out.candidates.reserve(24);
+    out.candidates.reserve(28);
 
     const float circle_anchor_x = in.left_circle.valid
         ? in.left_circle.cx

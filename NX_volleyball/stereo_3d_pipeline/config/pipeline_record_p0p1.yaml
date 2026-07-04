@@ -70,6 +70,7 @@ detector:
       roi_cuda_template_match: false # P2 OpenCV CUDA TemplateMatching small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
       roi_cuda_stereo_sgm: false # P2 OpenCV CUDA StereoSGM small ROI dense disparity candidate
+      roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
       roi_center_patch: true   # P1 100fps training candidate; record z_roi_center_patch
       roi_subpixel: true       # P1 CUDA multi-point candidate; record z_roi_multi_point
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate

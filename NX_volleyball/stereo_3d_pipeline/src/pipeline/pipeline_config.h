@@ -104,6 +104,7 @@ struct PipelineConfig {
         bool depth_roi_cuda_template_match = false; ///< 计算 OpenCV CUDA TemplateMatching 小 ROI 极线视差候选
         bool depth_roi_cuda_stereo_bm = false; ///< 计算 OpenCV CUDA StereoBM 小 ROI dense 视差候选
         bool depth_roi_cuda_stereo_sgm = false; ///< 计算 OpenCV CUDA StereoSGM 小 ROI dense 视差候选
+        bool depth_roi_ring_edge_profile = false; ///< 计算 CUDA ROI ring/edge profile 小范围极线视差候选
         bool depth_roi_center_patch = false; ///< 计算 ROI 中心 patch ZNCC 视差候选
         bool depth_roi_subpixel = true;    ///< 计算 ROI 多点亚像素视差候选
         bool depth_epipolar_fallback = true; ///< 单目漏检时启用有界极线搜索候选

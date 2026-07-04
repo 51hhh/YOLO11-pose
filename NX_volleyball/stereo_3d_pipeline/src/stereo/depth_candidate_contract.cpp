@@ -28,6 +28,7 @@ const char* depthCandidateMethodName(DepthCandidateMethod method) {
     case DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH: return "roi_cuda_template_match";
     case DepthCandidateMethod::ROI_CUDA_STEREO_BM: return "roi_cuda_stereo_bm";
     case DepthCandidateMethod::ROI_CUDA_STEREO_SGM: return "roi_cuda_stereo_sgm";
+    case DepthCandidateMethod::ROI_RING_EDGE_PROFILE: return "roi_ring_edge_profile";
     case DepthCandidateMethod::ROI_NEURAL_FEATURE: return "roi_neural_feature";
     case DepthCandidateMethod::ROI_CENTER_PATCH: return "roi_center_patch";
     case DepthCandidateMethod::ROI_MULTI_POINT: return "roi_multi_point";
@@ -87,6 +88,8 @@ int stereoDepthSourceForMethod(DepthCandidateMethod method) {
         return 22;
     case DepthCandidateMethod::ROI_CUDA_STEREO_SGM:
         return 23;
+    case DepthCandidateMethod::ROI_RING_EDGE_PROFILE:
+        return 24;
     case DepthCandidateMethod::ROI_NEURAL_FEATURE:
         return 20;
     case DepthCandidateMethod::CIRCLE_LEFT_EDGE:
@@ -166,6 +169,7 @@ bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate) {
     case DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH:
     case DepthCandidateMethod::ROI_CUDA_STEREO_BM:
     case DepthCandidateMethod::ROI_CUDA_STEREO_SGM:
+    case DepthCandidateMethod::ROI_RING_EDGE_PROFILE:
     case DepthCandidateMethod::ROI_NEURAL_FEATURE:
         return false;
     }

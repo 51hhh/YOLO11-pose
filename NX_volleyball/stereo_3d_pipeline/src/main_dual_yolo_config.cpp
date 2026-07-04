@@ -83,6 +83,9 @@ void loadDualYoloConfig(const YAML::Node& dual, stereo3d::PipelineConfig& cfg) {
         if (modes["roi_cuda_stereo_sgm"])
             cfg.dual_yolo.depth_roi_cuda_stereo_sgm =
                 modes["roi_cuda_stereo_sgm"].as<bool>();
+        if (modes["roi_ring_edge_profile"])
+            cfg.dual_yolo.depth_roi_ring_edge_profile =
+                modes["roi_ring_edge_profile"].as<bool>();
         if (modes["roi_center_patch"])
             cfg.dual_yolo.depth_roi_center_patch = modes["roi_center_patch"].as<bool>();
         if (modes["roi_subpixel"])

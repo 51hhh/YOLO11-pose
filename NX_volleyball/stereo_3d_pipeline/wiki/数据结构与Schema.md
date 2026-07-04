@@ -41,7 +41,7 @@
 | ROI sparse | `z_roi_corner_points`, `z_roi_texture_points`, `z_roi_binary_points` |
 | 描述子/近似描述子 | `z_roi_orb_points`, `z_roi_brisk_points`, `z_roi_akaze_points`, `z_roi_sift_points` |
 | 彩色 IoU/patch | `z_roi_iou_region_color_patch`, `z_roi_patch_iou_color_edge` |
-| OpenCV CUDA P2 | `z_roi_cuda_template_match`, `z_roi_cuda_stereo_bm`, `z_roi_cuda_stereo_sgm` |
+| OpenCV/CUDA P2 | `z_roi_cuda_template_match`, `z_roi_cuda_stereo_bm`, `z_roi_cuda_stereo_sgm`, `z_roi_ring_edge_profile` |
 | 神经特征 | `z_roi_neural_feature` |
 | patch/subpixel | `z_roi_center_patch`, `z_roi_multi_point` |
 | fallback | `z_fallback`, `z_fallback_epipolar`, `z_fallback_template`, `z_fallback_feature_points` |
@@ -80,6 +80,10 @@
 | 18 | 彩色区域 IoU |
 | 19 | 彩色边缘 IoU |
 | 20 | 神经特征 |
+| 21 | CUDA 模板匹配 |
+| 22 | CUDA StereoBM |
+| 23 | CUDA StereoSGM |
+| 24 | CUDA ring/edge profile |
 
 新增深度候选时必须扩展该映射，并同步 [深度测量](深度测量.md)。
 

@@ -66,6 +66,9 @@ uint32_t dualYoloP2DepthModeMask(const PipelineConfig::DualYoloConfig& cfg) {
     if (cfg.depth_roi_cuda_stereo_sgm) {
         mask |= P2_DEPTH_MODE_CUDA_STEREO_SGM;
     }
+    if (cfg.depth_roi_ring_edge_profile) {
+        mask |= P2_DEPTH_MODE_RING_EDGE_PROFILE;
+    }
     if (cfg.depth_fallback_feature_points) {
         mask |= P2_DEPTH_MODE_FALLBACK_FEATURE_POINTS;
     }

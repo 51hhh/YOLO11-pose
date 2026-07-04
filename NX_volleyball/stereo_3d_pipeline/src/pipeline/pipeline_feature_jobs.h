@@ -56,6 +56,7 @@ enum P2FeatureDepthMode : uint32_t {
     P2_DEPTH_MODE_CUDA_STEREO_SGM = 1u << 11,
     P2_DEPTH_MODE_NEURAL_FEATURE = 1u << 12,
     P2_DEPTH_MODE_FALLBACK_FEATURE_POINTS = 1u << 13,
+    P2_DEPTH_MODE_RING_EDGE_PROFILE = 1u << 14,
 };
 
 struct P2FeatureJobPolicy {

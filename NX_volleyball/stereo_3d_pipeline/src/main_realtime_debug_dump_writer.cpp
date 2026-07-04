@@ -134,13 +134,14 @@ cv::Mat makePanel(const RealtimeDebugDumpJob& job,
             " tmpl=" + fmt(obj.z_roi_cuda_template_match), 2);
     putLine(panel, "cuda_bm=" + fmt(obj.z_roi_cuda_stereo_bm) +
             " cuda_sgm=" + fmt(obj.z_roi_cuda_stereo_sgm) +
-            " fb_epi=" + fmt(obj.z_fallback_epipolar) +
-            " fb=" + fmt(obj.z_fallback), 3);
+            " ring=" + fmt(obj.z_roi_ring_edge_profile), 3);
+    putLine(panel, "fb_epi=" + fmt(obj.z_fallback_epipolar) +
+            " fb=" + fmt(obj.z_fallback), 4);
     putLine(panel,
             " pair_iou=" + fmt(obj.pair_shifted_iou) +
             " Lsrc=" + std::to_string(obj.left_circle_source) +
-            " Rsrc=" + std::to_string(obj.right_circle_source), 4);
-    putLine(panel, "dy=" + fmt(obj.epipolar_dy, 2), 5);
+            " Rsrc=" + std::to_string(obj.right_circle_source), 5);
+    putLine(panel, "dy=" + fmt(obj.epipolar_dy, 2), 6);
     return panel;
 }
 
@@ -211,6 +212,7 @@ void writeSummaryJson(const RealtimeDebugDumpJob& job,
             << ", \"z_roi_cuda_template_match\": " << obj.z_roi_cuda_template_match
             << ", \"z_roi_cuda_stereo_bm\": " << obj.z_roi_cuda_stereo_bm
             << ", \"z_roi_cuda_stereo_sgm\": " << obj.z_roi_cuda_stereo_sgm
+            << ", \"z_roi_ring_edge_profile\": " << obj.z_roi_ring_edge_profile
             << ", \"z_fallback_epipolar\": " << obj.z_fallback_epipolar
             << ", \"z_fallback\": " << obj.z_fallback
             << ", \"pair_shifted_iou\": " << obj.pair_shifted_iou

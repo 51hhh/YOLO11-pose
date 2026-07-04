@@ -50,6 +50,8 @@ struct DepthCandidateBuilderInput {
     float z_roi_cuda_stereo_bm = -1.0f;
     SparseFeatureDisparityResult cuda_stereo_sgm_result;
     float z_roi_cuda_stereo_sgm = -1.0f;
+    SparseFeatureDisparityResult ring_edge_profile_result;
+    float z_roi_ring_edge_profile = -1.0f;
     SparseFeatureDisparityResult neural_feature_result;
     float z_roi_neural_feature = -1.0f;
     SparseFeatureDisparityResult corner_points_result;

@@ -35,6 +35,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const uint8_t* right_bgr_gpu, int right_bgr_pitch,
     int img_width, int img_height,
     cudaStream_t stream,
+    bool p2_inline_feature_jobs_enabled,
     DualYoloMatchStats* stats)
 {
     using Clock = std::chrono::high_resolution_clock;
@@ -89,7 +90,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         dualYoloROIRadialCenterDepthEnabled(config_.dual_yolo);
     const bool roi_edge_pair_center_depth_enabled =
         dualYoloROIEdgePairCenterDepthEnabled(config_.dual_yolo);
-    const bool p2_inline_feature_jobs_enabled =
+    p2_inline_feature_jobs_enabled =
+        p2_inline_feature_jobs_enabled &&
         !(config_.p2_feature_job_scaffold_enabled &&
           config_.p2_diagnostic_lane_decision_enabled &&
           !config_.p2_realtime_lane_decision_enabled);
@@ -129,6 +131,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const bool roi_cuda_stereo_sgm_depth_enabled =
         p2_inline_feature_jobs_enabled &&
         dualYoloROICudaStereoSGMDepthEnabled(config_.dual_yolo);
+    const bool roi_ring_edge_profile_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
+        dualYoloROIRingEdgeProfileDepthEnabled(config_.dual_yolo);
     const bool neural_feature_depth_enabled =
         p2_inline_feature_jobs_enabled &&
         config_.neural_features.enabled &&
@@ -193,6 +198,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         roi_cuda_template_match_depth_enabled ||
         roi_cuda_stereo_bm_depth_enabled ||
         roi_cuda_stereo_sgm_depth_enabled ||
+        roi_ring_edge_profile_depth_enabled ||
         neural_feature_depth_enabled ||
         roi_center_patch_depth_enabled ||
         use_subpixel_depth;
@@ -858,6 +864,36 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             }
         }
 
+        SparseFeatureDisparityResult ring_edge_profile_result;
+        float z_roi_ring_edge_profile = -1.0f;
+        if (roi_ring_edge_profile_depth_enabled && direct_yolo_match &&
+            right_det && feature_initial_disparity > 0.0f &&
+            gpu_image_available && stream != nullptr) {
+            const auto profile_start = Clock::now();
+            ring_edge_profile_result = matchCudaRingEdgeProfileDisparityGPU(
+                left_gpu, left_gpu_pitch,
+                right_gpu, right_gpu_pitch,
+                img_width, img_height,
+                left_det, *right_det,
+                feature_initial_disparity,
+                feature_cfg,
+                config_.max_disparity,
+                focal,
+                baseline,
+                stream);
+            const double profile_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - profile_start).count();
+            globalPerf().record("Stage2_CudaRingEdgeProfileMatch",
+                                profile_ms);
+            if (ring_edge_profile_result.valid) {
+                z_roi_ring_edge_profile =
+                    depth_from_disparity(ring_edge_profile_result.disparity);
+                ring_edge_profile_result.valid =
+                    z_roi_ring_edge_profile > 0.0f;
+            }
+        }
+
         SparseFeatureDisparityResult neural_feature_result;
         float z_roi_neural_feature = -1.0f;
         if (neural_feature_depth_enabled && direct_yolo_match &&
@@ -1035,6 +1071,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             z_roi_cuda_template_match <= 0.0f &&
             z_roi_cuda_stereo_bm <= 0.0f &&
             z_roi_cuda_stereo_sgm <= 0.0f &&
+            z_roi_ring_edge_profile <= 0.0f &&
             z_roi_neural_feature <= 0.0f &&
             z_fallback_feature_points <= 0.0f) {
             if (epipolar_bad) ++local_stats.epipolar_reject;
@@ -1269,6 +1306,10 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             cuda_stereo_sgm_result;
         depth_candidate_input.z_roi_cuda_stereo_sgm =
             z_roi_cuda_stereo_sgm;
+        depth_candidate_input.ring_edge_profile_result =
+            ring_edge_profile_result;
+        depth_candidate_input.z_roi_ring_edge_profile =
+            z_roi_ring_edge_profile;
         depth_candidate_input.neural_feature_result = neural_feature_result;
         depth_candidate_input.z_roi_neural_feature = z_roi_neural_feature;
         depth_candidate_input.corner_points_result = corner_points_result;
@@ -1384,6 +1425,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.z_roi_cuda_template_match = z_roi_cuda_template_match;
         obj.z_roi_cuda_stereo_bm = z_roi_cuda_stereo_bm;
         obj.z_roi_cuda_stereo_sgm = z_roi_cuda_stereo_sgm;
+        obj.z_roi_ring_edge_profile = z_roi_ring_edge_profile;
         obj.z_roi_neural_feature = z_roi_neural_feature;
         obj.z_roi_center_patch = z_roi_center_patch;
         obj.z_roi_multi_point = z_subpixel;
@@ -1447,6 +1489,10 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.disparity_roi_cuda_stereo_sgm =
             cuda_stereo_sgm_result.valid
                 ? cuda_stereo_sgm_result.disparity
+                : -1.0f;
+        obj.disparity_roi_ring_edge_profile =
+            ring_edge_profile_result.valid
+                ? ring_edge_profile_result.disparity
                 : -1.0f;
         obj.disparity_roi_neural_feature =
             neural_feature_result.valid
@@ -1566,6 +1612,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 : -1.0f;
         obj.roi_cuda_stereo_sgm_confidence =
             cuda_stereo_sgm_result.confidence;
+        obj.roi_ring_edge_profile_support =
+            ring_edge_profile_result.support;
+        obj.roi_ring_edge_profile_std_px =
+            ring_edge_profile_result.valid
+                ? ring_edge_profile_result.stddev
+                : -1.0f;
+        obj.roi_ring_edge_profile_confidence =
+            ring_edge_profile_result.confidence;
         obj.roi_neural_feature_support = neural_feature_result.support;
         obj.roi_neural_feature_std_px =
             neural_feature_result.valid ? neural_feature_result.stddev : -1.0f;

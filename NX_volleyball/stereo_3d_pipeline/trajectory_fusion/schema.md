@@ -100,6 +100,10 @@
 | z_roi_sift_points | float | ROI OpenCV CPU SIFT 实验候选视差三角测距;当前 NX 无 true CUDA SIFT 后端 |
 | z_roi_iou_region_color_patch | float | ROI GPU 彩色区域 IoU + patch 视差三角测距 |
 | z_roi_patch_iou_color_edge | float | ROI GPU 彩色边缘 IoU + patch 视差三角测距 |
+| z_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 小 ROI 极线视差三角测距 |
+| z_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 小 ROI dense disparity 三角测距 |
+| z_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 小 ROI dense disparity 三角测距 |
+| z_roi_ring_edge_profile | float | CUDA ring/edge profile 小范围极线视差三角测距 |
 | z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
 | z_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差三角测距 |
@@ -127,6 +131,10 @@
 | disparity_roi_sift_points | float | ROI OpenCV CPU SIFT 聚合视差 |
 | disparity_roi_iou_region_color_patch | float | ROI 彩色区域 IoU 聚合视差 |
 | disparity_roi_patch_iou_color_edge | float | ROI 彩色边缘 IoU 聚合视差 |
+| disparity_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 聚合视差 |
+| disparity_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 聚合视差 |
+| disparity_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 聚合视差 |
+| disparity_roi_ring_edge_profile | float | CUDA ring/edge profile 聚合视差 |
 | disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
 | disparity_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差 |
@@ -168,6 +176,9 @@
 | roi_patch_iou_color_edge_support | int | 彩色边缘 IoU/patch 匹配支撑点数 |
 | roi_patch_iou_color_edge_std_px | float | 彩色边缘 IoU/patch 视差标准差 |
 | roi_patch_iou_color_edge_confidence | float | 彩色边缘 IoU/patch 匹配置信度 |
+| roi_ring_edge_profile_support | int | CUDA ring/edge profile 有效采样点数 |
+| roi_ring_edge_profile_std_px | float | CUDA ring/edge profile 视差标准差 |
+| roi_ring_edge_profile_confidence | float | CUDA ring/edge profile 匹配置信度 |
 | roi_neural_feature_support | int | 神经特征匹配支撑点数 |
 | roi_neural_feature_std_px | float | 神经特征视差标准差 |
 | roi_neural_feature_confidence | float | 神经特征匹配置信度 |
@@ -175,7 +186,7 @@
 | fallback_feature_points_std_px | float | 单侧漏检特征 fallback 视差标准差 |
 | fallback_feature_points_confidence | float | 单侧漏检特征 fallback 置信度 |
 | stereo_match_source | int | 0=无,1=左右YOLO,2=左到右fallback,3=右到左fallback |
-| stereo_depth_source | int | legacy `z_stereo` first-usable 选择来源；0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征 |
+| stereo_depth_source | int | legacy `z_stereo` first-usable 选择来源；0=无,1=圆心/搜索,2=ROI多点,3=bbox中心,4=中心patch,5=边缘质心,6=bbox边缘,7=模板fallback,8=径向中心,9=边缘成对中心,10=角点特征,11=纹理特征,12=特征fallback,13=二值特征,14=ORB,15=BRISK,16=AKAZE,17=SIFT,18=彩色区域IoU,19=彩色边缘IoU,20=神经特征,21=CUDA模板匹配,22=CUDA StereoBM,23=CUDA StereoSGM,24=CUDA ring/edge profile |
 | depth_method | int | 在线 legacy 输出的深度来源方法，0=单目,1=双目,2=融合；只用于诊断/baseline |
 
 ## 训练标签/诊断字段
@@ -214,7 +225,7 @@
 | p2_candidate_observed_count | int | 本帧已写入 `Object3D` 的 P2 候选观测数；由 z/support/confidence 粗判，不代表所有未触发算法 |
 | p2_candidate_valid_count | int | 本帧 P2 候选中有效 z 数量 |
 | p2_feature_valid_count | int | 本帧 CPU/feature/patch/fallback feature 类 P2 有效 z 数量 |
-| p2_cuda_valid_count | int | 本帧 OpenCV CUDA Template/BM/SGM 类 P2 有效 z 数量 |
+| p2_cuda_valid_count | int | 本帧 CUDA/OpenCV CUDA Template/BM/SGM/ring-edge 类 P2 有效 z 数量 |
 | p2_neural_valid_count | int | 本帧神经特征 P2 有效 z 数量 |
 | best_confidence | float | 本帧最高输出置信度 |
 
@@ -234,7 +245,10 @@ disparity_roi_edge_pair_center,disparity_roi_corner_points,
 disparity_roi_texture_points,disparity_roi_binary_points,
 disparity_roi_orb_points,disparity_roi_brisk_points,disparity_roi_akaze_points,
 disparity_roi_sift_points,disparity_roi_iou_region_color_patch,
-disparity_roi_patch_iou_color_edge,disparity_roi_neural_feature,
+disparity_roi_patch_iou_color_edge,
+disparity_roi_cuda_template_match,disparity_roi_cuda_stereo_bm,
+disparity_roi_cuda_stereo_sgm,disparity_roi_ring_edge_profile,
+disparity_roi_neural_feature,
 disparity_roi_center_patch,
 disparity_roi_multi_point,disparity_fallback_epipolar,disparity_fallback_template,
 disparity_fallback_feature_points,
@@ -243,7 +257,9 @@ z_circle_center,z_circle_left_edge,z_circle_right_edge,
 z_roi_edge_centroid,z_roi_radial_center,z_roi_edge_pair_center,
 z_roi_corner_points,z_roi_texture_points,z_roi_binary_points,
 z_roi_orb_points,z_roi_brisk_points,z_roi_akaze_points,z_roi_sift_points,
-z_roi_iou_region_color_patch,z_roi_patch_iou_color_edge,z_roi_neural_feature,z_roi_center_patch,z_roi_multi_point,
+z_roi_iou_region_color_patch,z_roi_patch_iou_color_edge,
+z_roi_cuda_template_match,z_roi_cuda_stereo_bm,z_roi_cuda_stereo_sgm,z_roi_ring_edge_profile,
+z_roi_neural_feature,z_roi_center_patch,z_roi_multi_point,
 z_fallback,z_fallback_epipolar,z_fallback_template,z_fallback_feature_points,z,
 epipolar_dy,size_ratio,subpixel_valid,subpixel_attempted,subpixel_support,
 subpixel_std_px,subpixel_confidence,subpixel_gate_px,
@@ -257,6 +273,7 @@ roi_sift_points_support,roi_sift_points_std_px,roi_sift_points_confidence,
 roi_iou_region_color_patch_support,roi_iou_region_color_patch_std_px,
 roi_iou_region_color_patch_confidence,roi_patch_iou_color_edge_support,
 roi_patch_iou_color_edge_std_px,roi_patch_iou_color_edge_confidence,
+roi_ring_edge_profile_support,roi_ring_edge_profile_std_px,roi_ring_edge_profile_confidence,
 roi_neural_feature_support,roi_neural_feature_std_px,roi_neural_feature_confidence,
 fallback_feature_points_support,fallback_feature_points_std_px,
 fallback_feature_points_confidence,

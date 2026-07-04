@@ -216,6 +216,7 @@ private:
         int width = 0;
         int height = 0;
         cudaStream_t stream = nullptr;
+        bool p2_inline_feature_jobs_enabled = true;
     };
     struct RoiStage2Output {
         std::vector<Detection> detections;
@@ -234,10 +235,14 @@ private:
         const uint8_t* right_bgr_gpu, int right_bgr_pitch,
         int img_width, int img_height,
         cudaStream_t stream,
+        bool p2_inline_feature_jobs_enabled,
         DualYoloMatchStats* stats);
     void collectRoiDetections(FrameSlot& slot, int slot_index);
     bool roiStage2NeedsHostImages(const std::vector<Detection>& left_detections,
                                   const std::vector<Detection>& right_detections) const;
+    bool roiStage2FallbackMayNeedHostImages(
+        const std::vector<Detection>& left_detections,
+        const std::vector<Detection>& right_detections) const;
     RoiStage2Output runRoiStage2Core(const RoiStage2Input& input);
     void applyRoiStage2Output(FrameSlot& slot, RoiStage2Output&& output);
     void publishRoiResultCallback(FrameSlot& slot);

@@ -37,6 +37,8 @@ bool dualYoloROICudaStereoBMDepthEnabled(
     const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloROICudaStereoSGMDepthEnabled(
     const PipelineConfig::DualYoloConfig& cfg);
+bool dualYoloROIRingEdgeProfileDepthEnabled(
+    const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloROICenterPatchDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloEpipolarFallbackEnabled(const PipelineConfig::DualYoloConfig& cfg);

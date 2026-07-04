@@ -200,6 +200,8 @@ const char* p2DiagnosticModeName(uint32_t mode_bit) {
         return "cuda_stereo_bm";
     case P2_DEPTH_MODE_CUDA_STEREO_SGM:
         return "cuda_stereo_sgm";
+    case P2_DEPTH_MODE_RING_EDGE_PROFILE:
+        return "cuda_ring_edge_profile";
     default:
         return "unknown";
     }
@@ -1063,6 +1065,12 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     "Stage2_P2FeatureJobDiagnosticCudaStereoSGMValid",
                     "Stage2_P2FeatureJobDiagnosticCudaStereoSGMInvalid",
                     matchCudaStereoSGMDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_RING_EDGE_PROFILE,
+                    "Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfile",
+                    "Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfileValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfileInvalid",
+                    matchCudaRingEdgeProfileDisparityGPU);
                 if (!ran_any) {
                     globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop",
                                         0.0);
@@ -1540,38 +1548,61 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
         releaseAsyncRoiBuffer(buffer_index, "reuse_wait_failed");
         return false;
     }
-    const bool need_host_gray =
+    const bool requested_host_gray =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
         neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
-    const bool need_bgr =
+    const bool requested_bgr =
         colorPipelineEnabled() &&
         has_stereo_detections &&
         (config_.dual_yolo.depth_roi_iou_region_color_patch ||
          config_.dual_yolo.depth_roi_patch_iou_color_edge ||
          neural_needs_bgr);
-    if (need_host_gray) {
-        globalPerf().record("Stage2_AsyncRoiNeedHostGray", 0.0);
-    }
-    if (need_bgr) {
-        globalPerf().record("Stage2_AsyncRoiNeedBgr", 0.0);
-    }
     const P2FeatureJobPolicy p2_policy = makeP2FeatureJobPolicy(config_);
     const P2FeatureJobDecision p2_decision = decideP2FeatureJobs(
         p2_policy,
         slot.frame_id,
         slot.detections,
         slot.detections_right,
-        need_host_gray,
-        need_bgr);
+        requested_host_gray,
+        requested_bgr);
+    const bool p2_inline_feature_jobs_enabled =
+        (!p2_decision.p2_depth_modes_enabled ||
+         !(p2_policy.split_feature_jobs && p2_policy.selective_trigger) ||
+         p2_decision.realtime_requested) &&
+        !p2DiagnosticOnlyFeatureJobsEnabled(config_);
+    const bool fallback_needs_host_gray =
+        roiStage2FallbackMayNeedHostImages(slot.detections,
+                                           slot.detections_right);
+    const bool need_host_gray =
+        requested_host_gray &&
+        (p2_inline_feature_jobs_enabled ||
+         p2_decision.diagnostic_requested ||
+         fallback_needs_host_gray);
+    const bool need_bgr =
+        requested_bgr &&
+        (p2_inline_feature_jobs_enabled ||
+         p2_decision.diagnostic_requested);
     std::vector<P2FeatureJobDescriptor> p2_feature_jobs =
         buildP2FeatureJobDescriptors(
             p2_policy,
             p2_decision,
             need_host_gray,
             need_bgr);
+    if (need_host_gray) {
+        globalPerf().record("Stage2_AsyncRoiNeedHostGray", 0.0);
+    }
+    if (requested_host_gray && !need_host_gray) {
+        globalPerf().record("Stage2_AsyncRoiSkipHostGraySelective", 0.0);
+    }
+    if (need_bgr) {
+        globalPerf().record("Stage2_AsyncRoiNeedBgr", 0.0);
+    }
+    if (requested_bgr && !need_bgr) {
+        globalPerf().record("Stage2_AsyncRoiSkipBgrSelective", 0.0);
+    }
     if (p2_decision.p2_depth_modes_enabled) {
         globalPerf().record("Stage2_P2FeatureJobConfigured", 0.0);
     }
@@ -1653,6 +1684,8 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.input.frame_id = slot.frame_id;
     task.input.left_detections = slot.detections;
     task.input.right_detections = slot.detections_right;
+    task.input.p2_inline_feature_jobs_enabled =
+        p2_inline_feature_jobs_enabled;
     task.input.left_cpu = need_host_gray ? buffer.left_gray_host : nullptr;
     task.input.left_cpu_pitch =
         need_host_gray ? static_cast<int>(buffer.left_gray_host_pitch) : 0;
@@ -1750,15 +1783,22 @@ void Pipeline::asyncRoiWorkerLoop() {
                 globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
             }
             const bool p2_inline_enabled =
-                !p2DiagnosticOnlyFeatureJobsEnabled(config_);
+                task.input.p2_inline_feature_jobs_enabled;
             if (p2_inline_enabled &&
                 task.p2_feature_decision.p2_depth_modes_enabled) {
                 globalPerf().record("Stage2_P2FeatureJobInlineStage2", 0.0);
             }
             if (!p2_inline_enabled &&
                 task.p2_feature_decision.p2_depth_modes_enabled) {
-                globalPerf().record(
-                    "Stage2_P2FeatureJobInlineSkippedDiagnosticOnly", 0.0);
+                if (p2DiagnosticOnlyFeatureJobsEnabled(config_)) {
+                    globalPerf().record(
+                        "Stage2_P2FeatureJobInlineSkippedDiagnosticOnly",
+                        0.0);
+                } else {
+                    globalPerf().record(
+                        "Stage2_P2FeatureJobInlineSkippedSelective",
+                        0.0);
+                }
             }
             if (p2_inline_enabled &&
                 task.p2_feature_decision.split_feature_jobs &&
