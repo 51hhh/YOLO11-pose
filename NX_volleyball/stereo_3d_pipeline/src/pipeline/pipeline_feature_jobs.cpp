@@ -69,6 +69,30 @@ uint32_t dualYoloP2DepthModeMask(const PipelineConfig::DualYoloConfig& cfg) {
     if (cfg.depth_roi_ring_edge_profile) {
         mask |= P2_DEPTH_MODE_RING_EDGE_PROFILE;
     }
+    if (cfg.depth_roi_vpi_template_match) {
+        mask |= P2_DEPTH_MODE_VPI_TEMPLATE;
+    }
+    if (cfg.depth_roi_vpi_stereo_disparity) {
+        mask |= P2_DEPTH_MODE_VPI_STEREO;
+    }
+    if (cfg.depth_roi_vpi_harris_lk) {
+        mask |= P2_DEPTH_MODE_VPI_HARRIS_LK;
+    }
+    if (cfg.depth_roi_vpi_orb) {
+        mask |= P2_DEPTH_MODE_VPI_ORB;
+    }
+    if (cfg.depth_roi_cuda_gftt_lk) {
+        mask |= P2_DEPTH_MODE_CUDA_GFTT_LK;
+    }
+    if (cfg.depth_roi_cuda_sift) {
+        mask |= P2_DEPTH_MODE_CUDA_SIFT;
+    }
+    if (cfg.depth_roi_libsgm) {
+        mask |= P2_DEPTH_MODE_LIBSGM;
+    }
+    if (cfg.depth_roi_cuda_hough_circle) {
+        mask |= P2_DEPTH_MODE_CUDA_HOUGH_CIRCLE;
+    }
     if (cfg.depth_fallback_feature_points) {
         mask |= P2_DEPTH_MODE_FALLBACK_FEATURE_POINTS;
     }

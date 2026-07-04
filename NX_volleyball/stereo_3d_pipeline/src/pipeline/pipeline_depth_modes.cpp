@@ -173,6 +173,14 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
            dualYoloROICudaStereoBMDepthEnabled(cfg) ||
            dualYoloROICudaStereoSGMDepthEnabled(cfg) ||
            dualYoloROIRingEdgeProfileDepthEnabled(cfg) ||
+           cfg.depth_roi_vpi_template_match ||
+           cfg.depth_roi_vpi_stereo_disparity ||
+           cfg.depth_roi_vpi_harris_lk ||
+           cfg.depth_roi_vpi_orb ||
+           cfg.depth_roi_cuda_gftt_lk ||
+           cfg.depth_roi_cuda_sift ||
+           cfg.depth_roi_libsgm ||
+           cfg.depth_roi_cuda_hough_circle ||
            dualYoloROICenterPatchDepthEnabled(cfg) ||
            dualYoloSubpixelDepthEnabled(cfg) ||
            dualYoloEpipolarFallbackEnabled(cfg) ||

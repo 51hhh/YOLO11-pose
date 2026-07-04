@@ -86,6 +86,30 @@ void loadDualYoloConfig(const YAML::Node& dual, stereo3d::PipelineConfig& cfg) {
         if (modes["roi_ring_edge_profile"])
             cfg.dual_yolo.depth_roi_ring_edge_profile =
                 modes["roi_ring_edge_profile"].as<bool>();
+        if (modes["roi_vpi_template_match"])
+            cfg.dual_yolo.depth_roi_vpi_template_match =
+                modes["roi_vpi_template_match"].as<bool>();
+        if (modes["roi_vpi_stereo_disparity"])
+            cfg.dual_yolo.depth_roi_vpi_stereo_disparity =
+                modes["roi_vpi_stereo_disparity"].as<bool>();
+        if (modes["roi_vpi_harris_lk"])
+            cfg.dual_yolo.depth_roi_vpi_harris_lk =
+                modes["roi_vpi_harris_lk"].as<bool>();
+        if (modes["roi_vpi_orb"])
+            cfg.dual_yolo.depth_roi_vpi_orb =
+                modes["roi_vpi_orb"].as<bool>();
+        if (modes["roi_cuda_gftt_lk"])
+            cfg.dual_yolo.depth_roi_cuda_gftt_lk =
+                modes["roi_cuda_gftt_lk"].as<bool>();
+        if (modes["roi_cuda_sift"])
+            cfg.dual_yolo.depth_roi_cuda_sift =
+                modes["roi_cuda_sift"].as<bool>();
+        if (modes["roi_libsgm"])
+            cfg.dual_yolo.depth_roi_libsgm =
+                modes["roi_libsgm"].as<bool>();
+        if (modes["roi_cuda_hough_circle"])
+            cfg.dual_yolo.depth_roi_cuda_hough_circle =
+                modes["roi_cuda_hough_circle"].as<bool>();
         if (modes["roi_center_patch"])
             cfg.dual_yolo.depth_roi_center_patch = modes["roi_center_patch"].as<bool>();
         if (modes["roi_subpixel"])

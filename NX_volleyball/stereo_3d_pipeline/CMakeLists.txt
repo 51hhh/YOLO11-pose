@@ -63,6 +63,17 @@ else()
   message(STATUS "OpenCV cudafeatures2d not found, CUDA ORB disabled")
 endif()
 
+find_package(OpenCV QUIET COMPONENTS cudaoptflow)
+if(OpenCV_cudaoptflow_FOUND)
+  set(HAS_OPENCV_CUDAOPTFLOW ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
+  message(STATUS "OpenCV cudaoptflow: found (CUDA LK enabled)")
+else()
+  set(HAS_OPENCV_CUDAOPTFLOW OFF)
+  message(STATUS "OpenCV cudaoptflow not found, CUDA LK disabled")
+endif()
+
 # TensorRT
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   HINTS /usr/include/aarch64-linux-gnu /usr/include)
@@ -199,6 +210,7 @@ set(PIPELINE_SOURCES
   src/stereo/roi_feature_match_cpu_opencv.cpp
   src/stereo/roi_feature_match_cpu_debug.cpp
   src/stereo/roi_feature_match_gpu.cpp
+  src/stereo/roi_feature_match_experimental.cpp
   src/stereo/neural_feature_matcher.cpp
   src/stereo/neural_feature_matcher_xfeat.cpp
   src/stereo/neural_feature_matcher_direct.cpp
@@ -280,6 +292,9 @@ target_link_libraries(stereo_pipeline
 
 if(HAS_OPENCV_CUDAFEATURES2D)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAFEATURES2D)
+endif()
+if(HAS_OPENCV_CUDAOPTFLOW)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAOPTFLOW)
 endif()
 
 if(HIK_FOUND)

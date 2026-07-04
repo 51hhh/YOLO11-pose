@@ -73,6 +73,14 @@ detector:
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
       roi_cuda_stereo_sgm: false # P2 OpenCV CUDA StereoSGM small ROI dense disparity candidate
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
+      roi_vpi_template_match: false # P2 VPI CUDA TemplateMatching small ROI epipolar candidate
+      roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
+      roi_vpi_harris_lk: false # P2 VPI Harris + Pyramidal LK candidate
+      roi_vpi_orb: false # P2 VPI ORB candidate
+      roi_cuda_gftt_lk: false # P2 OpenCV CUDA GFTT/Harris + SparsePyrLK candidate
+      roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
+      roi_libsgm: false # P2 Fixstars libSGM candidate
+      roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
       roi_center_patch: true   # P1 100fps training candidate; record z_roi_center_patch
       roi_subpixel: true       # P1 CUDA multi-point candidate; record z_roi_multi_point
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate

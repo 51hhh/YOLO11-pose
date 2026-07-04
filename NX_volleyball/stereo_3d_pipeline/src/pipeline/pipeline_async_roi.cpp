@@ -202,6 +202,22 @@ const char* p2DiagnosticModeName(uint32_t mode_bit) {
         return "cuda_stereo_sgm";
     case P2_DEPTH_MODE_RING_EDGE_PROFILE:
         return "cuda_ring_edge_profile";
+    case P2_DEPTH_MODE_VPI_TEMPLATE:
+        return "vpi_template_match";
+    case P2_DEPTH_MODE_VPI_STEREO:
+        return "vpi_stereo_disparity";
+    case P2_DEPTH_MODE_VPI_HARRIS_LK:
+        return "vpi_harris_lk";
+    case P2_DEPTH_MODE_VPI_ORB:
+        return "vpi_orb";
+    case P2_DEPTH_MODE_CUDA_GFTT_LK:
+        return "opencv_cuda_gftt_lk";
+    case P2_DEPTH_MODE_CUDA_SIFT:
+        return "cuda_sift";
+    case P2_DEPTH_MODE_LIBSGM:
+        return "fixstars_libsgm";
+    case P2_DEPTH_MODE_CUDA_HOUGH_CIRCLE:
+        return "cuda_hough_circle";
     default:
         return "unknown";
     }
@@ -1071,6 +1087,54 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     "Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfileValid",
                     "Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfileInvalid",
                     matchCudaRingEdgeProfileDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_VPI_TEMPLATE,
+                    "Stage2_P2FeatureJobDiagnosticVpiTemplate",
+                    "Stage2_P2FeatureJobDiagnosticVpiTemplateValid",
+                    "Stage2_P2FeatureJobDiagnosticVpiTemplateInvalid",
+                    matchVpiTemplateDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_VPI_STEREO,
+                    "Stage2_P2FeatureJobDiagnosticVpiStereo",
+                    "Stage2_P2FeatureJobDiagnosticVpiStereoValid",
+                    "Stage2_P2FeatureJobDiagnosticVpiStereoInvalid",
+                    matchVpiStereoDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_VPI_HARRIS_LK,
+                    "Stage2_P2FeatureJobDiagnosticVpiHarrisLk",
+                    "Stage2_P2FeatureJobDiagnosticVpiHarrisLkValid",
+                    "Stage2_P2FeatureJobDiagnosticVpiHarrisLkInvalid",
+                    matchVpiHarrisLkDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_VPI_ORB,
+                    "Stage2_P2FeatureJobDiagnosticVpiOrb",
+                    "Stage2_P2FeatureJobDiagnosticVpiOrbValid",
+                    "Stage2_P2FeatureJobDiagnosticVpiOrbInvalid",
+                    matchVpiOrbDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_GFTT_LK,
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLk",
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLkValid",
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLkInvalid",
+                    matchOpenCVCudaGfttLkDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_SIFT,
+                    "Stage2_P2FeatureJobDiagnosticCudaSift",
+                    "Stage2_P2FeatureJobDiagnosticCudaSiftValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaSiftInvalid",
+                    matchCudaSiftDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_LIBSGM,
+                    "Stage2_P2FeatureJobDiagnosticFixstarsLibSgm",
+                    "Stage2_P2FeatureJobDiagnosticFixstarsLibSgmValid",
+                    "Stage2_P2FeatureJobDiagnosticFixstarsLibSgmInvalid",
+                    matchFixstarsLibSgmDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_HOUGH_CIRCLE,
+                    "Stage2_P2FeatureJobDiagnosticCudaHoughCircle",
+                    "Stage2_P2FeatureJobDiagnosticCudaHoughCircleValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaHoughCircleInvalid",
+                    matchCudaCannyHoughCircleDisparityGPU);
                 if (!ran_any) {
                     globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop",
                                         0.0);
