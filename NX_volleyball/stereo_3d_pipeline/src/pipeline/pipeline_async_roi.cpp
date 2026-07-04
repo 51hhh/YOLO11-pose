@@ -576,6 +576,7 @@ bool Pipeline::openP2FeatureDiagnosticResults() {
     if (config_.p2_diagnostic_results_path.empty()) {
         LOG_WARN("P2 diagnostic results enabled but path is empty; results "
                  "CSV disabled");
+        config_.p2_diagnostic_results_enabled = false;
         return true;
     }
 
