@@ -1,6 +1,7 @@
 #include "roi_feature_match_gpu.h"
 
 #include "roi_feature_match_common.h"
+#include "roi_feature_match_gpu_reduce.h"
 #include "../utils/logger.h"
 
 #include <opencv2/core/cuda.hpp>
@@ -321,6 +322,99 @@ struct OpenCVCudaOrbScratch {
 
 }  // namespace
 #endif
+
+namespace {
+
+struct CudaTemplatePeakScratch {
+    CudaTemplateScorePeak* device = nullptr;
+    CudaTemplateScorePeak* host = nullptr;
+
+    ~CudaTemplatePeakScratch() {
+        if (device) {
+            cudaFree(device);
+            device = nullptr;
+        }
+        if (host) {
+            cudaFreeHost(host);
+            host = nullptr;
+        }
+    }
+
+    bool ensure() {
+        if (!device) {
+            const cudaError_t err =
+                cudaMalloc(reinterpret_cast<void**>(&device),
+                           sizeof(CudaTemplateScorePeak));
+            if (err != cudaSuccess) {
+                device = nullptr;
+                return false;
+            }
+        }
+        if (!host) {
+            const cudaError_t err =
+                cudaHostAlloc(reinterpret_cast<void**>(&host),
+                              sizeof(CudaTemplateScorePeak),
+                              cudaHostAllocDefault);
+            if (err != cudaSuccess) {
+                host = nullptr;
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+bool findTemplatePeakOnGpu(const cv::cuda::GpuMat& score_gpu,
+                           cudaStream_t stream,
+                           double* max_value,
+                           cv::Point* max_loc) {
+    if (score_gpu.empty() || score_gpu.type() != CV_32FC1 ||
+        !stream || !max_value || !max_loc) {
+        return false;
+    }
+    thread_local CudaTemplatePeakScratch scratch;
+    if (!scratch.ensure()) {
+        return false;
+    }
+    cudaError_t err = findCudaTemplateScorePeak(
+        score_gpu.ptr<float>(),
+        score_gpu.step,
+        score_gpu.cols,
+        score_gpu.rows,
+        scratch.device,
+        scratch.host,
+        stream);
+    if (err == cudaSuccess) {
+        err = cudaStreamSynchronize(stream);
+    }
+    if (err != cudaSuccess || !scratch.host->valid) {
+        return false;
+    }
+    *max_value = static_cast<double>(scratch.host->value);
+    *max_loc = cv::Point(scratch.host->x, scratch.host->y);
+    return true;
+}
+
+bool findTemplatePeakOnCpu(const cv::cuda::GpuMat& score_gpu,
+                           cv::cuda::Stream& cv_stream,
+                           double* max_value,
+                           cv::Point* max_loc) {
+    if (score_gpu.empty() || !max_value || !max_loc) {
+        return false;
+    }
+    cv::Mat score_cpu;
+    score_gpu.download(score_cpu, cv_stream);
+    cv_stream.waitForCompletion();
+    if (score_cpu.empty()) {
+        return false;
+    }
+    double min_value = 0.0;
+    cv::Point min_loc;
+    cv::minMaxLoc(score_cpu, &min_value, max_value, &min_loc, max_loc);
+    return true;
+}
+
+}  // namespace
 
 SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
     const uint8_t* left_gpu, int left_pitch,
@@ -643,22 +737,19 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
         }
         thread_local cv::cuda::GpuMat score_gpu;
         matcher->match(search, templ, score_gpu, cv_stream);
-
-        cv::Mat score_cpu;
-        score_gpu.download(score_cpu, cv_stream);
         cv_stream.waitForCompletion();
-        if (score_cpu.empty()) {
+        if (score_gpu.empty()) {
             result.low_confidence = true;
             return result;
         }
 
-        double min_val = 0.0;
         double max_val = 0.0;
-        cv::Point min_loc;
         cv::Point max_loc;
-        cv::minMaxLoc(score_cpu, &min_val, &max_val, &min_loc, &max_loc);
-        (void)min_val;
-        (void)min_loc;
+        if (!findTemplatePeakOnGpu(score_gpu, stream, &max_val, &max_loc) &&
+            !findTemplatePeakOnCpu(score_gpu, cv_stream, &max_val, &max_loc)) {
+            result.low_confidence = true;
+            return result;
+        }
 
         const float right_anchor_x =
             static_cast<float>(search_rect.x + max_loc.x + patch_radius);
