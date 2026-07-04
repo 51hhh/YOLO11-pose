@@ -162,6 +162,7 @@ set(PIPELINE_SOURCES
   src/main_config_loaders.cpp
   src/main_dual_yolo_config.cpp
   src/main_realtime_debug_dump.cpp
+  src/main_realtime_debug_dump_writer.cpp
   src/main_recording_config_loaders.cpp
   src/main_runtime_overrides.cpp
   src/pipeline/pipeline.cpp
