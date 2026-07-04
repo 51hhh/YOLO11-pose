@@ -65,16 +65,16 @@
 - [x] 构建并实测 `xfeat_extractor_96.engine`。
 - [x] 实测 `neural_xfeat_96_top32`。
 - [x] 实测 `neural_xfeat_96_top64`。
-- [ ] 实测 `neural_xfeat_128_top32`。
-- [ ] 实测 `neural_xfeat_128_top96`。
-- [ ] 实测 `neural_xfeat_160_top64`。
+- [x] 实测 `neural_xfeat_128_top32`。
+- [x] 实测 `neural_xfeat_128_top96`。
+- [x] 实测 `neural_xfeat_160_top64`。
 - [x] 构建并实测 `superpoint_extractor_128_top64.engine`。
 - [x] 构建并实测 `superpoint_extractor_160_top64.engine`。
 - [x] 构建并实测 `superpoint_extractor_224_top64.engine`。
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_160_top64`。
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_224_top64`。
 - [ ] 将 XFeat NMS/descriptor sampling/mutual-NN 从 CPU 后处理迁移到 GPU 或 fused engine。
-  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。ALIKED 仍卡在 `torchvision::deform_conv2d`，没有可用 TensorRT engine。
+  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。2026-07-04 追加单项测试中，XFeat 128/top32 为 `94.7fps`、`24/375` 有效，128/top96 为 `96.4fps`、`2/402` 有效，160/top64 为 `87.9fps`、`6/398` 有效。ALIKED 仍卡在 `torchvision::deform_conv2d`，没有可用 TensorRT engine。
 
 ## 动态录制验证
 
