@@ -11,13 +11,13 @@ from typing import Any, Dict
 try:
     from .dataset import find_metadata_for_csv, read_csv_rows, read_metadata
     from .check_dataset_fields import DEPTH_KEYS, JUMP_DEPTH_KEYS, REQUIRED_FIELDS
+    from .check_dataset_frame_summary import frame_summary_report
     from .check_dataset_metrics import (
         delta_stats,
         depth_jump_stats,
         depth_stats,
         field_set,
         frame_gaps,
-        frame_summary_report,
         metadata_float,
         source_breakdown,
         timing_stats,
@@ -26,13 +26,13 @@ try:
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import find_metadata_for_csv, read_csv_rows, read_metadata
     from check_dataset_fields import DEPTH_KEYS, JUMP_DEPTH_KEYS, REQUIRED_FIELDS
+    from check_dataset_frame_summary import frame_summary_report
     from check_dataset_metrics import (
         delta_stats,
         depth_jump_stats,
         depth_stats,
         field_set,
         frame_gaps,
-        frame_summary_report,
         metadata_float,
         source_breakdown,
         timing_stats,
