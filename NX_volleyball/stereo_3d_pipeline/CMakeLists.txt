@@ -184,6 +184,7 @@ set(PIPELINE_SOURCES
   src/stereo/roi_stereo_matcher.cpp
   src/stereo/depth_candidate_contract.cpp
   src/stereo/depth_candidate_builder.cpp
+  src/stereo/depth_candidate_builder_feature.cpp
   src/stereo/depth_match_contract.cpp
   src/stereo/dual_yolo_depth_gpu.cpp
   src/stereo/roi_feature_validation.cpp
