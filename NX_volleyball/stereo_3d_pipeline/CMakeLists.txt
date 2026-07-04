@@ -324,6 +324,7 @@ if(HIK_FOUND)
   add_executable(hik_frame_metadata_probe
     tools/hik_frame_metadata_probe.cpp
     tools/hik_frame_metadata_probe_args.cpp
+    tools/hik_frame_metadata_probe_stats.cpp
   )
   set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
   target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
