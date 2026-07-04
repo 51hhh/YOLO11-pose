@@ -2,7 +2,7 @@
 
 最后核对: 2026-07-04
 
-本页用于明天在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个候选能否在实时管线里单项跑通”，不改变 P0/P1 默认采集集合。
+本页用于在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个候选能否在实时管线里单项跑通”，不改变 P0/P1 默认采集集合。
 
 ## 是否已经完成本地准备
 
@@ -13,11 +13,22 @@
 - 报告会写出算法级 `algo_stage` 用时、完整 async worker 用时、deadline/drop 诊断、候选有效率和 CSV 行数；diagnostic-only case 会额外写 `p2_diag_*` 逐帧结果统计。
 - `--debug-on-failure` 可在失败 case 后额外抓 feature debug 图和实时 zoom 图。
 
-必须等 NX 实测才能确认:
+本轮已完成的 NX 有球实测:
 
-- 新 P2 case 能否在 Jetson 编译后的真实 OpenCV CUDA/TensorRT 环境中运行。
-- 单项是否稳定 100fps。
-- 是否只是参数导致无效，还是算法本身在排球 ROI 上不稳定。
+- 核心 P2 inline: `test_logs/codex_ball_p2_core_20260704_063458/`。
+- 神经特征 P2: `test_logs/codex_ball_p2_neural_20260704_063923/`。
+- 可行候选 20s 长测: `test_logs/codex_ball_p2_viable_long_20260704_064200/`。
+- 新增 diagnostic 后端: `test_logs/codex_ball_p2_experimental_diag_20260704_070148/`。
+- GFTT/LK 修复复测: `test_logs/codex_ball_p2_gftt_lk_roi105_20260704_071106/`。
+- selective 调度 smoke: `test_logs/codex_ball_p2_selective_after_exp_20260704_071202/`。
+
+后续判断口径:
+
+- `patch_iou_color_edge_wide_search` 是当前唯一明确通过 100fps + 全有效的 P2 训练候选。
+- `iou_region_color_patch_wide_search` 全有效但 20s 长测为 `99.2fps`，只能作为备选长测。
+- `diagnostic-only` case 不写主 CSV 候选字段，必须看 `diag_valid/rows`、`diag_over_deadline` 和算法 stage。
+- VPI Template/Stereo 已有真实 CUDA diagnostic 后端，本轮 `0/rows` 表示算法/gate 未产出有效深度。
+- VPI Harris/ORB、LibSGM、CUDA-SIFT 当前只是 availability stub，`0/rows` 表示后端未实现或依赖缺失，不等价于真实算法失败。
 
 ## 正式准入测试
 

@@ -36,32 +36,40 @@
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
 - [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。
-- [ ] 实测 ROI ring/edge profile matcher。
-  - 已接入 `roi_ring_edge_profile` 默认关闭字段、自研 CUDA kernel、TrajectoryRecorder/训练读取和 `cuda_ring_edge_profile_diagnostic_only` 矩阵 case；剩余有球 NX 实测。
-- [ ] 复测 `roi_iou_region_color_patch_offline_tuned`。
+- [x] 实测 ROI ring/edge profile matcher。
+  - 已接入 `roi_ring_edge_profile` 默认关闭字段、自研 CUDA kernel、TrajectoryRecorder/训练读取和 `cuda_ring_edge_profile_diagnostic_only` 矩阵 case；有球 NX diagnostic `100.0fps`、`0/652` 有效，support=0/low confidence，不准入。
+- [x] 复测 `roi_iou_region_color_patch_offline_tuned`。
 - [x] 复测 `roi_iou_region_color_patch_wide_search`。
-- [ ] 复测 `patch_iou_color_edge_offline_tuned`。
+- [x] 复测 `patch_iou_color_edge_offline_tuned`。
 - [x] 复测 `patch_iou_color_edge_wide_search`。
 - [x] 接入 OpenCV CUDA TemplateMatching 小 ROI 极线匹配字段。
 - [x] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配。
 - [x] 实测 `opencv_cuda_template_match_patch9`。
-- [ ] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
+- [x] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
+  - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `99.4fps`、`0/645` 有效，不准入。
 - [x] 接入 OpenCV CUDA StereoBM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
 - [x] 实测 `opencv_cuda_stereo_bm_patch9`。
 - [x] 接入 OpenCV CUDA StereoSGM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoSGM 裁剪 ROI / 小 `numDisparities`。
 - [x] 实测 `opencv_cuda_stereo_sgm_patch9`。
-- [ ] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
+- [x] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
+  - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `100.1fps`、`0/632` 有效，不准入。
 - [ ] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
+  - 已接 `roi_libsgm` 配置/diagnostic 入口；NX 当前缺 libSGM，运行返回 unsupported。
 - [x] 复测 `opencv_cuda_orb_fast48`。
 - [x] 复测 `opencv_cuda_orb_wide_y`。
 - [ ] 核对 NX VPI ORB 是否支持 CUDA backend；若支持则实现 VPI ORB P2 后端。
+  - 已接 `roi_vpi_orb` 配置/diagnostic 入口并通过 NX build；当前运行返回 unsupported stub，真实 VPI descriptor matcher 仍待实现。
 - [ ] 实测 VPI CUDA Harris + Pyramidal LK。
-- [ ] 实测 OpenCV CUDA GFTT/Harris + SparsePyrLK。
+  - 已接 `roi_vpi_harris_lk` 配置/diagnostic 入口并通过 NX build；当前运行返回 unsupported stub，真实 VPIArray/VPIPyramid LK 后端仍待实现。
+- [x] 实测 OpenCV CUDA GFTT/Harris + SparsePyrLK。
+  - 已接 `roi_cuda_gftt_lk` diagnostic-only 后端并通过 NX build；修复非连续 ROI view 后，有球复测仍 `93.6fps`、`0/555` 有效，不准入。
 - [ ] 调研并验证 CUDA-SIFT 第三方依赖是否能限制在 ROI/top-k 内稳定 10ms。
+  - 已接 `roi_cuda_sift` 配置/diagnostic 入口；NX 当前缺 CUDA-SIFT，运行返回 unsupported。
 - [ ] 调研 BRISK/AKAZE 是否存在可维护 CUDA/VPI 后端；否则只保留 CPU debug。
-- [ ] 实测 CUDA Canny/HoughCircles fallback circle refinement。
+- [x] 实测 CUDA Canny/HoughCircles fallback circle refinement。
+  - 已接 `roi_cuda_hough_circle` diagnostic-only 后端并通过 NX build；有球 diagnostic `88.0fps`、`6/539` 有效，不准入。
 
 ## P2 TensorRT 神经特征
 
@@ -77,7 +85,7 @@
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_160_top64`。
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_224_top64`。
 - [ ] 将 XFeat NMS/descriptor sampling/mutual-NN 从 CPU 后处理迁移到 GPU 或 fused engine。
-  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。2026-07-04 追加单项测试中，XFeat 128/top32 为 `94.7fps`、`24/375` 有效，128/top96 为 `96.4fps`、`2/402` 有效，160/top64 为 `87.9fps`、`6/398` 有效。ALIKED 仍卡在 `torchvision::deform_conv2d`，没有可用 TensorRT engine。
+  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。2026-07-04 有球测试中，XFeat 96/top32 为 `97.9fps`、`3/627` 有效，128/top32 为 `94.5fps`、`44/604` 有效，160/top64 为 `93.5fps`、`32/601` 有效；SuperPoint 224/top64 为 `59.2fps`、`151/402` 有效。ALIKED 缺 `aliked_extractor_*_top64.engine`。
 
 ## 动态录制验证
 
