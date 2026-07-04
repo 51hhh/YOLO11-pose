@@ -10,7 +10,7 @@
 
 - P2 默认关闭字段和矩阵 case 已准备好。
 - `scripts/nx_algorithm_matrix_test.py` 已按单算法隔离生成临时 YAML。
-- 报告会写出算法级 `algo_stage` 用时、完整 async worker 用时、deadline/drop 诊断、候选有效率和 CSV 行数。
+- 报告会写出算法级 `algo_stage` 用时、完整 async worker 用时、deadline/drop 诊断、候选有效率和 CSV 行数；diagnostic-only case 会额外写 `p2_diag_*` 逐帧结果统计。
 - `--debug-on-failure` 可在失败 case 后额外抓 feature debug 图和实时 zoom 图。
 
 必须等 NX 实测才能确认:
@@ -54,7 +54,13 @@ python3 scripts/nx_algorithm_matrix_test.py \
   --cases opencv_cuda_template_match_patch9
 ```
 
-需要逐 frame 对齐 diagnostic lane 迟到结果时，在临时 YAML 的 `performance` 中打开:
+矩阵脚本里的 diagnostic-only case 会自动打开独立结果 CSV，路径形如:
+
+```text
+test_logs/<run>/<case>.p2_diagnostic.csv
+```
+
+需要手工逐 frame 对齐 diagnostic lane 迟到结果时，在临时 YAML 的 `performance` 中打开:
 
 ```yaml
 p2_feature_job_scaffold_enabled: true
@@ -91,6 +97,8 @@ logs/<case>.debug_realtime_dump.log
 | `stale/expired` | stale result、stale ready、expired pending、主线程 stale ROI 之和 | 大于 0 表示架构丢弃了过期结果 |
 | `queue_drop` | pending/no-buffer/submit drop 之和 | 大于 0 表示 async 队列或 buffer 不够 |
 | `candidate_valid/frames` | 目标 `z_*` 字段有效帧数/帧数 | 判断 gate 后是否真的产出深度 |
+| `diag_valid/rows` | diagnostic 独立 CSV 中有效行/总行数 | diagnostic-only case 看这一列，不看 `candidate_valid` |
+| `diag_over_deadline` | diagnostic worker 超过 `p2_diagnostic_deadline_ms` 的逐帧次数 | 大于 0 表示 diagnostic 结果迟到 |
 | `accepted` | async 结果被主线程接收次数 | 为 0 时先看 detection/drop |
 | `frame_cb_skip` | 原 ring slot 已复用，跳过图像 frame callback | 不影响 CSV 结果，但影响实时图像 debug |
 | `host_gray` | 本 case 触发 host gray D2H 的次数 | GPU-only case 应接近 0 |

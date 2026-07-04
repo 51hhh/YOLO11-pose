@@ -17,7 +17,7 @@
 - [ ] 评估是否可将 P2 FeatureJob 从完整 `runRoiStage2Core()` 中拆出，支持低频、迟到和按 frame id 落盘。
   - 已完成 FeatureJob 配置、决策结构、async ROI 提交流程观测点和 P2 diagnostic lane 独立 worker/队列/max-in-flight 限流。
   - NX 已验证 async ROI 路径的 OpenCV CUDA ORB/Template/BM/SGM diagnostic 执行体、独立 GPU snapshot 和独立 CUDA stream。Template stride=10 可维持 100fps；stride=1 会抢占 GPU，不作为准入。
-  - 已编写 diagnostic lane 迟到结果独立 CSV 落盘，按 frame id 写算法状态、视差/深度、support/attempted、bbox、anchor 和 deadline 状态；待 NX 编译和实跑验证。
+  - 已编写并在 NX 验证 diagnostic lane 迟到结果独立 CSV 落盘，按 frame id 写算法状态、视差/深度、support/attempted、bbox、anchor 和 deadline 状态；最终 smoke 日志 `test_logs/codex_diag_csv_final_20260704_052610/`，Template diagnostic-only `diag_valid/rows=6/227`，`diag_over_deadline=1`。
   - 颜色 patch、神经特征和主结果融合仍未迁移。
 - [ ] 缩小或移除 `roi_postprocess_mutex_` 对独立 P2 job 的影响。
 - [ ] OpenCV CUDA P2 使用独立 stream/scratch/matcher 实例，测试多个 OpenCV CUDA 算法并行是否存在隐式同步或尾延迟放大。
@@ -36,22 +36,22 @@
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。
 - [ ] 实测 ROI ring/edge profile matcher。
 - [ ] 复测 `roi_iou_region_color_patch_offline_tuned`。
-- [ ] 复测 `roi_iou_region_color_patch_wide_search`。
+- [x] 复测 `roi_iou_region_color_patch_wide_search`。
 - [ ] 复测 `patch_iou_color_edge_offline_tuned`。
-- [ ] 复测 `patch_iou_color_edge_wide_search`。
+- [x] 复测 `patch_iou_color_edge_wide_search`。
 - [x] 接入 OpenCV CUDA TemplateMatching 小 ROI 极线匹配字段。
-- [ ] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配。
+- [x] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配。
 - [ ] 实测 `opencv_cuda_template_match_patch9`。
 - [ ] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
 - [x] 接入 OpenCV CUDA StereoBM 小 ROI dense disparity 字段。
-- [ ] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
+- [x] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
 - [ ] 实测 `opencv_cuda_stereo_bm_patch9`。
 - [x] 接入 OpenCV CUDA StereoSGM 小 ROI dense disparity 字段。
-- [ ] 实测 OpenCV CUDA StereoSGM 裁剪 ROI / 小 `numDisparities`。
+- [x] 实测 OpenCV CUDA StereoSGM 裁剪 ROI / 小 `numDisparities`。
 - [ ] 实测 `opencv_cuda_stereo_sgm_patch9`。
 - [ ] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
 - [ ] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
-- [ ] 复测 `opencv_cuda_orb_fast48`。
+- [x] 复测 `opencv_cuda_orb_fast48`。
 - [ ] 复测 `opencv_cuda_orb_wide_y`。
 - [ ] 核对 NX VPI ORB 是否支持 CUDA backend；若支持则实现 VPI ORB P2 后端。
 - [ ] 实测 VPI CUDA Harris + Pyramidal LK。
@@ -62,18 +62,19 @@
 
 ## P2 TensorRT 神经特征
 
-- [ ] 构建并实测 `xfeat_extractor_96.engine`。
-- [ ] 实测 `neural_xfeat_96_top32`。
-- [ ] 实测 `neural_xfeat_96_top64`。
+- [x] 构建并实测 `xfeat_extractor_96.engine`。
+- [x] 实测 `neural_xfeat_96_top32`。
+- [x] 实测 `neural_xfeat_96_top64`。
 - [ ] 实测 `neural_xfeat_128_top32`。
 - [ ] 实测 `neural_xfeat_128_top96`。
 - [ ] 实测 `neural_xfeat_160_top64`。
-- [ ] 构建并实测 `superpoint_extractor_128_top64.engine`。
-- [ ] 构建并实测 `superpoint_extractor_160_top64.engine`。
-- [ ] 构建并实测 `superpoint_extractor_224_top64.engine`。
+- [x] 构建并实测 `superpoint_extractor_128_top64.engine`。
+- [x] 构建并实测 `superpoint_extractor_160_top64.engine`。
+- [x] 构建并实测 `superpoint_extractor_224_top64.engine`。
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_160_top64`。
 - [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_224_top64`。
 - [ ] 将 XFeat NMS/descriptor sampling/mutual-NN 从 CPU 后处理迁移到 GPU 或 fused engine。
+  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。ALIKED 仍卡在 `torchvision::deform_conv2d`，没有可用 TensorRT engine。
 
 ## 动态录制验证
 
