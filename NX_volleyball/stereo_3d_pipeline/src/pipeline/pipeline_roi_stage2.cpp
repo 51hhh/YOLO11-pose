@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cmath>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -39,6 +40,64 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
 
     auto has_valid_stereo = [this](const Object3D& obj) {
         return obj.z > 0.0f && obj.confidence > config_.depth.min_confidence;
+    };
+    auto has_recordable_roi_result = [&](const Object3D& obj) {
+        if (has_valid_stereo(obj)) return true;
+        if (obj.stereo_match_source == 1 && obj.pair_positive_disparity) {
+            return true;
+        }
+        auto valid_depth = [](float z) {
+            return std::isfinite(z) && z > 0.0f;
+        };
+        auto observed = [&](float z, int support, float confidence) {
+            return valid_depth(z) || support > 0 ||
+                   (std::isfinite(confidence) && confidence > 0.0f);
+        };
+        return observed(obj.z_roi_multi_point,
+                        obj.subpixel_support,
+                        obj.subpixel_confidence) ||
+               observed(obj.z_roi_center_patch,
+                        obj.subpixel_support,
+                        obj.subpixel_confidence) ||
+               observed(obj.z_roi_corner_points,
+                        obj.roi_corner_points_support,
+                        obj.roi_corner_points_confidence) ||
+               observed(obj.z_roi_texture_points,
+                        obj.roi_texture_points_support,
+                        obj.roi_texture_points_confidence) ||
+               observed(obj.z_roi_binary_points,
+                        obj.roi_binary_points_support,
+                        obj.roi_binary_points_confidence) ||
+               observed(obj.z_roi_orb_points,
+                        obj.roi_orb_points_support,
+                        obj.roi_orb_points_confidence) ||
+               observed(obj.z_roi_brisk_points,
+                        obj.roi_brisk_points_support,
+                        obj.roi_brisk_points_confidence) ||
+               observed(obj.z_roi_akaze_points,
+                        obj.roi_akaze_points_support,
+                        obj.roi_akaze_points_confidence) ||
+               observed(obj.z_roi_sift_points,
+                        obj.roi_sift_points_support,
+                        obj.roi_sift_points_confidence) ||
+               observed(obj.z_roi_iou_region_color_patch,
+                        obj.roi_iou_region_color_patch_support,
+                        obj.roi_iou_region_color_patch_confidence) ||
+               observed(obj.z_roi_patch_iou_color_edge,
+                        obj.roi_patch_iou_color_edge_support,
+                        obj.roi_patch_iou_color_edge_confidence) ||
+               observed(obj.z_roi_cuda_template_match,
+                        obj.roi_cuda_template_match_support,
+                        obj.roi_cuda_template_match_confidence) ||
+               observed(obj.z_roi_cuda_stereo_bm,
+                        obj.roi_cuda_stereo_bm_support,
+                        obj.roi_cuda_stereo_bm_confidence) ||
+               observed(obj.z_roi_cuda_stereo_sgm,
+                        obj.roi_cuda_stereo_sgm_support,
+                        obj.roi_cuda_stereo_sgm_confidence) ||
+               observed(obj.z_roi_neural_feature,
+                        obj.roi_neural_feature_support,
+                        obj.roi_neural_feature_confidence);
     };
 
     auto count_valid = [&](const std::vector<Object3D>& results) {
@@ -142,7 +201,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
             valid_detections.reserve(n);
             valid_results.reserve(n);
             for (size_t i = 0; i < n; ++i) {
-                if (!has_valid_stereo(roi_results[i])) continue;
+                if (!has_recordable_roi_result(roi_results[i])) continue;
                 valid_detections.push_back(fusion_detections[i]);
                 valid_results.push_back(roi_results[i]);
             }

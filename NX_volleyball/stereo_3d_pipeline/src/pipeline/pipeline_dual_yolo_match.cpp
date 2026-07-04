@@ -1292,17 +1292,25 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             buildDepthCandidateObservations(depth_candidate_input);
         const DepthCandidateSelection& depth_selection =
             depth_candidate_build.selection;
-        if (depth_selection.valid) {
+        const bool has_legacy_depth = depth_selection.valid;
+        const bool emit_record_only_candidate =
+            direct_yolo_match && direct_depth_without_circle_enabled;
+        if (has_legacy_depth) {
             disparity = depth_selection.observation.disparity_px;
             depth_source = depth_selection.observation.stereo_depth_source;
             disparity_conf = depth_selection.observation.fusion_confidence;
+        } else if (emit_record_only_candidate) {
+            disparity = -1.0f;
+            depth_source = 0;
+            disparity_conf = 0.0f;
         } else {
             ++local_stats.depth_reject;
             return false;
         }
 
-        const float z = depth_selection.observation.depth_m;
-        if (z < config_.depth.min_depth || z > config_.depth.max_depth) {
+        const float z = has_legacy_depth ? depth_selection.observation.depth_m : -1.0f;
+        if (has_legacy_depth &&
+            (z < config_.depth.min_depth || z > config_.depth.max_depth)) {
             ++local_stats.depth_reject;
             return false;
         }
@@ -1318,14 +1326,25 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             anchor_cx = left_det.cx;
             anchor_cy = left_det.cy;
         }
-        obj.x = (anchor_cx - cx0) * z / focal;
-        obj.y = (anchor_cy - cy0) * z / focal;
-        obj.z = z;
-        obj.raw_x = obj.x;
-        obj.raw_y = obj.y;
-        obj.raw_z = obj.z;
-        obj.raw_observation_valid = 1;
-        obj.z_stereo = z;
+        if (has_legacy_depth) {
+            obj.x = (anchor_cx - cx0) * z / focal;
+            obj.y = (anchor_cy - cy0) * z / focal;
+            obj.z = z;
+            obj.raw_x = obj.x;
+            obj.raw_y = obj.y;
+            obj.raw_z = obj.z;
+            obj.raw_observation_valid = 1;
+            obj.z_stereo = z;
+        } else {
+            obj.x = 0.0f;
+            obj.y = 0.0f;
+            obj.z = -1.0f;
+            obj.raw_x = 0.0f;
+            obj.raw_y = 0.0f;
+            obj.raw_z = -1.0f;
+            obj.raw_observation_valid = 0;
+            obj.z_stereo = -1.0f;
+        }
         obj.z_bbox_center = z_yolo;
         obj.z_bbox_left_edge = z_bbox_left_edge;
         obj.z_bbox_right_edge = z_bbox_right_edge;
