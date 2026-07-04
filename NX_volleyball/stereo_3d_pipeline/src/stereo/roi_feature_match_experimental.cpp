@@ -547,6 +547,7 @@ SparseFeatureDisparityResult unsupportedBackend(const char* name) {
     }
     SparseFeatureDisparityResult result;
     result.low_confidence = true;
+    result.unsupported = true;
     return result;
 }
 

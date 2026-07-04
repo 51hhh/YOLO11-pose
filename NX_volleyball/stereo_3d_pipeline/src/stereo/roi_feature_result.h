@@ -17,6 +17,7 @@ struct SparseFeatureDisparityResult {
     float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
     int support = 0;
     int attempted = 0;
+    bool unsupported = false;
 };
 
 }  // namespace stereo3d

@@ -1027,7 +1027,9 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     row.frame_id = task.job.frame_id;
                     row.metadata = task.metadata;
                     row.mode = p2DiagnosticModeName(mode_bit);
-                    row.status = result.valid ? "valid" : "invalid";
+                    row.status = result.valid
+                        ? "valid"
+                        : (result.unsupported ? "unsupported" : "invalid");
                     row.valid = result.valid;
                     row.low_confidence = result.low_confidence;
                     row.disparity = result.disparity;
