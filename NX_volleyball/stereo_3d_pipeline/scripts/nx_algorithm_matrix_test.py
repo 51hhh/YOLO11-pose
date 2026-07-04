@@ -37,6 +37,7 @@ MODE_KEYS = {
     "roi_cuda_template_match",
     "roi_cuda_stereo_bm",
     "roi_cuda_stereo_sgm",
+    "roi_ring_edge_profile",
     "roi_center_patch",
     "roi_subpixel",
     "epipolar_fallback",
@@ -324,6 +325,34 @@ P2_DIAGNOSTIC_ONLY = {
     "p2_diagnostic_deadline_ms": "50.0",
 }
 
+P2_SELECTIVE_PAIR_QUALITY = {
+    "p2_feature_job_scaffold_enabled": "true",
+    "p2_selective_trigger": "true",
+    "p2_trigger_on_fallback": "false",
+    "p2_trigger_on_direct_pair": "false",
+    "p2_trigger_on_host_gray": "false",
+    "p2_trigger_on_bgr": "false",
+    "p2_trigger_on_pair_quality": "true",
+    "p2_trigger_on_no_valid_direct_pair": "true",
+    "p2_pair_quality_min_shifted_iou": "0.99",
+    "p2_pair_quality_max_epipolar_dy": "0.10",
+    "p2_pair_quality_min_confidence": "0.99",
+}
+
+P2_SELECTIVE_NO_TRIGGER = {
+    "p2_feature_job_scaffold_enabled": "true",
+    "p2_selective_trigger": "true",
+    "p2_trigger_on_fallback": "false",
+    "p2_trigger_on_direct_pair": "false",
+    "p2_trigger_on_host_gray": "false",
+    "p2_trigger_on_bgr": "false",
+    "p2_trigger_on_pair_quality": "true",
+    "p2_trigger_on_no_valid_direct_pair": "false",
+    "p2_pair_quality_min_shifted_iou": "0.0",
+    "p2_pair_quality_max_epipolar_dy": "0.0",
+    "p2_pair_quality_min_confidence": "0.0",
+}
+
 
 RELAXED_CASES = (
     Case(
@@ -462,6 +491,22 @@ RELAXED_CASES = (
         note="P2 sweep: CUDA color-edge patch with wider search and looser gates",
     ),
     Case(
+        "patch_iou_color_edge_selective_pair_quality",
+        {"roi_patch_iou_color_edge": True},
+        ("z_roi_patch_iou_color_edge",),
+        support_field="roi_patch_iou_color_edge_support",
+        yaml_scalars={**COLOR_WIDE_SEARCH, **P2_SELECTIVE_PAIR_QUALITY},
+        note="P2 selective-trigger smoke: force pair quality triggers for color-edge patch",
+    ),
+    Case(
+        "patch_iou_color_edge_selective_no_trigger",
+        {"roi_patch_iou_color_edge": True},
+        ("z_roi_patch_iou_color_edge",),
+        support_field="roi_patch_iou_color_edge_support",
+        yaml_scalars={**COLOR_WIDE_SEARCH, **P2_SELECTIVE_NO_TRIGGER},
+        note="P2 selective-trigger smoke: no trigger should skip color-edge patch",
+    ),
+    Case(
         "opencv_cuda_template_match_relaxed",
         {"roi_cuda_template_match": True},
         ("z_roi_cuda_template_match",),
@@ -559,6 +604,13 @@ RELAXED_CASES = (
         yaml_scalars={**DENSE_PATCH9_SWEEP, **P2_DIAGNOSTIC_ONLY},
         algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaStereoSGM",
         note="diagnostic lane only: OpenCV CUDA StereoSGM runs from independent GPU snapshot; no CSV candidate writeback",
+    ),
+    Case(
+        "cuda_ring_edge_profile_diagnostic_only",
+        {"roi_ring_edge_profile": True},
+        yaml_scalars={**COLOR_WIDE_SEARCH, **P2_DIAGNOSTIC_ONLY},
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaRingEdgeProfile",
+        note="diagnostic lane only: custom CUDA ring/edge profile matcher; no CSV candidate writeback",
     ),
     Case(
         "neural_xfeat_relaxed",
@@ -1187,6 +1239,8 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
     async_frame_cb_skipped = stage("Stage2_AsyncRoiFrameCallbackSkippedReusedSlot")
     async_need_host_gray = stage("Stage2_AsyncRoiNeedHostGray")
     async_need_bgr = stage("Stage2_AsyncRoiNeedBgr")
+    async_skip_host_gray_selective = stage("Stage2_AsyncRoiSkipHostGraySelective")
+    async_skip_bgr_selective = stage("Stage2_AsyncRoiSkipBgrSelective")
     async_host_gray_submit = stage("Stage2_AsyncRoiHostGrayD2HSubmit")
     async_gray_submit = stage("Stage2_AsyncRoiGrayD2DSubmit")
     async_bgr_submit = stage("Stage2_AsyncRoiBgrD2DSubmit")
@@ -1194,6 +1248,16 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
     async_slot_copy_wait = stage("Stage2_AsyncRoiSlotCopyWait")
     async_worker_busy = stage("Stage2_AsyncRoiWorkerBusy")
     stage2_drop_stale_roi = stage("Stage2_DropStaleROI")
+    p2_configured = stage("Stage2_P2FeatureJobConfigured")
+    p2_realtime_requested = stage("Stage2_P2FeatureJobRealtimeRequested")
+    p2_realtime_not_attempted = stage("Stage2_P2FeatureJobRealtimeNotAttempted")
+    p2_not_triggered = stage("Stage2_P2FeatureJobNotTriggered")
+    p2_skip_selective = stage("Stage2_P2FeatureJobSkipSelective")
+    p2_trigger_pair_low_iou = stage("Stage2_P2FeatureJobTriggerPairLowIou")
+    p2_trigger_pair_epipolar_dy = stage("Stage2_P2FeatureJobTriggerPairEpipolarDy")
+    p2_trigger_pair_low_conf = stage("Stage2_P2FeatureJobTriggerPairLowConf")
+    p2_trigger_no_valid_pair = stage("Stage2_P2FeatureJobTriggerNoValidPair")
+    p2_inline_skipped_selective = stage("Stage2_P2FeatureJobInlineSkippedSelective")
     error_lines = [line for line in log.splitlines() if "[ERROR]" in line or "[WARN ]" in line]
     neural_unbound = (
         "does not bind/use NeuralFeatureMatcher outputs yet" in log
@@ -1269,6 +1333,8 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "async_frame_callback_skipped_count": async_frame_cb_skipped[3],
         "async_need_host_gray_count": async_need_host_gray[3],
         "async_need_bgr_count": async_need_bgr[3],
+        "async_skip_host_gray_selective_count": async_skip_host_gray_selective[3],
+        "async_skip_bgr_selective_count": async_skip_bgr_selective[3],
         "async_host_gray_submit_avg_ms": async_host_gray_submit[0],
         "async_host_gray_submit_count": async_host_gray_submit[3],
         "async_gray_submit_avg_ms": async_gray_submit[0],
@@ -1277,6 +1343,16 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "async_slot_copy_wait_avg_ms": async_slot_copy_wait[0],
         "async_worker_busy_count": async_worker_busy[3],
         "stage2_drop_stale_roi_count": stage2_drop_stale_roi[3],
+        "p2_configured_count": p2_configured[3],
+        "p2_realtime_requested_count": p2_realtime_requested[3],
+        "p2_realtime_not_attempted_count": p2_realtime_not_attempted[3],
+        "p2_not_triggered_count": p2_not_triggered[3],
+        "p2_skip_selective_count": p2_skip_selective[3],
+        "p2_trigger_pair_low_iou_count": p2_trigger_pair_low_iou[3],
+        "p2_trigger_pair_epipolar_dy_count": p2_trigger_pair_epipolar_dy[3],
+        "p2_trigger_pair_low_conf_count": p2_trigger_pair_low_conf[3],
+        "p2_trigger_no_valid_pair_count": p2_trigger_no_valid_pair[3],
+        "p2_inline_skipped_selective_count": p2_inline_skipped_selective[3],
         "candidate_rows": "",
         "candidate_valid": "",
         "candidate_rate": "",
@@ -1379,6 +1455,8 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "async_frame_callback_skipped_count": "",
         "async_need_host_gray_count": "",
         "async_need_bgr_count": "",
+        "async_skip_host_gray_selective_count": "",
+        "async_skip_bgr_selective_count": "",
         "async_host_gray_submit_avg_ms": "",
         "async_host_gray_submit_count": "",
         "async_gray_submit_avg_ms": "",
@@ -1387,6 +1465,16 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "async_slot_copy_wait_avg_ms": "",
         "async_worker_busy_count": "",
         "stage2_drop_stale_roi_count": "",
+        "p2_configured_count": "",
+        "p2_realtime_requested_count": "",
+        "p2_realtime_not_attempted_count": "",
+        "p2_not_triggered_count": "",
+        "p2_skip_selective_count": "",
+        "p2_trigger_pair_low_iou_count": "",
+        "p2_trigger_pair_epipolar_dy_count": "",
+        "p2_trigger_pair_low_conf_count": "",
+        "p2_trigger_no_valid_pair_count": "",
+        "p2_inline_skipped_selective_count": "",
         "candidate_rows": "",
         "candidate_valid": "",
         "candidate_rate": "",
@@ -1512,8 +1600,8 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
         "- `realtime_path_used_cpu_or_host_gray` means the supposedly realtime P2 run triggered CPU fallback or host gray D2H and must be rerun with those paths disabled.",
         "- `debug_dirs` is populated only when `--debug-on-failure` is used.",
         "",
-        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | p2 triggers | selective skip | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for row in rows:
         has_diag_rows = bool(row.get("p2_diag_rows"))
@@ -1550,6 +1638,26 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
                 f'feature={row.get("debug_feature_dir", "")} '
                 f'realtime={row.get("debug_realtime_dir", "")}'
             ).strip()
+        p2_triggers = []
+        for key, label in (
+            ("p2_trigger_pair_low_iou_count", "low_iou"),
+            ("p2_trigger_pair_epipolar_dy_count", "dy"),
+            ("p2_trigger_pair_low_conf_count", "low_conf"),
+            ("p2_trigger_no_valid_pair_count", "no_pair"),
+            ("p2_skip_selective_count", "skip"),
+        ):
+            count = row_int(row, key)
+            if count:
+                p2_triggers.append(f"{label}={count}")
+        selective_skips = []
+        for key, label in (
+            ("p2_inline_skipped_selective_count", "inline"),
+            ("async_skip_bgr_selective_count", "bgr"),
+            ("async_skip_host_gray_selective_count", "host"),
+        ):
+            count = row_int(row, key)
+            if count:
+                selective_skips.append(f"{label}={count}")
         values = [
             row.get("case", ""),
             row.get("diagnosis", ""),
@@ -1566,6 +1674,8 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
             f'{row.get("p2_diag_valid", "")}/{row.get("p2_diag_rows", "")}'
             if row.get("p2_diag_rows") else "",
             row.get("p2_diag_over_deadline", ""),
+            ";".join(p2_triggers),
+            ";".join(selective_skips),
             rate_value,
             f"{median_value}/{mad_value}",
             support_value,
