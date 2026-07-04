@@ -164,6 +164,53 @@ float bboxDisparityConsistencyPenaltyCPU(
     return scale * excess / std::max(1.0f, tolerance);
 }
 
+std::vector<DualYoloGpuDetectionPair> buildGpuDetectionPairsForRefine(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections,
+    const StereoRoiPairGateConfig& roi_pair_gate,
+    float baseline,
+    const HybridDepthConfig& depth_cfg,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    std::size_t max_pairs)
+{
+    std::vector<StereoRoiPair> roi_pairs =
+        collectStereoRoiPairCandidates(
+            left_detections,
+            right_detections,
+            roi_pair_gate,
+            left_detections.size() * right_detections.size());
+    for (auto& roi_pair : roi_pairs) {
+        roi_pair.score += bboxDisparityConsistencyPenaltyCPU(
+            roi_pair.left,
+            roi_pair.right,
+            roi_pair.initial_disparity,
+            baseline,
+            depth_cfg,
+            dual_cfg,
+            max_disparity);
+    }
+    std::sort(roi_pairs.begin(), roi_pairs.end(),
+              [](const StereoRoiPair& a, const StereoRoiPair& b) {
+                  return a.score < b.score;
+              });
+    if (roi_pairs.size() > max_pairs) {
+        roi_pairs.resize(max_pairs);
+    }
+
+    std::vector<DualYoloGpuDetectionPair> gpu_pairs;
+    gpu_pairs.reserve(roi_pairs.size());
+    for (const auto& roi_pair : roi_pairs) {
+        DualYoloGpuDetectionPair pair;
+        pair.left = makeGpuDetection(roi_pair.left);
+        pair.right = makeGpuDetection(roi_pair.right);
+        pair.left_index = roi_pair.left_index;
+        pair.right_index = roi_pair.right_index;
+        gpu_pairs.push_back(pair);
+    }
+    return gpu_pairs;
+}
+
 CircleFit2D searchTemplateOnEpipolarCPU(
     const uint8_t* source_img, int source_pitch,
     const uint8_t* target_img, int target_pitch,

@@ -246,41 +246,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     if (gpu_candidate_refine_enabled &&
         !left_detections.empty() &&
         !right_detections.empty()) {
-        std::vector<StereoRoiPair> roi_pairs =
-            collectStereoRoiPairCandidates(
+        std::vector<DualYoloGpuDetectionPair> gpu_pairs =
+            buildGpuDetectionPairsForRefine(
                 left_detections,
                 right_detections,
                 roi_pair_gate,
-                left_detections.size() * right_detections.size());
-        for (auto& roi_pair : roi_pairs) {
-            roi_pair.score += bboxDisparityConsistencyPenaltyCPU(
-                roi_pair.left,
-                roi_pair.right,
-                roi_pair.initial_disparity,
                 baseline,
                 config_.depth,
                 config_.dual_yolo,
-                config_.max_disparity);
-        }
-        std::sort(roi_pairs.begin(), roi_pairs.end(),
-                  [](const StereoRoiPair& a, const StereoRoiPair& b) {
-                      return a.score < b.score;
-                  });
-        const std::size_t max_gpu_pairs =
-            static_cast<std::size_t>(dual_yolo_depth_gpu_->maxPairs());
-        if (roi_pairs.size() > max_gpu_pairs) {
-            roi_pairs.resize(max_gpu_pairs);
-        }
-        std::vector<DualYoloGpuDetectionPair> gpu_pairs;
-        gpu_pairs.reserve(roi_pairs.size());
-        for (const auto& roi_pair : roi_pairs) {
-            DualYoloGpuDetectionPair pair;
-            pair.left = makeGpuDetection(roi_pair.left);
-            pair.right = makeGpuDetection(roi_pair.right);
-            pair.left_index = roi_pair.left_index;
-            pair.right_index = roi_pair.right_index;
-            gpu_pairs.push_back(pair);
-        }
+                config_.max_disparity,
+                static_cast<std::size_t>(dual_yolo_depth_gpu_->maxPairs()));
         if (!gpu_pairs.empty()) {
             const auto gpu_start = Clock::now();
             gpu_candidates = dual_yolo_depth_gpu_->matchPairs(

@@ -2,10 +2,14 @@
 #define STEREO_3D_PIPELINE_PIPELINE_ROI_MATCH_HELPERS_H_
 
 #include "pipeline.h"
+#include "../stereo/depth_match_contract.h"
 #include "../stereo/dual_yolo_depth_gpu.h"
 #include "../stereo/roi_feature_result.h"
 #include "../stereo/roi_geometry_cpu.h"
 #include "../stereo/roi_patch_match_cpu.h"
+
+#include <cstddef>
+#include <vector>
 
 namespace stereo3d {
 
@@ -30,6 +34,16 @@ float bboxDisparityConsistencyPenaltyCPU(
     const HybridDepthConfig& depth_cfg,
     const PipelineConfig::DualYoloConfig& dual_cfg,
     int max_disparity);
+
+std::vector<DualYoloGpuDetectionPair> buildGpuDetectionPairsForRefine(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections,
+    const StereoRoiPairGateConfig& roi_pair_gate,
+    float baseline,
+    const HybridDepthConfig& depth_cfg,
+    const PipelineConfig::DualYoloConfig& dual_cfg,
+    int max_disparity,
+    std::size_t max_pairs);
 
 CircleFit2D searchTemplateOnEpipolarCPU(
     const uint8_t* source_img,
