@@ -256,6 +256,8 @@ private:
         size_t right_gray_host_pitch = 0;
         cudaEvent_t copy_done = nullptr;
         bool copy_event_recorded = false;
+        cudaEvent_t p2_diag_copy_done = nullptr;
+        bool p2_diag_copy_event_recorded = false;
     };
     struct AsyncRoiTask {
         int frame_id = -1;
@@ -280,7 +282,21 @@ private:
     struct P2FeatureDiagnosticTask {
         P2FeatureJobDescriptor job;
         FrameMetadata metadata;
+        int buffer_index = -1;
+        std::vector<Detection> left_detections;
+        std::vector<Detection> right_detections;
+        int width = 0;
+        int height = 0;
+        bool copy_event_recorded = false;
         std::chrono::steady_clock::time_point enqueue_time{};
+    };
+    struct P2FeatureDiagnosticBuffer {
+        uint8_t* left_gray_gpu = nullptr;
+        size_t left_gray_pitch = 0;
+        uint8_t* right_gray_gpu = nullptr;
+        size_t right_gray_pitch = 0;
+        cudaEvent_t copy_done = nullptr;
+        bool copy_event_recorded = false;
     };
     bool asyncRoiStage2Configured() const;
     bool initAsyncRoiStage2();
@@ -303,10 +319,20 @@ private:
     bool p2FeatureDiagnosticLaneConfigured() const;
     bool startP2FeatureDiagnosticLane();
     void shutdownP2FeatureDiagnosticLane();
+    bool initP2FeatureDiagnosticBuffers();
+    void destroyP2FeatureDiagnosticBuffers();
+    void releaseP2FeatureDiagnosticBuffer(int buffer_index);
     void p2FeatureDiagnosticWorkerLoop();
     void enqueueP2FeatureDiagnosticJobs(
         const FrameMetadata& metadata,
         const std::vector<P2FeatureJobDescriptor>& jobs);
+    void enqueueP2FeatureDiagnosticJobs(
+        const FrameMetadata& metadata,
+        const std::vector<P2FeatureJobDescriptor>& jobs,
+        const RoiStage2Input& input,
+        cudaEvent_t source_copy_done,
+        bool source_copy_event_recorded,
+        AsyncRoiBuffer& source_buffer);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -366,10 +392,14 @@ private:
     // ===== P2 diagnostic lane =====
     bool p2_feature_diag_thread_stop_ = false;
     bool p2_feature_diag_worker_busy_ = false;
+    cudaStream_t p2_feature_diag_stream_ = nullptr;
+    cudaStream_t p2_feature_diag_copy_stream_ = nullptr;
     std::thread p2_feature_diag_thread_;
     std::mutex p2_feature_diag_mutex_;
     std::condition_variable p2_feature_diag_cv_;
     std::deque<P2FeatureDiagnosticTask> p2_feature_diag_pending_;
+    std::deque<int> p2_feature_diag_free_buffers_;
+    std::vector<P2FeatureDiagnosticBuffer> p2_feature_diag_buffers_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器

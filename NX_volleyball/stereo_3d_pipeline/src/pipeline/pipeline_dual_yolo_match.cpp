@@ -89,31 +89,48 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         dualYoloROIRadialCenterDepthEnabled(config_.dual_yolo);
     const bool roi_edge_pair_center_depth_enabled =
         dualYoloROIEdgePairCenterDepthEnabled(config_.dual_yolo);
+    const bool p2_inline_feature_jobs_enabled =
+        !(config_.p2_feature_job_scaffold_enabled &&
+          config_.p2_diagnostic_lane_decision_enabled &&
+          !config_.p2_realtime_lane_decision_enabled);
     const bool roi_corner_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROICornerPointsDepthEnabled(config_.dual_yolo);
     const bool roi_texture_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROITexturePointsDepthEnabled(config_.dual_yolo);
     const bool roi_binary_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIBinaryPointsDepthEnabled(config_.dual_yolo);
     const bool roi_orb_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIORBPointsDepthEnabled(config_.dual_yolo);
     const bool roi_brisk_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIBRISKPointsDepthEnabled(config_.dual_yolo);
     const bool roi_akaze_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIAKAZEPointsDepthEnabled(config_.dual_yolo);
     const bool roi_sift_points_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROISIFTPointsDepthEnabled(config_.dual_yolo);
     const bool roi_iou_region_color_patch_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIIoURegionColorPatchDepthEnabled(config_.dual_yolo);
     const bool roi_patch_iou_color_edge_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROIPatchIoUColorEdgeDepthEnabled(config_.dual_yolo);
     const bool roi_cuda_template_match_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROICudaTemplateMatchDepthEnabled(config_.dual_yolo);
     const bool roi_cuda_stereo_bm_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROICudaStereoBMDepthEnabled(config_.dual_yolo);
     const bool roi_cuda_stereo_sgm_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloROICudaStereoSGMDepthEnabled(config_.dual_yolo);
     const bool neural_feature_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
         config_.neural_features.enabled &&
         neural_feature_matcher_ &&
         neural_feature_matcher_->isReady();
@@ -126,6 +143,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const bool fallback_template_enabled =
         dualYoloFallbackTemplateEnabled(config_.dual_yolo);
     const bool fallback_feature_points_enabled =
+        p2_inline_feature_jobs_enabled &&
         dualYoloFallbackFeaturePointsEnabled(config_.dual_yolo);
     const bool circle_seed_refine_enabled =
         dualYoloNeedsCircleSeedRefine(config_.dual_yolo);

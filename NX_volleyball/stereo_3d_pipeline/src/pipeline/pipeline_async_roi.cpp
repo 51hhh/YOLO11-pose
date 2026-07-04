@@ -4,6 +4,8 @@
  */
 
 #include "pipeline.h"
+#include "pipeline_depth_modes.h"
+#include "../stereo/roi_feature_match_gpu.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
 
@@ -11,12 +13,26 @@
 #include <chrono>
 #include <cctype>
 #include <cuda_runtime.h>
+#include <cmath>
 #include <string>
 #include <utility>
 
 namespace stereo3d {
 
 namespace {
+
+using DiagnosticGpuMatchFn = SparseFeatureDisparityResult (*)(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream);
 
 bool asyncRoiSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     if (!cfg.depth_roi_subpixel || !cfg.subpixel_enabled) return false;
@@ -101,6 +117,74 @@ void applyP2FeatureJobDecisionToSlot(
     slot.p2_right_count = decision.right_count;
 }
 
+cudaError_t createLowPriorityNonBlockingStream(cudaStream_t* stream,
+                                               const char* name) {
+    int least_priority = 0;
+    int greatest_priority = 0;
+    const cudaError_t priority_err =
+        cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority);
+    (void)greatest_priority;
+    if (priority_err == cudaSuccess) {
+        cudaError_t err = cudaStreamCreateWithPriority(
+            stream, cudaStreamNonBlocking, least_priority);
+        if (err == cudaSuccess) {
+            return err;
+        }
+        LOG_WARN("Create low-priority %s stream failed (%s), falling back to "
+                 "default priority",
+                 name ? name : "cuda",
+                 cudaGetErrorString(err));
+    }
+    return cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
+}
+
+bool chooseDiagnosticDirectPair(const std::vector<Detection>& left,
+                                const std::vector<Detection>& right,
+                                int max_disparity,
+                                Detection* left_out,
+                                Detection* right_out,
+                                float* disparity_out) {
+    if (!left_out || !right_out || !disparity_out) {
+        return false;
+    }
+    float best_score = -1.0f;
+    Detection best_left;
+    Detection best_right;
+    float best_disp = -1.0f;
+    for (const auto& l : left) {
+        for (const auto& r : right) {
+            const float disp = l.cx - r.cx;
+            if (!std::isfinite(disp) || disp <= 0.0f ||
+                disp > static_cast<float>(std::max(1, max_disparity))) {
+                continue;
+            }
+            const float y_delta = std::fabs(l.cy - r.cy);
+            const float score =
+                (l.confidence + r.confidence) * 0.5f -
+                y_delta * 0.01f;
+            if (score > best_score) {
+                best_score = score;
+                best_left = l;
+                best_right = r;
+                best_disp = disp;
+            }
+        }
+    }
+    if (best_score < 0.0f) {
+        return false;
+    }
+    *left_out = best_left;
+    *right_out = best_right;
+    *disparity_out = best_disp;
+    return true;
+}
+
+bool p2DiagnosticOnlyFeatureJobsEnabled(const PipelineConfig& config) {
+    return config.p2_feature_job_scaffold_enabled &&
+           config.p2_diagnostic_lane_decision_enabled &&
+           !config.p2_realtime_lane_decision_enabled;
+}
+
 }  // namespace
 
 bool Pipeline::asyncRoiStage2Configured() const {
@@ -120,34 +204,15 @@ bool Pipeline::initAsyncRoiStage2() {
     config_.async_roi_deadline_ms =
         std::max(1.0f, config_.async_roi_deadline_ms);
 
-    int least_priority = 0;
-    int greatest_priority = 0;
-    const cudaError_t priority_err =
-        cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority);
-    const bool use_low_priority = priority_err == cudaSuccess;
-    (void)greatest_priority;
-    auto create_async_stream = [&](cudaStream_t* stream,
-                                   const char* name) -> cudaError_t {
-        cudaError_t e = use_low_priority
-            ? cudaStreamCreateWithPriority(stream, cudaStreamNonBlocking,
-                                           least_priority)
-            : cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
-        if (e != cudaSuccess && use_low_priority) {
-            LOG_WARN("Async ROI: create low-priority %s stream failed (%s), "
-                     "falling back to default priority",
-                     name, cudaGetErrorString(e));
-            e = cudaStreamCreateWithFlags(stream, cudaStreamNonBlocking);
-        }
-        return e;
-    };
-
-    cudaError_t err = create_async_stream(&async_roi_stream_, "worker");
+    cudaError_t err =
+        createLowPriorityNonBlockingStream(&async_roi_stream_, "Async ROI worker");
     if (err != cudaSuccess) {
         LOG_ERROR("Async ROI: create worker stream failed: %s",
                   cudaGetErrorString(err));
         return false;
     }
-    err = create_async_stream(&async_roi_copy_stream_, "copy");
+    err = createLowPriorityNonBlockingStream(&async_roi_copy_stream_,
+                                             "Async ROI copy");
     if (err != cudaSuccess) {
         LOG_ERROR("Async ROI: create copy stream failed: %s",
                   cudaGetErrorString(err));
@@ -186,6 +251,14 @@ bool Pipeline::initAsyncRoiStage2() {
         err = cudaEventCreateWithFlags(&b.copy_done, cudaEventDisableTiming);
         if (err != cudaSuccess) {
             LOG_ERROR("Async ROI: create buffer copy event %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyAsyncRoiStage2();
+            return false;
+        }
+        err = cudaEventCreateWithFlags(&b.p2_diag_copy_done,
+                                       cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            LOG_ERROR("Async ROI: create P2 diagnostic copy event %d failed: %s",
                       i, cudaGetErrorString(err));
             destroyAsyncRoiStage2();
             return false;
@@ -295,6 +368,9 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
     if (p2_feature_diag_thread_.joinable()) {
         return true;
     }
+    if (!initP2FeatureDiagnosticBuffers()) {
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
         p2_feature_diag_thread_stop_ = false;
@@ -309,6 +385,7 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
 
 void Pipeline::shutdownP2FeatureDiagnosticLane() {
     if (!p2_feature_diag_thread_.joinable()) {
+        destroyP2FeatureDiagnosticBuffers();
         return;
     }
     {
@@ -318,7 +395,14 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
             globalPerf().record("Stage2_P2FeatureJobDiagnosticDropShutdown",
                                 static_cast<double>(
                                     p2_feature_diag_pending_.size()));
-            p2_feature_diag_pending_.clear();
+            while (!p2_feature_diag_pending_.empty()) {
+                const int buffer_index =
+                    p2_feature_diag_pending_.front().buffer_index;
+                if (buffer_index >= 0) {
+                    p2_feature_diag_free_buffers_.push_back(buffer_index);
+                }
+                p2_feature_diag_pending_.pop_front();
+            }
         }
     }
     p2_feature_diag_cv_.notify_all();
@@ -328,6 +412,111 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
         p2_feature_diag_worker_busy_ = false;
         p2_feature_diag_thread_stop_ = false;
     }
+    destroyP2FeatureDiagnosticBuffers();
+}
+
+bool Pipeline::initP2FeatureDiagnosticBuffers() {
+    if (!p2_feature_diag_buffers_.empty()) {
+        return true;
+    }
+    cudaError_t err = createLowPriorityNonBlockingStream(
+        &p2_feature_diag_stream_, "P2 diagnostic worker");
+    if (err != cudaSuccess) {
+        LOG_ERROR("P2 diagnostic: create worker stream failed: %s",
+                  cudaGetErrorString(err));
+        destroyP2FeatureDiagnosticBuffers();
+        return false;
+    }
+    err = createLowPriorityNonBlockingStream(
+        &p2_feature_diag_copy_stream_, "P2 diagnostic copy");
+    if (err != cudaSuccess) {
+        LOG_ERROR("P2 diagnostic: create copy stream failed: %s",
+                  cudaGetErrorString(err));
+        destroyP2FeatureDiagnosticBuffers();
+        return false;
+    }
+
+    const int buffer_count =
+        std::clamp(config_.p2_diagnostic_max_in_flight, 1, 8);
+    const size_t gray_width_bytes =
+        static_cast<size_t>(config_.rect_width);
+    const size_t rows = static_cast<size_t>(config_.rect_height);
+    p2_feature_diag_buffers_.resize(static_cast<size_t>(buffer_count));
+    for (int i = 0; i < buffer_count; ++i) {
+        auto& b = p2_feature_diag_buffers_[static_cast<size_t>(i)];
+        err = cudaMallocPitch(reinterpret_cast<void**>(&b.left_gray_gpu),
+                              &b.left_gray_pitch,
+                              gray_width_bytes, rows);
+        if (err != cudaSuccess) {
+            LOG_ERROR("P2 diagnostic: alloc left gray buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyP2FeatureDiagnosticBuffers();
+            return false;
+        }
+        err = cudaMallocPitch(reinterpret_cast<void**>(&b.right_gray_gpu),
+                              &b.right_gray_pitch,
+                              gray_width_bytes, rows);
+        if (err != cudaSuccess) {
+            LOG_ERROR("P2 diagnostic: alloc right gray buffer %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyP2FeatureDiagnosticBuffers();
+            return false;
+        }
+        err = cudaEventCreateWithFlags(&b.copy_done, cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            LOG_ERROR("P2 diagnostic: create copy event %d failed: %s",
+                      i, cudaGetErrorString(err));
+            destroyP2FeatureDiagnosticBuffers();
+            return false;
+        }
+        p2_feature_diag_free_buffers_.push_back(i);
+    }
+    LOG_INFO("P2 diagnostic FeatureJob buffers ready: count=%d gray=%dx%d",
+             buffer_count, config_.rect_width, config_.rect_height);
+    return true;
+}
+
+void Pipeline::destroyP2FeatureDiagnosticBuffers() {
+    for (auto& b : p2_feature_diag_buffers_) {
+        if (b.copy_done) {
+            if (b.copy_event_recorded) {
+                cudaEventSynchronize(b.copy_done);
+                b.copy_event_recorded = false;
+            }
+            cudaEventDestroy(b.copy_done);
+            b.copy_done = nullptr;
+        }
+        if (b.left_gray_gpu) {
+            cudaFree(b.left_gray_gpu);
+            b.left_gray_gpu = nullptr;
+        }
+        if (b.right_gray_gpu) {
+            cudaFree(b.right_gray_gpu);
+            b.right_gray_gpu = nullptr;
+        }
+        b.left_gray_pitch = 0;
+        b.right_gray_pitch = 0;
+    }
+    p2_feature_diag_buffers_.clear();
+    p2_feature_diag_free_buffers_.clear();
+    p2_feature_diag_pending_.clear();
+    if (p2_feature_diag_stream_) {
+        cudaStreamDestroy(p2_feature_diag_stream_);
+        p2_feature_diag_stream_ = nullptr;
+    }
+    if (p2_feature_diag_copy_stream_) {
+        cudaStreamDestroy(p2_feature_diag_copy_stream_);
+        p2_feature_diag_copy_stream_ = nullptr;
+    }
+}
+
+void Pipeline::releaseP2FeatureDiagnosticBuffer(int buffer_index) {
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(p2_feature_diag_buffers_.size())) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+    p2_feature_diag_free_buffers_.push_back(buffer_index);
 }
 
 void Pipeline::enqueueP2FeatureDiagnosticJobs(
@@ -374,6 +563,131 @@ void Pipeline::enqueueP2FeatureDiagnosticJobs(
     }
 }
 
+void Pipeline::enqueueP2FeatureDiagnosticJobs(
+    const FrameMetadata& metadata,
+    const std::vector<P2FeatureJobDescriptor>& jobs,
+    const RoiStage2Input& input,
+    cudaEvent_t source_copy_done,
+    bool source_copy_event_recorded,
+    AsyncRoiBuffer& source_buffer) {
+    if (!p2FeatureDiagnosticLaneConfigured()) {
+        return;
+    }
+    if (!input.left_gray_gpu || !input.right_gray_gpu ||
+        input.left_gray_pitch <= 0 || input.right_gray_pitch <= 0 ||
+        input.width <= 0 || input.height <= 0 ||
+        !p2_feature_diag_copy_stream_) {
+        enqueueP2FeatureDiagnosticJobs(metadata, jobs);
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticNoImage", 0.0);
+        return;
+    }
+
+    const int max_in_flight = std::max(1, config_.p2_diagnostic_max_in_flight);
+    int enqueued = 0;
+    int dropped = 0;
+    const size_t gray_width_bytes = static_cast<size_t>(input.width);
+    const size_t rows = static_cast<size_t>(input.height);
+    for (const auto& job : jobs) {
+        if (job.lane != P2FeatureJobLane::DIAGNOSTIC) {
+            continue;
+        }
+        int buffer_index = -1;
+        {
+            std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+            const int in_flight =
+                static_cast<int>(p2_feature_diag_pending_.size()) +
+                (p2_feature_diag_worker_busy_ ? 1 : 0);
+            if (in_flight >= max_in_flight ||
+                p2_feature_diag_free_buffers_.empty()) {
+                ++dropped;
+                continue;
+            }
+            buffer_index = p2_feature_diag_free_buffers_.front();
+            p2_feature_diag_free_buffers_.pop_front();
+        }
+
+        auto& dst =
+            p2_feature_diag_buffers_[static_cast<size_t>(buffer_index)];
+        dst.copy_event_recorded = false;
+        cudaError_t err = cudaSuccess;
+        if (source_copy_event_recorded && source_copy_done) {
+            err = cudaStreamWaitEvent(p2_feature_diag_copy_stream_,
+                                      source_copy_done, 0);
+        }
+        const auto copy_submit_start = std::chrono::high_resolution_clock::now();
+        if (err == cudaSuccess) {
+            err = cudaMemcpy2DAsync(
+                dst.left_gray_gpu, dst.left_gray_pitch,
+                input.left_gray_gpu,
+                static_cast<size_t>(input.left_gray_pitch),
+                gray_width_bytes, rows,
+                cudaMemcpyDeviceToDevice,
+                p2_feature_diag_copy_stream_);
+        }
+        if (err == cudaSuccess) {
+            err = cudaMemcpy2DAsync(
+                dst.right_gray_gpu, dst.right_gray_pitch,
+                input.right_gray_gpu,
+                static_cast<size_t>(input.right_gray_pitch),
+                gray_width_bytes, rows,
+                cudaMemcpyDeviceToDevice,
+                p2_feature_diag_copy_stream_);
+        }
+        if (err == cudaSuccess) {
+            err = cudaEventRecord(dst.copy_done, p2_feature_diag_copy_stream_);
+        }
+        if (err == cudaSuccess && source_buffer.p2_diag_copy_done) {
+            err = cudaEventRecord(source_buffer.p2_diag_copy_done,
+                                  p2_feature_diag_copy_stream_);
+        }
+        if (err != cudaSuccess) {
+            LOG_WARN("P2 diagnostic: enqueue image copy failed frame=%d err=%s",
+                     job.frame_id, cudaGetErrorString(err));
+            releaseP2FeatureDiagnosticBuffer(buffer_index);
+            ++dropped;
+            continue;
+        }
+        dst.copy_event_recorded = true;
+        source_buffer.p2_diag_copy_event_recorded =
+            source_buffer.p2_diag_copy_done != nullptr;
+        const double copy_submit_ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::high_resolution_clock::now() -
+                copy_submit_start).count();
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticD2DSubmit",
+                            copy_submit_ms);
+
+        P2FeatureDiagnosticTask task;
+        task.job = job;
+        task.metadata = metadata;
+        task.buffer_index = buffer_index;
+        task.left_detections = input.left_detections;
+        task.right_detections = input.right_detections;
+        task.width = input.width;
+        task.height = input.height;
+        task.copy_event_recorded = true;
+        task.enqueue_time = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+            p2_feature_diag_pending_.push_back(std::move(task));
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticQueueDepth",
+                                static_cast<double>(
+                                    p2_feature_diag_pending_.size()));
+        }
+        ++enqueued;
+    }
+
+    for (int i = 0; i < enqueued; ++i) {
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticEnqueued", 0.0);
+    }
+    for (int i = 0; i < dropped; ++i) {
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticDropFull", 0.0);
+    }
+    if (enqueued > 0) {
+        p2_feature_diag_cv_.notify_one();
+    }
+}
+
 void Pipeline::p2FeatureDiagnosticWorkerLoop() {
     using Clock = std::chrono::steady_clock;
     while (true) {
@@ -394,6 +708,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
         }
 
         const auto start = Clock::now();
+        int release_buffer_index = task.buffer_index;
         if (task.enqueue_time.time_since_epoch().count() > 0) {
             const double queue_wait_ms =
                 std::chrono::duration<double, std::milli>(
@@ -402,9 +717,118 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                                 queue_wait_ms);
         }
 
-        // Algorithm execution is intentionally not wired yet; this worker is
-        // the non-blocking late-result lane for future P2 implementations.
-        globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop", 0.0);
+        bool copy_ready = true;
+        P2FeatureDiagnosticBuffer* buffer = nullptr;
+        if (task.buffer_index >= 0 &&
+            task.buffer_index <
+                static_cast<int>(p2_feature_diag_buffers_.size())) {
+            buffer =
+                &p2_feature_diag_buffers_[static_cast<size_t>(
+                    task.buffer_index)];
+            if (task.copy_event_recorded && buffer->copy_done) {
+                const auto copy_wait_start = Clock::now();
+                const cudaError_t copy_err =
+                    cudaEventSynchronize(buffer->copy_done);
+                const double copy_wait_ms =
+                    std::chrono::duration<double, std::milli>(
+                        Clock::now() - copy_wait_start).count();
+                globalPerf().record("Stage2_P2FeatureJobDiagnosticCopyWait",
+                                    copy_wait_ms);
+                buffer->copy_event_recorded = false;
+                if (copy_err != cudaSuccess) {
+                    copy_ready = false;
+                    LOG_WARN("P2 diagnostic: image copy failed frame=%d err=%s",
+                             task.job.frame_id,
+                             cudaGetErrorString(copy_err));
+                }
+            }
+        }
+
+        if (!copy_ready || !buffer) {
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticNoImage", 0.0);
+        } else {
+            Detection left_det;
+            Detection right_det;
+            float initial_disp = -1.0f;
+            if (!chooseDiagnosticDirectPair(
+                    task.left_detections, task.right_detections,
+                    config_.max_disparity,
+                    &left_det, &right_det, &initial_disp)) {
+                globalPerf().record(
+                    "Stage2_P2FeatureJobDiagnosticNoDirectPair", 0.0);
+            } else if (!calibration_ || !p2_feature_diag_stream_) {
+                globalPerf().record(
+                    "Stage2_P2FeatureJobDiagnosticUnavailable", 0.0);
+            } else {
+                const auto& p_left = calibration_->getProjectionLeft();
+                const float focal = static_cast<float>(p_left.at<double>(0, 0));
+                const float baseline = calibration_->getBaseline();
+                const ROIFeatureMatchConfig feature_cfg =
+                    makeROIFeatureMatchConfig(config_.dual_yolo,
+                                              config_.depth);
+
+                auto run_diagnostic_match = [&](uint32_t mode_bit,
+                                                const char* stage_name,
+                                                const char* valid_name,
+                                                const char* invalid_name,
+                                                DiagnosticGpuMatchFn fn) {
+                    if ((task.job.depth_mode_mask & mode_bit) == 0u || !fn) {
+                        return false;
+                    }
+                    const auto algo_start = Clock::now();
+                    const SparseFeatureDisparityResult result = fn(
+                        buffer->left_gray_gpu,
+                        static_cast<int>(buffer->left_gray_pitch),
+                        buffer->right_gray_gpu,
+                        static_cast<int>(buffer->right_gray_pitch),
+                        task.width, task.height,
+                        left_det, right_det,
+                        initial_disp,
+                        feature_cfg,
+                        config_.max_disparity,
+                        focal,
+                        baseline,
+                        p2_feature_diag_stream_);
+                    const double algo_ms =
+                        std::chrono::duration<double, std::milli>(
+                            Clock::now() - algo_start).count();
+                    globalPerf().record(stage_name, algo_ms);
+                    globalPerf().record(result.valid ? valid_name : invalid_name,
+                                        0.0);
+                    return true;
+                };
+
+                bool ran_any = false;
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_ORB_POINTS,
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaORB",
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaORBValid",
+                    "Stage2_P2FeatureJobDiagnosticOpenCVCudaORBInvalid",
+                    matchOpenCVORBDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_TEMPLATE,
+                    "Stage2_P2FeatureJobDiagnosticCudaTemplate",
+                    "Stage2_P2FeatureJobDiagnosticCudaTemplateValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaTemplateInvalid",
+                    matchCudaTemplateDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_STEREO_BM,
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoBM",
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoBMValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoBMInvalid",
+                    matchCudaStereoBMDisparityGPU);
+                ran_any |= run_diagnostic_match(
+                    P2_DEPTH_MODE_CUDA_STEREO_SGM,
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoSGM",
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoSGMValid",
+                    "Stage2_P2FeatureJobDiagnosticCudaStereoSGMInvalid",
+                    matchCudaStereoSGMDisparityGPU);
+                if (!ran_any) {
+                    globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop",
+                                        0.0);
+                }
+            }
+        }
 
         const double elapsed_ms =
             std::chrono::duration<double, std::milli>(
@@ -414,6 +838,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
             globalPerf().record("Stage2_P2FeatureJobDiagnosticOverDeadline",
                                 elapsed_ms);
         }
+        releaseP2FeatureDiagnosticBuffer(release_buffer_index);
 
         {
             std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
@@ -450,21 +875,45 @@ bool Pipeline::waitAsyncRoiBufferCopy(int buffer_index,
 
     auto& buffer = async_roi_buffers_[static_cast<size_t>(buffer_index)];
     if (!buffer.copy_event_recorded || !buffer.copy_done) {
-        return true;
+        if (!buffer.p2_diag_copy_event_recorded ||
+            !buffer.p2_diag_copy_done) {
+            return true;
+        }
+    } else {
+        const auto t0 = Clock::now();
+        const cudaError_t err = cudaEventSynchronize(buffer.copy_done);
+        const double wait_ms =
+            std::chrono::duration<double, std::milli>(
+                Clock::now() - t0).count();
+        globalPerf().record("Stage2_AsyncRoiCopyWait", wait_ms);
+        buffer.copy_event_recorded = false;
+        if (err != cudaSuccess) {
+            LOG_WARN("[AsyncROI] Buffer copy wait failed buffer=%d reason=%s err=%s",
+                     buffer_index,
+                     reason ? reason : "unknown",
+                     cudaGetErrorString(err));
+            return false;
+        }
     }
 
-    const auto t0 = Clock::now();
-    const cudaError_t err = cudaEventSynchronize(buffer.copy_done);
-    const double wait_ms =
-        std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    globalPerf().record("Stage2_AsyncRoiCopyWait", wait_ms);
-    buffer.copy_event_recorded = false;
-    if (err != cudaSuccess) {
-        LOG_WARN("[AsyncROI] Buffer copy wait failed buffer=%d reason=%s err=%s",
-                 buffer_index,
-                 reason ? reason : "unknown",
-                 cudaGetErrorString(err));
-        return false;
+    if (buffer.p2_diag_copy_event_recorded && buffer.p2_diag_copy_done) {
+        const auto t0 = Clock::now();
+        const cudaError_t err =
+            cudaEventSynchronize(buffer.p2_diag_copy_done);
+        const double wait_ms =
+            std::chrono::duration<double, std::milli>(
+                Clock::now() - t0).count();
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticSourceCopyWait",
+                            wait_ms);
+        buffer.p2_diag_copy_event_recorded = false;
+        if (err != cudaSuccess) {
+            LOG_WARN("[AsyncROI] P2 diagnostic source copy wait failed "
+                     "buffer=%d reason=%s err=%s",
+                     buffer_index,
+                     reason ? reason : "unknown",
+                     cudaGetErrorString(err));
+            return false;
+        }
     }
     return true;
 }
@@ -554,6 +1003,14 @@ void Pipeline::destroyAsyncRoiStage2() {
             cudaEventDestroy(b.copy_done);
             b.copy_done = nullptr;
         }
+        if (b.p2_diag_copy_done) {
+            if (b.p2_diag_copy_event_recorded) {
+                cudaEventSynchronize(b.p2_diag_copy_done);
+                b.p2_diag_copy_event_recorded = false;
+            }
+            cudaEventDestroy(b.p2_diag_copy_done);
+            b.p2_diag_copy_done = nullptr;
+        }
         if (b.left_gray_gpu) {
             cudaFree(b.left_gray_gpu);
             b.left_gray_gpu = nullptr;
@@ -636,6 +1093,7 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
         static_cast<size_t>(config_.rect_width) * 3u;
     const size_t rows = static_cast<size_t>(config_.rect_height);
     buffer.copy_event_recorded = false;
+    buffer.p2_diag_copy_event_recorded = false;
 
     if (!left_src || !right_src ||
         left_src_pitch <= 0 || right_src_pitch <= 0 ||
@@ -822,6 +1280,10 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
 
     AsyncRoiBuffer& buffer =
         async_roi_buffers_[static_cast<size_t>(buffer_index)];
+    if (!waitAsyncRoiBufferCopy(buffer_index, "reuse_before_snapshot")) {
+        releaseAsyncRoiBuffer(buffer_index, "reuse_wait_failed");
+        return false;
+    }
     const bool need_host_gray =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
@@ -865,9 +1327,15 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     if (p2_decision.diagnostic_requested) {
         globalPerf().record("Stage2_P2FeatureJobDiagnosticRequested", 0.0);
     }
-    if (p2_policy.split_feature_jobs && p2_feature_jobs.empty() &&
-        p2_decision.p2_depth_modes_enabled) {
+    const bool p2_job_requested =
+        p2_decision.realtime_requested || p2_decision.diagnostic_requested;
+    if (p2_policy.split_feature_jobs && p2_job_requested &&
+        p2_feature_jobs.empty() && p2_decision.p2_depth_modes_enabled) {
         globalPerf().record("Stage2_P2FeatureJobSplitNoJob", 0.0);
+    }
+    if (p2_policy.split_feature_jobs && !p2_job_requested &&
+        p2_decision.p2_depth_modes_enabled) {
+        globalPerf().record("Stage2_P2FeatureJobNotTriggered", 0.0);
     }
     applyP2FeatureJobDecisionToSlot(slot, p2_decision, p2_feature_jobs);
 
@@ -926,7 +1394,12 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.input.width = config_.rect_width;
     task.input.height = config_.rect_height;
     task.input.stream = async_roi_stream_;
-    enqueueP2FeatureDiagnosticJobs(task.metadata, task.p2_feature_jobs);
+    enqueueP2FeatureDiagnosticJobs(task.metadata,
+                                   task.p2_feature_jobs,
+                                   task.input,
+                                   buffer.copy_done,
+                                   buffer.copy_event_recorded,
+                                   buffer);
 
     int dropped_pending_buffer = -1;
     int dropped_pending_frame = -1;
@@ -998,10 +1471,19 @@ void Pipeline::asyncRoiWorkerLoop() {
             if (task.bgr_valid) {
                 globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
             }
-            if (task.p2_feature_decision.p2_depth_modes_enabled) {
+            const bool p2_inline_enabled =
+                !p2DiagnosticOnlyFeatureJobsEnabled(config_);
+            if (p2_inline_enabled &&
+                task.p2_feature_decision.p2_depth_modes_enabled) {
                 globalPerf().record("Stage2_P2FeatureJobInlineStage2", 0.0);
             }
-            if (task.p2_feature_decision.split_feature_jobs &&
+            if (!p2_inline_enabled &&
+                task.p2_feature_decision.p2_depth_modes_enabled) {
+                globalPerf().record(
+                    "Stage2_P2FeatureJobInlineSkippedDiagnosticOnly", 0.0);
+            }
+            if (p2_inline_enabled &&
+                task.p2_feature_decision.split_feature_jobs &&
                 !task.p2_feature_jobs.empty()) {
                 globalPerf().record("Stage2_P2FeatureJobInlineFallback", 0.0);
             }
