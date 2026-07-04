@@ -114,20 +114,6 @@ VPIImageData makeCudaPitchImageData(const uint8_t* ptr,
     return data;
 }
 
-bool createCudaPitchWrapper(const uint8_t* ptr,
-                            int pitch,
-                            int width,
-                            int height,
-                            VPIImage* out) {
-    if (!ptr || pitch <= 0 || width <= 0 || height <= 0 || !out) {
-        return false;
-    }
-    const VPIImageData data =
-        makeCudaPitchImageData(ptr, pitch, width, height);
-    return vpiImageCreateWrapper(
-        &data, nullptr, VPI_BACKEND_CUDA, out) == VPI_SUCCESS;
-}
-
 void destroyVpiImage(VPIImage& image) {
     if (image) {
         vpiImageDestroy(image);
@@ -229,6 +215,221 @@ bool findVpiCudaScorePeak(VPIImage score,
     *best_y = scratch.host->y;
     return true;
 }
+
+struct VpiTemplateScratch {
+    CUstream cuda_stream = nullptr;
+    VPIStream stream = nullptr;
+    VPIPayload payload = nullptr;
+    VPIImage source = nullptr;
+    VPIImage templ = nullptr;
+    VPIImage score = nullptr;
+    int source_w = 0;
+    int source_h = 0;
+    int templ_w = 0;
+    int templ_h = 0;
+    int score_w = 0;
+    int score_h = 0;
+
+    ~VpiTemplateScratch() { reset(); }
+
+    void reset() {
+        destroyVpiImage(score);
+        destroyVpiImage(templ);
+        destroyVpiImage(source);
+        destroyVpiPayload(payload);
+        destroyVpiStream(stream);
+        cuda_stream = nullptr;
+        source_w = source_h = templ_w = templ_h = score_w = score_h = 0;
+    }
+
+    bool ensure(CUstream cu_stream,
+                const uint8_t* source_ptr,
+                int source_pitch,
+                int requested_source_w,
+                int requested_source_h,
+                const uint8_t* templ_ptr,
+                int templ_pitch,
+                int requested_templ_w,
+                int requested_templ_h,
+                int requested_score_w,
+                int requested_score_h) {
+        const bool dims_changed =
+            source_w != requested_source_w ||
+            source_h != requested_source_h ||
+            templ_w != requested_templ_w ||
+            templ_h != requested_templ_h ||
+            score_w != requested_score_w ||
+            score_h != requested_score_h;
+        if (cuda_stream != cu_stream || dims_changed) {
+            reset();
+        }
+        if (!stream &&
+            vpiStreamCreateWrapperCUDA(cu_stream, VPI_BACKEND_CUDA,
+                                       &stream) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+
+        const VPIImageData source_data = makeCudaPitchImageData(
+            source_ptr, source_pitch, requested_source_w, requested_source_h);
+        const VPIImageData templ_data = makeCudaPitchImageData(
+            templ_ptr, templ_pitch, requested_templ_w, requested_templ_h);
+        if (!source) {
+            if (vpiImageCreateWrapper(&source_data, nullptr,
+                                      VPI_BACKEND_CUDA, &source) !=
+                VPI_SUCCESS) {
+                reset();
+                return false;
+            }
+        } else if (vpiImageSetWrapper(source, &source_data) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!templ) {
+            if (vpiImageCreateWrapper(&templ_data, nullptr,
+                                      VPI_BACKEND_CUDA, &templ) !=
+                VPI_SUCCESS) {
+                reset();
+                return false;
+            }
+        } else if (vpiImageSetWrapper(templ, &templ_data) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!payload &&
+            vpiCreateTemplateMatching(VPI_BACKEND_CUDA,
+                                      requested_source_w,
+                                      requested_source_h,
+                                      &payload) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!score &&
+            vpiImageCreate(requested_score_w, requested_score_h,
+                           VPI_IMAGE_FORMAT_F32,
+                           VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
+                           &score) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        cuda_stream = cu_stream;
+        source_w = requested_source_w;
+        source_h = requested_source_h;
+        templ_w = requested_templ_w;
+        templ_h = requested_templ_h;
+        score_w = requested_score_w;
+        score_h = requested_score_h;
+        return true;
+    }
+};
+
+struct VpiStereoScratch {
+    CUstream cuda_stream = nullptr;
+    VPIStream stream = nullptr;
+    VPIPayload payload = nullptr;
+    VPIImage left = nullptr;
+    VPIImage right = nullptr;
+    VPIImage disparity = nullptr;
+    VPIImage confidence = nullptr;
+    int width = 0;
+    int height = 0;
+    int max_disparity = 0;
+
+    ~VpiStereoScratch() { reset(); }
+
+    void reset() {
+        destroyVpiImage(confidence);
+        destroyVpiImage(disparity);
+        destroyVpiImage(right);
+        destroyVpiImage(left);
+        destroyVpiPayload(payload);
+        destroyVpiStream(stream);
+        cuda_stream = nullptr;
+        width = height = max_disparity = 0;
+    }
+
+    bool ensure(CUstream cu_stream,
+                const uint8_t* left_ptr,
+                int left_pitch,
+                const uint8_t* right_ptr,
+                int right_pitch,
+                int requested_w,
+                int requested_h,
+                int requested_max_disparity) {
+        const bool dims_changed =
+            width != requested_w ||
+            height != requested_h ||
+            max_disparity != requested_max_disparity;
+        if (cuda_stream != cu_stream || dims_changed) {
+            reset();
+        }
+        if (!stream &&
+            vpiStreamCreateWrapperCUDA(cu_stream, VPI_BACKEND_CUDA,
+                                       &stream) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+
+        const VPIImageData left_data = makeCudaPitchImageData(
+            left_ptr, left_pitch, requested_w, requested_h);
+        const VPIImageData right_data = makeCudaPitchImageData(
+            right_ptr, right_pitch, requested_w, requested_h);
+        if (!left) {
+            if (vpiImageCreateWrapper(&left_data, nullptr,
+                                      VPI_BACKEND_CUDA, &left) !=
+                VPI_SUCCESS) {
+                reset();
+                return false;
+            }
+        } else if (vpiImageSetWrapper(left, &left_data) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!right) {
+            if (vpiImageCreateWrapper(&right_data, nullptr,
+                                      VPI_BACKEND_CUDA, &right) !=
+                VPI_SUCCESS) {
+                reset();
+                return false;
+            }
+        } else if (vpiImageSetWrapper(right, &right_data) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!payload) {
+            VPIStereoDisparityEstimatorCreationParams create_params{};
+            vpiInitStereoDisparityEstimatorCreationParams(&create_params);
+            create_params.maxDisparity = requested_max_disparity;
+            create_params.includeDiagonals = 0;
+            if (vpiCreateStereoDisparityEstimator(
+                    VPI_BACKEND_CUDA, requested_w, requested_h,
+                    VPI_IMAGE_FORMAT_U8, &create_params, &payload) !=
+                VPI_SUCCESS) {
+                reset();
+                return false;
+            }
+        }
+        if (!disparity &&
+            vpiImageCreate(requested_w, requested_h, VPI_IMAGE_FORMAT_S16,
+                           VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
+                           &disparity) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        if (!confidence &&
+            vpiImageCreate(requested_w, requested_h, VPI_IMAGE_FORMAT_U16,
+                           VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
+                           &confidence) != VPI_SUCCESS) {
+            reset();
+            return false;
+        }
+        cuda_stream = cu_stream;
+        width = requested_w;
+        height = requested_h;
+        max_disparity = requested_max_disparity;
+        return true;
+    }
+};
 
 SparseFeatureDisparityResult aggregateGpuPointMatches(
     const std::vector<cv::Point2f>& left_pts,
@@ -628,19 +829,6 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
         return result;
     }
 
-    VPIStream vpi_stream = nullptr;
-    VPIPayload payload = nullptr;
-    VPIImage source = nullptr;
-    VPIImage templ = nullptr;
-    VPIImage score = nullptr;
-    auto cleanup = [&]() {
-        destroyVpiImage(score);
-        destroyVpiImage(templ);
-        destroyVpiImage(source);
-        destroyVpiPayload(payload);
-        destroyVpiStream(vpi_stream);
-    };
-
     const uint8_t* source_ptr =
         right_gpu + static_cast<size_t>(search_rect.y) *
                         static_cast<size_t>(right_pitch) +
@@ -649,43 +837,34 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
         left_gpu + static_cast<size_t>(templ_rect.y) *
                        static_cast<size_t>(left_pitch) +
         templ_rect.x;
-    VPIStatus st = vpiStreamCreateWrapperCUDA(
-        reinterpret_cast<CUstream>(stream), VPI_BACKEND_CUDA, &vpi_stream);
-    if (st != VPI_SUCCESS ||
-        !createCudaPitchWrapper(source_ptr, right_pitch,
-                                search_rect.width, search_rect.height,
-                                &source) ||
-        !createCudaPitchWrapper(templ_ptr, left_pitch,
-                                templ_rect.width, templ_rect.height,
-                                &templ) ||
-        vpiCreateTemplateMatching(VPI_BACKEND_CUDA, search_rect.width,
-                                  search_rect.height, &payload) !=
-            VPI_SUCCESS ||
-        vpiImageCreate(search_rect.width - templ_rect.width + 1,
-                       search_rect.height - templ_rect.height + 1,
-                       VPI_IMAGE_FORMAT_F32,
-                       VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
-                       &score) != VPI_SUCCESS) {
-        cleanup();
+    thread_local VpiTemplateScratch scratch;
+    const int score_w = search_rect.width - templ_rect.width + 1;
+    const int score_h = search_rect.height - templ_rect.height + 1;
+    if (!scratch.ensure(reinterpret_cast<CUstream>(stream),
+                        source_ptr, right_pitch,
+                        search_rect.width, search_rect.height,
+                        templ_ptr, left_pitch,
+                        templ_rect.width, templ_rect.height,
+                        score_w, score_h)) {
         result.low_confidence = true;
         return result;
     }
-    st = vpiTemplateMatchingSetSourceImage(
-        vpi_stream, VPI_BACKEND_CUDA, payload, source);
+    VPIStatus st = vpiTemplateMatchingSetSourceImage(
+        scratch.stream, VPI_BACKEND_CUDA, scratch.payload, scratch.source);
     if (st == VPI_SUCCESS) {
         st = vpiTemplateMatchingSetTemplateImage(
-            vpi_stream, VPI_BACKEND_CUDA, payload, templ, nullptr);
+            scratch.stream, VPI_BACKEND_CUDA, scratch.payload,
+            scratch.templ, nullptr);
     }
     if (st == VPI_SUCCESS) {
-        st = vpiSubmitTemplateMatching(vpi_stream, VPI_BACKEND_CUDA,
-                                       payload, score,
+        st = vpiSubmitTemplateMatching(scratch.stream, VPI_BACKEND_CUDA,
+                                       scratch.payload, scratch.score,
                                        VPI_TEMPLATE_MATCHING_NCC);
     }
     if (st == VPI_SUCCESS) {
-        st = vpiStreamSync(vpi_stream);
+        st = vpiStreamSync(scratch.stream);
     }
     if (st != VPI_SUCCESS) {
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -693,14 +872,13 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
     float best = -1.0f;
     int best_x = -1;
     int best_y = -1;
-    if (!findVpiCudaScorePeak(score, stream, &best, &best_x, &best_y)) {
-        cleanup();
+    if (!findVpiCudaScorePeak(scratch.score, stream, &best, &best_x,
+                              &best_y)) {
         result.low_confidence = true;
         return result;
     }
 
     if (best_x < 0 || best < std::max(0.05f, cfg.subpixel_min_confidence)) {
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -724,7 +902,6 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
                                   initial_disp, cfg) ||
         !passesSphereRadiusGate(sample, left_det, initial_disp,
                                 focal, baseline, cfg)) {
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -737,7 +914,6 @@ SparseFeatureDisparityResult matchVpiTemplateDisparityGPU(
     result.anchor_cy = left_det.cy;
     result.right_anchor_cx = rx;
     result.right_anchor_cy = ry;
-    cleanup();
     return result;
 }
 
@@ -774,21 +950,6 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
         return result;
     }
 
-    VPIStream vpi_stream = nullptr;
-    VPIPayload payload = nullptr;
-    VPIImage left = nullptr;
-    VPIImage right = nullptr;
-    VPIImage disparity_img = nullptr;
-    VPIImage confidence_img = nullptr;
-    auto cleanup = [&]() {
-        destroyVpiImage(confidence_img);
-        destroyVpiImage(disparity_img);
-        destroyVpiImage(right);
-        destroyVpiImage(left);
-        destroyVpiPayload(payload);
-        destroyVpiStream(vpi_stream);
-    };
-
     const uint8_t* left_ptr =
         left_gpu + static_cast<size_t>(left_rect.y) *
                        static_cast<size_t>(left_pitch) +
@@ -797,29 +958,12 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
         right_gpu + static_cast<size_t>(right_rect.y) *
                         static_cast<size_t>(right_pitch) +
         right_rect.x;
-    VPIStereoDisparityEstimatorCreationParams create_params{};
-    vpiInitStereoDisparityEstimatorCreationParams(&create_params);
-    create_params.maxDisparity = local_max_disp;
-    create_params.includeDiagonals = 0;
-    VPIStatus st = vpiStreamCreateWrapperCUDA(
-        reinterpret_cast<CUstream>(stream), VPI_BACKEND_CUDA, &vpi_stream);
-    if (st != VPI_SUCCESS ||
-        !createCudaPitchWrapper(left_ptr, left_pitch,
-                                left_rect.width, left_rect.height, &left) ||
-        !createCudaPitchWrapper(right_ptr, right_pitch,
-                                right_rect.width, right_rect.height, &right) ||
-        vpiCreateStereoDisparityEstimator(
-            VPI_BACKEND_CUDA, left_rect.width, left_rect.height,
-            VPI_IMAGE_FORMAT_U8, &create_params, &payload) != VPI_SUCCESS ||
-        vpiImageCreate(left_rect.width, left_rect.height,
-                       VPI_IMAGE_FORMAT_S16,
-                       VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
-                       &disparity_img) != VPI_SUCCESS ||
-        vpiImageCreate(left_rect.width, left_rect.height,
-                       VPI_IMAGE_FORMAT_U16,
-                       VPI_BACKEND_CUDA | VPI_BACKEND_CPU,
-                       &confidence_img) != VPI_SUCCESS) {
-        cleanup();
+    thread_local VpiStereoScratch scratch;
+    if (!scratch.ensure(reinterpret_cast<CUstream>(stream),
+                        left_ptr, left_pitch,
+                        right_ptr, right_pitch,
+                        left_rect.width, left_rect.height,
+                        local_max_disp)) {
         result.low_confidence = true;
         return result;
     }
@@ -831,14 +975,14 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
     params.confidenceType = VPI_STEREO_CONFIDENCE_ABSOLUTE;
     params.p1 = 10;
     params.p2 = 120;
-    st = vpiSubmitStereoDisparityEstimator(
-        vpi_stream, VPI_BACKEND_CUDA, payload, left, right,
-        disparity_img, confidence_img, &params);
+    VPIStatus st = vpiSubmitStereoDisparityEstimator(
+        scratch.stream, VPI_BACKEND_CUDA, scratch.payload,
+        scratch.left, scratch.right,
+        scratch.disparity, scratch.confidence, &params);
     if (st == VPI_SUCCESS) {
-        st = vpiStreamSync(vpi_stream);
+        st = vpiStreamSync(scratch.stream);
     }
     if (st != VPI_SUCCESS) {
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -847,24 +991,23 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
     VPIImageData conf_data{};
     bool disp_locked = false;
     bool conf_locked = false;
-    if (vpiImageLockData(disparity_img, VPI_LOCK_READ,
+    if (vpiImageLockData(scratch.disparity, VPI_LOCK_READ,
                          VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
                          &disp_data) == VPI_SUCCESS) {
         disp_locked = true;
     }
-    if (vpiImageLockData(confidence_img, VPI_LOCK_READ,
+    if (vpiImageLockData(scratch.confidence, VPI_LOCK_READ,
                          VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
                          &conf_data) == VPI_SUCCESS) {
         conf_locked = true;
     }
     if (!disp_locked || !conf_locked) {
         if (conf_locked) {
-            vpiImageUnlock(confidence_img);
+            vpiImageUnlock(scratch.confidence);
         }
         if (disp_locked) {
-            vpiImageUnlock(disparity_img);
+            vpiImageUnlock(scratch.disparity);
         }
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -926,8 +1069,8 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
             samples.push_back(sample);
         }
     }
-    vpiImageUnlock(confidence_img);
-    vpiImageUnlock(disparity_img);
+    vpiImageUnlock(scratch.confidence);
+    vpiImageUnlock(scratch.disparity);
 
     result.attempted = attempted;
     const RobustAggregate robust = aggregateRobustMatches(
@@ -935,7 +1078,6 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
         initial_disp, max_delta, std::max(0.05f, cfg.subpixel_max_stddev_px),
         cfg);
     if (!robust.valid) {
-        cleanup();
         result.low_confidence = true;
         return result;
     }
@@ -954,7 +1096,6 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
         result.valid = false;
         result.low_confidence = true;
     }
-    cleanup();
     return result;
 }
 
