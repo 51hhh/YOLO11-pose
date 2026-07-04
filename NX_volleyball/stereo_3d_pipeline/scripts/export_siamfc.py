@@ -14,122 +14,16 @@ If no checkpoint is provided, exports with random weights (for architecture vali
 """
 
 import argparse
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import os
 
 
-class SiamFCBackbone(nn.Module):
-    """
-    AlexNet-based SiamFC backbone (native 1ch grayscale input).
-    Input:  [N, 1, H, W]  (127x127 template or 255x255 search)
-    Output: [N, 256, h, w] (6x6 for 127, 22x22 for 255)
-    """
-    def __init__(self):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(1, 96, 11, stride=2),       # 1ch input
-            nn.BatchNorm2d(96),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(3, stride=2),
-            nn.Conv2d(96, 256, 5),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(3, stride=2),
-            nn.Conv2d(256, 384, 3),
-            nn.BatchNorm2d(384),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 384, 3),
-            nn.BatchNorm2d(384),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, 3),
-            nn.BatchNorm2d(256),
-        )
-
-    def forward(self, x):
-        return self.features(x)
-
-
-class SiamFCHead(nn.Module):
-    """
-    Cross-correlation head (cls only, no bbox regression).
-    Input:  template_feat [N,256,6,6], search_feat [N,256,22,22]
-    Output: cls_score [N,1,17,17]
-
-    Uses grouped conv for ONNX-friendly cross-correlation.
-    """
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, zf, xf):
-        # zf: [1, 256, 6, 6]  xf: [1, 256, 22, 22]
-        N, C, _, _ = zf.shape
-        # Depth-wise cross-correlation via grouped convolution
-        # F.conv2d with groups=C gives per-channel correlation
-        # Then sum over channels
-        score = F.conv2d(xf, zf, groups=N)  # [1, 256, 17, 17] for N=1
-        # Sum over channel dimension to get single score map
-        score = score.sum(dim=1, keepdim=True)  # [1, 1, 17, 17]
-        return score
-
-
-class SiamFCBackboneFromPretrained(nn.Module):
-    """Load backbone from a pretrained SiamFC checkpoint (3ch -> 1ch conversion)."""
-    def __init__(self, backbone_3ch):
-        super().__init__()
-        self.features = nn.Sequential()
-        first_done = False
-        for i, layer in enumerate(backbone_3ch):
-            if isinstance(layer, nn.Conv2d) and not first_done:
-                w = layer.weight.data  # [out, 3, kH, kW]
-                new_conv = nn.Conv2d(
-                    1, layer.out_channels, layer.kernel_size,
-                    stride=layer.stride, padding=layer.padding, bias=layer.bias is not None
-                )
-                new_conv.weight.data = w.mean(dim=1, keepdim=True)
-                if layer.bias is not None:
-                    new_conv.bias.data = layer.bias.data
-                self.features.add_module(str(i), new_conv)
-                first_done = True
-            else:
-                self.features.add_module(str(i), layer)
-
-    def forward(self, x):
-        return self.features(x)
-
-
-def load_siamfc_checkpoint(ckpt_path, backbone):
-    """Attempt to load a SiamFC checkpoint into our model."""
-    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    if "state_dict" in ckpt:
-        ckpt = ckpt["state_dict"]
-    elif "model" in ckpt:
-        ckpt = ckpt["model"]
-
-    # Try matching keys
-    model_dict = backbone.state_dict()
-    matched = {}
-    for k, v in ckpt.items():
-        # Strip common prefixes
-        for prefix in ["backbone.", "features.", "feature_extractor.", ""]:
-            clean = k.replace(prefix, "", 1) if k.startswith(prefix) else None
-            if clean and clean in model_dict:
-                if v.shape == model_dict[clean].shape:
-                    matched[clean] = v
-                elif clean.endswith(".weight") and len(v.shape) == 4 and v.shape[1] == 3:
-                    # 3ch -> 1ch
-                    matched[clean] = v.mean(dim=1, keepdim=True)
-                break
-
-    if matched:
-        model_dict.update(matched)
-        backbone.load_state_dict(model_dict, strict=False)
-        print(f"  Loaded {len(matched)}/{len(model_dict)} parameters from checkpoint")
-    else:
-        print(f"  [WARN] No matching keys found in checkpoint, using random weights")
-
-    return backbone
+def _load_export_deps():
+    try:
+        import torch
+        from siamfc_export_models import SiamFCBackbone, SiamFCHead, load_siamfc_checkpoint
+    except ImportError as exc:  # pragma: no cover - export environment dependent
+        raise SystemExit("PyTorch is required for SiamFC export") from exc
+    return torch, SiamFCBackbone, SiamFCHead, load_siamfc_checkpoint
 
 
 def main():
@@ -141,13 +35,14 @@ def main():
     parser.add_argument("--opset", type=int, default=17)
     args = parser.parse_args()
 
+    torch, backbone_cls, head_cls, load_checkpoint = _load_export_deps()
     os.makedirs(args.out_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --- Build backbone ---
-    backbone = SiamFCBackbone()
+    backbone = backbone_cls()
     if args.checkpoint:
-        backbone = load_siamfc_checkpoint(args.checkpoint, backbone)
+        backbone = load_checkpoint(args.checkpoint, backbone)
     backbone = backbone.to(device).eval()
 
     # --- Export backbone ---
@@ -176,7 +71,7 @@ def main():
         print(f"  search   feat: {xf.shape} (expect [1, 256, 22, 22])")
 
     # --- Export head ---
-    head = SiamFCHead().to(device).eval()
+    head = head_cls().to(device).eval()
     head_path = os.path.join(args.out_dir, "siamfc_head.onnx")
 
     # ONNX requires static shape for F.conv2d groups trick
