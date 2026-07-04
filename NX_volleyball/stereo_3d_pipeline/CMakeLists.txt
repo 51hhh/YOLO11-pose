@@ -206,6 +206,7 @@ set(PIPELINE_SOURCES
   src/fusion/trajectory_predictor.cpp
   src/utils/trajectory_recorder.cpp
   src/utils/trajectory_recorder_summary.cpp
+  src/utils/trajectory_recorder_writer.cpp
   src/utils/baseline_clip_recorder.cpp
   src/utils/baseline_clip_recorder_io.cpp
   src/utils/baseline_clip_recorder_writer.cpp
