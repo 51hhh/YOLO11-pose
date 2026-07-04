@@ -163,6 +163,7 @@ set(PIPELINE_SOURCES
   src/main_dual_yolo_config.cpp
   src/main_realtime_debug_dump.cpp
   src/main_recording_config_loaders.cpp
+  src/main_runtime_overrides.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
   src/pipeline/pipeline_debug.cpp

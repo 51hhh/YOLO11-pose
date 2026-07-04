@@ -14,6 +14,7 @@
 #include "main_cli_options.h"
 #include "main_config_loaders.h"
 #include "main_display_helpers.h"
+#include "main_runtime_overrides.h"
 
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
@@ -26,7 +27,6 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
-#include <cctype>
 
 #ifdef HAS_ROS2
 #include <rclcpp/rclcpp.hpp>
@@ -67,22 +67,6 @@ int main(int argc, char* argv[]) {
     bool debug_feature_matches = cli.debug_feature_matches;
     std::string debug_feature_matches_dir = cli.debug_feature_matches_dir;
     std::string recording_out_override = cli.recording_out_override;
-    bool baseline_clip_cli = cli.baseline_clip_cli;
-    std::string baseline_out_override = cli.baseline_out_override;
-    double baseline_duration_override = cli.baseline_duration_override;
-    int baseline_frames_override = cli.baseline_frames_override;
-    int baseline_clips_override = cli.baseline_clips_override;
-    double baseline_gap_override = cli.baseline_gap_override;
-    std::string baseline_format_override = cli.baseline_format_override;
-    std::string baseline_image_mode_override = cli.baseline_image_mode_override;
-    bool baseline_start_immediately = cli.baseline_start_immediately;
-    bool debug_realtime_dump_cli = cli.debug_realtime_dump_cli;
-    std::string debug_realtime_dump_dir_override =
-        cli.debug_realtime_dump_dir_override;
-    int debug_realtime_dump_stride_override =
-        cli.debug_realtime_dump_stride_override;
-    int debug_realtime_dump_max_override =
-        cli.debug_realtime_dump_max_override;
 
     // 注册信号
     signal(SIGINT,  signalHandler);
@@ -101,60 +85,11 @@ int main(int argc, char* argv[]) {
     }
     stereo3d::BaselineClipRecorderConfig baseline_cfg =
         loadBaselineClipRecorderConfig(config_path);
-    if (baseline_clip_cli) baseline_cfg.enabled = true;
-    if (!baseline_out_override.empty()) baseline_cfg.output_dir = baseline_out_override;
-    if (baseline_duration_override > 0.0) baseline_cfg.duration_sec = baseline_duration_override;
-    if (baseline_frames_override > 0) baseline_cfg.frame_limit = baseline_frames_override;
-    if (baseline_clips_override > 0) baseline_cfg.clip_count = baseline_clips_override;
-    if (baseline_gap_override >= 0.0) baseline_cfg.clip_gap_sec = baseline_gap_override;
-    if (!baseline_format_override.empty()) baseline_cfg.image_format = baseline_format_override;
-    if (!baseline_image_mode_override.empty()) baseline_cfg.image_mode = baseline_image_mode_override;
-    if (baseline_start_immediately) {
-        baseline_cfg.require_left_detection = false;
-        baseline_cfg.require_right_detection = false;
-        baseline_cfg.require_pair_gate = false;
-    }
-    baseline_cfg.trigger_hz = cfg.trigger_freq_hz;
-    if (debug_feature_matches) baseline_cfg.enabled = false;
+    applyBaselineClipOverrides(cli, cfg, baseline_cfg);
 
     RealtimeDebugDumpConfig realtime_dump_cfg =
         loadRealtimeDebugDumpConfig(config_path);
-    if (debug_realtime_dump_cli) realtime_dump_cfg.enabled = true;
-    if (!debug_realtime_dump_dir_override.empty()) {
-        realtime_dump_cfg.output_dir = debug_realtime_dump_dir_override;
-    }
-    if (debug_realtime_dump_stride_override >= 0) {
-        realtime_dump_cfg.stride = debug_realtime_dump_stride_override;
-    }
-    if (debug_realtime_dump_max_override >= 0) {
-        realtime_dump_cfg.max_frames = debug_realtime_dump_max_override;
-    }
-    realtime_dump_cfg.stride = std::max(0, realtime_dump_cfg.stride);
-    realtime_dump_cfg.max_frames = std::max(0, realtime_dump_cfg.max_frames);
-    realtime_dump_cfg.max_queue = std::max(1, realtime_dump_cfg.max_queue);
-
-    if (baseline_cfg.enabled) {
-        std::string baseline_mode = baseline_cfg.image_mode;
-        std::transform(baseline_mode.begin(), baseline_mode.end(), baseline_mode.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if ((baseline_mode == "bgr" || baseline_mode == "both") &&
-            cfg.detector_input_format != "bgr") {
-            LOG_WARN("Baseline image_mode=%s requested but detector.input_format=%s; "
-                     "BGR images are only valid when the color pipeline is enabled",
-                     baseline_cfg.image_mode.c_str(), cfg.detector_input_format.c_str());
-        }
-        cfg.detection_only = true;
-        cfg.disparity_strategy = stereo3d::DisparityStrategy::ROI_ONLY;
-        cfg.tracker.enabled = false;
-        cfg.neural_features.enabled = false;
-        cfg.dual_yolo.use_for_depth = false;
-        cfg.dual_yolo.fallback_to_roi_match = false;
-        cfg.dual_yolo.log_matches = false;
-        LOG_INFO("Baseline clip mode enabled: detection-only, stereo/depth/tracker disabled");
-        if (!cfg.dual_yolo.enabled) {
-            LOG_WARN("Baseline clip mode has dual_yolo.enabled=false; right detections will be empty");
-        }
-    }
+    applyRealtimeDebugDumpOverrides(cli, realtime_dump_cfg);
 
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
