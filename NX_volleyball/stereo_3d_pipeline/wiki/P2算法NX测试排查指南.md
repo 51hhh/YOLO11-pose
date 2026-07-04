@@ -21,6 +21,8 @@
 - 新增 diagnostic 后端: `test_logs/codex_ball_p2_experimental_diag_20260704_070148/`。
 - GFTT/LK 修复复测: `test_logs/codex_ball_p2_gftt_lk_roi105_20260704_071106/`。
 - selective 调度 smoke: `test_logs/codex_ball_p2_selective_after_exp_20260704_071202/`。
+- 剩余 base/relaxed 变体: `test_logs/codex_ball_p2_remaining_variants_20260704_072216/`。
+- base color/color-edge 20s 长测: `test_logs/codex_ball_p2_base_color_long_20260704_072551/`。
 
 后续判断口径:
 

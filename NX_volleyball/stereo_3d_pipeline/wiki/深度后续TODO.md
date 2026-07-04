@@ -47,6 +47,7 @@
 - [x] 实测 `opencv_cuda_template_match_patch9`。
 - [x] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
   - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `99.4fps`、`0/645` 有效，不准入。
+  - 已修正 VPI scratch 复用和 GPU peak reduce；下一轮只需重测修正后耗时，不改变当前不准入结论。
 - [x] 接入 OpenCV CUDA StereoBM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
 - [x] 实测 `opencv_cuda_stereo_bm_patch9`。
@@ -55,6 +56,7 @@
 - [x] 实测 `opencv_cuda_stereo_sgm_patch9`。
 - [x] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
   - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `100.1fps`、`0/632` 有效，不准入。
+  - 已修正 VPI scratch 复用和 `initial_disp ±32px` residual 搜索；下一轮重测有效率和耗时。
 - [ ] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
   - 已接 `roi_libsgm` 配置/diagnostic 入口；NX 当前缺 libSGM，运行返回 unsupported。
 - [x] 复测 `opencv_cuda_orb_fast48`。
