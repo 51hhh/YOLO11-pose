@@ -71,9 +71,12 @@ struct FrameMetadata {
     bool p2_diagnostic_requested = false;
     uint32_t p2_realtime_triggers = 0;
     uint32_t p2_diagnostic_triggers = 0;
+    uint32_t p2_realtime_skip_reasons = 0;
+    uint32_t p2_diagnostic_skip_reasons = 0;
     int p2_feature_job_count = 0;
     int p2_left_count = 0;
     int p2_right_count = 0;
+    int p2_valid_direct_pair_count = 0;
 };
 
 /**
@@ -127,9 +130,12 @@ struct FrameSlot {
     bool p2_diagnostic_requested = false;
     uint32_t p2_realtime_triggers = 0;
     uint32_t p2_diagnostic_triggers = 0;
+    uint32_t p2_realtime_skip_reasons = 0;
+    uint32_t p2_diagnostic_skip_reasons = 0;
     int p2_feature_job_count = 0;
     int p2_left_count = 0;
     int p2_right_count = 0;
+    int p2_valid_direct_pair_count = 0;
 
     // =========== Stage 2: 视差图 ===========
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
@@ -228,6 +234,19 @@ struct FrameSlot {
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        p2_depth_modes_enabled = false;
+        p2_depth_mode_mask = 0;
+        p2_feature_job_scaffold_enabled = false;
+        p2_realtime_requested = false;
+        p2_diagnostic_requested = false;
+        p2_realtime_triggers = 0;
+        p2_diagnostic_triggers = 0;
+        p2_realtime_skip_reasons = 0;
+        p2_diagnostic_skip_reasons = 0;
+        p2_feature_job_count = 0;
+        p2_left_count = 0;
+        p2_right_count = 0;
+        p2_valid_direct_pair_count = 0;
     }
 
     /**
@@ -255,9 +274,12 @@ struct FrameSlot {
         p2_diagnostic_requested = false;
         p2_realtime_triggers = 0;
         p2_diagnostic_triggers = 0;
+        p2_realtime_skip_reasons = 0;
+        p2_diagnostic_skip_reasons = 0;
         p2_feature_job_count = 0;
         p2_left_count = 0;
         p2_right_count = 0;
+        p2_valid_direct_pair_count = 0;
     }
 };
 
@@ -289,9 +311,12 @@ inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     meta.p2_diagnostic_requested = slot.p2_diagnostic_requested;
     meta.p2_realtime_triggers = slot.p2_realtime_triggers;
     meta.p2_diagnostic_triggers = slot.p2_diagnostic_triggers;
+    meta.p2_realtime_skip_reasons = slot.p2_realtime_skip_reasons;
+    meta.p2_diagnostic_skip_reasons = slot.p2_diagnostic_skip_reasons;
     meta.p2_feature_job_count = slot.p2_feature_job_count;
     meta.p2_left_count = slot.p2_left_count;
     meta.p2_right_count = slot.p2_right_count;
+    meta.p2_valid_direct_pair_count = slot.p2_valid_direct_pair_count;
     return meta;
 }
 

@@ -191,6 +191,11 @@ struct PipelineConfig {
     bool p2_trigger_on_direct_pair = false; ///< selective 模式下直接 pair 也触发 P2
     bool p2_trigger_on_host_gray = false; ///< selective 模式下 CPU/host gray 需求触发 P2
     bool p2_trigger_on_bgr = false; ///< selective 模式下 BGR/color 需求触发 P2
+    bool p2_trigger_on_pair_quality = false; ///< selective 模式下 direct pair 质量差触发 P2
+    bool p2_trigger_on_no_valid_direct_pair = false; ///< selective 模式下左右检测存在但无有效 direct pair 时触发 P2
+    float p2_pair_quality_min_shifted_iou = 0.0f; ///< >0 时低于该 shifted IoU 触发 P2
+    float p2_pair_quality_max_epipolar_dy = 0.0f; ///< >0 时超过该 y 偏差触发 P2
+    float p2_pair_quality_min_confidence = 0.0f; ///< >0 时低于该 direct pair 语义置信度触发 P2
     int p2_diagnostic_stride = 10; ///< diagnostic lane 每 N 帧尝试一次
     int p2_diagnostic_max_in_flight = 1; ///< diagnostic lane 最大在途 job 数
     float p2_realtime_deadline_ms = 10.0f; ///< P2 realtime lane deadline

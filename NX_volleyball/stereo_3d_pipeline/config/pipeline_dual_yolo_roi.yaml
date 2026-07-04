@@ -155,6 +155,11 @@ performance:
   p2_trigger_on_direct_pair: false
   p2_trigger_on_host_gray: false
   p2_trigger_on_bgr: false
+  p2_trigger_on_pair_quality: false          # true 时 direct pair 低质量触发 P2；阈值见下方
+  p2_trigger_on_no_valid_direct_pair: false  # true 时左右均有检测但没有通过 gate 的 direct pair 触发 P2
+  p2_pair_quality_min_shifted_iou: 0.0       # >0 时低于该 shifted IoU 触发 P2
+  p2_pair_quality_max_epipolar_dy: 0.0       # >0 时超过该 y 偏差触发 P2
+  p2_pair_quality_min_confidence: 0.0        # >0 时低于该 direct pair 语义置信度触发 P2
   p2_diagnostic_stride: 10
   p2_diagnostic_max_in_flight: 1
   p2_realtime_deadline_ms: 10.0

@@ -24,6 +24,20 @@ enum P2FeatureJobTrigger : uint32_t {
     P2_TRIGGER_HOST_GRAY = 1u << 4,
     P2_TRIGGER_BGR = 1u << 5,
     P2_TRIGGER_DIAGNOSTIC_STRIDE = 1u << 6,
+    P2_TRIGGER_PAIR_LOW_IOU = 1u << 7,
+    P2_TRIGGER_PAIR_EPIPOLAR_DY = 1u << 8,
+    P2_TRIGGER_PAIR_LOW_CONFIDENCE = 1u << 9,
+    P2_TRIGGER_NO_VALID_DIRECT_PAIR = 1u << 10,
+};
+
+enum P2FeatureJobSkipReason : uint32_t {
+    P2_SKIP_NONE = 0u,
+    P2_SKIP_NO_DEPTH_MODE = 1u << 0,
+    P2_SKIP_REALTIME_LANE_DISABLED = 1u << 1,
+    P2_SKIP_DIAGNOSTIC_LANE_DISABLED = 1u << 2,
+    P2_SKIP_SELECTIVE_NOT_TRIGGERED = 1u << 3,
+    P2_SKIP_DIAGNOSTIC_STRIDE_MISS = 1u << 4,
+    P2_SKIP_NO_STEREO_DETECTIONS = 1u << 5,
 };
 
 enum P2FeatureDepthMode : uint32_t {
@@ -55,6 +69,15 @@ struct P2FeatureJobPolicy {
     bool trigger_on_direct_pair = false;
     bool trigger_on_host_gray = false;
     bool trigger_on_bgr = false;
+    bool trigger_on_pair_quality = false;
+    bool trigger_on_no_valid_direct_pair = false;
+    float pair_quality_min_shifted_iou = 0.0f;
+    float pair_quality_max_epipolar_dy = 0.0f;
+    float pair_quality_min_confidence = 0.0f;
+    int pair_gate_max_disparity = 2048;
+    float pair_gate_epipolar_y_tolerance = 12.0f;
+    float pair_gate_max_size_ratio = 2.0f;
+    float pair_gate_min_shifted_iou = 0.0f;
     int diagnostic_stride = 10;
     int diagnostic_max_in_flight = 1;
     float realtime_deadline_ms = 10.0f;
@@ -69,9 +92,12 @@ struct P2FeatureJobDecision {
     bool diagnostic_requested = false;
     uint32_t realtime_triggers = P2_TRIGGER_NONE;
     uint32_t diagnostic_triggers = P2_TRIGGER_NONE;
+    uint32_t realtime_skip_reasons = P2_SKIP_NONE;
+    uint32_t diagnostic_skip_reasons = P2_SKIP_NONE;
     int frame_id = -1;
     int left_count = 0;
     int right_count = 0;
+    int valid_direct_pair_count = 0;
 };
 
 struct P2FeatureJobDescriptor {
@@ -106,6 +132,7 @@ std::vector<P2FeatureJobDescriptor> buildP2FeatureJobDescriptors(
 
 const char* p2FeatureJobLaneName(P2FeatureJobLane lane);
 std::string p2FeatureJobTriggerString(uint32_t triggers);
+std::string p2FeatureJobSkipReasonString(uint32_t reasons);
 
 }  // namespace stereo3d
 

@@ -334,13 +334,16 @@ bool Pipeline::init(const PipelineConfig& config) {
         config_.p2_feature_job_scaffold_enabled ||
         config_.p2_diagnostic_lane_decision_enabled) {
         LOG_INFO("  P2 lanes: modes=0x%x feature_jobs=%d realtime=%d diagnostic=%d "
-                 "selective=%d diag_stride=%d diag_inflight=%d "
-                 "deadline_rt=%.2fms deadline_diag=%.2fms",
+                 "selective=%d pair_quality=%d no_valid_pair=%d "
+                 "diag_stride=%d diag_inflight=%d deadline_rt=%.2fms "
+                 "deadline_diag=%.2fms",
                  static_cast<unsigned int>(p2FeatureDepthModeMask(config_)),
                  config_.p2_feature_job_scaffold_enabled,
                  config_.p2_realtime_lane_decision_enabled,
                  config_.p2_diagnostic_lane_decision_enabled,
                  config_.p2_selective_trigger,
+                 config_.p2_trigger_on_pair_quality,
+                 config_.p2_trigger_on_no_valid_direct_pair,
                  config_.p2_diagnostic_stride,
                  config_.p2_diagnostic_max_in_flight,
                  config_.p2_realtime_deadline_ms,

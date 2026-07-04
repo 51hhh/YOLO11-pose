@@ -391,9 +391,12 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     slot.p2_diagnostic_requested = p2_decision.diagnostic_requested;
     slot.p2_realtime_triggers = p2_decision.realtime_triggers;
     slot.p2_diagnostic_triggers = p2_decision.diagnostic_triggers;
+    slot.p2_realtime_skip_reasons = p2_decision.realtime_skip_reasons;
+    slot.p2_diagnostic_skip_reasons = p2_decision.diagnostic_skip_reasons;
     slot.p2_feature_job_count = static_cast<int>(p2_feature_jobs.size());
     slot.p2_left_count = p2_decision.left_count;
     slot.p2_right_count = p2_decision.right_count;
+    slot.p2_valid_direct_pair_count = p2_decision.valid_direct_pair_count;
     enqueueP2FeatureDiagnosticJobs(makeFrameMetadata(slot), p2_feature_jobs);
     VPIImageData hostDataL, hostDataR;
     bool lockedL = false;

@@ -207,6 +207,21 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
             cfg.p2_trigger_on_host_gray = perf["p2_trigger_on_host_gray"].as<bool>();
         if (perf["p2_trigger_on_bgr"])
             cfg.p2_trigger_on_bgr = perf["p2_trigger_on_bgr"].as<bool>();
+        if (perf["p2_trigger_on_pair_quality"])
+            cfg.p2_trigger_on_pair_quality =
+                perf["p2_trigger_on_pair_quality"].as<bool>();
+        if (perf["p2_trigger_on_no_valid_direct_pair"])
+            cfg.p2_trigger_on_no_valid_direct_pair =
+                perf["p2_trigger_on_no_valid_direct_pair"].as<bool>();
+        if (perf["p2_pair_quality_min_shifted_iou"])
+            cfg.p2_pair_quality_min_shifted_iou =
+                perf["p2_pair_quality_min_shifted_iou"].as<float>();
+        if (perf["p2_pair_quality_max_epipolar_dy"])
+            cfg.p2_pair_quality_max_epipolar_dy =
+                perf["p2_pair_quality_max_epipolar_dy"].as<float>();
+        if (perf["p2_pair_quality_min_confidence"])
+            cfg.p2_pair_quality_min_confidence =
+                perf["p2_pair_quality_min_confidence"].as<float>();
         if (perf["p2_diagnostic_stride"])
             cfg.p2_diagnostic_stride = perf["p2_diagnostic_stride"].as<int>();
         if (perf["p2_diagnostic_max_in_flight"])

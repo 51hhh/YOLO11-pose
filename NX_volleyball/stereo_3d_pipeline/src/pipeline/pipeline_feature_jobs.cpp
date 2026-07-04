@@ -1,4 +1,5 @@
 #include "pipeline_feature_jobs.h"
+#include "../stereo/depth_match_contract.h"
 
 #include <algorithm>
 #include <string>
@@ -99,6 +100,22 @@ P2FeatureJobPolicy makeP2FeatureJobPolicy(const PipelineConfig& cfg) {
     out.trigger_on_direct_pair = cfg.p2_trigger_on_direct_pair;
     out.trigger_on_host_gray = cfg.p2_trigger_on_host_gray;
     out.trigger_on_bgr = cfg.p2_trigger_on_bgr;
+    out.trigger_on_pair_quality = cfg.p2_trigger_on_pair_quality;
+    out.trigger_on_no_valid_direct_pair =
+        cfg.p2_trigger_on_no_valid_direct_pair;
+    out.pair_quality_min_shifted_iou =
+        std::max(0.0f, cfg.p2_pair_quality_min_shifted_iou);
+    out.pair_quality_max_epipolar_dy =
+        std::max(0.0f, cfg.p2_pair_quality_max_epipolar_dy);
+    out.pair_quality_min_confidence =
+        std::max(0.0f, cfg.p2_pair_quality_min_confidence);
+    out.pair_gate_max_disparity = std::max(1, cfg.max_disparity);
+    out.pair_gate_epipolar_y_tolerance =
+        std::max(1.0f, cfg.dual_yolo.epipolar_y_tolerance);
+    out.pair_gate_max_size_ratio =
+        std::max(1.0f, cfg.dual_yolo.max_size_ratio);
+    out.pair_gate_min_shifted_iou =
+        std::max(0.0f, cfg.dual_yolo.min_shifted_iou);
     out.diagnostic_stride = std::max(1, cfg.p2_diagnostic_stride);
     out.diagnostic_max_in_flight = std::max(1, cfg.p2_diagnostic_max_in_flight);
     out.realtime_deadline_ms = std::max(1.0f, cfg.p2_realtime_deadline_ms);
@@ -122,6 +139,8 @@ P2FeatureJobDecision decideP2FeatureJobs(
     out.left_count = static_cast<int>(left_detections.size());
     out.right_count = static_cast<int>(right_detections.size());
     if (!policy.p2_depth_modes_enabled) {
+        out.realtime_skip_reasons |= P2_SKIP_NO_DEPTH_MODE;
+        out.diagnostic_skip_reasons |= P2_SKIP_NO_DEPTH_MODE;
         return out;
     }
 
@@ -146,12 +165,54 @@ P2FeatureJobDecision decideP2FeatureJobs(
     if (needs_bgr && policy.trigger_on_bgr) {
         triggers |= P2_TRIGGER_BGR;
     }
+    if (direct_pair_possible) {
+        StereoRoiPairGateConfig pair_gate;
+        pair_gate.max_disparity = policy.pair_gate_max_disparity;
+        pair_gate.epipolar_y_tolerance = policy.pair_gate_epipolar_y_tolerance;
+        pair_gate.max_size_ratio = policy.pair_gate_max_size_ratio;
+        pair_gate.min_shifted_iou = policy.pair_gate_min_shifted_iou;
+
+        std::vector<StereoRoiPair> pairs =
+            collectStereoRoiPairCandidates(left_detections,
+                                           right_detections,
+                                           pair_gate,
+                                           left_detections.size() *
+                                               right_detections.size());
+        out.valid_direct_pair_count = static_cast<int>(pairs.size());
+        if (pairs.empty()) {
+            if (policy.trigger_on_no_valid_direct_pair) {
+                triggers |= P2_TRIGGER_NO_VALID_DIRECT_PAIR;
+            }
+        } else if (policy.trigger_on_pair_quality) {
+            const StereoRoiPair& best = pairs.front();
+            if (policy.pair_quality_min_shifted_iou > 0.0f &&
+                best.shifted_bbox_iou < policy.pair_quality_min_shifted_iou) {
+                triggers |= P2_TRIGGER_PAIR_LOW_IOU;
+            }
+            if (policy.pair_quality_max_epipolar_dy > 0.0f &&
+                best.epipolar_dy > policy.pair_quality_max_epipolar_dy) {
+                triggers |= P2_TRIGGER_PAIR_EPIPOLAR_DY;
+            }
+            if (policy.pair_quality_min_confidence > 0.0f &&
+                best.semantic_confidence <
+                    policy.pair_quality_min_confidence) {
+                triggers |= P2_TRIGGER_PAIR_LOW_CONFIDENCE;
+            }
+        }
+    }
 
     const bool selected =
         !policy.selective_trigger || triggers != P2_TRIGGER_CONFIGURED;
     if (policy.realtime_lane_enabled && selected) {
         out.realtime_requested = true;
         out.realtime_triggers = triggers;
+    } else if (!policy.realtime_lane_enabled) {
+        out.realtime_skip_reasons |= P2_SKIP_REALTIME_LANE_DISABLED;
+    } else if (!selected) {
+        out.realtime_skip_reasons |= P2_SKIP_SELECTIVE_NOT_TRIGGERED;
+        if (!direct_pair_possible) {
+            out.realtime_skip_reasons |= P2_SKIP_NO_STEREO_DETECTIONS;
+        }
     }
 
     if (policy.diagnostic_lane_enabled &&
@@ -159,6 +220,10 @@ P2FeatureJobDecision decideP2FeatureJobs(
         out.diagnostic_requested = true;
         out.diagnostic_triggers = P2_TRIGGER_CONFIGURED |
                                   P2_TRIGGER_DIAGNOSTIC_STRIDE;
+    } else if (!policy.diagnostic_lane_enabled) {
+        out.diagnostic_skip_reasons |= P2_SKIP_DIAGNOSTIC_LANE_DISABLED;
+    } else {
+        out.diagnostic_skip_reasons |= P2_SKIP_DIAGNOSTIC_STRIDE_MISS;
     }
     return out;
 }
@@ -221,6 +286,33 @@ std::string p2FeatureJobTriggerString(uint32_t triggers) {
     appendTriggerName(&out, triggers, P2_TRIGGER_BGR, "bgr");
     appendTriggerName(&out, triggers, P2_TRIGGER_DIAGNOSTIC_STRIDE,
                       "diagnostic_stride");
+    appendTriggerName(&out, triggers, P2_TRIGGER_PAIR_LOW_IOU,
+                      "pair_low_iou");
+    appendTriggerName(&out, triggers, P2_TRIGGER_PAIR_EPIPOLAR_DY,
+                      "pair_epipolar_dy");
+    appendTriggerName(&out, triggers, P2_TRIGGER_PAIR_LOW_CONFIDENCE,
+                      "pair_low_confidence");
+    appendTriggerName(&out, triggers, P2_TRIGGER_NO_VALID_DIRECT_PAIR,
+                      "no_valid_direct_pair");
+    if (out.empty()) {
+        return "none";
+    }
+    return out;
+}
+
+std::string p2FeatureJobSkipReasonString(uint32_t reasons) {
+    std::string out;
+    appendTriggerName(&out, reasons, P2_SKIP_NO_DEPTH_MODE, "no_depth_mode");
+    appendTriggerName(&out, reasons, P2_SKIP_REALTIME_LANE_DISABLED,
+                      "realtime_lane_disabled");
+    appendTriggerName(&out, reasons, P2_SKIP_DIAGNOSTIC_LANE_DISABLED,
+                      "diagnostic_lane_disabled");
+    appendTriggerName(&out, reasons, P2_SKIP_SELECTIVE_NOT_TRIGGERED,
+                      "selective_not_triggered");
+    appendTriggerName(&out, reasons, P2_SKIP_DIAGNOSTIC_STRIDE_MISS,
+                      "diagnostic_stride_miss");
+    appendTriggerName(&out, reasons, P2_SKIP_NO_STEREO_DETECTIONS,
+                      "no_stereo_detections");
     if (out.empty()) {
         return "none";
     }

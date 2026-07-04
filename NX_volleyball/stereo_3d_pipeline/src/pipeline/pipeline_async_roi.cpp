@@ -101,9 +101,12 @@ void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
     slot.p2_diagnostic_requested = meta.p2_diagnostic_requested;
     slot.p2_realtime_triggers = meta.p2_realtime_triggers;
     slot.p2_diagnostic_triggers = meta.p2_diagnostic_triggers;
+    slot.p2_realtime_skip_reasons = meta.p2_realtime_skip_reasons;
+    slot.p2_diagnostic_skip_reasons = meta.p2_diagnostic_skip_reasons;
     slot.p2_feature_job_count = meta.p2_feature_job_count;
     slot.p2_left_count = meta.p2_left_count;
     slot.p2_right_count = meta.p2_right_count;
+    slot.p2_valid_direct_pair_count = meta.p2_valid_direct_pair_count;
 }
 
 void applyP2FeatureJobDecisionToSlot(
@@ -117,9 +120,12 @@ void applyP2FeatureJobDecisionToSlot(
     slot.p2_diagnostic_requested = decision.diagnostic_requested;
     slot.p2_realtime_triggers = decision.realtime_triggers;
     slot.p2_diagnostic_triggers = decision.diagnostic_triggers;
+    slot.p2_realtime_skip_reasons = decision.realtime_skip_reasons;
+    slot.p2_diagnostic_skip_reasons = decision.diagnostic_skip_reasons;
     slot.p2_feature_job_count = static_cast<int>(jobs.size());
     slot.p2_left_count = decision.left_count;
     slot.p2_right_count = decision.right_count;
+    slot.p2_valid_direct_pair_count = decision.valid_direct_pair_count;
 }
 
 cudaError_t createLowPriorityNonBlockingStream(cudaStream_t* stream,
@@ -1571,8 +1577,30 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     }
     if (p2_decision.realtime_requested) {
         globalPerf().record("Stage2_P2FeatureJobRealtimeRequested", 0.0);
+        if ((p2_decision.realtime_triggers & P2_TRIGGER_PAIR_LOW_IOU) != 0u) {
+            globalPerf().record("Stage2_P2FeatureJobTriggerPairLowIou", 0.0);
+        }
+        if ((p2_decision.realtime_triggers &
+             P2_TRIGGER_PAIR_EPIPOLAR_DY) != 0u) {
+            globalPerf().record("Stage2_P2FeatureJobTriggerPairEpipolarDy",
+                                0.0);
+        }
+        if ((p2_decision.realtime_triggers &
+             P2_TRIGGER_PAIR_LOW_CONFIDENCE) != 0u) {
+            globalPerf().record("Stage2_P2FeatureJobTriggerPairLowConf",
+                                0.0);
+        }
+        if ((p2_decision.realtime_triggers &
+             P2_TRIGGER_NO_VALID_DIRECT_PAIR) != 0u) {
+            globalPerf().record("Stage2_P2FeatureJobTriggerNoValidPair",
+                                0.0);
+        }
     } else if (p2_decision.p2_depth_modes_enabled) {
         globalPerf().record("Stage2_P2FeatureJobRealtimeNotAttempted", 0.0);
+        if ((p2_decision.realtime_skip_reasons &
+             P2_SKIP_SELECTIVE_NOT_TRIGGERED) != 0u) {
+            globalPerf().record("Stage2_P2FeatureJobSkipSelective", 0.0);
+        }
     }
     if (p2_decision.diagnostic_requested) {
         globalPerf().record("Stage2_P2FeatureJobDiagnosticRequested", 0.0);
