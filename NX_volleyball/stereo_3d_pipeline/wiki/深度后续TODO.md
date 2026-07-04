@@ -15,7 +15,8 @@
 
 - [x] 按 [架构调度优化](架构调度优化.md) 设计 realtime lane / diagnostic lane，P2 迟到结果不能阻塞 P0/P1。
 - [ ] 评估是否可将 P2 FeatureJob 从完整 `runRoiStage2Core()` 中拆出，支持低频、迟到和按 frame id 落盘。
-  - 已完成 FeatureJob 配置、决策结构和 async ROI 提交流程观测点；独立 worker/迟到落盘仍待 NX 编译和 100fps 实测。
+  - 已完成 FeatureJob 配置、决策结构、async ROI 提交流程观测点和 P2 diagnostic lane 独立 worker/队列/max-in-flight 限流。
+  - NX 短测已验证 diagnostic worker 启动/入队/退出正常；当前仍是 no-op worker，真实 P2 算法执行体待迁入。
 - [ ] 缩小或移除 `roi_postprocess_mutex_` 对独立 P2 job 的影响。
 - [ ] OpenCV CUDA P2 使用独立 stream/scratch/matcher 实例，测试多个 OpenCV CUDA 算法并行是否存在隐式同步或尾延迟放大。
 - [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。

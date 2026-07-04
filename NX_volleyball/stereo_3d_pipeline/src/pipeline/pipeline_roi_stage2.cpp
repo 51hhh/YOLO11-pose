@@ -1,6 +1,7 @@
 #include "pipeline.h"
 #include "pipeline_depth_modes.h"
 #include "pipeline_roi_match_helpers.h"
+#include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
 
 #include <algorithm>
@@ -334,6 +335,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     slot.p2_feature_job_count = static_cast<int>(p2_feature_jobs.size());
     slot.p2_left_count = p2_decision.left_count;
     slot.p2_right_count = p2_decision.right_count;
+    enqueueP2FeatureDiagnosticJobs(makeFrameMetadata(slot), p2_feature_jobs);
     VPIImageData hostDataL, hostDataR;
     bool lockedL = false;
     bool lockedR = false;

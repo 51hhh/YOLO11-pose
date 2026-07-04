@@ -49,6 +49,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -276,6 +277,11 @@ private:
         std::vector<Detection> right_detections;
         RoiStage2Output output;
     };
+    struct P2FeatureDiagnosticTask {
+        P2FeatureJobDescriptor job;
+        FrameMetadata metadata;
+        std::chrono::steady_clock::time_point enqueue_time{};
+    };
     bool asyncRoiStage2Configured() const;
     bool initAsyncRoiStage2();
     bool startAsyncRoiStage2();
@@ -294,6 +300,13 @@ private:
     bool waitAsyncRoiBufferCopy(int buffer_index, const char* reason);
     void markAsyncRoiSlotCopyPendingLocked(int slot_index);
     void waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
+    bool p2FeatureDiagnosticLaneConfigured() const;
+    bool startP2FeatureDiagnosticLane();
+    void shutdownP2FeatureDiagnosticLane();
+    void p2FeatureDiagnosticWorkerLoop();
+    void enqueueP2FeatureDiagnosticJobs(
+        const FrameMetadata& metadata,
+        const std::vector<P2FeatureJobDescriptor>& jobs);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -349,6 +362,14 @@ private:
     bool async_roi_worker_busy_ = false;
     std::mutex roi_postprocess_mutex_;
     std::mutex hybrid_depth_mutex_;
+
+    // ===== P2 diagnostic lane =====
+    bool p2_feature_diag_thread_stop_ = false;
+    bool p2_feature_diag_worker_busy_ = false;
+    std::thread p2_feature_diag_thread_;
+    std::mutex p2_feature_diag_mutex_;
+    std::condition_variable p2_feature_diag_cv_;
+    std::deque<P2FeatureDiagnosticTask> p2_feature_diag_pending_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器

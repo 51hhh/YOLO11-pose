@@ -282,6 +282,147 @@ bool Pipeline::startAsyncRoiStage2() {
     return true;
 }
 
+bool Pipeline::p2FeatureDiagnosticLaneConfigured() const {
+    return config_.p2_feature_job_scaffold_enabled &&
+           config_.p2_diagnostic_lane_decision_enabled &&
+           pipelineP2DepthModesEnabled(config_);
+}
+
+bool Pipeline::startP2FeatureDiagnosticLane() {
+    if (!p2FeatureDiagnosticLaneConfigured()) {
+        return true;
+    }
+    if (p2_feature_diag_thread_.joinable()) {
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+        p2_feature_diag_thread_stop_ = false;
+        p2_feature_diag_worker_busy_ = false;
+        p2_feature_diag_pending_.clear();
+    }
+    p2_feature_diag_thread_ =
+        std::thread(&Pipeline::p2FeatureDiagnosticWorkerLoop, this);
+    LOG_INFO("P2 diagnostic FeatureJob worker started");
+    return true;
+}
+
+void Pipeline::shutdownP2FeatureDiagnosticLane() {
+    if (!p2_feature_diag_thread_.joinable()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+        p2_feature_diag_thread_stop_ = true;
+        if (!p2_feature_diag_pending_.empty()) {
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticDropShutdown",
+                                static_cast<double>(
+                                    p2_feature_diag_pending_.size()));
+            p2_feature_diag_pending_.clear();
+        }
+    }
+    p2_feature_diag_cv_.notify_all();
+    p2_feature_diag_thread_.join();
+    {
+        std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+        p2_feature_diag_worker_busy_ = false;
+        p2_feature_diag_thread_stop_ = false;
+    }
+}
+
+void Pipeline::enqueueP2FeatureDiagnosticJobs(
+    const FrameMetadata& metadata,
+    const std::vector<P2FeatureJobDescriptor>& jobs) {
+    if (!p2FeatureDiagnosticLaneConfigured()) {
+        return;
+    }
+    const int max_in_flight = std::max(1, config_.p2_diagnostic_max_in_flight);
+    int enqueued = 0;
+    int dropped = 0;
+    {
+        std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+        for (const auto& job : jobs) {
+            if (job.lane != P2FeatureJobLane::DIAGNOSTIC) {
+                continue;
+            }
+            const int in_flight =
+                static_cast<int>(p2_feature_diag_pending_.size()) +
+                (p2_feature_diag_worker_busy_ ? 1 : 0);
+            if (in_flight >= max_in_flight) {
+                ++dropped;
+                continue;
+            }
+            P2FeatureDiagnosticTask task;
+            task.job = job;
+            task.metadata = metadata;
+            task.enqueue_time = std::chrono::steady_clock::now();
+            p2_feature_diag_pending_.push_back(std::move(task));
+            ++enqueued;
+        }
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticQueueDepth",
+                            static_cast<double>(
+                                p2_feature_diag_pending_.size()));
+    }
+    for (int i = 0; i < enqueued; ++i) {
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticEnqueued", 0.0);
+    }
+    for (int i = 0; i < dropped; ++i) {
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticDropFull", 0.0);
+    }
+    if (enqueued > 0) {
+        p2_feature_diag_cv_.notify_one();
+    }
+}
+
+void Pipeline::p2FeatureDiagnosticWorkerLoop() {
+    using Clock = std::chrono::steady_clock;
+    while (true) {
+        P2FeatureDiagnosticTask task;
+        {
+            std::unique_lock<std::mutex> lk(p2_feature_diag_mutex_);
+            p2_feature_diag_cv_.wait(lk, [this] {
+                return p2_feature_diag_thread_stop_ ||
+                       !p2_feature_diag_pending_.empty();
+            });
+            if (p2_feature_diag_thread_stop_ &&
+                p2_feature_diag_pending_.empty()) {
+                break;
+            }
+            task = std::move(p2_feature_diag_pending_.front());
+            p2_feature_diag_pending_.pop_front();
+            p2_feature_diag_worker_busy_ = true;
+        }
+
+        const auto start = Clock::now();
+        if (task.enqueue_time.time_since_epoch().count() > 0) {
+            const double queue_wait_ms =
+                std::chrono::duration<double, std::milli>(
+                    start - task.enqueue_time).count();
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticQueueWait",
+                                queue_wait_ms);
+        }
+
+        // Algorithm execution is intentionally not wired yet; this worker is
+        // the non-blocking late-result lane for future P2 implementations.
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop", 0.0);
+
+        const double elapsed_ms =
+            std::chrono::duration<double, std::milli>(
+                Clock::now() - start).count();
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticWorker", elapsed_ms);
+        if (elapsed_ms > static_cast<double>(task.job.deadline_ms)) {
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticOverDeadline",
+                                elapsed_ms);
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+            p2_feature_diag_worker_busy_ = false;
+        }
+    }
+    LOG_INFO("P2 diagnostic FeatureJob worker exited");
+}
+
 void Pipeline::releaseAsyncRoiBuffer(int buffer_index, const char* reason) {
     if (buffer_index < 0 ||
         buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
@@ -785,6 +926,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.input.width = config_.rect_width;
     task.input.height = config_.rect_height;
     task.input.stream = async_roi_stream_;
+    enqueueP2FeatureDiagnosticJobs(task.metadata, task.p2_feature_jobs);
 
     int dropped_pending_buffer = -1;
     int dropped_pending_frame = -1;

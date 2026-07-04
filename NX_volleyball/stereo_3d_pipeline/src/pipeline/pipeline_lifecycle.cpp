@@ -1,4 +1,5 @@
 #include "pipeline.h"
+#include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
 
 #include <cstdint>
@@ -12,6 +13,7 @@ Pipeline::Pipeline() = default;
 Pipeline::~Pipeline() {
     stop();
     destroyAsyncRoiStage2();
+    shutdownP2FeatureDiagnosticLane();
     for (auto& slot : slots_) {
         slot.destroy();
     }
@@ -31,11 +33,17 @@ void Pipeline::start() {
         running_ = false;
         return;
     }
+    if (!startP2FeatureDiagnosticLane()) {
+        running_ = false;
+        shutdownAsyncRoiStage2();
+        return;
+    }
 
 #ifdef HIK_CAMERA_ENABLED
     if (camera_ && !camera_->startGrabbing()) {
         LOG_ERROR("Failed to start camera grabbing");
         running_ = false;
+        shutdownP2FeatureDiagnosticLane();
         shutdownAsyncRoiStage2();
         return;
     }
@@ -72,6 +80,7 @@ void Pipeline::stop() {
     }
 
     shutdownAsyncRoiStage2();
+    shutdownP2FeatureDiagnosticLane();
 
 #ifdef HIK_CAMERA_ENABLED
     if (grab_thread_.joinable()) {
