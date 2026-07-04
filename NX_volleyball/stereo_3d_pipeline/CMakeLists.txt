@@ -209,6 +209,7 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth_track.cpp
   src/fusion/trajectory_predictor.cpp
   src/fusion/trajectory_predictor_fit.cpp
+  src/fusion/trajectory_predictor_history.cpp
   src/utils/trajectory_recorder.cpp
   src/utils/trajectory_recorder_summary.cpp
   src/utils/trajectory_recorder_writer.cpp
