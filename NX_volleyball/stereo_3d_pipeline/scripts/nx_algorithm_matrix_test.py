@@ -63,6 +63,7 @@ class Case:
     neural_max_disp_delta_px: float = 32.0
     neural_final_disp_gate_px: float = 2.0
     neural_min_score: float = 0.0
+    algo_stage_override: str | None = None
     note: str = ""
 
 
@@ -313,6 +314,16 @@ DENSE_PATCH9_SWEEP = {
     "feature_sphere_radius_scale": "2.5",
 }
 
+P2_DIAGNOSTIC_ONLY = {
+    "p2_feature_job_scaffold_enabled": "true",
+    "p2_realtime_lane_decision_enabled": "false",
+    "p2_diagnostic_lane_decision_enabled": "true",
+    "p2_selective_trigger": "false",
+    "p2_diagnostic_stride": "1",
+    "p2_diagnostic_max_in_flight": "1",
+    "p2_diagnostic_deadline_ms": "50.0",
+}
+
 
 RELAXED_CASES = (
     Case(
@@ -364,6 +375,15 @@ RELAXED_CASES = (
         support_field="roi_orb_points_support",
         yaml_scalars=ORB_FAST_SWEEP,
         note="P2 sweep: true OpenCV CUDA ORB, smaller ROI/search and 48-point cap",
+    ),
+    Case(
+        "opencv_cuda_orb_diagnostic_only",
+        {"roi_orb_points": True},
+        ("z_roi_orb_points",),
+        support_field="roi_orb_points_support",
+        yaml_scalars={**ORB_FAST_SWEEP, **P2_DIAGNOSTIC_ONLY},
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticOpenCVCudaORB",
+        note="diagnostic lane only: OpenCV CUDA ORB runs from independent GPU snapshot; no CSV candidate writeback",
     ),
     Case(
         "opencv_cuda_orb_wide_y",
@@ -466,6 +486,15 @@ RELAXED_CASES = (
         note="P2 sweep: OpenCV CUDA TemplateMatching patch radius 9",
     ),
     Case(
+        "opencv_cuda_template_match_diagnostic_only",
+        {"roi_cuda_template_match": True},
+        ("z_roi_cuda_template_match",),
+        support_field="roi_cuda_template_match_support",
+        yaml_scalars={**TEMPLATE_PATCH9_SWEEP, **P2_DIAGNOSTIC_ONLY},
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaTemplate",
+        note="diagnostic lane only: OpenCV CUDA TemplateMatching runs from independent GPU snapshot; no CSV candidate writeback",
+    ),
+    Case(
         "opencv_cuda_stereo_bm_relaxed",
         {"roi_cuda_stereo_bm": True},
         ("z_roi_cuda_stereo_bm",),
@@ -490,6 +519,15 @@ RELAXED_CASES = (
         note="P2 sweep: OpenCV CUDA StereoBM larger census/block window",
     ),
     Case(
+        "opencv_cuda_stereo_bm_diagnostic_only",
+        {"roi_cuda_stereo_bm": True},
+        ("z_roi_cuda_stereo_bm",),
+        support_field="roi_cuda_stereo_bm_support",
+        yaml_scalars={**DENSE_PATCH9_SWEEP, **P2_DIAGNOSTIC_ONLY},
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaStereoBM",
+        note="diagnostic lane only: OpenCV CUDA StereoBM runs from independent GPU snapshot; no CSV candidate writeback",
+    ),
+    Case(
         "opencv_cuda_stereo_sgm_relaxed",
         {"roi_cuda_stereo_sgm": True},
         ("z_roi_cuda_stereo_sgm",),
@@ -512,6 +550,15 @@ RELAXED_CASES = (
         support_field="roi_cuda_stereo_sgm_support",
         yaml_scalars=DENSE_PATCH9_SWEEP,
         note="P2 sweep: OpenCV CUDA StereoSGM larger aggregation window",
+    ),
+    Case(
+        "opencv_cuda_stereo_sgm_diagnostic_only",
+        {"roi_cuda_stereo_sgm": True},
+        ("z_roi_cuda_stereo_sgm",),
+        support_field="roi_cuda_stereo_sgm_support",
+        yaml_scalars={**DENSE_PATCH9_SWEEP, **P2_DIAGNOSTIC_ONLY},
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaStereoSGM",
+        note="diagnostic lane only: OpenCV CUDA StereoSGM runs from independent GPU snapshot; no CSV candidate writeback",
     ),
     Case(
         "neural_xfeat_relaxed",
@@ -829,6 +876,14 @@ def prepare_config(
         text = set_yaml_bool(text, "subpixel_enabled", case.subpixel_enabled)
     for key, value in case.yaml_scalars.items():
         text = set_yaml_scalar(text, key, value)
+    if "P2FeatureJobDiagnostic" in (case.algo_stage_override or ""):
+        diag_csv = out_dir / f"{case.name}.p2_diagnostic.csv"
+        text = set_yaml_scalar(text, "p2_diagnostic_results_enabled", "true")
+        text = set_yaml_scalar(
+            text,
+            "p2_diagnostic_results_path",
+            f'"{diag_csv}"',
+        )
     if case.neural_backend:
         text = upsert_neural_block(text, render_neural_block(case, neural_model_dir))
     cfg = config_dir / f"{case.name}.yaml"
@@ -854,6 +909,8 @@ def count_frame_rows(frames_path: Path) -> int:
 
 
 def profile_stage_for_case(case: Case) -> str:
+    if case.algo_stage_override:
+        return case.algo_stage_override
     if case.neural_backend:
         return "Stage2_NeuralFeatureMatch"
     if case.modes.get("roi_orb_points"):
@@ -894,6 +951,12 @@ def classify_case_result(row: dict[str, str]) -> str:
         return "skipped_missing_dependency"
     if status == "failed":
         return "pipeline_failed"
+    if row_int(row, "p2_diag_rows") > 0:
+        if row_int(row, "p2_diag_over_deadline") > 0:
+            return "diagnostic_over_deadline"
+        if row_int(row, "p2_diag_valid") > 0:
+            return "diagnostic_ok"
+        return "diagnostic_ran_but_no_valid_candidate"
 
     stale_or_expired = (
         row_int(row, "async_drop_stale_count") +
@@ -993,6 +1056,85 @@ def summarize_candidate_csv(case: Case, csv_path: Path, frames_path: Path) -> di
         "support_median": support_s,
         "field_valids": field_valids,
         "target_rows": str(target_total),
+    }
+
+
+def summarize_diagnostic_csv(csv_path: Path) -> dict[str, str]:
+    empty = {
+        "p2_diag_rows": "",
+        "p2_diag_valid": "",
+        "p2_diag_invalid": "",
+        "p2_diag_rate": "",
+        "p2_diag_over_deadline": "",
+        "p2_diag_median_m": "",
+        "p2_diag_mad_m": "",
+        "p2_diag_support_median": "",
+        "p2_diag_attempted_median": "",
+        "p2_diag_status_counts": "",
+        "p2_diag_mode_counts": "",
+        "p2_diag_path": "",
+    }
+    if not csv_path.exists():
+        return empty
+
+    with csv_path.open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    total = len(rows)
+    if total == 0:
+        return {**empty, "p2_diag_rows": "0", "p2_diag_path": str(csv_path)}
+
+    valid_depths: list[float] = []
+    supports: list[float] = []
+    attempted_values: list[float] = []
+    status_counts: dict[str, int] = {}
+    mode_counts: dict[str, int] = {}
+    valid = 0
+    over_deadline = 0
+    for row in rows:
+        status = row.get("status", "")
+        mode = row.get("mode", "")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        if row.get("valid") == "1":
+            valid += 1
+            z_m = parse_float(row.get("z_m"))
+            if z_m is not None and z_m > 0.0:
+                valid_depths.append(z_m)
+        if row.get("over_deadline") == "1":
+            over_deadline += 1
+        support = parse_float(row.get("support"))
+        if support is not None and support >= 0.0:
+            supports.append(support)
+        attempted = parse_float(row.get("attempted"))
+        if attempted is not None and attempted >= 0.0:
+            attempted_values.append(attempted)
+
+    if valid_depths:
+        med = median(valid_depths)
+        mad = median(abs(v - med) for v in valid_depths)
+        med_s = f"{med:.4f}"
+        mad_s = f"{mad:.4f}"
+    else:
+        med_s = ""
+        mad_s = ""
+
+    return {
+        "p2_diag_rows": str(total),
+        "p2_diag_valid": str(valid),
+        "p2_diag_invalid": str(total - valid),
+        "p2_diag_rate": f"{valid / total:.3f}" if total else "",
+        "p2_diag_over_deadline": str(over_deadline),
+        "p2_diag_median_m": med_s,
+        "p2_diag_mad_m": mad_s,
+        "p2_diag_support_median": f"{median(supports):.1f}" if supports else "",
+        "p2_diag_attempted_median": f"{median(attempted_values):.1f}" if attempted_values else "",
+        "p2_diag_status_counts": ";".join(
+            f"{k}={v}" for k, v in sorted(status_counts.items())
+        ),
+        "p2_diag_mode_counts": ";".join(
+            f"{k}={v}" for k, v in sorted(mode_counts.items())
+        ),
+        "p2_diag_path": str(csv_path),
     }
 
 
@@ -1143,6 +1285,18 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "support_median": "",
         "field_valids": "",
         "target_rows": "",
+        "p2_diag_rows": "",
+        "p2_diag_valid": "",
+        "p2_diag_invalid": "",
+        "p2_diag_rate": "",
+        "p2_diag_over_deadline": "",
+        "p2_diag_median_m": "",
+        "p2_diag_mad_m": "",
+        "p2_diag_support_median": "",
+        "p2_diag_attempted_median": "",
+        "p2_diag_status_counts": "",
+        "p2_diag_mode_counts": "",
+        "p2_diag_path": "",
         "diagnosis": "",
         "debug_feature_dir": "",
         "debug_realtime_dir": "",
@@ -1241,6 +1395,18 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "support_median": "",
         "field_valids": "",
         "target_rows": "",
+        "p2_diag_rows": "",
+        "p2_diag_valid": "",
+        "p2_diag_invalid": "",
+        "p2_diag_rate": "",
+        "p2_diag_over_deadline": "",
+        "p2_diag_median_m": "",
+        "p2_diag_mad_m": "",
+        "p2_diag_support_median": "",
+        "p2_diag_attempted_median": "",
+        "p2_diag_status_counts": "",
+        "p2_diag_mode_counts": "",
+        "p2_diag_path": "",
         "diagnosis": "skipped_missing_dependency",
         "debug_feature_dir": "",
         "debug_realtime_dir": "",
@@ -1264,6 +1430,9 @@ def run_case(project: Path, binary: Path, duration_sec: int, case: Case, cfg: Pa
         case,
         out_dir / f"{case.name}.csv",
         out_dir / f"{case.name}.frames.csv",
+    ))
+    row.update(summarize_diagnostic_csv(
+        out_dir / f"{case.name}.p2_diagnostic.csv",
     ))
     row["diagnosis"] = classify_case_result(row)
     return row
@@ -1343,10 +1512,27 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
         "- `realtime_path_used_cpu_or_host_gray` means the supposedly realtime P2 run triggered CPU fallback or host gray D2H and must be rerun with those paths disabled.",
         "- `debug_dirs` is populated only when `--debug-on-failure` is used.",
         "",
-        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for row in rows:
+        has_diag_rows = bool(row.get("p2_diag_rows"))
+        rate_value = (
+            row.get("p2_diag_rate", "")
+            if has_diag_rows else row.get("candidate_rate", "")
+        )
+        median_value = (
+            row.get("p2_diag_median_m", "")
+            if has_diag_rows else row.get("candidate_median_m", "")
+        )
+        mad_value = (
+            row.get("p2_diag_mad_m", "")
+            if has_diag_rows else row.get("candidate_mad_m", "")
+        )
+        support_value = (
+            row.get("p2_diag_support_median", "")
+            if has_diag_rows else row.get("support_median", "")
+        )
         stale_expired = (
             row_int(row, "async_drop_stale_count") +
             row_int(row, "async_drop_stale_ready_count") +
@@ -1377,9 +1563,12 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
             str(queue_drop) if queue_drop else "",
             f'{row.get("candidate_valid", "")}/{row.get("candidate_rows", "")}'
             if row.get("candidate_rows") else "",
-            row.get("candidate_rate", ""),
-            f'{row.get("candidate_median_m", "")}/{row.get("candidate_mad_m", "")}',
-            row.get("support_median", ""),
+            f'{row.get("p2_diag_valid", "")}/{row.get("p2_diag_rows", "")}'
+            if row.get("p2_diag_rows") else "",
+            row.get("p2_diag_over_deadline", ""),
+            rate_value,
+            f"{median_value}/{mad_value}",
+            support_value,
             row.get("async_accepted_count", ""),
             row.get("async_frame_callback_skipped_count", ""),
             f'{row.get("async_need_host_gray_count", "")}/{row.get("async_host_gray_submit_count", "")}',
