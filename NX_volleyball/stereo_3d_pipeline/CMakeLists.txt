@@ -180,6 +180,7 @@ set(PIPELINE_SOURCES
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
+  src/stereo/depth_candidate_contract.cpp
   src/stereo/depth_candidate_builder.cpp
   src/stereo/depth_match_contract.cpp
   src/stereo/dual_yolo_depth_gpu.cpp
