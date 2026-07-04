@@ -147,6 +147,18 @@ performance:
   async_roi_stage2: true        # 检测帧 ROI/IoU/特征候选异步执行；tracker detect_interval>1 时自动禁用，避免倒序更新深度
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
   async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
+  p2_feature_job_scaffold_enabled: false      # 预留拆分 P2 FeatureJob；默认 false 保持完整 Stage2 inline 行为
+  p2_realtime_lane_decision_enabled: true      # realtime lane 触发决策观测，不改变当前 inline 执行
+  p2_diagnostic_lane_decision_enabled: false   # diagnostic lane 低频决策观测，独立 worker 待实测后启用
+  p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
+  p2_trigger_on_fallback: true
+  p2_trigger_on_direct_pair: false
+  p2_trigger_on_host_gray: false
+  p2_trigger_on_bgr: false
+  p2_diagnostic_stride: 10
+  p2_diagnostic_max_in_flight: 1
+  p2_realtime_deadline_ms: 10.0
+  p2_diagnostic_deadline_ms: 50.0
 
 tracker:
   enabled: false

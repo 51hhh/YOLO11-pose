@@ -13,6 +13,7 @@
 namespace stereo3d {
 
 struct Object3D;
+struct FrameMetadata;
 
 struct TrajectoryFrameSummaryStats {
     int tracked_count = 0;
@@ -46,6 +47,7 @@ void writeTrajectoryFrameSummaryHeader(std::ostream& os);
 void writeTrajectoryFrameSummaryRow(std::ostream& os,
                                     int frame_id,
                                     double timestamp,
+                                    const FrameMetadata& metadata,
                                     std::size_t result_count,
                                     const TrajectoryFrameSummaryStats& stats);
 

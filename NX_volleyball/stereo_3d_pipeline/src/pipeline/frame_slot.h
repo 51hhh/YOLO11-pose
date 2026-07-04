@@ -64,6 +64,16 @@ struct FrameMetadata {
     int64_t timestamp_delta_us = 0;
     bool grab_failed = false;
     bool is_detect_frame = true;
+    bool p2_depth_modes_enabled = false;
+    uint32_t p2_depth_mode_mask = 0;
+    bool p2_feature_job_scaffold_enabled = false;
+    bool p2_realtime_requested = false;
+    bool p2_diagnostic_requested = false;
+    uint32_t p2_realtime_triggers = 0;
+    uint32_t p2_diagnostic_triggers = 0;
+    int p2_feature_job_count = 0;
+    int p2_left_count = 0;
+    int p2_right_count = 0;
 };
 
 /**
@@ -110,6 +120,16 @@ struct FrameSlot {
     SOTResult sot_bbox_result;            ///< SOT tracker 输出
     BboxSource bbox_source = BboxSource::NONE; ///< 最终 bbox 来源
     bool is_detect_frame = true;          ///< 是否为 YOLO 检测帧
+    bool p2_depth_modes_enabled = false;
+    uint32_t p2_depth_mode_mask = 0;
+    bool p2_feature_job_scaffold_enabled = false;
+    bool p2_realtime_requested = false;
+    bool p2_diagnostic_requested = false;
+    uint32_t p2_realtime_triggers = 0;
+    uint32_t p2_diagnostic_triggers = 0;
+    int p2_feature_job_count = 0;
+    int p2_left_count = 0;
+    int p2_right_count = 0;
 
     // =========== Stage 2: 视差图 ===========
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
@@ -228,6 +248,16 @@ struct FrameSlot {
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        p2_depth_modes_enabled = false;
+        p2_depth_mode_mask = 0;
+        p2_feature_job_scaffold_enabled = false;
+        p2_realtime_requested = false;
+        p2_diagnostic_requested = false;
+        p2_realtime_triggers = 0;
+        p2_diagnostic_triggers = 0;
+        p2_feature_job_count = 0;
+        p2_left_count = 0;
+        p2_right_count = 0;
     }
 };
 
@@ -252,6 +282,16 @@ inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
          static_cast<int64_t>(slot.right_timestamp_us)) / 1000;
     meta.grab_failed = slot.grab_failed;
     meta.is_detect_frame = slot.is_detect_frame;
+    meta.p2_depth_modes_enabled = slot.p2_depth_modes_enabled;
+    meta.p2_depth_mode_mask = slot.p2_depth_mode_mask;
+    meta.p2_feature_job_scaffold_enabled = slot.p2_feature_job_scaffold_enabled;
+    meta.p2_realtime_requested = slot.p2_realtime_requested;
+    meta.p2_diagnostic_requested = slot.p2_diagnostic_requested;
+    meta.p2_realtime_triggers = slot.p2_realtime_triggers;
+    meta.p2_diagnostic_triggers = slot.p2_diagnostic_triggers;
+    meta.p2_feature_job_count = slot.p2_feature_job_count;
+    meta.p2_left_count = slot.p2_left_count;
+    meta.p2_right_count = slot.p2_right_count;
     return meta;
 }
 

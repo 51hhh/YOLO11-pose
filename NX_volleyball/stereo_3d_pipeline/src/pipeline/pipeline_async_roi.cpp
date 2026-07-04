@@ -72,6 +72,33 @@ void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
     slot.right_trigger_index = meta.right_trigger_index;
     slot.grab_failed = meta.grab_failed;
     slot.is_detect_frame = meta.is_detect_frame;
+    slot.p2_depth_modes_enabled = meta.p2_depth_modes_enabled;
+    slot.p2_depth_mode_mask = meta.p2_depth_mode_mask;
+    slot.p2_feature_job_scaffold_enabled =
+        meta.p2_feature_job_scaffold_enabled;
+    slot.p2_realtime_requested = meta.p2_realtime_requested;
+    slot.p2_diagnostic_requested = meta.p2_diagnostic_requested;
+    slot.p2_realtime_triggers = meta.p2_realtime_triggers;
+    slot.p2_diagnostic_triggers = meta.p2_diagnostic_triggers;
+    slot.p2_feature_job_count = meta.p2_feature_job_count;
+    slot.p2_left_count = meta.p2_left_count;
+    slot.p2_right_count = meta.p2_right_count;
+}
+
+void applyP2FeatureJobDecisionToSlot(
+    FrameSlot& slot,
+    const P2FeatureJobDecision& decision,
+    const std::vector<P2FeatureJobDescriptor>& jobs) {
+    slot.p2_depth_modes_enabled = decision.p2_depth_modes_enabled;
+    slot.p2_depth_mode_mask = decision.depth_mode_mask;
+    slot.p2_feature_job_scaffold_enabled = decision.split_feature_jobs;
+    slot.p2_realtime_requested = decision.realtime_requested;
+    slot.p2_diagnostic_requested = decision.diagnostic_requested;
+    slot.p2_realtime_triggers = decision.realtime_triggers;
+    slot.p2_diagnostic_triggers = decision.diagnostic_triggers;
+    slot.p2_feature_job_count = static_cast<int>(jobs.size());
+    slot.p2_left_count = decision.left_count;
+    slot.p2_right_count = decision.right_count;
 }
 
 }  // namespace
@@ -672,6 +699,36 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     if (need_bgr) {
         globalPerf().record("Stage2_AsyncRoiNeedBgr", 0.0);
     }
+    const P2FeatureJobPolicy p2_policy = makeP2FeatureJobPolicy(config_);
+    const P2FeatureJobDecision p2_decision = decideP2FeatureJobs(
+        p2_policy,
+        slot.frame_id,
+        slot.detections,
+        slot.detections_right,
+        need_host_gray,
+        need_bgr);
+    std::vector<P2FeatureJobDescriptor> p2_feature_jobs =
+        buildP2FeatureJobDescriptors(
+            p2_policy,
+            p2_decision,
+            need_host_gray,
+            need_bgr);
+    if (p2_decision.p2_depth_modes_enabled) {
+        globalPerf().record("Stage2_P2FeatureJobConfigured", 0.0);
+    }
+    if (p2_decision.realtime_requested) {
+        globalPerf().record("Stage2_P2FeatureJobRealtimeRequested", 0.0);
+    } else if (p2_decision.p2_depth_modes_enabled) {
+        globalPerf().record("Stage2_P2FeatureJobRealtimeNotAttempted", 0.0);
+    }
+    if (p2_decision.diagnostic_requested) {
+        globalPerf().record("Stage2_P2FeatureJobDiagnosticRequested", 0.0);
+    }
+    if (p2_policy.split_feature_jobs && p2_feature_jobs.empty() &&
+        p2_decision.p2_depth_modes_enabled) {
+        globalPerf().record("Stage2_P2FeatureJobSplitNoJob", 0.0);
+    }
+    applyP2FeatureJobDecisionToSlot(slot, p2_decision, p2_feature_jobs);
 
     ScopedTimer tsnap("Stage2_AsyncRoiSnapshot");
     if (!snapshotAsyncRoiImages(slot, buffer, need_host_gray, need_bgr)) {
@@ -704,6 +761,8 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     task.bgr_valid = need_bgr;
     task.copy_event_recorded = buffer.copy_event_recorded;
     task.metadata = makeFrameMetadata(slot);
+    task.p2_feature_decision = p2_decision;
+    task.p2_feature_jobs = std::move(p2_feature_jobs);
     task.input.frame_id = slot.frame_id;
     task.input.left_detections = slot.detections;
     task.input.right_detections = slot.detections_right;
@@ -796,6 +855,13 @@ void Pipeline::asyncRoiWorkerLoop() {
             }
             if (task.bgr_valid) {
                 globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
+            }
+            if (task.p2_feature_decision.p2_depth_modes_enabled) {
+                globalPerf().record("Stage2_P2FeatureJobInlineStage2", 0.0);
+            }
+            if (task.p2_feature_decision.split_feature_jobs &&
+                !task.p2_feature_jobs.empty()) {
+                globalPerf().record("Stage2_P2FeatureJobInlineFallback", 0.0);
             }
             std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
             output = runRoiStage2Core(task.input);

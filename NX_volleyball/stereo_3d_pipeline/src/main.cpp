@@ -194,7 +194,9 @@ int main(int argc, char* argv[]) {
 
     if (!baseline_cfg.enabled) {
         pipeline.setResultCallback(
-            [&](int frame_id, const std::vector<stereo3d::Object3D>& results) {
+            [&](int frame_id,
+                const std::vector<stereo3d::Object3D>& results,
+                const stereo3d::FrameMetadata& metadata) {
             // 计算 dt
             auto now = std::chrono::steady_clock::now();
             double dt = 0.01; // 默认 100fps
@@ -214,7 +216,7 @@ int main(int argc, char* argv[]) {
             // 记录轨迹
             double timestamp = std::chrono::duration<double>(
                 now.time_since_epoch()).count();
-            recorder.record(frame_id, timestamp, results, preds);
+            recorder.record(frame_id, timestamp, results, preds, metadata);
 
             // ROS2 发布
 #ifdef HAS_ROS2

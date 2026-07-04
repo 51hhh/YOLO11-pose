@@ -16,7 +16,10 @@ namespace stereo3d {
 /**
  * @brief 结果回调
  */
-using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
+using ResultCallback = std::function<void(
+    int frame_id,
+    const std::vector<Object3D>& results,
+    const FrameMetadata& metadata)>;
 
 /**
  * @brief 帧回调视图。

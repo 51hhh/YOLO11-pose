@@ -64,7 +64,9 @@ void Pipeline::pipelineLoop() {
             }
 
             if (result_callback_) {
-                result_callback_(slot.frame_id, slot.results);
+                result_callback_(slot.frame_id,
+                                 slot.results,
+                                 makeFrameMetadata(slot));
             }
 
             if (frame_callback_) {
@@ -184,7 +186,11 @@ void Pipeline::pipelineLoop() {
         vpiStreamSync(streams_.vpiStreamGPU);
 
         stage3_fuse(slot, slot_idx);
-        if (result_callback_) result_callback_(slot.frame_id, slot.results);
+        if (result_callback_) {
+            result_callback_(slot.frame_id,
+                             slot.results,
+                             makeFrameMetadata(slot));
+        }
 
         next_fuse_frame++;
     }

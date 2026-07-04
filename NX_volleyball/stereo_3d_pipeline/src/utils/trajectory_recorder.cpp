@@ -81,6 +81,14 @@ void TrajectoryRecorder::record(
     int frame_id, double timestamp,
     const std::vector<Object3D>& results,
     const std::vector<LandingPrediction>& preds) {
+    record(frame_id, timestamp, results, preds, FrameMetadata{});
+}
+
+void TrajectoryRecorder::record(
+    int frame_id, double timestamp,
+    const std::vector<Object3D>& results,
+    const std::vector<LandingPrediction>& preds,
+    const FrameMetadata& metadata) {
 
     if (!cfg_.enabled || !running_) return;
 
@@ -95,7 +103,7 @@ void TrajectoryRecorder::record(
             }
             return;
         }
-        queue_.push_back({frame_id, timestamp, results, preds});
+        queue_.push_back({frame_id, timestamp, results, preds, metadata});
     }
     queue_cv_.notify_one();
     frame_count_++;

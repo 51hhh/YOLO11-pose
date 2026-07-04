@@ -158,7 +158,13 @@ TrajectoryFrameSummaryStats summarizeTrajectoryFrame(
 }
 
 void writeTrajectoryFrameSummaryHeader(std::ostream& os) {
-    os << "frame_id,timestamp,result_count,tracked_count,raw_observation_count,"
+    os << "frame_id,timestamp,left_frame_counter,right_frame_counter,"
+       << "frame_counter_delta,frame_number_delta,timestamp_delta_us,"
+       << "grab_failed,is_detect_frame,p2_depth_modes_enabled,"
+       << "p2_depth_mode_mask,p2_feature_job_scaffold_enabled,p2_realtime_requested,"
+       << "p2_diagnostic_requested,p2_feature_job_count,p2_left_count,"
+       << "p2_right_count,p2_realtime_triggers,p2_diagnostic_triggers,"
+       << "result_count,tracked_count,raw_observation_count,"
        << "stereo_observation_count,direct_pair_count,fallback_l2r_count,"
        << "fallback_r2l_count,pair_positive_count,pair_shifted_iou_min,"
        << "pair_shifted_iou_mean,pair_score_mean,pair_bbox_prior_penalty_mean,"
@@ -172,10 +178,28 @@ void writeTrajectoryFrameSummaryHeader(std::ostream& os) {
 void writeTrajectoryFrameSummaryRow(std::ostream& os,
                                     int frame_id,
                                     double timestamp,
+                                    const FrameMetadata& metadata,
                                     std::size_t result_count,
                                     const TrajectoryFrameSummaryStats& stats) {
     os << frame_id << ","
        << std::fixed << std::setprecision(6) << timestamp << ","
+       << metadata.left_frame_counter << ","
+       << metadata.right_frame_counter << ","
+       << metadata.frame_counter_delta << ","
+       << metadata.frame_number_delta << ","
+       << metadata.timestamp_delta_us << ","
+       << (metadata.grab_failed ? 1 : 0) << ","
+       << (metadata.is_detect_frame ? 1 : 0) << ","
+       << (metadata.p2_depth_modes_enabled ? 1 : 0) << ","
+       << metadata.p2_depth_mode_mask << ","
+       << (metadata.p2_feature_job_scaffold_enabled ? 1 : 0) << ","
+       << (metadata.p2_realtime_requested ? 1 : 0) << ","
+       << (metadata.p2_diagnostic_requested ? 1 : 0) << ","
+       << metadata.p2_feature_job_count << ","
+       << metadata.p2_left_count << ","
+       << metadata.p2_right_count << ","
+       << metadata.p2_realtime_triggers << ","
+       << metadata.p2_diagnostic_triggers << ","
        << result_count << ","
        << stats.tracked_count << ","
        << stats.raw_count << ","

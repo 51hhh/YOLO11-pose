@@ -61,6 +61,10 @@ public:
     void record(int frame_id, double timestamp,
                 const std::vector<Object3D>& results,
                 const std::vector<LandingPrediction>& preds);
+    void record(int frame_id, double timestamp,
+                const std::vector<Object3D>& results,
+                const std::vector<LandingPrediction>& preds,
+                const FrameMetadata& metadata);
 
     void close();
 
@@ -74,6 +78,7 @@ private:
         double timestamp;
         std::vector<Object3D> results;
         std::vector<LandingPrediction> preds;
+        FrameMetadata metadata;
     };
 
     TrajectoryRecorderConfig cfg_;

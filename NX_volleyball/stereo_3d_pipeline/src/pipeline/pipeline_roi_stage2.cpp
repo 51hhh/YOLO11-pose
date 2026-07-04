@@ -244,7 +244,9 @@ void Pipeline::applyRoiStage2Output(FrameSlot& slot,
 void Pipeline::publishRoiResultCallback(FrameSlot& slot) {
     if (result_callback_) {
         ScopedTimer trc("Stage2_ResultCB");
-        result_callback_(slot.frame_id, slot.results);
+        result_callback_(slot.frame_id,
+                         slot.results,
+                         makeFrameMetadata(slot));
         globalPerf().record("Stage2_ResultCB", trc.elapsedMs());
     }
 }
@@ -298,6 +300,40 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
 
     const bool need_host_images =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
+    const bool neural_needs_bgr =
+        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+    const bool has_stereo_detections =
+        !slot.detections.empty() && !slot.detections_right.empty();
+    const bool need_bgr =
+        colorPipelineEnabled() &&
+        has_stereo_detections &&
+        (config_.dual_yolo.depth_roi_iou_region_color_patch ||
+         config_.dual_yolo.depth_roi_patch_iou_color_edge ||
+         neural_needs_bgr);
+    const P2FeatureJobPolicy p2_policy = makeP2FeatureJobPolicy(config_);
+    const P2FeatureJobDecision p2_decision = decideP2FeatureJobs(
+        p2_policy,
+        slot.frame_id,
+        slot.detections,
+        slot.detections_right,
+        need_host_images,
+        need_bgr);
+    const std::vector<P2FeatureJobDescriptor> p2_feature_jobs =
+        buildP2FeatureJobDescriptors(
+            p2_policy,
+            p2_decision,
+            need_host_images,
+            need_bgr);
+    slot.p2_depth_modes_enabled = p2_decision.p2_depth_modes_enabled;
+    slot.p2_depth_mode_mask = p2_decision.depth_mode_mask;
+    slot.p2_feature_job_scaffold_enabled = p2_decision.split_feature_jobs;
+    slot.p2_realtime_requested = p2_decision.realtime_requested;
+    slot.p2_diagnostic_requested = p2_decision.diagnostic_requested;
+    slot.p2_realtime_triggers = p2_decision.realtime_triggers;
+    slot.p2_diagnostic_triggers = p2_decision.diagnostic_triggers;
+    slot.p2_feature_job_count = static_cast<int>(p2_feature_jobs.size());
+    slot.p2_left_count = p2_decision.left_count;
+    slot.p2_right_count = p2_decision.right_count;
     VPIImageData hostDataL, hostDataR;
     bool lockedL = false;
     bool lockedR = false;

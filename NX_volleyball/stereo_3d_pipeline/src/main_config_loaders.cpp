@@ -188,6 +188,35 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
             cfg.async_roi_buffers = perf["async_roi_buffers"].as<int>();
         if (perf["async_roi_deadline_ms"])
             cfg.async_roi_deadline_ms = perf["async_roi_deadline_ms"].as<float>();
+        if (perf["p2_feature_job_scaffold_enabled"])
+            cfg.p2_feature_job_scaffold_enabled =
+                perf["p2_feature_job_scaffold_enabled"].as<bool>();
+        if (perf["p2_realtime_lane_decision_enabled"])
+            cfg.p2_realtime_lane_decision_enabled =
+                perf["p2_realtime_lane_decision_enabled"].as<bool>();
+        if (perf["p2_diagnostic_lane_decision_enabled"])
+            cfg.p2_diagnostic_lane_decision_enabled =
+                perf["p2_diagnostic_lane_decision_enabled"].as<bool>();
+        if (perf["p2_selective_trigger"])
+            cfg.p2_selective_trigger = perf["p2_selective_trigger"].as<bool>();
+        if (perf["p2_trigger_on_fallback"])
+            cfg.p2_trigger_on_fallback = perf["p2_trigger_on_fallback"].as<bool>();
+        if (perf["p2_trigger_on_direct_pair"])
+            cfg.p2_trigger_on_direct_pair = perf["p2_trigger_on_direct_pair"].as<bool>();
+        if (perf["p2_trigger_on_host_gray"])
+            cfg.p2_trigger_on_host_gray = perf["p2_trigger_on_host_gray"].as<bool>();
+        if (perf["p2_trigger_on_bgr"])
+            cfg.p2_trigger_on_bgr = perf["p2_trigger_on_bgr"].as<bool>();
+        if (perf["p2_diagnostic_stride"])
+            cfg.p2_diagnostic_stride = perf["p2_diagnostic_stride"].as<int>();
+        if (perf["p2_diagnostic_max_in_flight"])
+            cfg.p2_diagnostic_max_in_flight =
+                perf["p2_diagnostic_max_in_flight"].as<int>();
+        if (perf["p2_realtime_deadline_ms"])
+            cfg.p2_realtime_deadline_ms = perf["p2_realtime_deadline_ms"].as<float>();
+        if (perf["p2_diagnostic_deadline_ms"])
+            cfg.p2_diagnostic_deadline_ms =
+                perf["p2_diagnostic_deadline_ms"].as<float>();
     }
     if (!camera_trigger_frequency_set) {
         cfg.camera.trigger_frequency_hz = cfg.trigger_freq_hz;

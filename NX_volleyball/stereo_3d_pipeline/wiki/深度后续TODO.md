@@ -13,15 +13,17 @@
 
 ## P2 CUDA 候选
 
-- [ ] 按 [架构调度优化](架构调度优化.md) 设计 realtime lane / diagnostic lane，P2 迟到结果不能阻塞 P0/P1。
+- [x] 按 [架构调度优化](架构调度优化.md) 设计 realtime lane / diagnostic lane，P2 迟到结果不能阻塞 P0/P1。
 - [ ] 评估是否可将 P2 FeatureJob 从完整 `runRoiStage2Core()` 中拆出，支持低频、迟到和按 frame id 落盘。
+  - 已完成 FeatureJob 配置、决策结构和 async ROI 提交流程观测点；独立 worker/迟到落盘仍待 NX 编译和 100fps 实测。
 - [ ] 缩小或移除 `roi_postprocess_mutex_` 对独立 P2 job 的影响。
 - [ ] OpenCV CUDA P2 使用独立 stream/scratch/matcher 实例，测试多个 OpenCV CUDA 算法并行是否存在隐式同步或尾延迟放大。
 - [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
 - [ ] 增加 P2 选择性触发: P0/P1 分歧、pair gate 变差、fallback、帧间跳变或运动残差异常时才运行。
+  - 已接入 fallback/direct/host-gray/BGR 初始触发开关；P0/P1 分歧、pair gate 变差和运动残差触发仍待实现。
 - [ ] 增加 P2 attempted/not_attempted/valid/reject reason 统计，避免把未触发当成无效。
   - 矩阵报告层已有 `candidate_attempted`、`candidate_not_attempted`、`candidate_valid` 和粗粒度 `candidate_reject_reason`；精确逐帧 reject reason 仍需新增实时字段。
-  - TrajectoryRecorder `.frames.csv` 已有 P2 `observed/valid/feature/cuda/neural` 粗统计；仍需实时字段区分未触发、触发无效、过期和精确 gate reject reason。
+  - TrajectoryRecorder `.frames.csv` 已有 P2 调度状态、`p2_depth_mode_mask`、trigger mask 和 `observed/valid/feature/cuda/neural` 粗统计；仍需补精确 gate reject reason 和 async stale/drop 未发布帧统计。
 - [ ] 将整帧 async snapshot 优化为 realtime ROI pack / diagnostic full snapshot 分层。
 - [ ] 评估固定自研 CUDA P2 pipeline 是否适合 CUDA Graph 降低 launch overhead。
 - [x] profiler 增加 p50/p90/p95/p99，用于 P2 准入；drop/accepted ratio 继续由矩阵脚本统计。

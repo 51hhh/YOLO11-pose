@@ -183,6 +183,18 @@ struct PipelineConfig {
     bool async_roi_stage2 = false; ///< ROI_ONLY 检测帧异步执行 IoU/ROI 特征/候选深度
     int async_roi_buffers = 3;     ///< 异步 ROI 图像快照缓冲数 (running + pending + free)
     float async_roi_deadline_ms = 10.0f; ///< 期望在下一帧 YOLO ready 前完成的软预算
+    bool p2_feature_job_scaffold_enabled = false; ///< 预留: P2 独立 FeatureJob 骨架开关
+    bool p2_realtime_lane_decision_enabled = true; ///< P2 realtime lane 决策观测开关
+    bool p2_diagnostic_lane_decision_enabled = false; ///< P2 diagnostic lane 决策观测开关
+    bool p2_selective_trigger = false; ///< 仅在 fallback/质量异常等条件触发 P2
+    bool p2_trigger_on_fallback = true; ///< selective 模式下单侧漏检触发 P2
+    bool p2_trigger_on_direct_pair = false; ///< selective 模式下直接 pair 也触发 P2
+    bool p2_trigger_on_host_gray = false; ///< selective 模式下 CPU/host gray 需求触发 P2
+    bool p2_trigger_on_bgr = false; ///< selective 模式下 BGR/color 需求触发 P2
+    int p2_diagnostic_stride = 10; ///< diagnostic lane 每 N 帧尝试一次
+    int p2_diagnostic_max_in_flight = 1; ///< diagnostic lane 最大在途 job 数
+    float p2_realtime_deadline_ms = 10.0f; ///< P2 realtime lane deadline
+    float p2_diagnostic_deadline_ms = 50.0f; ///< P2 diagnostic lane 软 deadline
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR

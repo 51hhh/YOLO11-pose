@@ -107,6 +107,8 @@ recording:
 
 写入器是后台线程。队列满时应丢记录，不能反向阻塞 100fps 管线。
 
+实时 recorder 还会生成同名前缀 `*.frames.csv` sidecar。它记录每帧同步水印、`result_count`、direct/fallback 数量、pair gate 统计、P2 候选 observed/valid 计数，以及 P2 调度状态字段 `p2_depth_modes_enabled`、`p2_depth_mode_mask`、`p2_realtime_requested`、`p2_diagnostic_requested`、`p2_feature_job_count` 和 trigger mask。该 sidecar 用于区分“未触发 P2”和“触发但候选无效”。
+
 ## 基准片段 CSV
 
 定义位置: `src/utils/baseline_clip_recorder.*`

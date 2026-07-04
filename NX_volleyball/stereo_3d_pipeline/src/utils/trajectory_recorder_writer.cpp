@@ -137,6 +137,7 @@ void TrajectoryRecorder::writeFrameSummary(const RecordEntry& entry) {
     writeTrajectoryFrameSummaryRow(frame_file_,
                                    entry.frame_id,
                                    entry.timestamp,
+                                   entry.metadata,
                                    entry.results.size(),
                                    stats);
 }

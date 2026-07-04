@@ -22,6 +22,7 @@
 #include "frame_slot.h"
 #include "pipeline_callbacks.h"
 #include "pipeline_config.h"
+#include "pipeline_feature_jobs.h"
 #include "sync.h"
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
 #ifndef HIK_CAMERA_ENABLED
@@ -264,6 +265,8 @@ private:
         bool copy_event_recorded = false;
         FrameMetadata metadata;
         RoiStage2Input input;
+        P2FeatureJobDecision p2_feature_decision;
+        std::vector<P2FeatureJobDescriptor> p2_feature_jobs;
     };
     struct AsyncRoiResult {
         int frame_id = -1;
