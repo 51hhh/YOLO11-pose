@@ -9,6 +9,7 @@ from pathlib import Path
 from nx_algorithm_candidate_summary import count_frame_rows, parse_float, summarize_candidate_csv
 from nx_algorithm_cases import Case
 from nx_algorithm_diagnosis import classify_case_result, parse_int, row_int, should_debug_case
+from nx_algorithm_profile import parse_profile_stage, profile_stage_for_case
 
 
 SKIPPED_ROW_FIELDS = """
@@ -37,83 +38,47 @@ neural_stub_or_unbound log note last_error_or_warn
 """.split()
 
 
-def profile_stage_for_case(case: Case) -> str:
-    if case.neural_backend:
-        return "Stage2_NeuralFeatureMatch"
-    if case.modes.get("roi_orb_points"):
-        return "Stage2_OpenCVCudaORB"
-    if case.modes.get("roi_brisk_points"):
-        return "Stage2_CPUFeatureOpenCVBRISK"
-    if case.modes.get("roi_akaze_points"):
-        return "Stage2_CPUFeatureOpenCVAKAZE"
-    if case.modes.get("roi_sift_points"):
-        return "Stage2_CPUFeatureOpenCVSIFT"
-    if case.modes.get("roi_cuda_template_match"):
-        return "Stage2_OpenCVCudaTemplateMatch"
-    if case.modes.get("roi_cuda_stereo_bm"):
-        return "Stage2_OpenCVCudaStereoBM"
-    if case.modes.get("roi_cuda_stereo_sgm"):
-        return "Stage2_OpenCVCudaStereoSGM"
-    if case.modes.get("roi_subpixel"):
-        return "Stage2_SubpixelMatch"
-    return "Stage2_DualYoloGpuCandidates"
-
 def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
     fps_matches = re.findall(r"\[ROI\] FPS:\s*([0-9.]+).*?stale_drop=([0-9]+)", log)
 
-    def stage(name: str) -> tuple[str, str, str, str, str, str, str, str]:
-        matches = re.findall(
-            rf"^{re.escape(name)}\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+(\d+)"
-            rf"(?:\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+))?",
-            log,
-            re.M,
-        )
-        if not matches:
-            return ("", "", "", "", "", "", "", "")
-        match = matches[-1]
-        return (
-            match[0], match[1], match[2], match[3],
-            match[4] or "", match[5] or "", match[6] or "", match[7] or "",
-        )
-
-    stage_gpu = stage("Stage2_DualYoloGpuCandidates")
-    stage_match = stage("Stage2_DualYoloMatch")
-    subpixel = stage("Stage2_SubpixelMatch")
-    neural = stage("Stage2_NeuralFeatureMatch")
-    opencv_cuda_orb = stage("Stage2_OpenCVCudaORB")
-    opencv_cuda_template = stage("Stage2_OpenCVCudaTemplateMatch")
-    opencv_cuda_bm = stage("Stage2_OpenCVCudaStereoBM")
-    opencv_cuda_sgm = stage("Stage2_OpenCVCudaStereoSGM")
-    cpu_opencv = stage("Stage2_CPUFeatureOpenCV")
-    cpu_opencv_orb = stage("Stage2_CPUFeatureOpenCVORB")
-    cpu_opencv_brisk = stage("Stage2_CPUFeatureOpenCVBRISK")
-    cpu_opencv_akaze = stage("Stage2_CPUFeatureOpenCVAKAZE")
-    cpu_opencv_sift = stage("Stage2_CPUFeatureOpenCVSIFT")
-    cpu_fallback = stage("Stage2_CPUFallbackSearch")
+    stage_gpu = parse_profile_stage(log, "Stage2_DualYoloGpuCandidates")
+    stage_match = parse_profile_stage(log, "Stage2_DualYoloMatch")
+    subpixel = parse_profile_stage(log, "Stage2_SubpixelMatch")
+    neural = parse_profile_stage(log, "Stage2_NeuralFeatureMatch")
+    opencv_cuda_orb = parse_profile_stage(log, "Stage2_OpenCVCudaORB")
+    opencv_cuda_template = parse_profile_stage(log, "Stage2_OpenCVCudaTemplateMatch")
+    opencv_cuda_bm = parse_profile_stage(log, "Stage2_OpenCVCudaStereoBM")
+    opencv_cuda_sgm = parse_profile_stage(log, "Stage2_OpenCVCudaStereoSGM")
+    cpu_opencv = parse_profile_stage(log, "Stage2_CPUFeatureOpenCV")
+    cpu_opencv_orb = parse_profile_stage(log, "Stage2_CPUFeatureOpenCVORB")
+    cpu_opencv_brisk = parse_profile_stage(log, "Stage2_CPUFeatureOpenCVBRISK")
+    cpu_opencv_akaze = parse_profile_stage(log, "Stage2_CPUFeatureOpenCVAKAZE")
+    cpu_opencv_sift = parse_profile_stage(log, "Stage2_CPUFeatureOpenCVSIFT")
+    cpu_fallback = parse_profile_stage(log, "Stage2_CPUFallbackSearch")
     algo_stage_name = profile_stage_for_case(case)
-    algo_stage = stage(algo_stage_name)
-    async_worker = stage("Stage2_AsyncRoiWorker")
-    async_over_deadline = stage("Stage2_AsyncRoiOverDeadline")
-    async_drop_stale = stage("Stage2_AsyncRoiDropStaleResult")
-    async_drop_stale_ready = stage("Stage2_AsyncRoiDropStaleReady")
-    async_drop_expired_pending = stage("Stage2_AsyncRoiDropExpiredPending")
-    async_drop_pending = stage("Stage2_AsyncRoiDropPending")
-    async_drop_no_buffer = stage("Stage2_AsyncRoiDropNoBuffer")
-    async_submit_drop = stage("Stage2_AsyncRoiSubmitDrop")
-    async_no_detections = stage("Stage2_AsyncRoiNoDetections")
-    async_submitted = stage("Stage2_AsyncRoiSubmitted")
-    async_accepted = stage("Stage2_AsyncRoiAccepted")
-    async_accepted_reused = stage("Stage2_AsyncRoiAcceptedReusedSlot")
-    async_frame_cb_skipped = stage("Stage2_AsyncRoiFrameCallbackSkippedReusedSlot")
-    async_need_host_gray = stage("Stage2_AsyncRoiNeedHostGray")
-    async_need_bgr = stage("Stage2_AsyncRoiNeedBgr")
-    async_host_gray_submit = stage("Stage2_AsyncRoiHostGrayD2HSubmit")
-    async_gray_submit = stage("Stage2_AsyncRoiGrayD2DSubmit")
-    async_bgr_submit = stage("Stage2_AsyncRoiBgrD2DSubmit")
-    async_copy_wait = stage("Stage2_AsyncRoiCopyWait")
-    async_slot_copy_wait = stage("Stage2_AsyncRoiSlotCopyWait")
-    async_worker_busy = stage("Stage2_AsyncRoiWorkerBusy")
-    stage2_drop_stale_roi = stage("Stage2_DropStaleROI")
+    algo_stage = parse_profile_stage(log, algo_stage_name)
+    async_worker = parse_profile_stage(log, "Stage2_AsyncRoiWorker")
+    async_over_deadline = parse_profile_stage(log, "Stage2_AsyncRoiOverDeadline")
+    async_drop_stale = parse_profile_stage(log, "Stage2_AsyncRoiDropStaleResult")
+    async_drop_stale_ready = parse_profile_stage(log, "Stage2_AsyncRoiDropStaleReady")
+    async_drop_expired_pending = parse_profile_stage(log, "Stage2_AsyncRoiDropExpiredPending")
+    async_drop_pending = parse_profile_stage(log, "Stage2_AsyncRoiDropPending")
+    async_drop_no_buffer = parse_profile_stage(log, "Stage2_AsyncRoiDropNoBuffer")
+    async_submit_drop = parse_profile_stage(log, "Stage2_AsyncRoiSubmitDrop")
+    async_no_detections = parse_profile_stage(log, "Stage2_AsyncRoiNoDetections")
+    async_submitted = parse_profile_stage(log, "Stage2_AsyncRoiSubmitted")
+    async_accepted = parse_profile_stage(log, "Stage2_AsyncRoiAccepted")
+    async_accepted_reused = parse_profile_stage(log, "Stage2_AsyncRoiAcceptedReusedSlot")
+    async_frame_cb_skipped = parse_profile_stage(log, "Stage2_AsyncRoiFrameCallbackSkippedReusedSlot")
+    async_need_host_gray = parse_profile_stage(log, "Stage2_AsyncRoiNeedHostGray")
+    async_need_bgr = parse_profile_stage(log, "Stage2_AsyncRoiNeedBgr")
+    async_host_gray_submit = parse_profile_stage(log, "Stage2_AsyncRoiHostGrayD2HSubmit")
+    async_gray_submit = parse_profile_stage(log, "Stage2_AsyncRoiGrayD2DSubmit")
+    async_bgr_submit = parse_profile_stage(log, "Stage2_AsyncRoiBgrD2DSubmit")
+    async_copy_wait = parse_profile_stage(log, "Stage2_AsyncRoiCopyWait")
+    async_slot_copy_wait = parse_profile_stage(log, "Stage2_AsyncRoiSlotCopyWait")
+    async_worker_busy = parse_profile_stage(log, "Stage2_AsyncRoiWorkerBusy")
+    stage2_drop_stale_roi = parse_profile_stage(log, "Stage2_DropStaleROI")
     error_lines = [line for line in log.splitlines() if "[ERROR]" in line or "[WARN ]" in line]
     neural_unbound = (
         "does not bind/use NeuralFeatureMatcher outputs yet" in log
