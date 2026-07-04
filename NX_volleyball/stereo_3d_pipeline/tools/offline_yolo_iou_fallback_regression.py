@@ -16,41 +16,488 @@ in the realtime pipeline.
 
 from __future__ import annotations
 
+import argparse
+import csv
 import json
-from typing import Dict, List
+import math
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, List, Sequence, Tuple
 
-from offline_yolo_iou_config import build_bbox_prior, build_pair_gate, parse_args, parse_fake_scales
-from offline_yolo_iou_inputs import (
-    load_baseline_from_calib,
-    read_rows,
+import cv2
+import numpy as np
+
+from stereo_feature_matching.realtime_contract import (
+    BboxDisparityPriorConfig,
+    Detection,
+    StereoRoiPairGateConfig,
+    bbox_disparity_consistency_penalty,
+    evaluate_stereo_roi_pair,
+    estimate_bbox_disparity_px,
+    select_global_stereo_roi_pairs,
+    score_stereo_roi_pair_with_bbox_prior,
 )
-from offline_yolo_iou_regression_cases import evaluate_regression_row
-from offline_yolo_iou_report import build_summary, write_regression_outputs
+
+
+@dataclass
+class TemplateSearchResult:
+    valid: bool = False
+    x: float = 0.0
+    y: float = 0.0
+    score: float = -2.0
+    second_score: float = -2.0
+    elapsed_ms: float = 0.0
+
+
+def _load_baseline_from_calib(path: Path) -> float:
+    fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
+    if not fs.isOpened():
+        raise FileNotFoundError(path)
+    try:
+        node = fs.getNode("baseline")
+        if node.empty():
+            raise KeyError("missing calibration key: baseline")
+        return float(node.real()) / 1000.0
+    finally:
+        fs.release()
+
+
+def _read_rows(path: Path, max_frames: int) -> List[Dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if max_frames > 0:
+        rows = rows[:max_frames]
+    return rows
+
+
+def _read_gray(path: Path) -> np.ndarray:
+    img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise FileNotFoundError(path)
+    if img.ndim == 3:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return img
+
+
+def _det(row: Dict[str, str], side: str) -> Detection | None:
+    try:
+        count = int(float(row[f"{side}_count"]))
+    except (KeyError, ValueError):
+        count = 1
+    if count <= 0:
+        return None
+    try:
+        return Detection(
+            cx=float(row[f"{side}_cx"]),
+            cy=float(row[f"{side}_cy"]),
+            width=float(row[f"{side}_w"]),
+            height=float(row[f"{side}_h"]),
+            confidence=float(row.get(f"{side}_conf", 1.0)),
+            class_id=int(float(row.get(f"{side}_class_id", 0))),
+        )
+    except (KeyError, ValueError):
+        return None
+
+
+def _normalize_patch(patch: np.ndarray) -> np.ndarray:
+    patch_f = patch.astype(np.float32)
+    return (patch_f - float(patch_f.mean())) / (float(patch_f.std()) + 1e-6)
+
+
+def template_search_gray(
+    source: np.ndarray,
+    target: np.ndarray,
+    source_det: Detection,
+    predicted_cx: float,
+    predicted_cy: float,
+    patch_radius: int,
+    search_margin_px: float,
+    y_tolerance_px: float,
+    min_score: float,
+    peak_exclusion_radius: int,
+) -> TemplateSearchResult:
+    start = time.perf_counter()
+    result = TemplateSearchResult()
+    h, w = target.shape[:2]
+    pr = int(max(3, patch_radius))
+    sx = int(round(source_det.cx))
+    sy = int(round(source_det.cy))
+    if sx - pr < 0 or sx + pr >= source.shape[1] or sy - pr < 0 or sy + pr >= source.shape[0]:
+        return result
+
+    source_patch = _normalize_patch(source[sy - pr : sy + pr + 1, sx - pr : sx + pr + 1])
+    x1 = max(pr, int(math.floor(predicted_cx - search_margin_px)))
+    x2 = min(w - pr - 1, int(math.ceil(predicted_cx + search_margin_px)))
+    y1 = max(pr, int(math.floor(predicted_cy - y_tolerance_px)))
+    y2 = min(h - pr - 1, int(math.ceil(predicted_cy + y_tolerance_px)))
+    if x1 >= x2 or y1 >= y2:
+        return result
+
+    best_score = -2.0
+    second_score = -2.0
+    best_xy: Tuple[int, int] | None = None
+    step = 2 if (x2 - x1) * (y2 - y1) > 7000 else 1
+    for y in range(y1, y2 + 1, step):
+        for x in range(x1, x2 + 1, step):
+            target_patch = _normalize_patch(target[y - pr : y + pr + 1, x - pr : x + pr + 1])
+            score = float(np.mean(source_patch * target_patch))
+            if score > best_score:
+                second_score = best_score
+                best_score = score
+                best_xy = (x, y)
+            elif score > second_score:
+                second_score = score
+
+    if best_xy is None:
+        return result
+
+    bx, by = best_xy
+    for y in range(max(y1, by - step), min(y2, by + step) + 1):
+        for x in range(max(x1, bx - step), min(x2, bx + step) + 1):
+            target_patch = _normalize_patch(target[y - pr : y + pr + 1, x - pr : x + pr + 1])
+            score = float(np.mean(source_patch * target_patch))
+            if score > best_score:
+                second_score = best_score
+                best_score = score
+                bx, by = x, y
+            elif score > second_score and (x != bx or y != by):
+                second_score = score
+
+    # The adjacent pixels around the best response are usually almost equal
+    # and do not indicate a distinct competing match. Recompute the second peak
+    # outside a small exclusion radius so the score gap reflects ambiguity.
+    second_score = -2.0
+    exclusion = max(1, int(peak_exclusion_radius))
+    for y in range(y1, y2 + 1, step):
+        for x in range(x1, x2 + 1, step):
+            if math.hypot(float(x - bx), float(y - by)) < exclusion:
+                continue
+            target_patch = _normalize_patch(target[y - pr : y + pr + 1, x - pr : x + pr + 1])
+            score = float(np.mean(source_patch * target_patch))
+            if score > second_score:
+                second_score = score
+
+    result.elapsed_ms = (time.perf_counter() - start) * 1000.0
+    result.x = float(bx)
+    result.y = float(by)
+    result.score = best_score
+    result.second_score = second_score
+    result.valid = best_score >= min_score
+    return result
+
+
+def _fake_right_detection(left: Detection, true_right: Detection, scale: float) -> Detection:
+    true_disp = max(1.0, left.cx - true_right.cx)
+    return Detection(
+        cx=left.cx - true_disp * scale,
+        cy=true_right.cy,
+        width=true_right.width,
+        height=true_right.height,
+        confidence=true_right.confidence,
+        class_id=true_right.class_id,
+    )
+
+
+def _fake_left_detection(true_left: Detection, right: Detection, scale: float) -> Detection:
+    true_disp = max(1.0, true_left.cx - right.cx)
+    return Detection(
+        cx=right.cx + true_disp * scale,
+        cy=true_left.cy,
+        width=true_left.width,
+        height=true_left.height,
+        confidence=true_left.confidence,
+        class_id=true_left.class_id,
+    )
+
+
+def _selected_pair_score(selected, left_index: int, right_index: int) -> float:
+    for pair in selected:
+        if pair.left_index == left_index and pair.right_index == right_index:
+            return pair.score
+    return 0.0
+
+
+def _write_csv(path: Path, rows: Sequence[Dict[str, object]]) -> None:
+    if not rows:
+        path.write_text("", encoding="utf-8")
+        return
+    fieldnames: List[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _rate(values: Iterable[bool]) -> float:
+    vals = list(values)
+    if not vals:
+        return 0.0
+    return float(sum(1 for v in vals if v)) / float(len(vals))
+
+
+def _percentile(values: Sequence[float], p: float) -> float:
+    if not values:
+        return 0.0
+    return float(np.percentile(np.asarray(values, dtype=np.float64), p))
+
+
+def build_summary(rows: Sequence[Dict[str, object]]) -> Dict[str, object]:
+    left_errors = [float(r["left_missing_center_error_px"]) for r in rows if r["left_missing_valid"]]
+    right_errors = [float(r["right_missing_center_error_px"]) for r in rows if r["right_missing_valid"]]
+    left_disp_errors = [float(r["left_missing_disparity_error_px"]) for r in rows if r["left_missing_valid"]]
+    right_disp_errors = [float(r["right_missing_disparity_error_px"]) for r in rows if r["right_missing_valid"]]
+    return {
+        "frames": len(rows),
+        "normal_pair_pass_rate": _rate(bool(r["normal_pair_valid"]) for r in rows),
+        "fake_right_low_selected_true_rate": _rate(bool(r["fake_right_low_selected_true"]) for r in rows),
+        "fake_right_high_selected_true_rate": _rate(bool(r["fake_right_high_selected_true"]) for r in rows),
+        "fake_left_low_selected_true_rate": _rate(bool(r["fake_left_low_selected_true"]) for r in rows),
+        "fake_left_high_selected_true_rate": _rate(bool(r["fake_left_high_selected_true"]) for r in rows),
+        "right_missing_pass_rate": _rate(bool(r["right_missing_pass"]) for r in rows),
+        "left_missing_pass_rate": _rate(bool(r["left_missing_pass"]) for r in rows),
+        "right_missing_center_error_median_px": _percentile(right_errors, 50),
+        "right_missing_center_error_p95_px": _percentile(right_errors, 95),
+        "left_missing_center_error_median_px": _percentile(left_errors, 50),
+        "left_missing_center_error_p95_px": _percentile(left_errors, 95),
+        "right_missing_disparity_error_p95_px": _percentile(right_disp_errors, 95),
+        "left_missing_disparity_error_p95_px": _percentile(left_disp_errors, 95),
+        "template_elapsed_ms_median": _percentile(
+            [float(r["right_missing_elapsed_ms"]) + float(r["left_missing_elapsed_ms"]) for r in rows],
+            50,
+        ),
+        "template_elapsed_ms_p95": _percentile(
+            [float(r["right_missing_elapsed_ms"]) + float(r["left_missing_elapsed_ms"]) for r in rows],
+            95,
+        ),
+    }
 
 
 def main() -> int:
-    args = parse_args()
-    baseline_m = load_baseline_from_calib(args.calib)
-    pair_gate = build_pair_gate(args)
-    prior = build_bbox_prior(args)
-    fake_scales = parse_fake_scales(args.fake_disparity_scales)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--clip", type=Path, required=True, help="baseline clip directory with frames.csv")
+    parser.add_argument("--calib", type=Path, default=Path("NX_volleyball/calibration/stereo_calib.yaml"))
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--max-frames", type=int, default=120)
+    parser.add_argument("--object-diameter-m", type=float, default=0.200)
+    parser.add_argument("--bbox-scale", type=float, default=0.95)
+    parser.add_argument("--max-disparity", type=int, default=2048)
+    parser.add_argument("--pair-y-tolerance-px", type=float, default=12.0)
+    parser.add_argument("--pair-max-size-ratio", type=float, default=2.0)
+    parser.add_argument("--pair-min-shifted-iou", type=float, default=0.05)
+    parser.add_argument("--bbox-consistency-ratio", type=float, default=0.30)
+    parser.add_argument("--bbox-consistency-min-px", type=float, default=45.0)
+    parser.add_argument("--bbox-penalty-scale", type=float, default=0.75)
+    parser.add_argument("--fake-disparity-scales", default="0.55,1.45")
+    parser.add_argument("--template-patch-radius", type=int, default=9)
+    parser.add_argument("--template-search-margin-px", type=float, default=72.0)
+    parser.add_argument("--template-y-tolerance-px", type=float, default=24.0)
+    parser.add_argument("--template-min-score", type=float, default=0.20)
+    parser.add_argument("--template-min-score-gap", type=float, default=0.010)
+    parser.add_argument("--template-peak-exclusion-radius", type=int, default=12)
+    parser.add_argument("--max-center-error-px", type=float, default=18.0)
+    parser.add_argument("--max-y-error-px", type=float, default=8.0)
+    parser.add_argument("--max-disparity-error-px", type=float, default=18.0)
+    parser.add_argument("--fail-on-regression", action="store_true")
+    parser.add_argument("--min-pass-rate", type=float, default=0.99)
+    args = parser.parse_args()
 
-    rows_in = read_rows(args.clip / "frames.csv", args.max_frames)
+    baseline_m = _load_baseline_from_calib(args.calib)
+    pair_gate = StereoRoiPairGateConfig(
+        max_disparity=args.max_disparity,
+        epipolar_y_tolerance=args.pair_y_tolerance_px,
+        max_size_ratio=args.pair_max_size_ratio,
+        min_shifted_iou=args.pair_min_shifted_iou,
+    )
+    prior = BboxDisparityPriorConfig(
+        object_diameter_m=args.object_diameter_m,
+        bbox_scale=args.bbox_scale,
+        consistency_ratio=args.bbox_consistency_ratio,
+        consistency_min_px=args.bbox_consistency_min_px,
+        penalty_scale=args.bbox_penalty_scale,
+    )
+    fake_scales = sorted(float(v.strip()) for v in args.fake_disparity_scales.split(",") if v.strip())
+    if len(fake_scales) != 2:
+        raise ValueError("--fake-disparity-scales must contain two comma-separated values")
+
+    rows_in = _read_rows(args.clip / "frames.csv", args.max_frames)
     args.out.mkdir(parents=True, exist_ok=True)
     out_rows: List[Dict[str, object]] = []
 
     for row in rows_in:
-        evaluated = evaluate_regression_row(
-            row,
-            args.clip,
-            args,
-            baseline_m,
-            pair_gate,
-            prior,
-            fake_scales,
+        left = _det(row, "left")
+        right = _det(row, "right")
+        if left is None or right is None:
+            continue
+        left_img = _read_gray(args.clip / row["left_image"])
+        right_img = _read_gray(args.clip / row["right_image"])
+        true_disp = left.cx - right.cx
+
+        normal_pair, normal_reject = evaluate_stereo_roi_pair(left, right, 0, 0, pair_gate)
+        normal_score = (
+            score_stereo_roi_pair_with_bbox_prior(normal_pair, baseline_m, prior, args.max_disparity)
+            if normal_pair is not None
+            else 0.0
         )
-        if evaluated is not None:
-            out_rows.append(evaluated)
+        normal_penalty = (
+            bbox_disparity_consistency_penalty(normal_pair, baseline_m, prior, args.max_disparity)
+            if normal_pair is not None
+            else 0.0
+        )
+
+        fake_results: List[Tuple[bool, float, str]] = []
+        for scale in fake_scales:
+            fake = _fake_right_detection(left, right, scale)
+            fake_pair, fake_reject = evaluate_stereo_roi_pair(left, fake, 0, 1, pair_gate)
+            selected = select_global_stereo_roi_pairs(
+                [left],
+                [fake, right],
+                pair_gate,
+                baseline_m,
+                prior,
+                args.max_disparity,
+            )
+            selected_true = any(pair.left_index == 0 and pair.right_index == 1 for pair in selected)
+            if normal_pair is None:
+                fake_results.append((False, 0.0, normal_reject))
+                continue
+            if fake_pair is None:
+                fake_results.append((selected_true, _selected_pair_score(selected, 0, 1), fake_reject))
+                continue
+            fake_score = score_stereo_roi_pair_with_bbox_prior(
+                fake_pair, baseline_m, prior, args.max_disparity
+            )
+            fake_results.append((selected_true, fake_score, "none"))
+
+        fake_left_results: List[Tuple[bool, float, str]] = []
+        for scale in fake_scales:
+            fake = _fake_left_detection(left, right, scale)
+            fake_pair, fake_reject = evaluate_stereo_roi_pair(fake, right, 1, 0, pair_gate)
+            selected = select_global_stereo_roi_pairs(
+                [fake, left],
+                [right],
+                pair_gate,
+                baseline_m,
+                prior,
+                args.max_disparity,
+            )
+            selected_true = any(pair.left_index == 1 and pair.right_index == 0 for pair in selected)
+            if normal_pair is None:
+                fake_left_results.append((False, 0.0, normal_reject))
+                continue
+            if fake_pair is None:
+                fake_left_results.append((selected_true, _selected_pair_score(selected, 1, 0), fake_reject))
+                continue
+            fake_score = score_stereo_roi_pair_with_bbox_prior(
+                fake_pair, baseline_m, prior, args.max_disparity
+            )
+            fake_left_results.append((selected_true, fake_score, "none"))
+
+        right_expected_disp = estimate_bbox_disparity_px(
+            left, baseline_m, prior, args.max_disparity
+        )
+        right_pred_x = left.cx - right_expected_disp
+        right_found = template_search_gray(
+            left_img,
+            right_img,
+            left,
+            right_pred_x,
+            left.cy,
+            args.template_patch_radius,
+            args.template_search_margin_px,
+            args.template_y_tolerance_px,
+            args.template_min_score,
+            args.template_peak_exclusion_radius,
+        )
+        right_center_err = math.hypot(right_found.x - right.cx, right_found.y - right.cy)
+        right_disp_err = abs((left.cx - right_found.x) - true_disp)
+        right_y_err = abs(right_found.y - right.cy)
+        right_score_gap = right_found.score - right_found.second_score
+        right_pass = (
+            right_found.valid
+            and right_center_err <= args.max_center_error_px
+            and right_y_err <= args.max_y_error_px
+            and right_disp_err <= args.max_disparity_error_px
+            and right_score_gap >= args.template_min_score_gap
+        )
+
+        left_expected_disp = estimate_bbox_disparity_px(
+            right, baseline_m, prior, args.max_disparity
+        )
+        left_pred_x = right.cx + left_expected_disp
+        left_found = template_search_gray(
+            right_img,
+            left_img,
+            right,
+            left_pred_x,
+            right.cy,
+            args.template_patch_radius,
+            args.template_search_margin_px,
+            args.template_y_tolerance_px,
+            args.template_min_score,
+            args.template_peak_exclusion_radius,
+        )
+        left_center_err = math.hypot(left_found.x - left.cx, left_found.y - left.cy)
+        left_disp_err = abs((left_found.x - right.cx) - true_disp)
+        left_y_err = abs(left_found.y - left.cy)
+        left_score_gap = left_found.score - left_found.second_score
+        left_pass = (
+            left_found.valid
+            and left_center_err <= args.max_center_error_px
+            and left_y_err <= args.max_y_error_px
+            and left_disp_err <= args.max_disparity_error_px
+            and left_score_gap >= args.template_min_score_gap
+        )
+
+        out_rows.append(
+            {
+                "clip_frame_id": row.get("clip_frame_id", ""),
+                "pipeline_frame_id": row.get("pipeline_frame_id", ""),
+                "true_disparity_px": true_disp,
+                "normal_pair_valid": normal_pair is not None,
+                "normal_pair_reject": normal_reject,
+                "normal_pair_score": normal_score,
+                "normal_bbox_prior_penalty": normal_penalty,
+                "fake_right_low_selected_true": fake_results[0][0],
+                "fake_right_low_score": fake_results[0][1],
+                "fake_right_low_reject": fake_results[0][2],
+                "fake_right_high_selected_true": fake_results[1][0],
+                "fake_right_high_score": fake_results[1][1],
+                "fake_right_high_reject": fake_results[1][2],
+                "fake_left_low_selected_true": fake_left_results[0][0],
+                "fake_left_low_score": fake_left_results[0][1],
+                "fake_left_low_reject": fake_left_results[0][2],
+                "fake_left_high_selected_true": fake_left_results[1][0],
+                "fake_left_high_score": fake_left_results[1][1],
+                "fake_left_high_reject": fake_left_results[1][2],
+                "right_missing_valid": right_found.valid,
+                "right_missing_pass": right_pass,
+                "right_missing_x": right_found.x,
+                "right_missing_y": right_found.y,
+                "right_missing_score": right_found.score,
+                "right_missing_second_score": right_found.second_score,
+                "right_missing_score_gap": right_score_gap,
+                "right_missing_center_error_px": right_center_err,
+                "right_missing_y_error_px": right_y_err,
+                "right_missing_disparity_error_px": right_disp_err,
+                "right_missing_elapsed_ms": right_found.elapsed_ms,
+                "left_missing_valid": left_found.valid,
+                "left_missing_pass": left_pass,
+                "left_missing_x": left_found.x,
+                "left_missing_y": left_found.y,
+                "left_missing_score": left_found.score,
+                "left_missing_second_score": left_found.second_score,
+                "left_missing_score_gap": left_score_gap,
+                "left_missing_center_error_px": left_center_err,
+                "left_missing_y_error_px": left_y_err,
+                "left_missing_disparity_error_px": left_disp_err,
+                "left_missing_elapsed_ms": left_found.elapsed_ms,
+            }
+        )
 
     summary = {
         "clip": str(args.clip),
@@ -80,7 +527,25 @@ def main() -> int:
         },
         "metrics": build_summary(out_rows),
     }
-    write_regression_outputs(args.out, out_rows, summary, args.clip)
+    _write_csv(args.out / "per_frame.csv", out_rows)
+    (args.out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    report = [
+        "# YOLO/IoU Fallback Regression",
+        "",
+        f"- clip: `{args.clip}`",
+        f"- frames: `{summary['metrics']['frames']}`",
+        f"- normal pair pass rate: `{summary['metrics']['normal_pair_pass_rate']:.3f}`",
+        f"- fake right low selected true: `{summary['metrics']['fake_right_low_selected_true_rate']:.3f}`",
+        f"- fake right high selected true: `{summary['metrics']['fake_right_high_selected_true_rate']:.3f}`",
+        f"- fake left low selected true: `{summary['metrics']['fake_left_low_selected_true_rate']:.3f}`",
+        f"- fake left high selected true: `{summary['metrics']['fake_left_high_selected_true_rate']:.3f}`",
+        f"- right missing pass rate: `{summary['metrics']['right_missing_pass_rate']:.3f}`",
+        f"- left missing pass rate: `{summary['metrics']['left_missing_pass_rate']:.3f}`",
+        f"- right missing center p95 px: `{summary['metrics']['right_missing_center_error_p95_px']:.2f}`",
+        f"- left missing center p95 px: `{summary['metrics']['left_missing_center_error_p95_px']:.2f}`",
+        f"- template elapsed p95 ms: `{summary['metrics']['template_elapsed_ms_p95']:.2f}`",
+    ]
+    (args.out / "report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
     if args.fail_on_regression:
         metrics = summary["metrics"]
