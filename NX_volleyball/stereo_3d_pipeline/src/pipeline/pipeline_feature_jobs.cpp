@@ -26,6 +26,10 @@ void appendTriggerName(std::string* out, uint32_t triggers,
     out->append(name);
 }
 
+uint32_t diagnosticSidecarDepthModeMask(uint32_t mask) {
+    return mask & (P2_DEPTH_MODE_VPI_TEMPLATE | P2_DEPTH_MODE_VPI_ORB);
+}
+
 }  // namespace
 
 uint32_t dualYoloP2DepthModeMask(const PipelineConfig::DualYoloConfig& cfg) {
@@ -278,9 +282,15 @@ std::vector<P2FeatureJobDescriptor> buildP2FeatureJobDescriptors(
         out.push_back(job);
     }
     if (decision.diagnostic_requested) {
+        const uint32_t diagnostic_mask = policy.realtime_lane_enabled
+            ? diagnosticSidecarDepthModeMask(decision.depth_mode_mask)
+            : decision.depth_mode_mask;
+        if (diagnostic_mask == P2_DEPTH_MODE_NONE) {
+            return out;
+        }
         P2FeatureJobDescriptor job;
         job.lane = P2FeatureJobLane::DIAGNOSTIC;
-        job.depth_mode_mask = decision.depth_mode_mask;
+        job.depth_mode_mask = diagnostic_mask;
         job.frame_id = decision.frame_id;
         job.left_count = decision.left_count;
         job.right_count = decision.right_count;

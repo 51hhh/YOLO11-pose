@@ -65,16 +65,16 @@ detector:
       roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
       roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
-      roi_iou_region_color_patch: false # GPU color region IoU + patch candidate; requires BGR pipeline
-      roi_patch_iou_color_edge: false # GPU color edge IoU + patch candidate; requires BGR pipeline
+      roi_iou_region_color_patch: true # P1 promoted: GPU color region IoU + patch candidate; requires BGR pipeline
+      roi_patch_iou_color_edge: true # P1 promoted: GPU color edge IoU + patch candidate; requires BGR pipeline
       roi_cuda_template_match: false # P2 OpenCV CUDA TemplateMatching small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
-      roi_cuda_stereo_sgm: false # P2 OpenCV CUDA StereoSGM small ROI dense disparity candidate
+      roi_cuda_stereo_sgm: true # P1 promoted: OpenCV CUDA StereoSGM small ROI dense disparity candidate
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
-      roi_vpi_template_match: false # P2 VPI CUDA TemplateMatching small ROI epipolar candidate
+      roi_vpi_template_match: true # P1 sidecar: VPI CUDA TemplateMatching diagnostic candidate
       roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
       roi_vpi_harris_lk: false # P2 VPI Harris + Pyramidal LK candidate
-      roi_vpi_orb: false # P2 VPI ORB candidate
+      roi_vpi_orb: true # P1 sidecar: VPI ORB diagnostic candidate
       roi_cuda_gftt_lk: false # P2 OpenCV CUDA GFTT/Harris + SparsePyrLK candidate
       roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
       roi_libsgm: false # P2 Fixstars libSGM candidate
@@ -156,6 +156,28 @@ performance:
   async_roi_stage2: true        # 检测帧 ROI/IoU/特征候选异步执行；tracker detect_interval>1 时自动禁用，避免倒序更新深度
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
   async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
+  p2_feature_job_scaffold_enabled: true      # enable diagnostic sidecar jobs without blocking main recorder
+  p2_realtime_lane_decision_enabled: true    # keep inline P1 promoted candidates in the main trajectory CSV
+  p2_diagnostic_lane_decision_enabled: true  # record VPI template/ORB in *.p2_diagnostic.csv
+  p2_selective_trigger: false
+  p2_trigger_on_fallback: true
+  p2_trigger_on_direct_pair: false
+  p2_trigger_on_host_gray: false
+  p2_trigger_on_bgr: false
+  p2_trigger_on_pair_quality: false
+  p2_trigger_on_no_valid_direct_pair: false
+  p2_pair_quality_min_shifted_iou: 0.0
+  p2_pair_quality_max_epipolar_dy: 0.0
+  p2_pair_quality_min_confidence: 0.0
+  p2_diagnostic_stride: 10
+  p2_diagnostic_max_in_flight: 1
+  p2_realtime_deadline_ms: 10.0
+  p2_diagnostic_deadline_ms: 50.0
+  p2_diagnostic_results_enabled: true
+  p2_diagnostic_results_path: ""             # empty = derive from recording.output_path or --recording-out
+  p2_diagnostic_artifacts_enabled: false
+  p2_diagnostic_artifacts_dir: ""
+  p2_diagnostic_artifacts_max: 20
 
 tracker:
   enabled: false
