@@ -6,7 +6,7 @@
 
 ## FrameSlot
 
-定义位置: `src/pipeline/frame_slot.h`
+定义位置: `src/pipeline/object3d_types.h` 和 `src/pipeline/frame_slot.h`
 
 `FrameSlot` 是 ring buffer 的单帧状态，包含:
 
