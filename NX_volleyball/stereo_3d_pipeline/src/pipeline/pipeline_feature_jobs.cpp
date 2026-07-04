@@ -27,7 +27,9 @@ void appendTriggerName(std::string* out, uint32_t triggers,
 }
 
 uint32_t diagnosticSidecarDepthModeMask(uint32_t mask) {
-    return mask & (P2_DEPTH_MODE_VPI_TEMPLATE | P2_DEPTH_MODE_VPI_ORB);
+    return mask & (P2_DEPTH_MODE_VPI_TEMPLATE |
+                   P2_DEPTH_MODE_VPI_ORB |
+                   P2_DEPTH_MODE_CUDA_GFTT_LK);
 }
 
 }  // namespace

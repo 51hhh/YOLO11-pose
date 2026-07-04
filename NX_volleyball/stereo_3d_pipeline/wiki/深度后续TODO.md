@@ -41,7 +41,8 @@
   - XFeat 和 SuperPoint 160/top64 已输出真实左右点对 overlay；SuperPoint 仍不准入。
   - Template/VPI Template 已输出 score map；后续只补单独 template patch/search window 裁剪。
   - BM/SGM/libSGM 已输出 32x32 ROI disparity patch；VPI Stereo 已输出 32x32 disparity + confidence patch。
-  - color patch/color edge 已输出 gate 后 inlier samples；ring-edge 已输出采样点和候选视差，仍需 gate 后 inlier/outlier 与 reject reason。
+  - color patch/color edge 已输出 gate 后 inlier samples，但现有图不含 case 参数、search window、score/reject，不足以证明 `wide_search` 匹配正确。
+  - ring-edge 已输出采样点和候选视差，仍需 gate 后 inlier/outlier 与 reject reason。
   - VPI Harris/LK 更新测试仍未捕获有效 artifact。
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
 - [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。

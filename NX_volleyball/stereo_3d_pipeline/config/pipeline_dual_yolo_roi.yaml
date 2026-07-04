@@ -67,17 +67,17 @@ detector:
       roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
       roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
-      roi_iou_region_color_patch: true # P1 promoted: GPU color region IoU + patch candidate; requires BGR pipeline
-      roi_patch_iou_color_edge: true # P1 promoted: GPU color edge IoU + patch candidate; requires BGR pipeline
+      roi_iou_region_color_patch: false # disabled: 2026-07-04 artifacts showed systematic stripe-region mismatch
+      roi_patch_iou_color_edge: false # disabled: 2026-07-04 artifacts showed systematic wrong color-edge match
       roi_cuda_template_match: false # P2 OpenCV CUDA TemplateMatching small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
-      roi_cuda_stereo_sgm: true # P1 promoted: OpenCV CUDA StereoSGM small ROI dense disparity candidate
+      roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 100fps
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
-      roi_vpi_template_match: true # P1 sidecar: VPI CUDA TemplateMatching diagnostic candidate
+      roi_vpi_template_match: false # disabled: current stable config removes VPI tail latency
       roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
       roi_vpi_harris_lk: false # P2 VPI Harris + Pyramidal LK candidate
-      roi_vpi_orb: true # P1 sidecar: VPI ORB diagnostic candidate
-      roi_cuda_gftt_lk: false # P2 OpenCV CUDA GFTT/Harris + SparsePyrLK candidate
+      roi_vpi_orb: false # disabled: current stable config removes VPI tail latency
+      roi_cuda_gftt_lk: true # P2 sidecar: OpenCV CUDA GFTT/Harris + SparsePyrLK candidate
       roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
       roi_libsgm: false # P2 Fixstars libSGM candidate
       roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
@@ -134,6 +134,22 @@ stereo:
   window_size: 5
   quality: 6
 
+neural_feature_matching:
+  enabled: true
+  backend: "xfeat"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_128.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  roi_size: 128
+  top_k: 32
+  descriptor_dim: 64
+  min_matches: 4
+  max_y_error_px: 2.0
+  max_disp_delta_px: 6.0
+  final_disp_gate_px: 3.0
+  min_score: 0.05
+  use_lightglue: false
+
 fusion:
   min_depth: 0.8
   max_depth: 20.0
@@ -158,7 +174,7 @@ performance:
   async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
   p2_feature_job_scaffold_enabled: true       # enable diagnostic sidecar jobs without blocking main recorder
   p2_realtime_lane_decision_enabled: true     # keep inline P1 promoted candidates in the main trajectory CSV
-  p2_diagnostic_lane_decision_enabled: true   # record VPI template/ORB in *.p2_diagnostic.csv
+  p2_diagnostic_lane_decision_enabled: true   # record OpenCV CUDA GFTT/LK in *.p2_diagnostic.csv
   p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
   p2_trigger_on_fallback: true
   p2_trigger_on_direct_pair: false

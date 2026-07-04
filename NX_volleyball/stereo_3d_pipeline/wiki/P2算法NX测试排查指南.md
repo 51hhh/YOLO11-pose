@@ -2,7 +2,7 @@
 
 最后核对: 2026-07-04
 
-本页用于在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个候选能否在实时管线里单项跑通”。当前排序 `1/2/5/7/8` 已按用户选择提升为 P1-promoted 录制候选，其余 P2 仍不改变默认采集集合。
+本页用于在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个候选能否在实时管线里单项跑通”。当前默认 100fps 采集不再提升 color/SGM/VPI；GFTT/LK 只作为低频 diagnostic sidecar，XFeat 虽已接主 CSV 字段但未通过 100fps 准入。
 
 ## 是否已经完成本地准备
 
@@ -21,7 +21,7 @@
 - 10:49 targeted 性能复核: `test_logs/codex_p2_verify_20260704_104947/`。
 - 10:53 artifact debug 抽样: `test_logs/codex_p2_artifact_debug_20260704_105356/`，已生成 OpenCV CUDA GFTT/LK、VPI Template、VPI ORB 的真实算法级样张。
 - 11:08 final artifact 复测: NX run `codex_p2_artifacts_final_20260704_110837`，生成 `65` 张真实算法级 PNG；代表图同步到 `wiki/assets/p2_20260704_final/`。
-- 13:02 inline artifact 重测: NX run `codex_p2_retest_inline_20260704_130245`，color/color-edge/XFeat 均生成真实匹配 PNG；代表图同步到 `wiki/assets/p2_20260704_inline/`。
+- 13:02 inline artifact 重测: NX run `codex_p2_retest_inline_20260704_130245`，XFeat 生成真实匹配 PNG；color/color-edge 只生成 gate 后 sample overlay。代表图同步到 `wiki/assets/p2_20260704_inline/`。
 - 13:06 dense artifact 重测: NX run `codex_p2_retest_dense_20260704_130617`，BM/SGM/VPI Stereo/libSGM 均生成 32x32 patch PNG；代表图同步到 `wiki/assets/p2_20260704_dense/`。
 - 13:14 SGM valid artifact 单项复测: NX run `codex_p2_retest_sgm_valid_20260704_131452`，`opencv_cuda_stereo_sgm_diagnostic_only` 为 `96.6fps`、`3/549` diagnostic valid，并保留 valid 样张。
 - Wiki 抽样图: `wiki/assets/p2_20260704/`，已在 [稳定100fps深度方法与训练入口](稳定100fps深度方法与训练入口.md) 的 P2 推荐排序总表中内联显示。注意这些图混合了 ROI/status zoom 和全帧 detection panel；性能/有效率以无 debug 矩阵 CSV/log 为准，图片只用于人工排查。逐项图片类型见 [P2算法效果与可视化审查](P2算法效果与可视化审查.md)。
@@ -40,8 +40,8 @@
 
 后续判断口径:
 
-- `patch_iou_color_edge_wide_search` 仍是当前最稳 P2；10:49 targeted 为 `100.1fps`、`654/654` 有效、worker p95 `1.48ms`。
-- `iou_region_color_patch_wide_search` 10:49 targeted 为 `100.0fps`、`647/647` 有效、worker p95 `1.39ms`，作为备选训练候选。
+- `patch_iou_color_edge_wide_search` 10:49 targeted 为 `100.1fps`、`654/654` 有效、worker p95 `1.48ms`，但后续 artifact 显示错配，已退出默认配置。
+- `iou_region_color_patch_wide_search` 10:49 targeted 为 `100.0fps`、`647/647` 有效、worker p95 `1.39ms`，但后续 artifact 显示错配，已退出默认配置。
 - `diagnostic-only` case 不写主 CSV 候选字段，必须看 `diag_valid/rows`、`diag_over_deadline` 和算法 stage。
 - VPI Template 10:49 targeted 为 `601/630` diagnostic 有效，但存在 `57.54ms` 长尾，只保留 diagnostic；11:08 artifact run 为 `46/81`，有 `20` 张峰值图。
 - OpenCV CUDA GFTT/LK 10:49 targeted 为 `501/572` diagnostic 有效，但 FPS/长尾不准入；11:08 artifact run 为 `73/75`，有 `20` 张点对图。
@@ -266,7 +266,7 @@ summary.txt
 - 已有: OpenCV CUDA StereoBM、VPI Stereo、Fixstars libSGM 的 32x32 dense patch；VPI Stereo 额外有 confidence patch。
 - 已有: XFeat TensorRT 真实左右 keypoint pair overlay。
 - 已有: SuperPoint TensorRT 160/top64 真实左右 keypoint pair overlay；仅作调试证据，不准入。
-- 已有: 自研 color patch / color-edge gate 后 inlier samples。
+- 部分已有: 自研 color patch / color-edge gate 后 inlier samples；现有图不含 search window、score/reject，也不区分 base / wide_search，不能作为完整匹配证明。
 - 已有: CUDA ring-edge profile 最佳候选视差下的三圈采样点；当前候选仍 invalid。
 - 已有: CUDA Hough circle 左右 refined center。
 - 暂无: VPI Harris/LK 本轮没有有效 artifact；CUDA-SIFT 仍是 unsupported。
@@ -276,6 +276,7 @@ summary.txt
 - OpenCV CUDA ORB/GFTT-LK、VPI ORB: 已有样张，但还需要更多 failure/low-support 抽样。
 - Template/VPI Template: 已有峰值点和 score map；后续只补单独 template patch/search window 裁剪。
 - BM/SGM/VPI Stereo/libSGM: 已有 bounded ROI patch；后续只补更完整的 reject reason 和多帧 failure 抽样。
+- color/color-edge: 重抓带 case 参数、search window、score/reject 的 artifact；现有 sample overlay 只保留为排错线索。
 - ring-edge: 已有采样点和候选视差；后续补 gate 后 inlier/outlier 和 reject reason。
 
 手动命令:

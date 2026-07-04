@@ -39,9 +39,7 @@ P0_DEPTH_KEYS = (
 P1_DEPTH_KEYS = (
     "z_roi_multi_point",
     "z_roi_center_patch",
-    "z_roi_patch_iou_color_edge",
-    "z_roi_iou_region_color_patch",
-    "z_roi_cuda_stereo_sgm",
+    "z_roi_neural_feature",
 )
 DEPTH_KEYS = P0_DEPTH_KEYS + P1_DEPTH_KEYS
 JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback_epipolar",)

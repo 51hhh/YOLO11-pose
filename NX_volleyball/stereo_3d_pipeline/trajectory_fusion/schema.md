@@ -105,6 +105,7 @@
 | z_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 小 ROI dense disparity 三角测距 |
 | z_roi_vpi_template_match | float | `*.p2_diagnostic.csv` 中 `mode=vpi_template_match` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_vpi_orb | float | `*.p2_diagnostic.csv` 中 `mode=vpi_orb` 合并出的训练候选；不在主 trajectory CSV header |
+| z_roi_opencv_cuda_gftt_lk | float | `*.p2_diagnostic.csv` 中 `mode=opencv_cuda_gftt_lk` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_ring_edge_profile | float | CUDA ring/edge profile 小范围极线视差三角测距 |
 | z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
@@ -138,6 +139,7 @@
 | disparity_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 聚合视差 |
 | disparity_roi_vpi_template_match | float | sidecar `vpi_template_match` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_vpi_orb | float | sidecar `vpi_orb` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
+| disparity_roi_opencv_cuda_gftt_lk | float | sidecar `opencv_cuda_gftt_lk` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_ring_edge_profile | float | CUDA ring/edge profile 聚合视差 |
 | disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
@@ -189,6 +191,9 @@
 | roi_vpi_orb_support | int | sidecar `vpi_orb` 支撑点数；由 `trajectory_fusion/dataset.py` 合并 |
 | roi_vpi_orb_std_px | float | sidecar `vpi_orb` 视差标准差；由 `trajectory_fusion/dataset.py` 合并 |
 | roi_vpi_orb_confidence | float | sidecar `vpi_orb` 置信度；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_opencv_cuda_gftt_lk_support | int | sidecar `opencv_cuda_gftt_lk` 支撑点数；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_opencv_cuda_gftt_lk_std_px | float | sidecar `opencv_cuda_gftt_lk` 视差标准差；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_opencv_cuda_gftt_lk_confidence | float | sidecar `opencv_cuda_gftt_lk` 置信度；由 `trajectory_fusion/dataset.py` 合并 |
 | roi_ring_edge_profile_support | int | CUDA ring/edge profile 有效采样点数 |
 | roi_ring_edge_profile_std_px | float | CUDA ring/edge profile 视差标准差 |
 | roi_ring_edge_profile_confidence | float | CUDA ring/edge profile 匹配置信度 |
@@ -287,7 +292,8 @@ disparity_roi_orb_points,disparity_roi_brisk_points,disparity_roi_akaze_points,
 disparity_roi_sift_points,disparity_roi_iou_region_color_patch,
 disparity_roi_patch_iou_color_edge,
 disparity_roi_cuda_template_match,disparity_roi_cuda_stereo_bm,
-disparity_roi_cuda_stereo_sgm,disparity_roi_ring_edge_profile,
+disparity_roi_cuda_stereo_sgm,disparity_roi_opencv_cuda_gftt_lk,
+disparity_roi_ring_edge_profile,
 disparity_roi_neural_feature,
 disparity_roi_center_patch,
 disparity_roi_multi_point,disparity_fallback_epipolar,disparity_fallback_template,
@@ -298,7 +304,8 @@ z_roi_edge_centroid,z_roi_radial_center,z_roi_edge_pair_center,
 z_roi_corner_points,z_roi_texture_points,z_roi_binary_points,
 z_roi_orb_points,z_roi_brisk_points,z_roi_akaze_points,z_roi_sift_points,
 z_roi_iou_region_color_patch,z_roi_patch_iou_color_edge,
-z_roi_cuda_template_match,z_roi_cuda_stereo_bm,z_roi_cuda_stereo_sgm,z_roi_ring_edge_profile,
+z_roi_cuda_template_match,z_roi_cuda_stereo_bm,z_roi_cuda_stereo_sgm,
+z_roi_opencv_cuda_gftt_lk,z_roi_ring_edge_profile,
 z_roi_neural_feature,z_roi_center_patch,z_roi_multi_point,
 z_fallback,z_fallback_epipolar,z_fallback_template,z_fallback_feature_points,z,
 epipolar_dy,size_ratio,subpixel_valid,subpixel_attempted,subpixel_support,
@@ -313,6 +320,8 @@ roi_sift_points_support,roi_sift_points_std_px,roi_sift_points_confidence,
 roi_iou_region_color_patch_support,roi_iou_region_color_patch_std_px,
 roi_iou_region_color_patch_confidence,roi_patch_iou_color_edge_support,
 roi_patch_iou_color_edge_std_px,roi_patch_iou_color_edge_confidence,
+roi_opencv_cuda_gftt_lk_support,roi_opencv_cuda_gftt_lk_std_px,
+roi_opencv_cuda_gftt_lk_confidence,
 roi_ring_edge_profile_support,roi_ring_edge_profile_std_px,roi_ring_edge_profile_confidence,
 roi_neural_feature_support,roi_neural_feature_std_px,roi_neural_feature_confidence,
 fallback_feature_points_support,fallback_feature_points_std_px,
