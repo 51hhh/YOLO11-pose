@@ -195,6 +195,8 @@ struct PipelineConfig {
     int p2_diagnostic_max_in_flight = 1; ///< diagnostic lane 最大在途 job 数
     float p2_realtime_deadline_ms = 10.0f; ///< P2 realtime lane deadline
     float p2_diagnostic_deadline_ms = 50.0f; ///< P2 diagnostic lane 软 deadline
+    bool p2_diagnostic_results_enabled = false; ///< diagnostic lane 迟到结果独立落盘开关
+    std::string p2_diagnostic_results_path; ///< diagnostic 结果 CSV; 空则不写
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR

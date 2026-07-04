@@ -159,6 +159,8 @@ performance:
   p2_diagnostic_max_in_flight: 1
   p2_realtime_deadline_ms: 10.0
   p2_diagnostic_deadline_ms: 50.0
+  p2_diagnostic_results_enabled: false     # true 时将 diagnostic lane 迟到结果写独立 CSV
+  p2_diagnostic_results_path: ""           # 例如 test_logs/p2_diag_results.csv；空路径不写
 
 tracker:
   enabled: false

@@ -54,6 +54,20 @@ python3 scripts/nx_algorithm_matrix_test.py \
   --cases opencv_cuda_template_match_patch9
 ```
 
+需要逐 frame 对齐 diagnostic lane 迟到结果时，在临时 YAML 的 `performance` 中打开:
+
+```yaml
+p2_feature_job_scaffold_enabled: true
+p2_realtime_lane_decision_enabled: false
+p2_diagnostic_lane_decision_enabled: true
+p2_diagnostic_stride: 10
+p2_diagnostic_max_in_flight: 1
+p2_diagnostic_results_enabled: true
+p2_diagnostic_results_path: test_logs/p2_diag_template_stride10.csv
+```
+
+这个 CSV 记录 `frame_id`、算法 `mode/status`、视差/深度、`support/attempted`、左右 bbox、anchor、`queue_wait_ms`、`worker_elapsed_ms` 和 `over_deadline`。它不写主 trajectory CSV，也不回写 HybridDepth；第一次启用时要和不写 CSV 的同配置各跑一遍，确认文本落盘没有放大 diagnostic worker 尾延迟。
+
 `--debug-on-failure` 会在对应目录下生成:
 
 ```text

@@ -14,7 +14,12 @@
 #include <cctype>
 #include <cuda_runtime.h>
 #include <cmath>
+#include <filesystem>
+#include <iomanip>
+#include <limits>
+#include <ostream>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace stereo3d {
@@ -177,6 +182,57 @@ bool chooseDiagnosticDirectPair(const std::vector<Detection>& left,
     *right_out = best_right;
     *disparity_out = best_disp;
     return true;
+}
+
+const char* p2DiagnosticModeName(uint32_t mode_bit) {
+    switch (mode_bit) {
+    case P2_DEPTH_MODE_ORB_POINTS:
+        return "opencv_cuda_orb";
+    case P2_DEPTH_MODE_CUDA_TEMPLATE:
+        return "cuda_template";
+    case P2_DEPTH_MODE_CUDA_STEREO_BM:
+        return "cuda_stereo_bm";
+    case P2_DEPTH_MODE_CUDA_STEREO_SGM:
+        return "cuda_stereo_sgm";
+    default:
+        return "unknown";
+    }
+}
+
+float p2DepthFromDisparity(float disparity, float focal, float baseline) {
+    if (!std::isfinite(disparity) || disparity <= 0.0f ||
+        !std::isfinite(focal) || focal <= 0.0f ||
+        !std::isfinite(baseline) || baseline <= 0.0f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return focal * baseline / disparity;
+}
+
+void writeCsvFloat(std::ostream& out, float value) {
+    if (std::isfinite(value)) {
+        out << std::fixed << std::setprecision(6) << value;
+    }
+}
+
+void writeCsvDouble(std::ostream& out, double value) {
+    if (std::isfinite(value)) {
+        out << std::fixed << std::setprecision(6) << value;
+    }
+}
+
+void writeP2FeatureDiagnosticResultHeader(std::ostream& out) {
+    out << "frame_id,left_timestamp_us,right_timestamp_us,"
+        << "left_frame_number,right_frame_number,"
+        << "left_frame_counter,right_frame_counter,"
+        << "left_trigger_index,right_trigger_index,"
+        << "lane,mode,status,valid,low_confidence,"
+        << "disparity,z_m,confidence,stddev,support,attempted,"
+        << "initial_disparity,"
+        << "left_cx,left_cy,left_w,left_h,left_conf,"
+        << "right_cx,right_cy,right_w,right_h,right_conf,"
+        << "anchor_cx,anchor_cy,right_anchor_cx,right_anchor_cy,"
+        << "algo_ms,queue_wait_ms,worker_elapsed_ms,deadline_ms,"
+        << "over_deadline,depth_mode_mask,triggers\n";
 }
 
 bool p2DiagnosticOnlyFeatureJobsEnabled(const PipelineConfig& config) {
@@ -371,6 +427,7 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
     if (!initP2FeatureDiagnosticBuffers()) {
         return false;
     }
+    openP2FeatureDiagnosticResults();
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
         p2_feature_diag_thread_stop_ = false;
@@ -407,6 +464,7 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
     }
     p2_feature_diag_cv_.notify_all();
     p2_feature_diag_thread_.join();
+    closeP2FeatureDiagnosticResults();
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
         p2_feature_diag_worker_busy_ = false;
@@ -508,6 +566,133 @@ void Pipeline::destroyP2FeatureDiagnosticBuffers() {
         cudaStreamDestroy(p2_feature_diag_copy_stream_);
         p2_feature_diag_copy_stream_ = nullptr;
     }
+    closeP2FeatureDiagnosticResults();
+}
+
+bool Pipeline::openP2FeatureDiagnosticResults() {
+    if (!config_.p2_diagnostic_results_enabled) {
+        return true;
+    }
+    if (config_.p2_diagnostic_results_path.empty()) {
+        LOG_WARN("P2 diagnostic results enabled but path is empty; results "
+                 "CSV disabled");
+        return true;
+    }
+
+    namespace fs = std::filesystem;
+    std::lock_guard<std::mutex> lk(p2_feature_diag_results_mutex_);
+    if (p2_feature_diag_results_file_.is_open()) {
+        return true;
+    }
+    const fs::path path(config_.p2_diagnostic_results_path);
+    const fs::path parent = path.parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        fs::create_directories(parent, ec);
+        if (ec) {
+            LOG_WARN("P2 diagnostic: create results directory failed: %s (%s); "
+                     "results CSV disabled",
+                      parent.string().c_str(),
+                      ec.message().c_str());
+            config_.p2_diagnostic_results_enabled = false;
+            return true;
+        }
+    }
+    p2_feature_diag_results_file_.open(path.string(),
+                                       std::ios::out | std::ios::trunc);
+    if (!p2_feature_diag_results_file_.is_open()) {
+        LOG_WARN("P2 diagnostic: failed to open results CSV: %s; disabled",
+                  path.string().c_str());
+        config_.p2_diagnostic_results_enabled = false;
+        return true;
+    }
+    writeP2FeatureDiagnosticResultHeader(p2_feature_diag_results_file_);
+    p2_feature_diag_results_file_.flush();
+    LOG_INFO("P2 diagnostic results CSV: %s", path.string().c_str());
+    return true;
+}
+
+void Pipeline::closeP2FeatureDiagnosticResults() {
+    std::lock_guard<std::mutex> lk(p2_feature_diag_results_mutex_);
+    if (p2_feature_diag_results_file_.is_open()) {
+        p2_feature_diag_results_file_.flush();
+        p2_feature_diag_results_file_.close();
+    }
+}
+
+void Pipeline::writeP2FeatureDiagnosticResults(
+    const std::vector<P2FeatureDiagnosticResultRow>& rows) {
+    if (rows.empty() || !config_.p2_diagnostic_results_enabled) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(p2_feature_diag_results_mutex_);
+    if (!p2_feature_diag_results_file_.is_open()) {
+        return;
+    }
+    for (const auto& row : rows) {
+        p2_feature_diag_results_file_ << row.frame_id << ","
+            << row.metadata.left_timestamp_us << ","
+            << row.metadata.right_timestamp_us << ","
+            << row.metadata.left_frame_number << ","
+            << row.metadata.right_frame_number << ","
+            << row.metadata.left_frame_counter << ","
+            << row.metadata.right_frame_counter << ","
+            << row.metadata.left_trigger_index << ","
+            << row.metadata.right_trigger_index << ","
+            << row.lane << "," << row.mode << "," << row.status << ","
+            << (row.valid ? 1 : 0) << ","
+            << (row.low_confidence ? 1 : 0) << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.disparity);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.z_m);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.confidence);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.stddev);
+        p2_feature_diag_results_file_ << ","
+            << row.support << "," << row.attempted << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.initial_disparity);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.left_det.cx);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.left_det.cy);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.left_det.width);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.left_det.height);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.left_det.confidence);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_det.cx);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_det.cy);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_det.width);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_det.height);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_det.confidence);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.anchor_cx);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.anchor_cy);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_anchor_cx);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.right_anchor_cy);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvDouble(p2_feature_diag_results_file_, row.algo_ms);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvDouble(p2_feature_diag_results_file_, row.queue_wait_ms);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvDouble(p2_feature_diag_results_file_, row.worker_elapsed_ms);
+        p2_feature_diag_results_file_ << ",";
+        writeCsvFloat(p2_feature_diag_results_file_, row.deadline_ms);
+        p2_feature_diag_results_file_ << ","
+            << (row.over_deadline ? 1 : 0) << ","
+            << row.depth_mode_mask << "," << row.triggers << "\n";
+    }
+    p2_feature_diag_results_file_.flush();
 }
 
 void Pipeline::releaseP2FeatureDiagnosticBuffer(int buffer_index) {
@@ -709,13 +894,28 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
 
         const auto start = Clock::now();
         int release_buffer_index = task.buffer_index;
+        double queue_wait_ms = 0.0;
         if (task.enqueue_time.time_since_epoch().count() > 0) {
-            const double queue_wait_ms =
+            queue_wait_ms =
                 std::chrono::duration<double, std::milli>(
                     start - task.enqueue_time).count();
             globalPerf().record("Stage2_P2FeatureJobDiagnosticQueueWait",
                                 queue_wait_ms);
         }
+        std::vector<P2FeatureDiagnosticResultRow> result_rows;
+        auto make_status_row = [&](const std::string& mode,
+                                   const std::string& status) {
+            P2FeatureDiagnosticResultRow row;
+            row.frame_id = task.job.frame_id;
+            row.metadata = task.metadata;
+            row.mode = mode;
+            row.status = status;
+            row.queue_wait_ms = queue_wait_ms;
+            row.deadline_ms = task.job.deadline_ms;
+            row.depth_mode_mask = task.job.depth_mode_mask;
+            row.triggers = task.job.triggers;
+            result_rows.push_back(std::move(row));
+        };
 
         bool copy_ready = true;
         P2FeatureDiagnosticBuffer* buffer = nullptr;
@@ -746,6 +946,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
 
         if (!copy_ready || !buffer) {
             globalPerf().record("Stage2_P2FeatureJobDiagnosticNoImage", 0.0);
+            make_status_row("all", "no_image");
         } else {
             Detection left_det;
             Detection right_det;
@@ -756,9 +957,11 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     &left_det, &right_det, &initial_disp)) {
                 globalPerf().record(
                     "Stage2_P2FeatureJobDiagnosticNoDirectPair", 0.0);
+                make_status_row("all", "no_direct_pair");
             } else if (!calibration_ || !p2_feature_diag_stream_) {
                 globalPerf().record(
                     "Stage2_P2FeatureJobDiagnosticUnavailable", 0.0);
+                make_status_row("all", "unavailable");
             } else {
                 const auto& p_left = calibration_->getProjectionLeft();
                 const float focal = static_cast<float>(p_left.at<double>(0, 0));
@@ -795,6 +998,36 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     globalPerf().record(stage_name, algo_ms);
                     globalPerf().record(result.valid ? valid_name : invalid_name,
                                         0.0);
+                    P2FeatureDiagnosticResultRow row;
+                    row.frame_id = task.job.frame_id;
+                    row.metadata = task.metadata;
+                    row.mode = p2DiagnosticModeName(mode_bit);
+                    row.status = result.valid ? "valid" : "invalid";
+                    row.valid = result.valid;
+                    row.low_confidence = result.low_confidence;
+                    row.disparity = result.disparity;
+                    row.z_m = result.valid
+                        ? p2DepthFromDisparity(result.disparity,
+                                               focal,
+                                               baseline)
+                        : std::numeric_limits<float>::quiet_NaN();
+                    row.confidence = result.confidence;
+                    row.stddev = result.stddev;
+                    row.support = result.support;
+                    row.attempted = result.attempted;
+                    row.initial_disparity = initial_disp;
+                    row.left_det = left_det;
+                    row.right_det = right_det;
+                    row.anchor_cx = result.anchor_cx;
+                    row.anchor_cy = result.anchor_cy;
+                    row.right_anchor_cx = result.right_anchor_cx;
+                    row.right_anchor_cy = result.right_anchor_cy;
+                    row.algo_ms = algo_ms;
+                    row.queue_wait_ms = queue_wait_ms;
+                    row.deadline_ms = task.job.deadline_ms;
+                    row.depth_mode_mask = task.job.depth_mode_mask;
+                    row.triggers = task.job.triggers;
+                    result_rows.push_back(std::move(row));
                     return true;
                 };
 
@@ -826,6 +1059,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 if (!ran_any) {
                     globalPerf().record("Stage2_P2FeatureJobDiagnosticNoop",
                                         0.0);
+                    make_status_row("all", "noop");
                 }
             }
         }
@@ -837,6 +1071,21 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
         if (elapsed_ms > static_cast<double>(task.job.deadline_ms)) {
             globalPerf().record("Stage2_P2FeatureJobDiagnosticOverDeadline",
                                 elapsed_ms);
+        }
+        for (auto& row : result_rows) {
+            row.worker_elapsed_ms = elapsed_ms;
+            row.over_deadline =
+                elapsed_ms > static_cast<double>(task.job.deadline_ms);
+        }
+        const auto result_write_start = Clock::now();
+        writeP2FeatureDiagnosticResults(result_rows);
+        if (!result_rows.empty() && config_.p2_diagnostic_results_enabled) {
+            const double result_write_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - result_write_start).count();
+            globalPerf().record(
+                "Stage2_P2FeatureJobDiagnosticResultsWrite",
+                result_write_ms);
         }
         releaseP2FeatureDiagnosticBuffer(release_buffer_index);
 

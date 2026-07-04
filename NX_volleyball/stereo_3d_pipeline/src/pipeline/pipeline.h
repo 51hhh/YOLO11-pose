@@ -53,7 +53,9 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <fstream>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -298,6 +300,35 @@ private:
         cudaEvent_t copy_done = nullptr;
         bool copy_event_recorded = false;
     };
+    struct P2FeatureDiagnosticResultRow {
+        int frame_id = -1;
+        FrameMetadata metadata;
+        std::string lane = "diagnostic";
+        std::string mode;
+        std::string status;
+        bool valid = false;
+        bool low_confidence = false;
+        float disparity = std::numeric_limits<float>::quiet_NaN();
+        float z_m = std::numeric_limits<float>::quiet_NaN();
+        float confidence = std::numeric_limits<float>::quiet_NaN();
+        float stddev = std::numeric_limits<float>::quiet_NaN();
+        int support = 0;
+        int attempted = 0;
+        float initial_disparity = std::numeric_limits<float>::quiet_NaN();
+        Detection left_det;
+        Detection right_det;
+        float anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        double algo_ms = 0.0;
+        double queue_wait_ms = 0.0;
+        double worker_elapsed_ms = 0.0;
+        float deadline_ms = 0.0f;
+        bool over_deadline = false;
+        uint32_t depth_mode_mask = 0u;
+        uint32_t triggers = 0u;
+    };
     bool asyncRoiStage2Configured() const;
     bool initAsyncRoiStage2();
     bool startAsyncRoiStage2();
@@ -333,6 +364,10 @@ private:
         cudaEvent_t source_copy_done,
         bool source_copy_event_recorded,
         AsyncRoiBuffer& source_buffer);
+    bool openP2FeatureDiagnosticResults();
+    void closeP2FeatureDiagnosticResults();
+    void writeP2FeatureDiagnosticResults(
+        const std::vector<P2FeatureDiagnosticResultRow>& rows);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -400,6 +435,8 @@ private:
     std::deque<P2FeatureDiagnosticTask> p2_feature_diag_pending_;
     std::deque<int> p2_feature_diag_free_buffers_;
     std::vector<P2FeatureDiagnosticBuffer> p2_feature_diag_buffers_;
+    std::mutex p2_feature_diag_results_mutex_;
+    std::ofstream p2_feature_diag_results_file_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器
