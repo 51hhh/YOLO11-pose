@@ -113,6 +113,8 @@ recording:
 
 实时 recorder 还会生成同名前缀 `*.frames.csv` sidecar。它记录每帧同步水印、`result_count`、direct/fallback 数量、pair gate 统计、P2 候选 observed/valid 计数，以及 P2 调度状态字段 `p2_depth_modes_enabled`、`p2_depth_mode_mask`、`p2_realtime_requested`、`p2_diagnostic_requested`、`p2_feature_job_count` 和 trigger mask。该 sidecar 用于区分“未触发 P2”和“触发但候选无效”。
 
+VPI Template/ORB 当前不在主 `Object3D` 和 trajectory CSV header 中新增字段。录制配置通过 P2 diagnostic lane 写同名前缀 `*.p2_diagnostic.csv`，再由 `trajectory_fusion/dataset.py` 合并为训练候选 `z_roi_vpi_template_match`、`z_roi_vpi_orb`。因此新增或排查 VPI 字段时要同时看主 CSV、`.frames.csv` 和 `.p2_diagnostic.csv`，不能只检查 `Object3D`。
+
 ## 基准片段 CSV
 
 定义位置: `src/utils/baseline_clip_recorder.*`

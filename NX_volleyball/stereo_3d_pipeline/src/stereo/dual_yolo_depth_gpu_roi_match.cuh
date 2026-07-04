@@ -350,6 +350,7 @@ __device__ void matchSparsePoints(
     float* sample_score,
     float* sample_x,
     float* sample_y,
+    float* sample_right_y,
     float* point_x,
     float* point_y,
     float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint],
@@ -367,6 +368,7 @@ __device__ void matchSparsePoints(
         sample_score[i] = 0.0f;
         sample_x[i] = 0.0f;
         sample_y[i] = 0.0f;
+        sample_right_y[i] = 0.0f;
         point_x[i] = 0.0f;
         point_y[i] = 0.0f;
         for (int j = 0; j < kThreadsPerPoint; ++j) {
@@ -546,6 +548,7 @@ __device__ void matchSparsePoints(
                         sample_score[idx] = best_score;
                         sample_x[idx] = left_x;
                         sample_y[idx] = left_y;
+                        sample_right_y[idx] = right_y;
                     }
                 }
             }
@@ -570,7 +573,8 @@ __device__ void matchSparsePoints(
                                         max_stddev, feature_mad_scale,
                                         feature_ransac_gate_px,
                                         sample_disp, sample_score,
-                                        sample_x, sample_y, point_x,
+                                        sample_x, sample_y, sample_right_y,
+                                        point_x,
                                         &disparity, &anchor_x, &anchor_y,
                                         &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
@@ -609,6 +613,9 @@ __device__ void matchSparsePoints(
                     out->support = support;
                     out->valid = out->confidence >= min_confidence ? 1 : 0;
                     out->low_confidence = out->valid ? 0 : 1;
+                    copyDualYoloDebugMatches(n, sample_disp, sample_score,
+                                             sample_x, sample_y,
+                                             sample_right_y, point_x, out);
                 }
             }
         }
@@ -650,6 +657,7 @@ __device__ void matchMultiPointPatch(
     float* sample_score,
     float* sample_x,
     float* sample_y,
+    float* sample_right_y,
     float* point_x,
     float* point_y,
     float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint],
@@ -667,6 +675,7 @@ __device__ void matchMultiPointPatch(
         sample_score[i] = 0.0f;
         sample_x[i] = 0.0f;
         sample_y[i] = 0.0f;
+        sample_right_y[i] = 0.0f;
         point_x[i] = 0.0f;
         point_y[i] = 0.0f;
         for (int j = 0; j < kThreadsPerPoint; ++j) {
@@ -813,6 +822,7 @@ __device__ void matchMultiPointPatch(
                         sample_score[idx] = best_score;
                         sample_x[idx] = left_x;
                         sample_y[idx] = left_y;
+                        sample_right_y[idx] = right_y;
                     }
                 }
             }
@@ -837,7 +847,8 @@ __device__ void matchMultiPointPatch(
                                         max_stddev, feature_mad_scale,
                                         feature_ransac_gate_px,
                                         sample_disp, sample_score,
-                                        sample_x, sample_y, point_x,
+                                        sample_x, sample_y, sample_right_y,
+                                        point_x,
                                         &disparity, &anchor_x, &anchor_y,
                                         &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
@@ -872,6 +883,9 @@ __device__ void matchMultiPointPatch(
                     out->support = support;
                     out->valid = out->confidence >= min_confidence ? 1 : 0;
                     out->low_confidence = out->valid ? 0 : 1;
+                    copyDualYoloDebugMatches(n, sample_disp, sample_score,
+                                             sample_x, sample_y,
+                                             sample_right_y, point_x, out);
                 }
             }
         }

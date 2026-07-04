@@ -130,6 +130,7 @@ __device__ __forceinline__ void clearDisparity(stereo3d::DualYoloGpuDisparity* d
     d->attempted = 0;
     d->low_confidence = 0;
     d->valid = 0;
+    d->debug_match_count = 0;
 }
 
 __device__ float znccScore(
@@ -356,6 +357,7 @@ __device__ void sortSamplesByDisparity(
     float* sample_score,
     float* sample_x,
     float* sample_y,
+    float* sample_right_y,
     int n) {
     for (int i = 0; i < n - 1; ++i) {
         for (int j = 0; j < n - i - 1; ++j) {
@@ -364,14 +366,17 @@ __device__ void sortSamplesByDisparity(
             const float ts = sample_score[j];
             const float tx = sample_x[j];
             const float ty = sample_y[j];
+            const float try_ = sample_right_y[j];
             sample_disp[j] = sample_disp[j + 1];
             sample_score[j] = sample_score[j + 1];
             sample_x[j] = sample_x[j + 1];
             sample_y[j] = sample_y[j + 1];
+            sample_right_y[j] = sample_right_y[j + 1];
             sample_disp[j + 1] = td;
             sample_score[j + 1] = ts;
             sample_x[j + 1] = tx;
             sample_y[j + 1] = ty;
+            sample_right_y[j + 1] = try_;
         }
     }
 }
@@ -399,6 +404,7 @@ __device__ bool robustAggregateSamples(
     float* sample_score,
     float* sample_x,
     float* sample_y,
+    float* sample_right_y,
     float* scratch,
     float* out_disp,
     float* out_anchor_x,
@@ -408,7 +414,8 @@ __device__ bool robustAggregateSamples(
     int* out_support) {
     if (n < min_points) return false;
 
-    sortSamplesByDisparity(sample_disp, sample_score, sample_x, sample_y, n);
+    sortSamplesByDisparity(sample_disp, sample_score, sample_x, sample_y,
+                           sample_right_y, n);
     const float median = medianSortedValues(sample_disp, n);
 
     for (int i = 0; i < n; ++i) {
@@ -498,6 +505,33 @@ __device__ bool robustAggregateSamples(
     *out_avg_score = sum_score / static_cast<float>(max(1, inliers));
     *out_support = inliers;
     return true;
+}
+
+__device__ void copyDualYoloDebugMatches(
+    int n,
+    const float* sample_disp,
+    const float* sample_score,
+    const float* sample_x,
+    const float* sample_y,
+    const float* sample_right_y,
+    const float* inlier_flags,
+    stereo3d::DualYoloGpuDisparity* out) {
+    int count = 0;
+    for (int i = 0;
+         i < n && count < stereo3d::kMaxDualYoloGpuDebugMatches;
+         ++i) {
+        if (inlier_flags[i] <= 0.0f || sample_disp[i] <= 0.5f) {
+            continue;
+        }
+        out->debug_left_x[count] = sample_x[i];
+        out->debug_left_y[count] = sample_y[i];
+        out->debug_right_x[count] = sample_x[i] - sample_disp[i];
+        out->debug_right_y[count] = sample_right_y[i];
+        out->debug_disparity[count] = sample_disp[i];
+        out->debug_score[count] = sample_score[i];
+        ++count;
+    }
+    out->debug_match_count = count;
 }
 
 __device__ bool pointInsideDetectionEllipse(

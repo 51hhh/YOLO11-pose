@@ -12,9 +12,21 @@ from statistics import mean
 from typing import Any, Dict, List, Sequence
 
 try:
-    from .dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
+    from .dataset import (
+        derive_frame_summary_path,
+        derive_p2_diagnostic_path,
+        find_metadata_for_csv,
+        read_csv_rows,
+        read_metadata,
+    )
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import derive_frame_summary_path, find_metadata_for_csv, read_csv_rows, read_metadata
+    from dataset import (
+        derive_frame_summary_path,
+        derive_p2_diagnostic_path,
+        find_metadata_for_csv,
+        read_csv_rows,
+        read_metadata,
+    )
 
 
 P0_DEPTH_KEYS = (
@@ -27,6 +39,9 @@ P0_DEPTH_KEYS = (
 P1_DEPTH_KEYS = (
     "z_roi_multi_point",
     "z_roi_center_patch",
+    "z_roi_patch_iou_color_edge",
+    "z_roi_iou_region_color_patch",
+    "z_roi_cuda_stereo_sgm",
 )
 DEPTH_KEYS = P0_DEPTH_KEYS + P1_DEPTH_KEYS
 JUMP_DEPTH_KEYS = DEPTH_KEYS + ("z_fallback_epipolar",)
@@ -339,6 +354,51 @@ def _frame_summary_report(csv_path: Path) -> Dict[str, Any]:
     }
 
 
+def _p2_diagnostic_report(csv_path: Path) -> Dict[str, Any]:
+    diag_path = derive_p2_diagnostic_path(csv_path)
+    if not diag_path.exists():
+        return {"path": str(diag_path), "present": False}
+
+    rows = read_csv_rows(diag_path)
+    by_mode: Dict[str, List[Dict[str, str]]] = {}
+    for row in rows:
+        mode = row.get("mode") or "unknown"
+        by_mode.setdefault(mode, []).append(row)
+
+    modes: Dict[str, Dict[str, Any]] = {}
+    for mode, mode_rows in sorted(by_mode.items()):
+        valid_rows = [
+            row
+            for row in mode_rows
+            if _safe_int(row.get("valid"), 0) == 1
+            and _safe_float(row.get("z_m"), -1.0) > 0.1
+        ]
+        z_values = [_safe_float(row.get("z_m"), -1.0) for row in valid_rows]
+        algo_ms = [_safe_float(row.get("algo_ms"), 0.0) for row in mode_rows]
+        worker_ms = [_safe_float(row.get("worker_elapsed_ms"), 0.0) for row in mode_rows]
+        modes[mode] = {
+            "rows": len(mode_rows),
+            "valid": len(valid_rows),
+            "hit_rate": len(valid_rows) / len(mode_rows) if mode_rows else 0.0,
+            "over_deadline": sum(
+                _safe_int(row.get("over_deadline"), 0) for row in mode_rows
+            ),
+            "median_z": _median(z_values),
+            "mad_z": _mad(z_values),
+            "algo_ms_median": _median(algo_ms),
+            "algo_ms_p95": _percentile(algo_ms, 95.0),
+            "worker_ms_median": _median(worker_ms),
+            "worker_ms_p95": _percentile(worker_ms, 95.0),
+        }
+
+    return {
+        "path": str(diag_path),
+        "present": True,
+        "rows": len(rows),
+        "modes": modes,
+    }
+
+
 def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = None) -> Dict[str, Any]:
     """Return quality metrics for one trajectory CSV."""
 
@@ -352,6 +412,7 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
     target_timing = _timing_stats(rows)
     target_gaps = _frame_gaps(rows)
     frame_summary = _frame_summary_report(csv_path)
+    p2_diagnostic = _p2_diagnostic_report(csv_path)
     timing_source = "frame_summary" if frame_summary["present"] else "target_csv"
     duration = frame_summary.get("duration_sec", target_timing["duration_sec"])
     fps_rows = frame_summary.get("fps_rows", target_timing["fps_rows"])
@@ -387,6 +448,7 @@ def analyze_dataset(csv_path: str | Path, metadata_path: str | Path | None = Non
         "depth": {key: _depth_stats(rows, key, known_z) for key in DEPTH_KEYS},
         "depth_jump": {key: _depth_jump_stats(rows, key) for key in JUMP_DEPTH_KEYS},
         "frame_summary": frame_summary,
+        "p2_diagnostic": p2_diagnostic,
         "known_z": known_z,
     }
 
@@ -437,6 +499,21 @@ def print_report(report: Dict[str, Any]) -> None:
     )
     if frame_summary["present"]:
         print(f"frame_summary_totals={frame_summary['totals']}")
+    p2_diagnostic = report["p2_diagnostic"]
+    print(
+        f"p2_diagnostic: present={p2_diagnostic['present']} "
+        f"path={p2_diagnostic['path']} rows={p2_diagnostic.get('rows')}"
+    )
+    if p2_diagnostic["present"]:
+        for mode, stats in p2_diagnostic["modes"].items():
+            print(
+                f"p2_diag[{mode}]: valid={stats['valid']}/{stats['rows']} "
+                f"hit={stats['hit_rate'] * 100.0:.1f}% "
+                f"median={_fmt(stats['median_z'])} mad={_fmt(stats['mad_z'])} "
+                f"algo_p95={_fmt(stats['algo_ms_p95'])}ms "
+                f"worker_p95={_fmt(stats['worker_ms_p95'])}ms "
+                f"over_deadline={stats['over_deadline']}"
+            )
 
 
 def main() -> int:

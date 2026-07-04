@@ -10,6 +10,7 @@
 #include "../utils/logger.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cuda_runtime.h>
@@ -21,6 +22,11 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace stereo3d {
 
@@ -255,8 +261,239 @@ void writeP2FeatureDiagnosticResultHeader(std::ostream& out) {
         << "left_cx,left_cy,left_w,left_h,left_conf,"
         << "right_cx,right_cy,right_w,right_h,right_conf,"
         << "anchor_cx,anchor_cy,right_anchor_cx,right_anchor_cy,"
+        << "debug_match_count,artifact_path,"
         << "algo_ms,queue_wait_ms,worker_elapsed_ms,deadline_ms,"
         << "over_deadline,depth_mode_mask,triggers\n";
+}
+
+bool finitePositive(float value) {
+    return std::isfinite(value) && value > 0.0f;
+}
+
+bool finitePoint(float x, float y) {
+    return std::isfinite(x) && std::isfinite(y);
+}
+
+std::string sanitizeArtifactToken(std::string token) {
+    if (token.empty()) {
+        return "unknown";
+    }
+    for (char& c : token) {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (!std::isalnum(uc) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    return token;
+}
+
+cv::Rect2f detectionRect(const Detection& det) {
+    if (!finitePoint(det.cx, det.cy) ||
+        !finitePositive(det.width) ||
+        !finitePositive(det.height)) {
+        return cv::Rect2f();
+    }
+    return cv::Rect2f(det.cx - det.width * 0.5f,
+                      det.cy - det.height * 0.5f,
+                      det.width,
+                      det.height);
+}
+
+void includePointBounds(float x,
+                        float y,
+                        float& min_x,
+                        float& min_y,
+                        float& max_x,
+                        float& max_y) {
+    if (!finitePoint(x, y)) {
+        return;
+    }
+    min_x = std::min(min_x, x);
+    min_y = std::min(min_y, y);
+    max_x = std::max(max_x, x);
+    max_y = std::max(max_y, y);
+}
+
+void includeRectBounds(const cv::Rect2f& rect,
+                       float& min_x,
+                       float& min_y,
+                       float& max_x,
+                       float& max_y) {
+    if (rect.width <= 0.0f || rect.height <= 0.0f) {
+        return;
+    }
+    includePointBounds(rect.x, rect.y, min_x, min_y, max_x, max_y);
+    includePointBounds(rect.x + rect.width,
+                       rect.y + rect.height,
+                       min_x, min_y, max_x, max_y);
+}
+
+cv::Rect cropAround(float cx,
+                    float cy,
+                    int crop_w,
+                    int crop_h,
+                    int img_w,
+                    int img_h) {
+    crop_w = std::clamp(crop_w, 1, std::max(1, img_w));
+    crop_h = std::clamp(crop_h, 1, std::max(1, img_h));
+    int x = static_cast<int>(std::lround(cx - static_cast<float>(crop_w) * 0.5f));
+    int y = static_cast<int>(std::lround(cy - static_cast<float>(crop_h) * 0.5f));
+    x = std::clamp(x, 0, std::max(0, img_w - crop_w));
+    y = std::clamp(y, 0, std::max(0, img_h - crop_h));
+    return cv::Rect(x, y, crop_w, crop_h);
+}
+
+cv::Point panelPoint(float x,
+                     float y,
+                     const cv::Rect& crop,
+                     float scale,
+                     int x_offset,
+                     int y_offset) {
+    return cv::Point(
+        x_offset + static_cast<int>(std::lround((x - crop.x) * scale)),
+        y_offset + static_cast<int>(std::lround((y - crop.y) * scale)));
+}
+
+void drawDetectionOnPanel(cv::Mat& canvas,
+                          const Detection& det,
+                          const cv::Rect& crop,
+                          float scale,
+                          int x_offset,
+                          int y_offset,
+                          const cv::Scalar& color) {
+    const cv::Rect2f rect = detectionRect(det);
+    if (rect.width <= 0.0f || rect.height <= 0.0f) {
+        return;
+    }
+    const cv::Point p0 = panelPoint(rect.x, rect.y, crop, scale, x_offset, y_offset);
+    const cv::Point p1 = panelPoint(rect.x + rect.width,
+                                    rect.y + rect.height,
+                                    crop, scale, x_offset, y_offset);
+    cv::rectangle(canvas, p0, p1, color, 2, cv::LINE_AA);
+}
+
+void drawCross(cv::Mat& canvas,
+               const cv::Point& p,
+               const cv::Scalar& color,
+               int radius = 7) {
+    cv::line(canvas, cv::Point(p.x - radius, p.y),
+             cv::Point(p.x + radius, p.y), color, 2, cv::LINE_AA);
+    cv::line(canvas, cv::Point(p.x, p.y - radius),
+             cv::Point(p.x, p.y + radius), color, 2, cv::LINE_AA);
+}
+
+cv::Mat renderDebugPatchPlane(const std::vector<float>& values,
+                              int width,
+                              int height,
+                              float configured_min,
+                              float configured_max,
+                              int target_w,
+                              int target_h) {
+    if (width <= 0 || height <= 0 ||
+        static_cast<int>(values.size()) < width * height ||
+        target_w <= 0 || target_h <= 0) {
+        return cv::Mat();
+    }
+
+    float min_value = configured_min;
+    float max_value = configured_max;
+    if (!std::isfinite(min_value) || !std::isfinite(max_value) ||
+        max_value <= min_value) {
+        min_value = std::numeric_limits<float>::max();
+        max_value = std::numeric_limits<float>::lowest();
+        for (int i = 0; i < width * height; ++i) {
+            const float v = values[static_cast<size_t>(i)];
+            if (!std::isfinite(v)) {
+                continue;
+            }
+            min_value = std::min(min_value, v);
+            max_value = std::max(max_value, v);
+        }
+    }
+    if (!std::isfinite(min_value) || !std::isfinite(max_value) ||
+        max_value <= min_value) {
+        return cv::Mat();
+    }
+
+    cv::Mat gray(height, width, CV_8UC1, cv::Scalar(0));
+    const float inv_range = 1.0f / std::max(1e-6f, max_value - min_value);
+    for (int y = 0; y < height; ++y) {
+        auto* row = gray.ptr<uint8_t>(y);
+        for (int x = 0; x < width; ++x) {
+            const float v = values[static_cast<size_t>(y * width + x)];
+            if (!std::isfinite(v)) {
+                row[x] = 0;
+                continue;
+            }
+            const float t = std::clamp((v - min_value) * inv_range, 0.0f, 1.0f);
+            row[x] = static_cast<uint8_t>(std::lround(24.0f + t * 231.0f));
+        }
+    }
+
+    cv::Mat resized;
+    cv::resize(gray, resized, cv::Size(target_w, target_h),
+               0.0, 0.0, cv::INTER_NEAREST);
+    cv::Mat color;
+    cv::applyColorMap(resized, color, cv::COLORMAP_TURBO);
+    return color;
+}
+
+void drawDebugPatchPanel(cv::Mat& canvas,
+                         const SparseFeatureDebugPatch& patch,
+                         int y_offset,
+                         int width,
+                         const cv::Scalar& white,
+                         const cv::Scalar& muted) {
+    if (!patch.valid || patch.width <= 0 || patch.height <= 0 ||
+        patch.disparity.empty() || y_offset >= canvas.rows) {
+        return;
+    }
+    constexpr int kInnerPad = 8;
+    constexpr int kLabelH = 24;
+    constexpr int kGap = 12;
+    const int available_h = canvas.rows - y_offset - kInnerPad;
+    if (available_h <= kLabelH + 8) {
+        return;
+    }
+    const bool draw_conf = patch.has_confidence &&
+        !patch.confidence.empty() &&
+        static_cast<int>(patch.confidence.size()) >= patch.width * patch.height;
+    const int panel_w = draw_conf
+        ? std::max(1, (width - kGap) / 2)
+        : std::max(1, width);
+    const int heat_h = std::max(1, available_h - kLabelH);
+
+    auto draw_one = [&](const char* title,
+                        const std::vector<float>& values,
+                        float min_value,
+                        float max_value,
+                        int x_offset) {
+        cv::putText(canvas, title, cv::Point(x_offset, y_offset + 17),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.48, white, 1, cv::LINE_AA);
+        cv::Mat heat = renderDebugPatchPlane(
+            values, patch.width, patch.height, min_value, max_value,
+            panel_w, heat_h);
+        if (heat.empty()) {
+            cv::putText(canvas, "no finite values",
+                        cv::Point(x_offset, y_offset + kLabelH + 24),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, muted, 1, cv::LINE_AA);
+            return;
+        }
+        heat.copyTo(canvas(cv::Rect(x_offset, y_offset + kLabelH,
+                                    heat.cols, heat.rows)));
+        cv::rectangle(canvas,
+                      cv::Rect(x_offset, y_offset + kLabelH,
+                               heat.cols, heat.rows),
+                      muted, 1, cv::LINE_AA);
+    };
+
+    draw_one("DISPARITY PATCH", patch.disparity,
+             patch.disparity_min, patch.disparity_max, 0);
+    if (draw_conf) {
+        draw_one("CONFIDENCE PATCH", patch.confidence,
+                 patch.confidence_min, patch.confidence_max,
+                 panel_w + kGap);
+    }
 }
 
 bool p2DiagnosticOnlyFeatureJobsEnabled(const PipelineConfig& config) {
@@ -451,6 +688,7 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
     if (!initP2FeatureDiagnosticBuffers()) {
         return false;
     }
+    p2_feature_diag_artifacts_saved_ = 0;
     openP2FeatureDiagnosticResults();
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
@@ -705,7 +943,9 @@ void Pipeline::writeP2FeatureDiagnosticResults(
         writeCsvFloat(p2_feature_diag_results_file_, row.right_anchor_cx);
         p2_feature_diag_results_file_ << ",";
         writeCsvFloat(p2_feature_diag_results_file_, row.right_anchor_cy);
-        p2_feature_diag_results_file_ << ",";
+        p2_feature_diag_results_file_ << ","
+            << row.debug_match_count << ","
+            << row.artifact_path << ",";
         writeCsvDouble(p2_feature_diag_results_file_, row.algo_ms);
         p2_feature_diag_results_file_ << ",";
         writeCsvDouble(p2_feature_diag_results_file_, row.queue_wait_ms);
@@ -718,6 +958,329 @@ void Pipeline::writeP2FeatureDiagnosticResults(
             << row.depth_mode_mask << "," << row.triggers << "\n";
     }
     p2_feature_diag_results_file_.flush();
+}
+
+void Pipeline::writeP2FeatureDiagnosticArtifacts(
+    std::vector<P2FeatureDiagnosticResultRow>& rows,
+    const P2FeatureDiagnosticBuffer& buffer,
+    int width,
+    int height) {
+    if (rows.empty() || !config_.p2_diagnostic_artifacts_enabled ||
+        config_.p2_diagnostic_artifacts_max <= 0 ||
+        width <= 0 || height <= 0 ||
+        !buffer.left_gray_gpu || !buffer.right_gray_gpu) {
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    fs::path out_dir;
+    if (!config_.p2_diagnostic_artifacts_dir.empty()) {
+        out_dir = fs::path(config_.p2_diagnostic_artifacts_dir);
+    } else if (!config_.p2_diagnostic_results_path.empty()) {
+        const fs::path csv_path(config_.p2_diagnostic_results_path);
+        const fs::path parent = csv_path.parent_path();
+        out_dir = parent / (csv_path.stem().string() + ".artifacts");
+    } else {
+        out_dir = fs::path("p2_diagnostic_artifacts");
+    }
+
+    std::error_code ec;
+    fs::create_directories(out_dir, ec);
+    if (ec) {
+        LOG_WARN("P2 diagnostic: create artifact directory failed: %s (%s)",
+                 out_dir.string().c_str(),
+                 ec.message().c_str());
+        return;
+    }
+
+    if (p2_feature_diag_stream_) {
+        const cudaError_t sync_err = cudaStreamSynchronize(p2_feature_diag_stream_);
+        if (sync_err != cudaSuccess) {
+            LOG_WARN("P2 diagnostic: synchronize before artifacts failed: %s",
+                     cudaGetErrorString(sync_err));
+            return;
+        }
+    }
+
+    cv::Mat left_gray(height, width, CV_8UC1);
+    cv::Mat right_gray(height, width, CV_8UC1);
+    cudaError_t err = cudaMemcpy2D(left_gray.data,
+                                   static_cast<size_t>(left_gray.step),
+                                   buffer.left_gray_gpu,
+                                   buffer.left_gray_pitch,
+                                   static_cast<size_t>(width),
+                                   static_cast<size_t>(height),
+                                   cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        LOG_WARN("P2 diagnostic: download left artifact image failed: %s",
+                 cudaGetErrorString(err));
+        return;
+    }
+    err = cudaMemcpy2D(right_gray.data,
+                       static_cast<size_t>(right_gray.step),
+                       buffer.right_gray_gpu,
+                       buffer.right_gray_pitch,
+                       static_cast<size_t>(width),
+                       static_cast<size_t>(height),
+                       cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        LOG_WARN("P2 diagnostic: download right artifact image failed: %s",
+                 cudaGetErrorString(err));
+        return;
+    }
+
+    cv::Mat left_bgr;
+    cv::Mat right_bgr;
+    cv::cvtColor(left_gray, left_bgr, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(right_gray, right_bgr, cv::COLOR_GRAY2BGR);
+
+    constexpr int kTopMargin = 78;
+    constexpr int kGap = 24;
+    constexpr int kMinCrop = 72;
+    constexpr int kMaxPanel = 520;
+    constexpr int kMaxDrawMatches = 24;
+    const cv::Scalar yellow(0, 220, 255);
+    const cv::Scalar cyan(255, 220, 0);
+    const cv::Scalar white(245, 245, 245);
+    const cv::Scalar muted(170, 170, 170);
+    const std::array<cv::Scalar, 8> palette = {
+        cv::Scalar(64, 220, 255),
+        cv::Scalar(80, 255, 120),
+        cv::Scalar(255, 170, 80),
+        cv::Scalar(255, 100, 180),
+        cv::Scalar(120, 180, 255),
+        cv::Scalar(180, 255, 80),
+        cv::Scalar(255, 220, 120),
+        cv::Scalar(210, 130, 255),
+    };
+
+    std::vector<size_t> row_order;
+    row_order.reserve(rows.size());
+    std::vector<uint8_t> queued(rows.size(), 0);
+    auto row_drawable = [](const P2FeatureDiagnosticResultRow& row) {
+        return row.debug_match_count > 0 || row.debug_patch.valid;
+    };
+    auto enqueue_rows = [&](auto predicate) {
+        for (size_t i = 0; i < rows.size(); ++i) {
+            if (queued[i] || !row_drawable(rows[i]) || !predicate(rows[i])) {
+                continue;
+            }
+            queued[i] = 1;
+            row_order.push_back(i);
+        }
+    };
+    enqueue_rows([](const P2FeatureDiagnosticResultRow& row) {
+        return row.valid && row.debug_match_count > 0;
+    });
+    enqueue_rows([](const P2FeatureDiagnosticResultRow& row) {
+        return row.valid;
+    });
+    enqueue_rows([](const P2FeatureDiagnosticResultRow& row) {
+        return row.debug_match_count > 0;
+    });
+    enqueue_rows([](const P2FeatureDiagnosticResultRow&) {
+        return true;
+    });
+
+    for (const size_t row_index : row_order) {
+        auto& row = rows[row_index];
+        const bool diagnostic_valid_priority =
+            row.lane == "diagnostic" && row.valid && row.debug_match_count > 0;
+        if (p2_feature_diag_artifacts_saved_ >=
+                config_.p2_diagnostic_artifacts_max &&
+            !diagnostic_valid_priority) {
+            break;
+        }
+        if (row.debug_match_count <= 0 && !row.debug_patch.valid) {
+            continue;
+        }
+
+        float left_min_x = std::numeric_limits<float>::max();
+        float left_min_y = std::numeric_limits<float>::max();
+        float left_max_x = std::numeric_limits<float>::lowest();
+        float left_max_y = std::numeric_limits<float>::lowest();
+        float right_min_x = std::numeric_limits<float>::max();
+        float right_min_y = std::numeric_limits<float>::max();
+        float right_max_x = std::numeric_limits<float>::lowest();
+        float right_max_y = std::numeric_limits<float>::lowest();
+
+        includeRectBounds(detectionRect(row.left_det),
+                          left_min_x, left_min_y, left_max_x, left_max_y);
+        includeRectBounds(detectionRect(row.right_det),
+                          right_min_x, right_min_y, right_max_x, right_max_y);
+        includePointBounds(row.anchor_cx, row.anchor_cy,
+                           left_min_x, left_min_y, left_max_x, left_max_y);
+        includePointBounds(row.right_anchor_cx, row.right_anchor_cy,
+                           right_min_x, right_min_y, right_max_x, right_max_y);
+
+        const int debug_count =
+            std::clamp(row.debug_match_count, 0, kMaxSparseFeatureDebugMatches);
+        for (int i = 0; i < debug_count; ++i) {
+            const auto& m = row.debug_matches[static_cast<size_t>(i)];
+            includePointBounds(m.left_x, m.left_y,
+                               left_min_x, left_min_y, left_max_x, left_max_y);
+            includePointBounds(m.right_x, m.right_y,
+                               right_min_x, right_min_y, right_max_x, right_max_y);
+        }
+
+        const bool have_left_bounds = left_min_x <= left_max_x &&
+                                      left_min_y <= left_max_y;
+        const bool have_right_bounds = right_min_x <= right_max_x &&
+                                       right_min_y <= right_max_y;
+        float left_cx = finitePoint(row.left_det.cx, row.left_det.cy)
+            ? row.left_det.cx : row.anchor_cx;
+        float left_cy = finitePoint(row.left_det.cx, row.left_det.cy)
+            ? row.left_det.cy : row.anchor_cy;
+        float right_cx = finitePoint(row.right_det.cx, row.right_det.cy)
+            ? row.right_det.cx : row.right_anchor_cx;
+        float right_cy = finitePoint(row.right_det.cx, row.right_det.cy)
+            ? row.right_det.cy : row.right_anchor_cy;
+        if (!finitePoint(left_cx, left_cy)) {
+            left_cx = static_cast<float>(width) * 0.5f;
+            left_cy = static_cast<float>(height) * 0.5f;
+        }
+        if (!finitePoint(right_cx, right_cy)) {
+            right_cx = static_cast<float>(width) * 0.5f;
+            right_cy = static_cast<float>(height) * 0.5f;
+        }
+
+        const float left_extent_w = have_left_bounds
+            ? (left_max_x - left_min_x) : static_cast<float>(kMinCrop);
+        const float left_extent_h = have_left_bounds
+            ? (left_max_y - left_min_y) : static_cast<float>(kMinCrop);
+        const float right_extent_w = have_right_bounds
+            ? (right_max_x - right_min_x) : static_cast<float>(kMinCrop);
+        const float right_extent_h = have_right_bounds
+            ? (right_max_y - right_min_y) : static_cast<float>(kMinCrop);
+        const int margin = 24;
+        const int crop_w = std::clamp(
+            static_cast<int>(std::ceil(std::max(left_extent_w, right_extent_w))) +
+                margin * 2,
+            kMinCrop,
+            std::max(1, width));
+        const int crop_h = std::clamp(
+            static_cast<int>(std::ceil(std::max(left_extent_h, right_extent_h))) +
+                margin * 2,
+            kMinCrop,
+            std::max(1, height));
+        const cv::Rect left_crop = cropAround(left_cx, left_cy,
+                                             crop_w, crop_h, width, height);
+        const cv::Rect right_crop = cropAround(right_cx, right_cy,
+                                              crop_w, crop_h, width, height);
+        const float scale = std::max(
+            1.0f,
+            std::min(4.0f, static_cast<float>(kMaxPanel) /
+                               static_cast<float>(std::max(crop_w, crop_h))));
+        const int panel_w = std::max(1, static_cast<int>(std::lround(crop_w * scale)));
+        const int panel_h = std::max(1, static_cast<int>(std::lround(crop_h * scale)));
+
+        cv::Mat left_panel;
+        cv::Mat right_panel;
+        cv::resize(left_bgr(left_crop), left_panel, cv::Size(panel_w, panel_h),
+                   0.0, 0.0, cv::INTER_NEAREST);
+        cv::resize(right_bgr(right_crop), right_panel, cv::Size(panel_w, panel_h),
+                   0.0, 0.0, cv::INTER_NEAREST);
+
+        const int patch_area_h = row.debug_patch.valid ? 168 : 0;
+        cv::Mat canvas(kTopMargin + panel_h + patch_area_h,
+                       panel_w * 2 + kGap,
+                       CV_8UC3,
+                       cv::Scalar(20, 20, 20));
+        left_panel.copyTo(canvas(cv::Rect(0, kTopMargin, panel_w, panel_h)));
+        right_panel.copyTo(canvas(cv::Rect(panel_w + kGap,
+                                           kTopMargin,
+                                           panel_w,
+                                           panel_h)));
+
+        drawDetectionOnPanel(canvas, row.left_det, left_crop, scale,
+                             0, kTopMargin, yellow);
+        drawDetectionOnPanel(canvas, row.right_det, right_crop, scale,
+                             panel_w + kGap, kTopMargin, yellow);
+        if (finitePoint(row.anchor_cx, row.anchor_cy)) {
+            const cv::Point p = panelPoint(row.anchor_cx, row.anchor_cy,
+                                           left_crop, scale, 0, kTopMargin);
+            drawCross(canvas, p, cyan);
+        }
+        if (finitePoint(row.right_anchor_cx, row.right_anchor_cy)) {
+            const cv::Point p = panelPoint(row.right_anchor_cx, row.right_anchor_cy,
+                                           right_crop, scale,
+                                           panel_w + kGap, kTopMargin);
+            drawCross(canvas, p, cyan);
+        }
+
+        const int draw_count = std::min(debug_count, kMaxDrawMatches);
+        for (int i = 0; i < draw_count; ++i) {
+            const auto& m = row.debug_matches[static_cast<size_t>(i)];
+            if (!finitePoint(m.left_x, m.left_y) ||
+                !finitePoint(m.right_x, m.right_y)) {
+                continue;
+            }
+            const cv::Scalar color = palette[static_cast<size_t>(i) % palette.size()];
+            const cv::Point lp = panelPoint(m.left_x, m.left_y,
+                                            left_crop, scale, 0, kTopMargin);
+            const cv::Point rp = panelPoint(m.right_x, m.right_y,
+                                            right_crop, scale,
+                                            panel_w + kGap, kTopMargin);
+            cv::circle(canvas, lp, 5, color, 2, cv::LINE_AA);
+            cv::circle(canvas, rp, 5, color, 2, cv::LINE_AA);
+            cv::line(canvas, lp, rp, color, 1, cv::LINE_AA);
+        }
+
+        cv::putText(canvas, "LEFT", cv::Point(8, kTopMargin - 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, white, 1, cv::LINE_AA);
+        cv::putText(canvas, "RIGHT", cv::Point(panel_w + kGap + 8,
+                                               kTopMargin - 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, white, 1, cv::LINE_AA);
+
+        std::ostringstream line1;
+        line1 << "frame " << row.frame_id << "  " << row.mode
+              << "  " << row.status
+              << "  disp=";
+        if (std::isfinite(row.disparity)) {
+            line1 << std::fixed << std::setprecision(2) << row.disparity;
+        } else {
+            line1 << "nan";
+        }
+        line1 << " px";
+        cv::putText(canvas, line1.str(), cv::Point(8, 24),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.55, white, 1, cv::LINE_AA);
+
+        std::ostringstream line2;
+        line2 << "z=";
+        if (std::isfinite(row.z_m)) {
+            line2 << std::fixed << std::setprecision(3) << row.z_m << "m";
+        } else {
+            line2 << "nan";
+        }
+        line2 << "  support=" << row.support << "/" << row.attempted
+              << "  debug_matches=" << debug_count;
+        if (row.debug_patch.valid) {
+            line2 << "  patch=" << row.debug_patch.width
+                  << "x" << row.debug_patch.height;
+        }
+        cv::putText(canvas, line2.str(), cv::Point(8, 50),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.50,
+                    white, 1, cv::LINE_AA);
+        if (row.debug_patch.valid) {
+            drawDebugPatchPanel(canvas, row.debug_patch,
+                                kTopMargin + panel_h + 12,
+                                canvas.cols, white, muted);
+        }
+
+        std::ostringstream filename;
+        filename << "frame_" << std::setw(6) << std::setfill('0') << row.frame_id
+                 << "_" << std::setw(2) << std::setfill('0') << row_index
+                 << "_" << sanitizeArtifactToken(row.mode)
+                 << "_" << sanitizeArtifactToken(row.status) << ".png";
+        const fs::path path = out_dir / filename.str();
+        if (cv::imwrite(path.string(), canvas)) {
+            row.artifact_path = path.string();
+            ++p2_feature_diag_artifacts_saved_;
+        } else {
+            LOG_WARN("P2 diagnostic: failed to write artifact: %s",
+                     path.string().c_str());
+        }
+    }
 }
 
 void Pipeline::releaseP2FeatureDiagnosticBuffer(int buffer_index) {
@@ -991,9 +1554,11 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 const auto& p_left = calibration_->getProjectionLeft();
                 const float focal = static_cast<float>(p_left.at<double>(0, 0));
                 const float baseline = calibration_->getBaseline();
-                const ROIFeatureMatchConfig feature_cfg =
+                ROIFeatureMatchConfig feature_cfg =
                     makeROIFeatureMatchConfig(config_.dual_yolo,
                                               config_.depth);
+                feature_cfg.debug_patch_enabled =
+                    config_.p2_diagnostic_artifacts_enabled;
 
                 auto run_diagnostic_match = [&](uint32_t mode_bit,
                                                 const char* stage_name,
@@ -1049,6 +1614,15 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     row.anchor_cy = result.anchor_cy;
                     row.right_anchor_cx = result.right_anchor_cx;
                     row.right_anchor_cy = result.right_anchor_cy;
+                    row.debug_match_count = std::clamp(
+                        result.debug_match_count,
+                        0,
+                        kMaxSparseFeatureDebugMatches);
+                    for (int i = 0; i < row.debug_match_count; ++i) {
+                        row.debug_matches[static_cast<size_t>(i)] =
+                            result.debug_matches[static_cast<size_t>(i)];
+                    }
+                    row.debug_patch = result.debug_patch;
                     row.algo_ms = algo_ms;
                     row.queue_wait_ms = queue_wait_ms;
                     row.deadline_ms = task.job.deadline_ms;
@@ -1159,6 +1733,10 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 elapsed_ms > static_cast<double>(task.job.deadline_ms);
         }
         const auto result_write_start = Clock::now();
+        writeP2FeatureDiagnosticArtifacts(result_rows,
+                                          *buffer,
+                                          task.width,
+                                          task.height);
         writeP2FeatureDiagnosticResults(result_rows);
         if (!result_rows.empty() && config_.p2_diagnostic_results_enabled) {
             const double result_write_ms =
@@ -1820,6 +2398,7 @@ void Pipeline::asyncRoiWorkerLoop() {
         RoiStage2Output output;
         const auto t0 = Clock::now();
         bool copy_ready = true;
+        AsyncRoiBuffer* artifact_buffer = nullptr;
         if (task.copy_event_recorded &&
             task.buffer_index >= 0 &&
             task.buffer_index < static_cast<int>(async_roi_buffers_.size())) {
@@ -1838,6 +2417,9 @@ void Pipeline::asyncRoiWorkerLoop() {
                     copy_ready = false;
                     LOG_WARN("[AsyncROI] Copy event failed frame=%d err=%s",
                              task.frame_id, cudaGetErrorString(copy_err));
+                }
+                if (copy_ready) {
+                    artifact_buffer = &buffer;
                 }
             }
         }
@@ -1873,6 +2455,17 @@ void Pipeline::asyncRoiWorkerLoop() {
             }
             std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
             output = runRoiStage2Core(task.input);
+            if (artifact_buffer && !output.p2_artifact_rows.empty()) {
+                P2FeatureDiagnosticBuffer artifact_view;
+                artifact_view.left_gray_gpu = artifact_buffer->left_gray_gpu;
+                artifact_view.left_gray_pitch = artifact_buffer->left_gray_pitch;
+                artifact_view.right_gray_gpu = artifact_buffer->right_gray_gpu;
+                artifact_view.right_gray_pitch = artifact_buffer->right_gray_pitch;
+                writeP2FeatureDiagnosticArtifacts(output.p2_artifact_rows,
+                                                  artifact_view,
+                                                  task.input.width,
+                                                  task.input.height);
+            }
         } else {
             output.detections = task.input.left_detections;
             output.predict_only = true;

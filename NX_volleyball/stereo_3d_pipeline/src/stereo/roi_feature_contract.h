@@ -31,6 +31,7 @@ struct ROIFeatureMatchConfig {
     float feature_normalize_min_diameter_px = 128.0f;
     float feature_normalize_margin_scale = 0.62f;
     bool feature_precompute_roi_maps = true;
+    bool debug_patch_enabled = false;
 };
 
 enum class SparseFeatureMode {

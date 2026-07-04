@@ -35,6 +35,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../stereo/vpi_stereo.h"
 #include "../stereo/roi_stereo_matcher.h"
 #include "../stereo/dual_yolo_depth_gpu.h"
+#include "../stereo/roi_feature_result.h"
 #include "../stereo/neural_feature_config.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
@@ -193,9 +194,43 @@ private:
         int iou_edge_support_max = 0;
         int iou_edge_attempted_max = 0;
     };
+    struct P2FeatureDiagnosticResultRow {
+        int frame_id = -1;
+        FrameMetadata metadata;
+        std::string lane = "diagnostic";
+        std::string mode;
+        std::string status;
+        bool valid = false;
+        bool low_confidence = false;
+        float disparity = std::numeric_limits<float>::quiet_NaN();
+        float z_m = std::numeric_limits<float>::quiet_NaN();
+        float confidence = std::numeric_limits<float>::quiet_NaN();
+        float stddev = std::numeric_limits<float>::quiet_NaN();
+        int support = 0;
+        int attempted = 0;
+        float initial_disparity = std::numeric_limits<float>::quiet_NaN();
+        Detection left_det;
+        Detection right_det;
+        float anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        int debug_match_count = 0;
+        std::array<SparseFeatureDebugMatch, kMaxSparseFeatureDebugMatches> debug_matches{};
+        SparseFeatureDebugPatch debug_patch;
+        std::string artifact_path;
+        double algo_ms = 0.0;
+        double queue_wait_ms = 0.0;
+        double worker_elapsed_ms = 0.0;
+        float deadline_ms = 0.0f;
+        bool over_deadline = false;
+        uint32_t depth_mode_mask = 0u;
+        uint32_t triggers = 0u;
+    };
     struct DualYoloMatchOutput {
         std::vector<Detection> detections;
         std::vector<Object3D> results;
+        std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
     };
     struct RoiStage2Input {
         int frame_id = -1;
@@ -221,6 +256,7 @@ private:
     struct RoiStage2Output {
         std::vector<Detection> detections;
         std::vector<Object3D> roi_results;
+        std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
         bool predict_only = false;
         bool detection_only = false;
     };
@@ -236,6 +272,7 @@ private:
         int img_width, int img_height,
         cudaStream_t stream,
         bool p2_inline_feature_jobs_enabled,
+        int frame_id,
         DualYoloMatchStats* stats);
     void collectRoiDetections(FrameSlot& slot, int slot_index);
     bool roiStage2NeedsHostImages(const std::vector<Detection>& left_detections,
@@ -305,35 +342,6 @@ private:
         cudaEvent_t copy_done = nullptr;
         bool copy_event_recorded = false;
     };
-    struct P2FeatureDiagnosticResultRow {
-        int frame_id = -1;
-        FrameMetadata metadata;
-        std::string lane = "diagnostic";
-        std::string mode;
-        std::string status;
-        bool valid = false;
-        bool low_confidence = false;
-        float disparity = std::numeric_limits<float>::quiet_NaN();
-        float z_m = std::numeric_limits<float>::quiet_NaN();
-        float confidence = std::numeric_limits<float>::quiet_NaN();
-        float stddev = std::numeric_limits<float>::quiet_NaN();
-        int support = 0;
-        int attempted = 0;
-        float initial_disparity = std::numeric_limits<float>::quiet_NaN();
-        Detection left_det;
-        Detection right_det;
-        float anchor_cx = std::numeric_limits<float>::quiet_NaN();
-        float anchor_cy = std::numeric_limits<float>::quiet_NaN();
-        float right_anchor_cx = std::numeric_limits<float>::quiet_NaN();
-        float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
-        double algo_ms = 0.0;
-        double queue_wait_ms = 0.0;
-        double worker_elapsed_ms = 0.0;
-        float deadline_ms = 0.0f;
-        bool over_deadline = false;
-        uint32_t depth_mode_mask = 0u;
-        uint32_t triggers = 0u;
-    };
     bool asyncRoiStage2Configured() const;
     bool initAsyncRoiStage2();
     bool startAsyncRoiStage2();
@@ -373,6 +381,11 @@ private:
     void closeP2FeatureDiagnosticResults();
     void writeP2FeatureDiagnosticResults(
         const std::vector<P2FeatureDiagnosticResultRow>& rows);
+    void writeP2FeatureDiagnosticArtifacts(
+        std::vector<P2FeatureDiagnosticResultRow>& rows,
+        const P2FeatureDiagnosticBuffer& buffer,
+        int width,
+        int height);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -442,6 +455,7 @@ private:
     std::vector<P2FeatureDiagnosticBuffer> p2_feature_diag_buffers_;
     std::mutex p2_feature_diag_results_mutex_;
     std::ofstream p2_feature_diag_results_file_;
+    int p2_feature_diag_artifacts_saved_ = 0;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器

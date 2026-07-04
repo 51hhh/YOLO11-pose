@@ -74,6 +74,44 @@ else()
   message(STATUS "OpenCV cudaoptflow not found, CUDA LK disabled")
 endif()
 
+# Fixstars libSGM 是可选 P2 diagnostic 后端。未安装时保持
+# roi_libsgm=unsupported，不阻塞默认实时管线构建。
+set(LIBSGM_ROOT "" CACHE PATH "Fixstars libSGM install or source root")
+find_path(LIBSGM_INCLUDE_DIR libsgm.h
+  HINTS
+    ${LIBSGM_ROOT}/include
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/include
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/include
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/include
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/include
+    /usr/local/include
+    /usr/include)
+find_library(LIBSGM_LIBRARY
+  NAMES sgm libsgm
+  HINTS
+    ${LIBSGM_ROOT}/lib
+    ${LIBSGM_ROOT}/lib64
+    ${LIBSGM_ROOT}/build
+    ${LIBSGM_ROOT}/build/src
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/lib
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/lib64
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/build
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/build/src
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/lib
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/lib64
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/build
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/build/src
+    /usr/local/lib
+    /usr/lib
+    /usr/lib/aarch64-linux-gnu)
+if(LIBSGM_INCLUDE_DIR AND LIBSGM_LIBRARY)
+  set(HAS_FIXSTARS_LIBSGM ON)
+  message(STATUS "Fixstars libSGM: ${LIBSGM_LIBRARY}")
+else()
+  set(HAS_FIXSTARS_LIBSGM OFF)
+  message(STATUS "Fixstars libSGM not found, roi_libsgm will report unsupported")
+endif()
+
 # TensorRT
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   HINTS /usr/include/aarch64-linux-gnu /usr/include)
@@ -295,6 +333,11 @@ if(HAS_OPENCV_CUDAFEATURES2D)
 endif()
 if(HAS_OPENCV_CUDAOPTFLOW)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAOPTFLOW)
+endif()
+if(HAS_FIXSTARS_LIBSGM)
+  target_include_directories(stereo_pipeline PRIVATE ${LIBSGM_INCLUDE_DIR})
+  target_link_libraries(stereo_pipeline ${LIBSGM_LIBRARY})
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_FIXSTARS_LIBSGM)
 endif()
 
 if(HIK_FOUND)

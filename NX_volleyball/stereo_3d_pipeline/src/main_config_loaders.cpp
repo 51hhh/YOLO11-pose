@@ -238,6 +238,15 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["p2_diagnostic_results_path"])
             cfg.p2_diagnostic_results_path =
                 perf["p2_diagnostic_results_path"].as<std::string>();
+        if (perf["p2_diagnostic_artifacts_enabled"])
+            cfg.p2_diagnostic_artifacts_enabled =
+                perf["p2_diagnostic_artifacts_enabled"].as<bool>();
+        if (perf["p2_diagnostic_artifacts_dir"])
+            cfg.p2_diagnostic_artifacts_dir =
+                perf["p2_diagnostic_artifacts_dir"].as<std::string>();
+        if (perf["p2_diagnostic_artifacts_max"])
+            cfg.p2_diagnostic_artifacts_max =
+                perf["p2_diagnostic_artifacts_max"].as<int>();
     }
     if (!camera_trigger_frequency_set) {
         cfg.camera.trigger_frequency_hz = cfg.trigger_freq_hz;

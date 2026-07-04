@@ -36,6 +36,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     int img_width, int img_height,
     cudaStream_t stream,
     bool p2_inline_feature_jobs_enabled,
+    int frame_id,
     DualYoloMatchStats* stats)
 {
     using Clock = std::chrono::high_resolution_clock;
@@ -225,8 +226,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const float cx0 = static_cast<float>(P1.at<double>(0, 2));
     const float cy0 = static_cast<float>(P1.at<double>(1, 2));
     const float baseline = calibration_->getBaseline();
-    const ROIFeatureMatchConfig feature_cfg =
+    ROIFeatureMatchConfig feature_cfg =
         makeROIFeatureMatchConfig(config_.dual_yolo, config_.depth);
+    feature_cfg.debug_patch_enabled = config_.p2_diagnostic_artifacts_enabled;
     const ROICircleSearchConfig circle_search_cfg =
         makeROICircleSearchConfig(config_.dual_yolo);
     const float y_tol = std::max(1.0f, config_.dual_yolo.epipolar_y_tolerance);
@@ -360,6 +362,49 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 return -1.0f;
             }
             return z_candidate;
+        };
+        auto append_p2_artifact = [&](const char* mode,
+                                      const SparseFeatureDisparityResult& result,
+                                      float initial_disp) {
+            if (!config_.p2_diagnostic_artifacts_enabled ||
+                !mode || !right_det ||
+                (result.debug_match_count <= 0 && !result.debug_patch.valid)) {
+                return;
+            }
+            P2FeatureDiagnosticResultRow row;
+            row.frame_id = frame_id;
+            row.lane = "inline";
+            row.mode = mode;
+            row.status = result.valid
+                ? "valid"
+                : (result.unsupported ? "unsupported" : "invalid");
+            row.valid = result.valid;
+            row.low_confidence = result.low_confidence;
+            row.disparity = result.disparity;
+            row.z_m = result.valid
+                ? depth_from_disparity(result.disparity)
+                : std::numeric_limits<float>::quiet_NaN();
+            row.confidence = result.confidence;
+            row.stddev = result.stddev;
+            row.support = result.support;
+            row.attempted = result.attempted;
+            row.initial_disparity = initial_disp;
+            row.left_det = left_det;
+            row.right_det = *right_det;
+            row.anchor_cx = result.anchor_cx;
+            row.anchor_cy = result.anchor_cy;
+            row.right_anchor_cx = result.right_anchor_cx;
+            row.right_anchor_cy = result.right_anchor_cy;
+            row.debug_match_count = std::clamp(
+                result.debug_match_count,
+                0,
+                kMaxSparseFeatureDebugMatches);
+            for (int i = 0; i < row.debug_match_count; ++i) {
+                row.debug_matches[static_cast<size_t>(i)] =
+                    result.debug_matches[static_cast<size_t>(i)];
+            }
+            row.debug_patch = result.debug_patch;
+            output.p2_artifact_rows.push_back(std::move(row));
         };
 
         const bool direct_yolo_match = match_source == 1;
@@ -754,6 +799,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 iou_region_color_patch_result.valid =
                     z_roi_iou_region_color_patch > 0.0f;
             }
+            append_p2_artifact("iou_region_color_patch",
+                               iou_region_color_patch_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult patch_iou_color_edge_result;
@@ -774,6 +822,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 patch_iou_color_edge_result.valid =
                     z_roi_patch_iou_color_edge > 0.0f;
             }
+            append_p2_artifact("patch_iou_color_edge",
+                               patch_iou_color_edge_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult cuda_template_match_result;
@@ -804,6 +855,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 cuda_template_match_result.valid =
                     z_roi_cuda_template_match > 0.0f;
             }
+            append_p2_artifact("cuda_template",
+                               cuda_template_match_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult cuda_stereo_bm_result;
@@ -833,6 +887,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 cuda_stereo_bm_result.valid =
                     z_roi_cuda_stereo_bm > 0.0f;
             }
+            append_p2_artifact("cuda_stereo_bm",
+                               cuda_stereo_bm_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult cuda_stereo_sgm_result;
@@ -862,6 +919,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 cuda_stereo_sgm_result.valid =
                     z_roi_cuda_stereo_sgm > 0.0f;
             }
+            append_p2_artifact("cuda_stereo_sgm",
+                               cuda_stereo_sgm_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult ring_edge_profile_result;
@@ -892,6 +952,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 ring_edge_profile_result.valid =
                     z_roi_ring_edge_profile > 0.0f;
             }
+            append_p2_artifact("cuda_ring_edge_profile",
+                               ring_edge_profile_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult neural_feature_result;
@@ -920,6 +983,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 neural_feature_result.confidence = neural.confidence;
                 neural_feature_result.support =
                     static_cast<int>(neural.matches.size());
+                neural_feature_result.attempted =
+                    static_cast<int>(neural.matches.size());
                 float sx = 0.0f;
                 float sy = 0.0f;
                 float rx = 0.0f;
@@ -936,6 +1001,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 neural_feature_result.anchor_cy = sy * inv;
                 neural_feature_result.right_anchor_cx = rx * inv;
                 neural_feature_result.right_anchor_cy = ry * inv;
+                neural_feature_result.debug_match_count = std::min(
+                    static_cast<int>(neural.matches.size()),
+                    kMaxSparseFeatureDebugMatches);
+                for (int i = 0; i < neural_feature_result.debug_match_count; ++i) {
+                    const auto& src = neural.matches[static_cast<size_t>(i)];
+                    auto& dst =
+                        neural_feature_result.debug_matches[static_cast<size_t>(i)];
+                    dst.left_x = src.left_x;
+                    dst.left_y = src.left_y;
+                    dst.right_x = src.right_x;
+                    dst.right_y = src.right_y;
+                    dst.disparity = src.disparity;
+                    dst.score = src.score;
+                }
                 if (!validateSparseFeatureGeometry(
                         neural_feature_result, left_det, *right_det,
                         feature_initial_disparity, feature_cfg,
@@ -948,6 +1027,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     depth_from_disparity(neural_feature_result.disparity);
                 neural_feature_result.valid = z_roi_neural_feature > 0.0f;
             }
+            append_p2_artifact("neural_feature",
+                               neural_feature_result,
+                               feature_initial_disparity);
         }
 
         SparseFeatureDisparityResult fallback_feature_result;

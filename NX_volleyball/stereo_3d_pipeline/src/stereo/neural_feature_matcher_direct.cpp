@@ -290,10 +290,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                           det.cx, det.cy, det.width, det.height,
                           context, stream);
         } else {
-            cropResizeGPU_3ch(bgr, bgr_pitch, img_width, img_height,
-                              dst, config_.roi_size,
-                              det.cx, det.cy, det.width, det.height,
-                              context, stream);
+            cropResizeBgrGPU_3ch(bgr, bgr_pitch, img_width, img_height,
+                                  dst, config_.roi_size,
+                                  det.cx, det.cy, det.width, det.height,
+                                  context, stream);
         }
         if (!extractor_.context->enqueueV3(stream) || !copy_outputs()) {
             return false;

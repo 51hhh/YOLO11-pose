@@ -33,6 +33,8 @@ METHOD_COLUMNS = (
     ("roi_cuda_template_match", "z_roi_cuda_template_match"),
     ("roi_cuda_stereo_bm", "z_roi_cuda_stereo_bm"),
     ("roi_cuda_stereo_sgm", "z_roi_cuda_stereo_sgm"),
+    ("roi_vpi_template_match", "z_roi_vpi_template_match"),
+    ("roi_vpi_orb", "z_roi_vpi_orb"),
     ("roi_ring_edge_profile", "z_roi_ring_edge_profile"),
     ("roi_neural_feature", "z_roi_neural_feature"),
     ("roi_center_patch", "z_roi_center_patch"),
@@ -42,6 +44,23 @@ METHOD_COLUMNS = (
     ("fallback_feature_points", "z_fallback_feature_points"),
 )
 METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
+
+P2_DIAGNOSTIC_MODE_COLUMNS = {
+    "vpi_template_match": {
+        "z": "z_roi_vpi_template_match",
+        "disparity": "disparity_roi_vpi_template_match",
+        "support": "roi_vpi_template_match_support",
+        "std": "roi_vpi_template_match_std_px",
+        "confidence": "roi_vpi_template_match_confidence",
+    },
+    "vpi_orb": {
+        "z": "z_roi_vpi_orb",
+        "disparity": "disparity_roi_vpi_orb",
+        "support": "roi_vpi_orb_support",
+        "std": "roi_vpi_orb_std_px",
+        "confidence": "roi_vpi_orb_confidence",
+    },
+}
 
 
 @dataclass
@@ -150,12 +169,83 @@ def derive_frame_summary_path(path: str | Path) -> Path:
     return Path(str(csv_path) + ".frames.csv")
 
 
+def derive_p2_diagnostic_path(path: str | Path) -> Path:
+    """Derive the P2 diagnostic sidecar path used by the runtime recorder."""
+
+    csv_path = Path(path)
+    if csv_path.name.endswith(".csv"):
+        return csv_path.with_name(csv_path.name[:-4] + ".p2_diagnostic.csv")
+    return Path(str(csv_path) + ".p2_diagnostic.csv")
+
+
 def read_csv_rows(path: str | Path) -> List[Dict[str, str]]:
     """Read CSV rows while tolerating accidental NUL bytes in log files."""
 
     data = Path(path).read_bytes().replace(b"\x00", b"")
     text = data.decode("utf-8", "replace")
     return list(csv.DictReader(io.StringIO(text)))
+
+
+def _diagnostic_candidate_rank(row: Dict[str, str]) -> Tuple[int, float, float]:
+    return (
+        _safe_int(row.get("valid"), 0),
+        _safe_float(row.get("confidence"), 0.0),
+        _safe_float(row.get("support"), 0.0),
+    )
+
+
+def read_p2_diagnostic_candidates(
+    path: str | Path,
+) -> Dict[int, Dict[str, Dict[str, str]]]:
+    """Read optional P2 diagnostic sidecar rows keyed by frame and mode."""
+
+    sidecar_path = derive_p2_diagnostic_path(path)
+    if not sidecar_path.exists():
+        return {}
+
+    by_frame: Dict[int, Dict[str, Dict[str, str]]] = {}
+    for row in read_csv_rows(sidecar_path):
+        mode = (row.get("mode") or "").strip()
+        if mode not in P2_DIAGNOSTIC_MODE_COLUMNS:
+            continue
+        frame_id = _safe_int(row.get("frame_id"), -1)
+        if frame_id < 0:
+            continue
+        frame_modes = by_frame.setdefault(frame_id, {})
+        previous = frame_modes.get(mode)
+        if (
+            previous is None
+            or _diagnostic_candidate_rank(row) > _diagnostic_candidate_rank(previous)
+        ):
+            frame_modes[mode] = row
+    return by_frame
+
+
+def _set_if_missing(row: Dict[str, str], key: str, value: object) -> None:
+    if key not in row or row[key] == "":
+        row[key] = str(value)
+
+
+def merge_p2_diagnostic_candidates(
+    row: Dict[str, str],
+    frame_candidates: Dict[str, Dict[str, str]] | None,
+) -> None:
+    """Expose selected diagnostic sidecar rows as optional training columns."""
+
+    for mode, columns in P2_DIAGNOSTIC_MODE_COLUMNS.items():
+        candidate = frame_candidates.get(mode) if frame_candidates else None
+        if candidate is None or _safe_int(candidate.get("valid"), 0) != 1:
+            _set_if_missing(row, columns["z"], "-1")
+            _set_if_missing(row, columns["disparity"], "-1")
+            _set_if_missing(row, columns["support"], "0")
+            _set_if_missing(row, columns["std"], "-1")
+            _set_if_missing(row, columns["confidence"], "0")
+            continue
+        _set_if_missing(row, columns["z"], candidate.get("z_m", "-1"))
+        _set_if_missing(row, columns["disparity"], candidate.get("disparity", "-1"))
+        _set_if_missing(row, columns["support"], candidate.get("support", "0"))
+        _set_if_missing(row, columns["std"], candidate.get("stddev", "-1"))
+        _set_if_missing(row, columns["confidence"], candidate.get("confidence", "0"))
 
 
 def load_legacy_sequences(
@@ -166,8 +256,15 @@ def load_legacy_sequences(
     """Load current trajectory recorder CSV and group rows by track_id."""
 
     metadata = read_metadata(metadata_path or find_metadata_for_csv(path))
+    p2_diagnostic_by_frame = read_p2_diagnostic_candidates(path)
     grouped: Dict[int, List[Dict[str, float]]] = {}
-    for row in read_csv_rows(path):
+    for raw_row in read_csv_rows(path):
+        row = dict(raw_row)
+        frame_id_int = _safe_int(row.get("frame_id"), -1)
+        merge_p2_diagnostic_candidates(
+            row,
+            p2_diagnostic_by_frame.get(frame_id_int),
+        )
         track_id = _safe_int(row.get("track_id"), -1)
         if track_id < 0:
             continue
@@ -205,6 +302,8 @@ def load_legacy_sequences(
             "z_roi_cuda_template_match": _safe_float(row.get("z_roi_cuda_template_match"), -1.0),
             "z_roi_cuda_stereo_bm": _safe_float(row.get("z_roi_cuda_stereo_bm"), -1.0),
             "z_roi_cuda_stereo_sgm": _safe_float(row.get("z_roi_cuda_stereo_sgm"), -1.0),
+            "z_roi_vpi_template_match": _safe_float(row.get("z_roi_vpi_template_match"), -1.0),
+            "z_roi_vpi_orb": _safe_float(row.get("z_roi_vpi_orb"), -1.0),
             "z_roi_ring_edge_profile": _safe_float(row.get("z_roi_ring_edge_profile"), -1.0),
             "z_roi_neural_feature": _safe_float(row.get("z_roi_neural_feature"), -1.0),
             "z_roi_center_patch": _safe_float(row.get("z_roi_center_patch"), -1.0),
@@ -242,6 +341,8 @@ def load_legacy_sequences(
             "disparity_roi_cuda_template_match": _safe_float(row.get("disparity_roi_cuda_template_match"), -1.0),
             "disparity_roi_cuda_stereo_bm": _safe_float(row.get("disparity_roi_cuda_stereo_bm"), -1.0),
             "disparity_roi_cuda_stereo_sgm": _safe_float(row.get("disparity_roi_cuda_stereo_sgm"), -1.0),
+            "disparity_roi_vpi_template_match": _safe_float(row.get("disparity_roi_vpi_template_match"), -1.0),
+            "disparity_roi_vpi_orb": _safe_float(row.get("disparity_roi_vpi_orb"), -1.0),
             "disparity_roi_ring_edge_profile": _safe_float(row.get("disparity_roi_ring_edge_profile"), -1.0),
             "disparity_roi_neural_feature": _safe_float(row.get("disparity_roi_neural_feature"), -1.0),
             "disparity_roi_center_patch": _safe_float(row.get("disparity_roi_center_patch"), -1.0),
@@ -297,6 +398,15 @@ def load_legacy_sequences(
             "roi_patch_iou_color_edge_support": _safe_float(row.get("roi_patch_iou_color_edge_support"), 0.0),
             "roi_patch_iou_color_edge_std_px": _safe_float(row.get("roi_patch_iou_color_edge_std_px"), -1.0),
             "roi_patch_iou_color_edge_confidence": _safe_float(row.get("roi_patch_iou_color_edge_confidence"), 0.0),
+            "roi_cuda_stereo_sgm_support": _safe_float(row.get("roi_cuda_stereo_sgm_support"), 0.0),
+            "roi_cuda_stereo_sgm_std_px": _safe_float(row.get("roi_cuda_stereo_sgm_std_px"), -1.0),
+            "roi_cuda_stereo_sgm_confidence": _safe_float(row.get("roi_cuda_stereo_sgm_confidence"), 0.0),
+            "roi_vpi_template_match_support": _safe_float(row.get("roi_vpi_template_match_support"), 0.0),
+            "roi_vpi_template_match_std_px": _safe_float(row.get("roi_vpi_template_match_std_px"), -1.0),
+            "roi_vpi_template_match_confidence": _safe_float(row.get("roi_vpi_template_match_confidence"), 0.0),
+            "roi_vpi_orb_support": _safe_float(row.get("roi_vpi_orb_support"), 0.0),
+            "roi_vpi_orb_std_px": _safe_float(row.get("roi_vpi_orb_std_px"), -1.0),
+            "roi_vpi_orb_confidence": _safe_float(row.get("roi_vpi_orb_confidence"), 0.0),
             "roi_neural_feature_support": _safe_float(row.get("roi_neural_feature_support"), 0.0),
             "roi_neural_feature_std_px": _safe_float(row.get("roi_neural_feature_std_px"), -1.0),
             "roi_neural_feature_confidence": _safe_float(row.get("roi_neural_feature_confidence"), 0.0),
@@ -375,6 +485,8 @@ def legacy_feature_names() -> List[str]:
         "z_roi_cuda_template_match",
         "z_roi_cuda_stereo_bm",
         "z_roi_cuda_stereo_sgm",
+        "z_roi_vpi_template_match",
+        "z_roi_vpi_orb",
         "z_roi_ring_edge_profile",
         "z_roi_neural_feature",
         "z_roi_center_patch",
@@ -406,6 +518,8 @@ def legacy_feature_names() -> List[str]:
         "disparity_roi_cuda_template_match",
         "disparity_roi_cuda_stereo_bm",
         "disparity_roi_cuda_stereo_sgm",
+        "disparity_roi_vpi_template_match",
+        "disparity_roi_vpi_orb",
         "disparity_roi_ring_edge_profile",
         "disparity_roi_neural_feature",
         "disparity_roi_center_patch",
@@ -458,6 +572,15 @@ def legacy_feature_names() -> List[str]:
         "roi_patch_iou_color_edge_support",
         "roi_patch_iou_color_edge_std_px",
         "roi_patch_iou_color_edge_confidence",
+        "roi_cuda_stereo_sgm_support",
+        "roi_cuda_stereo_sgm_std_px",
+        "roi_cuda_stereo_sgm_confidence",
+        "roi_vpi_template_match_support",
+        "roi_vpi_template_match_std_px",
+        "roi_vpi_template_match_confidence",
+        "roi_vpi_orb_support",
+        "roi_vpi_orb_std_px",
+        "roi_vpi_orb_confidence",
         "roi_neural_feature_support",
         "roi_neural_feature_std_px",
         "roi_neural_feature_confidence",
@@ -642,6 +765,8 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["z_roi_cuda_template_match"] if valid_by_key["z_roi_cuda_template_match"] else 0.0,
                 row["z_roi_cuda_stereo_bm"] if valid_by_key["z_roi_cuda_stereo_bm"] else 0.0,
                 row["z_roi_cuda_stereo_sgm"] if valid_by_key["z_roi_cuda_stereo_sgm"] else 0.0,
+                row["z_roi_vpi_template_match"] if valid_by_key["z_roi_vpi_template_match"] else 0.0,
+                row["z_roi_vpi_orb"] if valid_by_key["z_roi_vpi_orb"] else 0.0,
                 row["z_roi_ring_edge_profile"] if valid_by_key["z_roi_ring_edge_profile"] else 0.0,
                 row["z_roi_neural_feature"] if valid_by_key["z_roi_neural_feature"] else 0.0,
                 row["z_roi_center_patch"] if valid_by_key["z_roi_center_patch"] else 0.0,
@@ -673,6 +798,8 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["disparity_roi_cuda_template_match"],
                 row["disparity_roi_cuda_stereo_bm"],
                 row["disparity_roi_cuda_stereo_sgm"],
+                row["disparity_roi_vpi_template_match"],
+                row["disparity_roi_vpi_orb"],
                 row["disparity_roi_ring_edge_profile"],
                 row["disparity_roi_neural_feature"],
                 row["disparity_roi_center_patch"],
@@ -725,6 +852,15 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["roi_patch_iou_color_edge_support"],
                 row["roi_patch_iou_color_edge_std_px"],
                 row["roi_patch_iou_color_edge_confidence"],
+                row["roi_cuda_stereo_sgm_support"],
+                row["roi_cuda_stereo_sgm_std_px"],
+                row["roi_cuda_stereo_sgm_confidence"],
+                row["roi_vpi_template_match_support"],
+                row["roi_vpi_template_match_std_px"],
+                row["roi_vpi_template_match_confidence"],
+                row["roi_vpi_orb_support"],
+                row["roi_vpi_orb_std_px"],
+                row["roi_vpi_orb_confidence"],
                 row["roi_neural_feature_support"],
                 row["roi_neural_feature_std_px"],
                 row["roi_neural_feature_confidence"],

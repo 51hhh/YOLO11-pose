@@ -264,6 +264,16 @@ RobustAggregate aggregateRobustMatches(
         const double diff = static_cast<double>(s.disparity - out.disparity);
         var += w * diff * diff;
     }
+    out.debug_inlier_count = std::min(
+        static_cast<int>(inliers.size()),
+        kMaxSparseFeatureDebugMatches);
+    for (int i = 0; i < out.debug_inlier_count; ++i) {
+        const size_t idx =
+            static_cast<size_t>(i) * inliers.size() /
+            static_cast<size_t>(out.debug_inlier_count);
+        out.debug_inliers[static_cast<size_t>(i)] =
+            inliers[std::min(idx, inliers.size() - 1U)];
+    }
     if (sum_w <= 0.0) return out;
 
     out.anchor_x = static_cast<float>(sum_x / sum_w);
@@ -277,6 +287,35 @@ RobustAggregate aggregateRobustMatches(
                 out.support >= min_points &&
                 out.support <= std::max(min_points, max_points);
     return out;
+}
+
+void copyDebugMatches(const RobustAggregate& robust,
+                      SparseFeatureDisparityResult& result) {
+    result.debug_match_count = std::min(
+        robust.debug_inlier_count,
+        kMaxSparseFeatureDebugMatches);
+    for (int i = 0; i < result.debug_match_count; ++i) {
+        const auto& src = robust.debug_inliers[static_cast<size_t>(i)];
+        auto& dst = result.debug_matches[static_cast<size_t>(i)];
+        dst.left_x = src.left_x;
+        dst.left_y = src.left_y;
+        dst.right_x = src.right_x;
+        dst.right_y = src.right_y;
+        dst.disparity = src.disparity;
+        dst.score = src.score;
+    }
+}
+
+void setSingleDebugMatch(const RobustMatchSample& sample,
+                         SparseFeatureDisparityResult& result) {
+    result.debug_match_count = 1;
+    auto& dst = result.debug_matches[0];
+    dst.left_x = sample.left_x;
+    dst.left_y = sample.left_y;
+    dst.right_x = sample.right_x;
+    dst.right_y = sample.right_y;
+    dst.disparity = sample.disparity;
+    dst.score = sample.score;
 }
 
 }  // namespace stereo3d

@@ -98,10 +98,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
             if (!bgr_gpu || bgr_pitch <= 0) {
                 return false;
             }
-            cropResizeGPU_3ch(bgr_gpu, bgr_pitch, img_width, img_height,
-                              dst, size,
-                              det.cx, det.cy, det.width, det.height,
-                              context, stream);
+            cropResizeBgrGPU_3ch(bgr_gpu, bgr_pitch, img_width, img_height,
+                                  dst, size,
+                                  det.cx, det.cy, det.width, det.height,
+                                  context, stream);
             return true;
         }
         return false;
@@ -148,14 +148,14 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
                 out.status = "unsupported_input_schema";
                 return out;
             }
-            cropResizeGPU_3ch(left_bgr_gpu, left_bgr_pitch, img_width, img_height,
-                              base, config_.roi_size,
-                              left_det.cx, left_det.cy, left_det.width, left_det.height,
-                              context, stream);
-            cropResizeGPU_3ch(right_bgr_gpu, right_bgr_pitch, img_width, img_height,
-                              base + 3 * spatial, config_.roi_size,
-                              right_det.cx, right_det.cy, right_det.width, right_det.height,
-                              context, stream);
+            cropResizeBgrGPU_3ch(left_bgr_gpu, left_bgr_pitch, img_width, img_height,
+                                  base, config_.roi_size,
+                                  left_det.cx, left_det.cy, left_det.width, left_det.height,
+                                  context, stream);
+            cropResizeBgrGPU_3ch(right_bgr_gpu, right_bgr_pitch, img_width, img_height,
+                                  base + 3 * spatial, config_.roi_size,
+                                  right_det.cx, right_det.cy, right_det.width, right_det.height,
+                                  context, stream);
         } else {
             out.status = "unsupported_input_schema";
             return out;

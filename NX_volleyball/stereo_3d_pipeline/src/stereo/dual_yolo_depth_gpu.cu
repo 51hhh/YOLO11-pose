@@ -76,6 +76,7 @@ __global__ void dualYoloDepthCandidatesKernel(
     __shared__ float sample_score[kMaxFeaturePoints];
     __shared__ float sample_x[kMaxFeaturePoints];
     __shared__ float sample_y[kMaxFeaturePoints];
+    __shared__ float sample_right_y[kMaxFeaturePoints];
     __shared__ float point_x[kMaxFeaturePoints];
     __shared__ float point_y[kMaxFeaturePoints];
     __shared__ float best_score_parts[kMaxFeaturePoints][kThreadsPerPoint];
@@ -197,7 +198,8 @@ __global__ void dualYoloDepthCandidatesKernel(
                              feature_sphere_radius_scale,
                              feature_sphere_margin_m,
                              sample_disp, sample_score, sample_x, sample_y,
-                             point_x, point_y,
+                          sample_right_y,
+                          point_x, point_y,
                              best_score_parts, best_disp_parts,
                              best_dy_parts, &valid_count,
                              &out->multi_point);
@@ -233,6 +235,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -269,6 +272,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -305,6 +309,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -341,6 +346,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -377,6 +383,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -413,6 +420,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -449,6 +457,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -485,6 +494,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,
@@ -521,6 +531,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           feature_sphere_radius_scale,
                           feature_sphere_margin_m,
                           sample_disp, sample_score, sample_x, sample_y,
+                          sample_right_y,
                           point_x, point_y,
                           best_score_parts, best_disp_parts,
                           best_dy_parts, &valid_count,

@@ -22,6 +22,7 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -54,6 +55,38 @@ static void mouseCallback(int event, int x, int y, int /*flags*/, void*) {
         g_click.display_frames = 150;  // 显示约 1.5s @ 100fps
     }
 }
+
+namespace {
+
+std::string deriveP2DiagnosticResultsPath(const std::string& recording_path) {
+    if (recording_path.empty()) {
+        return {};
+    }
+    std::filesystem::path path(recording_path);
+    if (path.extension() == ".csv") {
+        path.replace_extension(".p2_diagnostic.csv");
+        return path.string();
+    }
+    return recording_path + ".p2_diagnostic.csv";
+}
+
+void bindP2DiagnosticResultsPath(
+    stereo3d::PipelineConfig& cfg,
+    const stereo3d::TrajectoryRecorderConfig& recorder_cfg) {
+    if (!cfg.p2_diagnostic_results_enabled ||
+        !cfg.p2_diagnostic_results_path.empty() ||
+        !recorder_cfg.enabled) {
+        return;
+    }
+    cfg.p2_diagnostic_results_path =
+        deriveP2DiagnosticResultsPath(recorder_cfg.output_path);
+    if (!cfg.p2_diagnostic_results_path.empty()) {
+        LOG_INFO("P2 diagnostic results path: %s",
+                 cfg.p2_diagnostic_results_path.c_str());
+    }
+}
+
+}  // namespace
 
 // ==================== main ====================
 
@@ -119,6 +152,7 @@ int main(int argc, char* argv[]) {
             recorder_cfg.output_path = recording_out_override;
             recorder_cfg.frame_summary_path.clear();
         }
+        bindP2DiagnosticResultsPath(cfg, recorder_cfg);
         recorder.init(recorder_cfg);
         if (!recording_out_override.empty() && !recorder.isEnabled()) {
             LOG_ERROR("Trajectory recorder failed for --recording-out=%s",

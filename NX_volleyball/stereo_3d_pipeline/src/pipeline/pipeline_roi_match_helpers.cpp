@@ -106,6 +106,20 @@ SparseFeatureDisparityResult sparseFromGpuCandidate(const DualYoloGpuDisparity& 
     out.anchor_cy = in.anchor_cy;
     out.support = in.support;
     out.attempted = in.attempted;
+    out.debug_match_count = std::clamp(
+        in.debug_match_count,
+        0,
+        std::min(kMaxSparseFeatureDebugMatches,
+                 kMaxDualYoloGpuDebugMatches));
+    for (int i = 0; i < out.debug_match_count; ++i) {
+        auto& m = out.debug_matches[static_cast<size_t>(i)];
+        m.left_x = in.debug_left_x[i];
+        m.left_y = in.debug_left_y[i];
+        m.right_x = in.debug_right_x[i];
+        m.right_y = in.debug_right_y[i];
+        m.disparity = in.debug_disparity[i];
+        m.score = in.debug_score[i];
+    }
     return out;
 }
 

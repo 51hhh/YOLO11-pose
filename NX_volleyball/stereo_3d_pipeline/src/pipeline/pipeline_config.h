@@ -211,6 +211,9 @@ struct PipelineConfig {
     float p2_diagnostic_deadline_ms = 50.0f; ///< P2 diagnostic lane 软 deadline
     bool p2_diagnostic_results_enabled = false; ///< diagnostic lane 迟到结果独立落盘开关
     std::string p2_diagnostic_results_path; ///< diagnostic 结果 CSV; 空则不写
+    bool p2_diagnostic_artifacts_enabled = false; ///< diagnostic lane 输出点对/采样点 PNG
+    std::string p2_diagnostic_artifacts_dir; ///< diagnostic PNG 输出目录; 空则从 CSV 路径派生
+    int p2_diagnostic_artifacts_max = 20; ///< 最多输出多少张 diagnostic artifact
 
     // VPI TNR (时域降噪)
     bool tnr_enabled = false;              ///< 是否启用 VPI TNR

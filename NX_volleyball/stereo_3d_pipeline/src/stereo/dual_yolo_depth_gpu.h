@@ -8,6 +8,8 @@
 
 namespace stereo3d {
 
+constexpr int kMaxDualYoloGpuDebugMatches = 16;
+
 struct DualYoloGpuDetection {
     float cx;
     float cy;
@@ -90,6 +92,13 @@ struct DualYoloGpuDisparity {
     int attempted = 0;
     int low_confidence = 0;
     int valid = 0;
+    int debug_match_count = 0;
+    float debug_left_x[kMaxDualYoloGpuDebugMatches]{};
+    float debug_left_y[kMaxDualYoloGpuDebugMatches]{};
+    float debug_right_x[kMaxDualYoloGpuDebugMatches]{};
+    float debug_right_y[kMaxDualYoloGpuDebugMatches]{};
+    float debug_disparity[kMaxDualYoloGpuDebugMatches]{};
+    float debug_score[kMaxDualYoloGpuDebugMatches]{};
 };
 
 struct DualYoloGpuCandidate {

@@ -2,10 +2,12 @@
 #define STEREO_3D_PIPELINE_ROI_FEATURE_MATCH_COMMON_H_
 
 #include "roi_feature_contract.h"
+#include "roi_feature_result.h"
 #include "../pipeline/detection_types.h"
 
 #include <opencv2/core.hpp>
 
+#include <array>
 #include <vector>
 
 namespace stereo3d {
@@ -29,6 +31,8 @@ struct RobustAggregate {
     float stddev = 0.0f;
     float mean_score = 0.0f;
     int support = 0;
+    int debug_inlier_count = 0;
+    std::array<RobustMatchSample, kMaxSparseFeatureDebugMatches> debug_inliers{};
 };
 
 float computeFeatureDeltaGate(
@@ -88,6 +92,12 @@ RobustAggregate aggregateRobustMatches(
     float max_delta,
     float max_stddev,
     const ROIFeatureMatchConfig& cfg);
+
+void copyDebugMatches(const RobustAggregate& robust,
+                      SparseFeatureDisparityResult& result);
+
+void setSingleDebugMatch(const RobustMatchSample& sample,
+                         SparseFeatureDisparityResult& result);
 
 }  // namespace stereo3d
 

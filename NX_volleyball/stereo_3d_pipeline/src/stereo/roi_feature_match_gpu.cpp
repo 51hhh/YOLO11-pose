@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -142,6 +143,62 @@ float readDenseLocalDisparity(const cv::Mat& disparity, int x, int y)
     }
 }
 
+void setDenseStereoDebugPatch(SparseFeatureDisparityResult& result,
+                              const cv::Mat& disparity_cpu,
+                              const CudaDenseStereoWorkRects& rects)
+{
+    if (disparity_cpu.empty() || rects.left.empty()) {
+        return;
+    }
+    const int out_w = std::clamp(disparity_cpu.cols, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    const int out_h = std::clamp(disparity_cpu.rows, 1,
+                                 kMaxSparseFeatureDebugPatchSide);
+    auto& patch = result.debug_patch;
+    patch = SparseFeatureDebugPatch{};
+    patch.valid = true;
+    patch.width = out_w;
+    patch.height = out_h;
+    patch.left_x0 = static_cast<float>(rects.left.x);
+    patch.left_y0 = static_cast<float>(rects.left.y);
+    patch.step_x = static_cast<float>(disparity_cpu.cols) /
+                   static_cast<float>(out_w);
+    patch.step_y = static_cast<float>(disparity_cpu.rows) /
+                   static_cast<float>(out_h);
+    patch.disparity.assign(static_cast<size_t>(out_w * out_h),
+                           std::numeric_limits<float>::quiet_NaN());
+    patch.disparity_min = std::numeric_limits<float>::max();
+    patch.disparity_max = std::numeric_limits<float>::lowest();
+
+    int finite_count = 0;
+    for (int oy = 0; oy < out_h; ++oy) {
+        const int sy = std::clamp(
+            static_cast<int>(std::floor(
+                (static_cast<float>(oy) + 0.5f) * patch.step_y)),
+            0, disparity_cpu.rows - 1);
+        for (int ox = 0; ox < out_w; ++ox) {
+            const int sx = std::clamp(
+                static_cast<int>(std::floor(
+                    (static_cast<float>(ox) + 0.5f) * patch.step_x)),
+                0, disparity_cpu.cols - 1);
+            const float local_disp = readDenseLocalDisparity(disparity_cpu, sx, sy);
+            if (!std::isfinite(local_disp) || local_disp <= 0.5f ||
+                local_disp >= static_cast<float>(rects.num_disparities) - 1.0f) {
+                continue;
+            }
+            const float disparity =
+                static_cast<float>(rects.min_disparity) + local_disp;
+            patch.disparity[static_cast<size_t>(oy * out_w + ox)] = disparity;
+            patch.disparity_min = std::min(patch.disparity_min, disparity);
+            patch.disparity_max = std::max(patch.disparity_max, disparity);
+            ++finite_count;
+        }
+    }
+    if (finite_count == 0) {
+        patch = SparseFeatureDebugPatch{};
+    }
+}
+
 SparseFeatureDisparityResult aggregateDenseStereoDisparity(
     const cv::Mat& disparity_cpu,
     const CudaDenseStereoWorkRects& rects,
@@ -157,6 +214,9 @@ SparseFeatureDisparityResult aggregateDenseStereoDisparity(
     if (disparity_cpu.empty()) {
         result.low_confidence = true;
         return result;
+    }
+    if (cfg.debug_patch_enabled) {
+        setDenseStereoDebugPatch(result, disparity_cpu, rects);
     }
 
     const float max_delta = computeFeatureDeltaGate(
@@ -267,6 +327,7 @@ SparseFeatureDisparityResult aggregateDenseStereoDisparity(
     result.right_anchor_cx = robust.right_anchor_x;
     result.right_anchor_cy = robust.right_anchor_y;
     result.support = robust.support;
+    copyDebugMatches(robust, result);
     result.stddev = robust.stddev;
     result.confidence = std::clamp(
         0.35f * support_ratio +
@@ -628,6 +689,7 @@ SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
         result.right_anchor_cx = robust.right_anchor_x;
         result.right_anchor_cy = robust.right_anchor_y;
         result.support = robust.support;
+        copyDebugMatches(robust, result);
         result.stddev = robust.stddev;
         if (result.stddev > max_stddev ||
             std::abs(result.disparity - initial_disp) > max_delta ||
@@ -788,6 +850,7 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
         result.right_anchor_cx = right_anchor_x;
         result.right_anchor_cy = right_anchor_y;
         result.support = 1;
+        setSingleDebugMatch(sample, result);
         return result;
     } catch (const cv::Exception& e) {
         LOG_WARN("OpenCV CUDA TemplateMatching ROI match failed: %s", e.what());

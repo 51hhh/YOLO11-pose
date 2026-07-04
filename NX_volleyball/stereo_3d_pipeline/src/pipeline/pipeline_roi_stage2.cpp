@@ -131,6 +131,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
             input.width, input.height,
             input.stream,
             input.p2_inline_feature_jobs_enabled,
+            input.frame_id,
             &match_stats);
 
         int semantic_valid = count_valid(semantic_match.results);
@@ -192,6 +193,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
         }
 
         fusion_detections = std::move(semantic_match.detections);
+        output.p2_artifact_rows = std::move(semantic_match.p2_artifact_rows);
         roi_results = std::move(semantic_match.results);
         need_roi_texture_match =
             config_.dual_yolo.fallback_to_roi_match &&

@@ -237,6 +237,7 @@ SparseFeatureDisparityResult matchOpenCVFeatureDisparityCPU(
         result.right_anchor_cx = robust.right_anchor_x;
         result.right_anchor_cy = robust.right_anchor_y;
         result.support = robust.support;
+        copyDebugMatches(robust, result);
         result.stddev = robust.stddev;
         if (result.stddev > max_stddev ||
             std::abs(result.disparity - initial_disp) > max_delta ||

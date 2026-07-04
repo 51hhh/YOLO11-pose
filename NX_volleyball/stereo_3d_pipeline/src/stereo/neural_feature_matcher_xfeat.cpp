@@ -93,10 +93,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             if (!bgr || bgr_pitch <= 0) {
                 return false;
             }
-            cropResizeGPU_3ch(bgr, bgr_pitch, img_width, img_height,
-                              dst, config_.roi_size,
-                              det.cx, det.cy, det.width, det.height,
-                              context, stream);
+            cropResizeBgrGPU_3ch(bgr, bgr_pitch, img_width, img_height,
+                                  dst, config_.roi_size,
+                                  det.cx, det.cy, det.width, det.height,
+                                  context, stream);
         } else {
             return false;
         }

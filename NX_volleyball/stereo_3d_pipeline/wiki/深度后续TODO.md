@@ -33,6 +33,15 @@
 - [ ] 评估固定自研 CUDA P2 pipeline 是否适合 CUDA Graph 降低 launch overhead。
 - [x] profiler 增加 p50/p90/p95/p99，用于 P2 准入；drop/accepted ratio 继续由矩阵脚本统计。
 - [ ] debug 特殊情况才下载 score map、disparity map、keypoint/match 可视化数据。
+- [x] 增加 P2 算法级可视化 artifact 基础能力，不能再用 realtime status zoom 代替特征点/采样点匹配图。
+  - 已输出 OpenCV CUDA ORB、OpenCV CUDA GFTT/LK、VPI ORB 点对 overlay。
+  - 已输出 OpenCV CUDA Template、VPI Template 峰值图。
+  - 已输出 OpenCV CUDA StereoSGM 少量 disparity 样本点和 CUDA Hough refined center。
+- [ ] 补齐剩余 P2 artifact。
+  - XFeat 已输出真实左右点对 overlay；SuperPoint 仍需捕获有效 overlay。
+  - Template/VPI Template: 输出 template patch、search window 和完整 score map。
+  - BM/SGM/libSGM 已输出 32x32 ROI disparity patch；VPI Stereo 已输出 32x32 disparity + confidence patch。
+  - color patch/color edge 已输出 gate 后 inlier samples；ring-edge 仍需输出采样点、候选视差和 gate 结果。
 - [ ] P2 性能准入先跑不带 `--debug-on-failure` 的矩阵；失败后再单独跑 debug capture。
 - [x] realtime P2 测试强制避免 CPU fallback 自动介入和 host gray D2H。
 - [ ] 可行 P2 优先迁移到 `DualYoloDepthGpuMatcher` batch kernel 或自研小 ROI CUDA kernel，降低 OpenCV CUDA 调用粒度成本。
@@ -57,19 +66,20 @@
 - [x] 实测 VPI CUDA Stereo Disparity 裁剪 ROI / 小 `maxdisp`。
   - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `100.1fps`、`0/632` 有效，不准入。
   - 已修正 VPI scratch 复用和 `initial_disp ±32px` residual 搜索；下一轮重测有效率和耗时。
-- [ ] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
-  - 已接 `roi_libsgm` 配置/diagnostic 入口；NX 当前缺 libSGM，运行返回 unsupported。
+- [x] 实测 Fixstars libSGM 裁剪 ROI / 小 `maxdisp`。
+  - 08:30 diagnostic `70.5fps`、`0/80` 有效、algo max `5210.15ms`；已构建/链接但当前不准入。
 - [x] 复测 `opencv_cuda_orb_fast48`。
 - [x] 复测 `opencv_cuda_orb_wide_y`。
-- [ ] 核对 NX VPI ORB 是否支持 CUDA backend；若支持则实现 VPI ORB P2 后端。
-  - 已接 `roi_vpi_orb` 配置/diagnostic 入口并通过 NX build；当前运行返回 unsupported stub，真实 VPI descriptor matcher 仍待实现。
-- [ ] 实测 VPI CUDA Harris + Pyramidal LK。
-  - 已接 `roi_vpi_harris_lk` 配置/diagnostic 入口并通过 NX build；当前运行返回 unsupported stub，真实 VPIArray/VPIPyramid LK 后端仍待实现。
+- [x] 实测 VPI CUDA ORB + BruteForceMatcher。
+  - 10:49 targeted `95.9fps`、`16/603` 有效、algo p95 `9.60ms`；10:53 有少量点对 artifact，但每帧运行仍不准入。
+- [x] 实测 VPI CUDA Harris + Pyramidal LK。
+  - 10:49 targeted `93.8fps`、`48/606` 有效；有效率太低，不准入。
 - [x] 实测 OpenCV CUDA GFTT/Harris + SparsePyrLK。
-  - 已接 `roi_cuda_gftt_lk` diagnostic-only 后端并通过 NX build；修复非连续 ROI view 后，有球复测仍 `93.6fps`、`0/555` 有效，不准入。
-- [ ] 调研并验证 CUDA-SIFT 第三方依赖是否能限制在 ROI/top-k 内稳定 10ms。
-  - 已接 `roi_cuda_sift` 配置/diagnostic 入口；NX 当前缺 CUDA-SIFT，运行返回 unsupported。
-- [ ] 调研 BRISK/AKAZE 是否存在可维护 CUDA/VPI 后端；否则只保留 CPU debug。
+  - 已接 `roi_cuda_gftt_lk` diagnostic-only 后端并通过 NX build；10:49 targeted `94.0fps`、`501/572` 有效，11:08 有真实点对 artifact，但 FPS/长尾不准入。
+- [x] 暂停 CUDA-SIFT 当前阶段实现。
+  - 保留 `roi_cuda_sift` 配置/diagnostic unsupported 入口；不引入第三方 CUDA-SIFT，不用 CPU SIFT 代替实时 GPU 结论。
+- [x] 停止推进 BRISK/AKAZE 作为当前实时/P2 路线。
+  - 当前 OpenCV 没有项目可用的官方 CUDA BRISK/AKAZE 后端；CPU 版只保留 debug/offline，不再进入 P2 矩阵。
 - [x] 实测 CUDA Canny/HoughCircles fallback circle refinement。
   - 已接 `roi_cuda_hough_circle` diagnostic-only 后端并通过 NX build；有球 diagnostic `88.0fps`、`6/539` 有效，不准入。
 
@@ -104,8 +114,8 @@
 - [ ] 满足 100fps 后再新增实时候选字段。
 - [ ] 新字段进入训练数据 schema。
 
-## 明日测试状态
+## 下一轮测试状态
 
 - [x] 轨迹录制使用固定 `config/pipeline_record_p0p1.yaml` 和 `--recording-out` 递增文件名，主 CSV、`.frames.csv`、metadata、log 的采集流程已明确。
 - [x] 预热流程已明确: 先录一段 warmup 文件确认 FPS、水印和 Stage2 状态，再从下一个递增文件名开始正式采集；warmup 文件不进入训练 manifest。
-- [x] 明天可以直接按 [轨迹模型数据采集流程](轨迹模型数据采集流程.md) 做实机测试。
+- [x] 下一轮可以直接按 [轨迹模型数据采集流程](轨迹模型数据采集流程.md) 做实机测试。

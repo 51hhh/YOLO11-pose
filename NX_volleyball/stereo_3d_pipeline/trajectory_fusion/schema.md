@@ -103,6 +103,8 @@
 | z_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 小 ROI 极线视差三角测距 |
 | z_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 小 ROI dense disparity 三角测距 |
 | z_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 小 ROI dense disparity 三角测距 |
+| z_roi_vpi_template_match | float | `*.p2_diagnostic.csv` 中 `mode=vpi_template_match` 合并出的训练候选；不在主 trajectory CSV header |
+| z_roi_vpi_orb | float | `*.p2_diagnostic.csv` 中 `mode=vpi_orb` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_ring_edge_profile | float | CUDA ring/edge profile 小范围极线视差三角测距 |
 | z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
@@ -134,6 +136,8 @@
 | disparity_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 聚合视差 |
 | disparity_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 聚合视差 |
 | disparity_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 聚合视差 |
+| disparity_roi_vpi_template_match | float | sidecar `vpi_template_match` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
+| disparity_roi_vpi_orb | float | sidecar `vpi_orb` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_ring_edge_profile | float | CUDA ring/edge profile 聚合视差 |
 | disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
@@ -176,6 +180,15 @@
 | roi_patch_iou_color_edge_support | int | 彩色边缘 IoU/patch 匹配支撑点数 |
 | roi_patch_iou_color_edge_std_px | float | 彩色边缘 IoU/patch 视差标准差 |
 | roi_patch_iou_color_edge_confidence | float | 彩色边缘 IoU/patch 匹配置信度 |
+| roi_cuda_stereo_sgm_support | int | OpenCV CUDA StereoSGM 有效采样点数 |
+| roi_cuda_stereo_sgm_std_px | float | OpenCV CUDA StereoSGM 视差标准差 |
+| roi_cuda_stereo_sgm_confidence | float | OpenCV CUDA StereoSGM 匹配置信度 |
+| roi_vpi_template_match_support | int | sidecar `vpi_template_match` 支撑点数；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_vpi_template_match_std_px | float | sidecar `vpi_template_match` 视差标准差；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_vpi_template_match_confidence | float | sidecar `vpi_template_match` 置信度；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_vpi_orb_support | int | sidecar `vpi_orb` 支撑点数；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_vpi_orb_std_px | float | sidecar `vpi_orb` 视差标准差；由 `trajectory_fusion/dataset.py` 合并 |
+| roi_vpi_orb_confidence | float | sidecar `vpi_orb` 置信度；由 `trajectory_fusion/dataset.py` 合并 |
 | roi_ring_edge_profile_support | int | CUDA ring/edge profile 有效采样点数 |
 | roi_ring_edge_profile_std_px | float | CUDA ring/edge profile 视差标准差 |
 | roi_ring_edge_profile_confidence | float | CUDA ring/edge profile 匹配置信度 |
@@ -228,6 +241,33 @@
 | p2_cuda_valid_count | int | 本帧 CUDA/OpenCV CUDA Template/BM/SGM/ring-edge 类 P2 有效 z 数量 |
 | p2_neural_valid_count | int | 本帧神经特征 P2 有效 z 数量 |
 | best_confidence | float | 本帧最高输出置信度 |
+
+## P2 Diagnostic Sidecar
+
+当 `performance.p2_diagnostic_results_enabled=true` 时，运行时会写同名前缀 `*.p2_diagnostic.csv`。如果 `p2_diagnostic_results_path` 为空，`main.cpp` 会从最终 `recording.output_path` 或 `--recording-out` 自动派生，例如 `traj_001.csv` -> `traj_001.p2_diagnostic.csv`。
+
+这个文件不替代主 trajectory CSV，不回写 `Object3D`。`trajectory_fusion/dataset.py` 当前只把 `mode=vpi_template_match` 和 `mode=vpi_orb` 按 `frame_id` 合并为训练候选字段:
+
+| sidecar 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| frame_id | int | 对应主 CSV 的 frame id |
+| lane | str | `diagnostic` |
+| mode | str | 算法名，例如 `vpi_template_match`、`vpi_orb` |
+| status | str | `valid`、`invalid`、`unsupported`、`no_pair` 等 |
+| valid | int | 1=本行有有效视差/深度 |
+| disparity | float | 聚合视差 |
+| z_m | float | 由视差三角化得到的深度 |
+| confidence | float | 算法置信度 |
+| stddev | float | 视差标准差 |
+| support | int | 支撑点/样本数 |
+| attempted | int | 尝试点/样本数 |
+| left_cx,left_cy,left_w,left_h,left_conf | float | 左检测框 |
+| right_cx,right_cy,right_w,right_h,right_conf | float | 右检测框 |
+| anchor_cx,anchor_cy,right_anchor_cx,right_anchor_cy | float | 算法聚合 anchor |
+| debug_match_count | int | artifact 可视化点对数量 |
+| artifact_path | str | diagnostic artifact PNG 路径；正式采集通常为空 |
+| algo_ms,queue_wait_ms,worker_elapsed_ms | float | 算法耗时、排队等待和 worker 总耗时 |
+| over_deadline | int | 是否超过 diagnostic deadline |
 
 ## 最小可用版本
 

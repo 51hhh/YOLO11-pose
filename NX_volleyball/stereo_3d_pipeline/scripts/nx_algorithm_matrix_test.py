@@ -639,28 +639,28 @@ RELAXED_CASES = (
         {"roi_vpi_template_match": True},
         yaml_scalars=P2_DIAGNOSTIC_ONLY,
         algo_stage_override="Stage2_P2FeatureJobDiagnosticVpiTemplate",
-        note="diagnostic lane only: VPI TemplateMatching backend availability check",
+        note="diagnostic lane only: VPI CUDA TemplateMatching; no CSV candidate writeback",
     ),
     Case(
         "vpi_stereo_disparity_diagnostic_only",
         {"roi_vpi_stereo_disparity": True},
         yaml_scalars=P2_DIAGNOSTIC_ONLY,
         algo_stage_override="Stage2_P2FeatureJobDiagnosticVpiStereo",
-        note="diagnostic lane only: VPI StereoDisparity backend availability check",
+        note="diagnostic lane only: VPI CUDA StereoDisparity; no CSV candidate writeback",
     ),
     Case(
         "vpi_harris_lk_diagnostic_only",
         {"roi_vpi_harris_lk": True},
         yaml_scalars=P2_DIAGNOSTIC_ONLY,
         algo_stage_override="Stage2_P2FeatureJobDiagnosticVpiHarrisLk",
-        note="diagnostic lane only: VPI Harris + Pyramidal LK backend availability check",
+        note="diagnostic lane only: VPI CUDA Harris + Pyramidal LK; no CSV candidate writeback",
     ),
     Case(
         "vpi_orb_diagnostic_only",
         {"roi_vpi_orb": True},
         yaml_scalars=P2_DIAGNOSTIC_ONLY,
         algo_stage_override="Stage2_P2FeatureJobDiagnosticVpiOrb",
-        note="diagnostic lane only: VPI ORB backend availability check",
+        note="diagnostic lane only: VPI CUDA ORB + BruteForceMatcher; no CSV candidate writeback",
     ),
     Case(
         "cuda_sift_diagnostic_only",
@@ -674,7 +674,7 @@ RELAXED_CASES = (
         {"roi_libsgm": True},
         yaml_scalars=P2_DIAGNOSTIC_ONLY,
         algo_stage_override="Stage2_P2FeatureJobDiagnosticFixstarsLibSgm",
-        note="diagnostic lane only: Fixstars libSGM backend availability check",
+        note="diagnostic lane only: Fixstars libSGM CUDA SGM; requires third_party/libSGM or LIBSGM_ROOT",
     ),
     Case(
         "neural_xfeat_relaxed",
@@ -994,12 +994,20 @@ def prepare_config(
         text = set_yaml_scalar(text, key, value)
     if "P2FeatureJobDiagnostic" in (case.algo_stage_override or ""):
         diag_csv = out_dir / f"{case.name}.p2_diagnostic.csv"
+        diag_artifacts = out_dir / f"{case.name}.p2_artifacts"
         text = set_yaml_scalar(text, "p2_diagnostic_results_enabled", "true")
         text = set_yaml_scalar(
             text,
             "p2_diagnostic_results_path",
             f'"{diag_csv}"',
         )
+        text = set_yaml_scalar(text, "p2_diagnostic_artifacts_enabled", "true")
+        text = set_yaml_scalar(
+            text,
+            "p2_diagnostic_artifacts_dir",
+            f'"{diag_artifacts}"',
+        )
+        text = set_yaml_scalar(text, "p2_diagnostic_artifacts_max", "20")
     if case.neural_backend:
         text = upsert_neural_block(text, render_neural_block(case, neural_model_dir))
     cfg = config_dir / f"{case.name}.yaml"
@@ -1186,6 +1194,10 @@ def summarize_diagnostic_csv(csv_path: Path) -> dict[str, str]:
         "p2_diag_mad_m": "",
         "p2_diag_support_median": "",
         "p2_diag_attempted_median": "",
+        "p2_diag_debug_match_rows": "",
+        "p2_diag_debug_matches_median": "",
+        "p2_diag_artifacts": "",
+        "p2_diag_artifact_dirs": "",
         "p2_diag_status_counts": "",
         "p2_diag_mode_counts": "",
         "p2_diag_path": "",
@@ -1202,10 +1214,13 @@ def summarize_diagnostic_csv(csv_path: Path) -> dict[str, str]:
     valid_depths: list[float] = []
     supports: list[float] = []
     attempted_values: list[float] = []
+    positive_debug_match_values: list[float] = []
+    artifact_paths: list[str] = []
     status_counts: dict[str, int] = {}
     mode_counts: dict[str, int] = {}
     valid = 0
     over_deadline = 0
+    rows_with_debug_matches = 0
     for row in rows:
         status = row.get("status", "")
         mode = row.get("mode", "")
@@ -1224,6 +1239,14 @@ def summarize_diagnostic_csv(csv_path: Path) -> dict[str, str]:
         attempted = parse_float(row.get("attempted"))
         if attempted is not None and attempted >= 0.0:
             attempted_values.append(attempted)
+        debug_matches = parse_float(row.get("debug_match_count"))
+        if debug_matches is not None and debug_matches >= 0.0:
+            if debug_matches > 0.0:
+                rows_with_debug_matches += 1
+                positive_debug_match_values.append(debug_matches)
+        artifact_path = row.get("artifact_path", "")
+        if artifact_path:
+            artifact_paths.append(artifact_path)
 
     if valid_depths:
         med = median(valid_depths)
@@ -1244,6 +1267,15 @@ def summarize_diagnostic_csv(csv_path: Path) -> dict[str, str]:
         "p2_diag_mad_m": mad_s,
         "p2_diag_support_median": f"{median(supports):.1f}" if supports else "",
         "p2_diag_attempted_median": f"{median(attempted_values):.1f}" if attempted_values else "",
+        "p2_diag_debug_match_rows": str(rows_with_debug_matches),
+        "p2_diag_debug_matches_median": (
+            f"{median(positive_debug_match_values):.1f}"
+            if positive_debug_match_values else ""
+        ),
+        "p2_diag_artifacts": str(len(artifact_paths)),
+        "p2_diag_artifact_dirs": ";".join(
+            sorted({str(Path(path).parent) for path in artifact_paths})
+        ),
         "p2_diag_status_counts": ";".join(
             f"{k}={v}" for k, v in sorted(status_counts.items())
         ),
@@ -1437,6 +1469,10 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "p2_diag_status_counts": "",
         "p2_diag_mode_counts": "",
         "p2_diag_path": "",
+        "p2_diag_debug_match_rows": "",
+        "p2_diag_debug_matches_median": "",
+        "p2_diag_artifacts": "",
+        "p2_diag_artifact_dirs": "",
         "diagnosis": "",
         "debug_feature_dir": "",
         "debug_realtime_dir": "",
@@ -1559,6 +1595,10 @@ def skipped_row(case: Case, reason: str, log_path: Path) -> dict[str, str]:
         "p2_diag_status_counts": "",
         "p2_diag_mode_counts": "",
         "p2_diag_path": "",
+        "p2_diag_debug_match_rows": "",
+        "p2_diag_debug_matches_median": "",
+        "p2_diag_artifacts": "",
+        "p2_diag_artifact_dirs": "",
         "diagnosis": "skipped_missing_dependency",
         "debug_feature_dir": "",
         "debug_realtime_dir": "",
@@ -1602,13 +1642,33 @@ def run_debug_captures(
     debug_root = out_dir / "debug" / case.name
     feature_dir = debug_root / "feature_matches"
     realtime_dir = debug_root / "realtime_zoom"
+    p2_artifact_dir = debug_root / "p2_artifacts"
     feature_dir.mkdir(parents=True, exist_ok=True)
     realtime_dir.mkdir(parents=True, exist_ok=True)
+    p2_artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    debug_cfg = debug_root / f"{case.name}.debug.yaml"
+    text = cfg.read_text()
+    if "P2FeatureJobDiagnostic" in (case.algo_stage_override or ""):
+        text = set_yaml_scalar(text, "p2_diagnostic_results_enabled", "true")
+        text = set_yaml_scalar(
+            text,
+            "p2_diagnostic_results_path",
+            f'"{debug_root / (case.name + ".p2_diagnostic.csv")}"',
+        )
+    text = set_yaml_scalar(text, "p2_diagnostic_artifacts_enabled", "true")
+    text = set_yaml_scalar(
+        text,
+        "p2_diagnostic_artifacts_dir",
+        f'"{p2_artifact_dir}"',
+    )
+    text = set_yaml_scalar(text, "p2_diagnostic_artifacts_max", "20")
+    debug_cfg.write_text(text)
 
     feature_log = log_dir / f"{case.name}.debug_feature_matches.log"
     feature_cmd = [
         "timeout", "12", str(binary),
-        "--config", str(cfg),
+        "--config", str(debug_cfg),
         "--debug-feature-matches",
         "--debug-feature-matches-dir", str(feature_dir),
     ]
@@ -1621,7 +1681,7 @@ def run_debug_captures(
     realtime_log = log_dir / f"{case.name}.debug_realtime_dump.log"
     realtime_cmd = [
         "timeout", str(realtime_sec), str(binary),
-        "--config", str(cfg),
+        "--config", str(debug_cfg),
         "--debug-realtime-dump",
         "--debug-realtime-dump-dir", str(realtime_dir),
         "--debug-realtime-dump-stride", "1",
@@ -1636,6 +1696,7 @@ def run_debug_captures(
     return {
         "debug_feature_dir": str(feature_dir),
         "debug_realtime_dir": str(realtime_dir),
+        "debug_p2_artifact_dir": str(p2_artifact_dir),
         "debug_feature_rc": str(feature_proc.returncode),
         "debug_realtime_rc": str(realtime_proc.returncode),
     }
@@ -1662,10 +1723,13 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
         "- `algo_*` is the profiler stage selected for this case; `async_worker_*` is full async Stage2. `p95` is the main tail-latency gate.",
         "- `late_or_deadline_dropped` means the worker finished late or the result was discarded after the next-frame deadline; CUDA/CPU work is not killed mid-kernel.",
         "- `realtime_path_used_cpu_or_host_gray` means the supposedly realtime P2 run triggered CPU fallback or host gray D2H and must be rerun with those paths disabled.",
-        "- `debug_dirs` is populated only when `--debug-on-failure` is used.",
+        "- `debug_dirs` is populated only when `--debug-on-failure` or `--debug-all` is used.",
+        "- `debug/<case>/realtime_zoom` is a realtime status view: bbox/circle/field overlay only, not an algorithm-specific feature-match overlay.",
+        "- `debug/<case>/feature_matches` currently runs the legacy CPU sparse/OpenCV debug path; it must not be used as proof of OpenCV CUDA, VPI, TensorRT, libSGM, or custom CUDA P2 internal matches.",
+        "- Diagnostic-only P2 cases write `<case>.p2_diagnostic.csv` plus `<case>.p2_artifacts/` overlays from backend-exposed debug matches. With `--debug-on-failure`, the rerun also writes `debug/<case>/p2_artifacts/`; realtime status zoom remains bbox/circle only.",
         "",
-        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | p2 triggers | selective skip | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|",
+        "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | debug match rows/median | artifacts | p2 triggers | selective skip | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for row in rows:
         has_diag_rows = bool(row.get("p2_diag_rows"))
@@ -1697,11 +1761,17 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
             row_int(row, "async_submit_drop_count")
         )
         debug_dirs = ""
-        if row.get("debug_feature_dir") or row.get("debug_realtime_dir"):
-            debug_dirs = (
-                f'feature={row.get("debug_feature_dir", "")} '
-                f'realtime={row.get("debug_realtime_dir", "")}'
-            ).strip()
+        debug_parts = []
+        if row.get("debug_feature_dir"):
+            debug_parts.append(f'feature={row.get("debug_feature_dir", "")}')
+        if row.get("debug_realtime_dir"):
+            debug_parts.append(f'realtime={row.get("debug_realtime_dir", "")}')
+        if row.get("debug_p2_artifact_dir"):
+            debug_parts.append(f'p2_debug={row.get("debug_p2_artifact_dir", "")}')
+        if row.get("p2_diag_artifact_dirs"):
+            debug_parts.append(f'p2_artifacts={row.get("p2_diag_artifact_dirs", "")}')
+        if debug_parts:
+            debug_dirs = " ".join(debug_parts)
         p2_triggers = []
         for key, label in (
             ("p2_trigger_pair_low_iou_count", "low_iou"),
@@ -1738,6 +1808,9 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
             f'{row.get("p2_diag_valid", "")}/{row.get("p2_diag_rows", "")}'
             if row.get("p2_diag_rows") else "",
             row.get("p2_diag_over_deadline", ""),
+            f'{row.get("p2_diag_debug_match_rows", "")}/{row.get("p2_diag_debug_matches_median", "")}'
+            if row.get("p2_diag_debug_match_rows") else "",
+            row.get("p2_diag_artifacts", ""),
             ";".join(p2_triggers),
             ";".join(selective_skips),
             rate_value,
@@ -1803,7 +1876,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug-on-failure",
         action="store_true",
-        help="after a failed/no-valid/deadline case, capture feature debug images and short realtime zoom dump",
+        help=(
+            "after a failed/no-valid/deadline case, capture legacy CPU "
+            "feature debug images and a short realtime status zoom dump"
+        ),
+    )
+    parser.add_argument(
+        "--debug-all",
+        action="store_true",
+        help=(
+            "capture debug outputs for every selected case; use only for "
+            "diagnostic reruns, not formal FPS admission"
+        ),
     )
     parser.add_argument(
         "--debug-realtime-sec",
@@ -1855,7 +1939,7 @@ def main() -> int:
         cfg = prepare_config(base, case, out_dir, config_dir, args.neural_model_dir)
         print(f"[RUN] {case.name}", flush=True)
         row = run_case(project, binary, args.duration_sec, case, cfg, log_dir)
-        if args.debug_on_failure and should_debug_case(row):
+        if args.debug_all or (args.debug_on_failure and should_debug_case(row)):
             print(f"[DEBUG] {case.name}: {row['diagnosis']}", flush=True)
             row.update(run_debug_captures(
                 project, binary, case, cfg, out_dir, log_dir,
