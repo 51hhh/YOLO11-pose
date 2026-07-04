@@ -22,6 +22,7 @@
 - [ ] 缩小或移除 `roi_postprocess_mutex_` 对独立 P2 job 的影响。
 - [ ] OpenCV CUDA P2 使用独立 stream/scratch/matcher 实例，测试多个 OpenCV CUDA 算法并行是否存在隐式同步或尾延迟放大。
 - [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
+  - TemplateMatching 已新增 CUDA score peak reduction，只下载最终 peak 结构；NX `opencv_cuda_template_match_patch9` 实测仍 `0/414` 有效，p95 `3.91ms`、max `43.30ms`，不准入。BM/SGM dense map 聚合仍待迁移。
 - [ ] 增加 P2 选择性触发: P0/P1 分歧、pair gate 变差、fallback、帧间跳变或运动残差异常时才运行。
   - 已接入 fallback/direct/host-gray/BGR 初始触发开关；P0/P1 分歧、pair gate 变差和运动残差触发仍待实现。
 - [ ] 增加 P2 attempted/not_attempted/valid/reject reason 统计，避免把未触发当成无效。
@@ -41,7 +42,7 @@
 - [x] 复测 `patch_iou_color_edge_wide_search`。
 - [x] 接入 OpenCV CUDA TemplateMatching 小 ROI 极线匹配字段。
 - [x] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配。
-- [ ] 实测 `opencv_cuda_template_match_patch9`。
+- [x] 实测 `opencv_cuda_template_match_patch9`。
 - [ ] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
 - [x] 接入 OpenCV CUDA StereoBM 小 ROI dense disparity 字段。
 - [x] 实测 OpenCV CUDA StereoBM 裁剪 ROI / 小 `numDisparities`。
