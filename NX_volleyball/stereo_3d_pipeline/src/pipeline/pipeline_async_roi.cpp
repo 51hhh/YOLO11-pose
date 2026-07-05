@@ -157,42 +157,20 @@ cudaError_t createLowPriorityNonBlockingStream(cudaStream_t* stream,
 
 bool chooseDiagnosticDirectPair(const std::vector<Detection>& left,
                                 const std::vector<Detection>& right,
-                                int max_disparity,
+                                const StereoRoiPairGateConfig& pair_gate,
                                 Detection* left_out,
                                 Detection* right_out,
                                 float* disparity_out) {
     if (!left_out || !right_out || !disparity_out) {
         return false;
     }
-    float best_score = -1.0f;
-    Detection best_left;
-    Detection best_right;
-    float best_disp = -1.0f;
-    for (const auto& l : left) {
-        for (const auto& r : right) {
-            const float disp = l.cx - r.cx;
-            if (!std::isfinite(disp) || disp <= 0.0f ||
-                disp > static_cast<float>(std::max(1, max_disparity))) {
-                continue;
-            }
-            const float y_delta = std::fabs(l.cy - r.cy);
-            const float score =
-                (l.confidence + r.confidence) * 0.5f -
-                y_delta * 0.01f;
-            if (score > best_score) {
-                best_score = score;
-                best_left = l;
-                best_right = r;
-                best_disp = disp;
-            }
-        }
-    }
-    if (best_score < 0.0f) {
+    StereoRoiPair best_pair;
+    if (!findBestStereoRoiPair(left, right, pair_gate, &best_pair)) {
         return false;
     }
-    *left_out = best_left;
-    *right_out = best_right;
-    *disparity_out = best_disp;
+    *left_out = best_pair.left;
+    *right_out = best_pair.right;
+    *disparity_out = best_pair.initial_disparity;
     return true;
 }
 
@@ -1540,10 +1518,11 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
             Detection left_det;
             Detection right_det;
             float initial_disp = -1.0f;
+            const StereoRoiPairGateConfig pair_gate =
+                makeStereoRoiPairGateConfig(config_);
             if (!chooseDiagnosticDirectPair(
                     task.left_detections, task.right_detections,
-                    config_.max_disparity,
-                    &left_det, &right_det, &initial_disp)) {
+                    pair_gate, &left_det, &right_det, &initial_disp)) {
                 globalPerf().record(
                     "Stage2_P2FeatureJobDiagnosticNoDirectPair", 0.0);
                 make_status_row("all", "no_direct_pair");
