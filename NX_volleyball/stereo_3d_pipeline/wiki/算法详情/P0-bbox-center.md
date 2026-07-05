@@ -1,4 +1,4 @@
-# P0 bbox 几何
+# P0 bbox center
 
 最后核对: 2026-07-05
 
@@ -6,7 +6,7 @@
 
 ## 类型
 
-几何测距。它不是模板、关键点或神经特征方法。
+几何测距。主字段是 `z_bbox_center`，同页记录 `z_bbox_left_edge` / `z_bbox_right_edge` 作为伴随诊断字段。
 
 ## 依赖
 

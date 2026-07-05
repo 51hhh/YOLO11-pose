@@ -1,4 +1,4 @@
-# P1 center patch
+# P0 ROI radial center
 
 最后核对: 2026-07-05
 
@@ -6,7 +6,7 @@
 
 ## 类型
 
-中心模板/patch 匹配。它只围绕球心或 ROI 中心做小范围匹配，不是多点关键点方法。
+几何测距。利用 ROI 内径向响应估计球心/中心线，不做特征点描述子匹配。
 
 ## 依赖
 
@@ -21,8 +21,8 @@
 ## 左右视差
 
 ```text
-left_x = left ROI center / circle center
-right_x = right peak from small patch search
+left_x = left_roi_radial_center_x
+right_x = right_roi_radial_center_x
 disparity = left_x - right_x
 z = fb / disparity
 ```
@@ -31,9 +31,9 @@ z = fb / disparity
 
 | 字段 | 含义 |
 |---|---|
-| `z_roi_center_patch` | 中心 patch 候选深度 |
-| `disparity_roi_center_patch` | 中心 patch 视差 |
+| `z_roi_radial_center` | ROI 径向响应中心视差深度 |
+| `disparity_roi_radial_center` | 对应视差 |
 
 ## 当前结论
 
-可作为多维度训练输入，但覆盖率偏低，不适合作为默认主路径。
+这是稳定 P0 几何候选，静态测试深度与 P0 主几何路线接近。它依赖左右 YOLO direct pair 正确，不负责单侧 fallback。

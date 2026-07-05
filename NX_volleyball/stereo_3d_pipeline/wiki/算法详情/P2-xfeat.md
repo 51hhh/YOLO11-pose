@@ -1,4 +1,4 @@
-# P2 XFeat TensorRT
+# P2 XFeat
 
 最后核对: 2026-07-05
 

@@ -1,4 +1,4 @@
-# P1 multi-point
+# P1 ROI multi-point
 
 最后核对: 2026-07-05
 
