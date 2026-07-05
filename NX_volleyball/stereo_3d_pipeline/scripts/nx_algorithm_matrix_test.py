@@ -72,6 +72,7 @@ class Case:
     neural_max_disp_delta_px: float = 32.0
     neural_final_disp_gate_px: float = 2.0
     neural_min_score: float = 0.0
+    neural_gpu_postprocess: bool = True
     algo_stage_override: str | None = None
     note: str = ""
 
@@ -849,6 +850,52 @@ RELAXED_CASES = (
         note="P2 sweep: TensorRT SuperPoint fixed extractor 160/top64",
     ),
     Case(
+        "neural_superpoint_160_top64_b2_sidecar",
+        candidate_fields=("z_roi_neural_feature",),
+        support_field="roi_neural_feature_support",
+        yaml_scalars=P2_DIAGNOSTIC_ONLY,
+        neural_backend="superpoint_lightglue",
+        neural_engine="superpoint_extractor_160_top64_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=256,
+        neural_min_matches=4,
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticNeuralFeature",
+        note="P2 sidecar: TensorRT SuperPoint 160/top64 batch=2 extractor + GPU mutual descriptor postprocess",
+    ),
+    Case(
+        "neural_superpoint_160_top64_b2_stride2",
+        candidate_fields=("z_roi_neural_feature",),
+        support_field="roi_neural_feature_support",
+        yaml_scalars={**P2_DIAGNOSTIC_ONLY, "p2_diagnostic_stride": "2"},
+        neural_backend="superpoint_lightglue",
+        neural_engine="superpoint_extractor_160_top64_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=256,
+        neural_min_matches=4,
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticNeuralFeature",
+        note="P2 sidecar: SuperPoint b2 at stride=2 to keep main ROI closer to 100fps",
+    ),
+    Case(
+        "neural_superpoint_160_top64_b2_stride2_relaxed",
+        candidate_fields=("z_roi_neural_feature",),
+        support_field="roi_neural_feature_support",
+        yaml_scalars={
+            **P2_DIAGNOSTIC_ONLY,
+            "p2_diagnostic_stride": "2",
+            "subpixel_max_stddev_px": "6.0",
+        },
+        neural_backend="superpoint_lightglue",
+        neural_engine="superpoint_extractor_160_top64_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=256,
+        neural_min_matches=4,
+        algo_stage_override="Stage2_P2FeatureJobDiagnosticNeuralFeature",
+        note="P2 sidecar: SuperPoint b2 stride=2 with relaxed outer stddev gate for training-candidate capture",
+    ),
+    Case(
         "neural_superpoint_224_top64",
         candidate_fields=("z_roi_neural_feature",),
         support_field="roi_neural_feature_support",
@@ -956,6 +1003,7 @@ def render_neural_block(case: Case, neural_model_dir: Path) -> str:
   final_disp_gate_px: {case.neural_final_disp_gate_px}
   min_score: {case.neural_min_score}
   use_lightglue: {use_lightglue}
+  gpu_postprocess: {str(case.neural_gpu_postprocess).lower()}
 """
 
 
@@ -1001,7 +1049,7 @@ def prepare_config(
             "p2_diagnostic_results_path",
             f'"{diag_csv}"',
         )
-        text = set_yaml_scalar(text, "p2_diagnostic_artifacts_enabled", "true")
+        text = set_yaml_scalar(text, "p2_diagnostic_artifacts_enabled", "false")
         text = set_yaml_scalar(
             text,
             "p2_diagnostic_artifacts_dir",
@@ -1737,7 +1785,7 @@ def write_reports(out_dir: Path, rows: list[dict[str, str]], duration_sec: int, 
         "- `debug_dirs` is populated only when `--debug-on-failure` or `--debug-all` is used.",
         "- `debug/<case>/realtime_zoom` is a realtime status view: bbox/circle/field overlay only, not an algorithm-specific feature-match overlay.",
         "- `debug/<case>/feature_matches` currently runs the legacy CPU sparse/OpenCV debug path; it must not be used as proof of OpenCV CUDA, VPI, TensorRT, libSGM, or custom CUDA P2 internal matches.",
-        "- Diagnostic-only P2 cases write `<case>.p2_diagnostic.csv` plus `<case>.p2_artifacts/` overlays from backend-exposed debug matches. With `--debug-on-failure`, the rerun also writes `debug/<case>/p2_artifacts/`; realtime status zoom remains bbox/circle only.",
+        "- Diagnostic-only P2 cases write `<case>.p2_diagnostic.csv` during formal runs. With `--debug-on-failure` or `--debug-all`, the rerun writes `debug/<case>/p2_artifacts/`; realtime status zoom remains bbox/circle only.",
         "",
         "| case | diagnosis | status | fps | algo_stage | algo avg/p95/max | worker avg/p95/max | over_deadline | stale/expired | queue_drop | candidate_valid/frames | diag_valid/rows | diag_over_deadline | debug match rows/median | artifacts | p2 triggers | selective skip | rate | median/MAD | support | accepted | frame_cb_skip | host_gray | debug_dirs | note | last error/warn |",
         "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---|",

@@ -12,6 +12,7 @@
 #define STEREO_3D_PIPELINE_NEURAL_FEATURE_MATCHER_H_
 
 #include "neural_feature_config.h"
+#include "neural_feature_direct_gpu_postprocess.h"
 #include "neural_feature_xfeat_gpu_postprocess.h"
 #include "roi_feature_result.h"
 #include "pipeline/detection_types.h"
@@ -107,6 +108,7 @@ private:
     TrtEngine matcher_;
     TrtEngine fused_;
     XFeatGpuWorkspace xfeat_gpu_workspace_;
+    DirectFeatureGpuWorkspace direct_gpu_workspace_;
 
     bool loadEngine(const std::string& path, TrtEngine& out);
     void destroyEngine(TrtEngine& engine);

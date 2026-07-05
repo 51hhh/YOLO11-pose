@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace stereo3d {
@@ -120,11 +121,28 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return nullptr;
     };
 
-    auto keypoint_count = [](const TrtEngine::TensorBuffer* tensor) -> int {
+    auto tensor_batch = [](const nvinfer1::Dims& dims) {
+        if (dims.nbDims >= 3 && dims.d[0] > 0 && dims.d[0] <= 8) {
+            return static_cast<int>(dims.d[0]);
+        }
+        if (dims.nbDims == 2 && dims.d[0] > 0 && dims.d[0] <= 8) {
+            return static_cast<int>(dims.d[0]);
+        }
+        return 1;
+    };
+
+    auto batch_stride = [&](const TrtEngine::TensorBuffer* tensor) -> size_t {
+        if (!tensor) return 0;
+        const int batch = std::max(1, tensor_batch(tensor->dims));
+        return tensor->elements / static_cast<size_t>(batch);
+    };
+
+    auto keypoint_count = [&](const TrtEngine::TensorBuffer* tensor) -> int {
         if (!tensor) return 0;
         const int last = tensorLastDim(tensor->dims);
+        const size_t per_batch = batch_stride(tensor);
         if (last == 2 || last == 3) {
-            return static_cast<int>(tensor->elements /
+            return static_cast<int>(per_batch /
                                     static_cast<size_t>(last));
         }
         if (tensor->dims.nbDims >= 2 &&
@@ -134,12 +152,13 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return 0;
     };
 
-    auto descriptor_count = [this](const TrtEngine::TensorBuffer* tensor) -> int {
+    auto descriptor_count = [&](const TrtEngine::TensorBuffer* tensor) -> int {
         if (!tensor || config_.descriptor_dim <= 0) return 0;
         const int last = tensorLastDim(tensor->dims);
+        const size_t per_batch = batch_stride(tensor);
         if (last == config_.descriptor_dim) {
             return static_cast<int>(
-                tensor->elements / static_cast<size_t>(config_.descriptor_dim));
+                per_batch / static_cast<size_t>(config_.descriptor_dim));
         }
         if (tensor->dims.nbDims >= 2 &&
             tensor->dims.d[tensor->dims.nbDims - 2] ==
@@ -149,15 +168,66 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return 0;
     };
 
-    auto read_keypoint = [this](const TrtEngine::TensorBuffer* tensor,
+    auto score_count = [&](const TrtEngine::TensorBuffer* tensor) -> int {
+        if (!tensor) return 0;
+        const size_t per_batch = batch_stride(tensor);
+        const int last = tensorLastDim(tensor->dims);
+        if (last == 1 && tensor->dims.nbDims >= 2) {
+            return static_cast<int>(per_batch);
+        }
+        return static_cast<int>(per_batch);
+    };
+
+    auto keypoint_layout =
+        [](const TrtEngine::TensorBuffer* tensor,
+           DirectFeatureKeypointLayout* layout) -> bool {
+            if (!tensor || !layout) return false;
+            const int last = tensorLastDim(tensor->dims);
+            if (last == 2) {
+                *layout = DIRECT_KPTS_K2;
+                return true;
+            }
+            if (tensor->dims.nbDims >= 2 &&
+                tensor->dims.d[tensor->dims.nbDims - 2] == 2) {
+                *layout = DIRECT_KPTS_2K;
+                return true;
+            }
+            return false;
+        };
+
+    auto descriptor_layout =
+        [this](const TrtEngine::TensorBuffer* tensor,
+               DirectFeatureDescriptorLayout* layout) -> bool {
+            if (!tensor || !layout) return false;
+            const int last = tensorLastDim(tensor->dims);
+            if (last == config_.descriptor_dim) {
+                *layout = DIRECT_DESC_KD;
+                return true;
+            }
+            if (tensor->dims.nbDims >= 2 &&
+                tensor->dims.d[tensor->dims.nbDims - 2] ==
+                    config_.descriptor_dim) {
+                *layout = DIRECT_DESC_DK;
+                return true;
+            }
+            return false;
+        };
+
+    auto read_keypoint = [this, &tensor_batch, &batch_stride, &keypoint_count](
+                                const TrtEngine::TensorBuffer* tensor,
                                 int index,
+                                int batch_index,
                                 float* x,
                                 float* y,
                                 float* score) -> bool {
         const int last = tensorLastDim(tensor->dims);
         const float* data = tensor->host_float.data();
+        const int batch = std::max(1, tensor_batch(tensor->dims));
+        if (batch_index < 0 || batch_index >= batch) return false;
+        const size_t offset =
+            static_cast<size_t>(batch_index) * batch_stride(tensor);
         if (last == 2 || last == 3) {
-            const size_t base = static_cast<size_t>(index) *
+            const size_t base = offset + static_cast<size_t>(index) *
                                 static_cast<size_t>(last);
             if (base + 1 >= tensor->host_float.size()) return false;
             *x = data[base];
@@ -167,9 +237,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             }
         } else if (tensor->dims.nbDims >= 2 &&
                    tensor->dims.d[tensor->dims.nbDims - 2] == 2) {
-            const int count = tensorLastDim(tensor->dims);
-            const size_t ix = static_cast<size_t>(index);
-            const size_t iy = static_cast<size_t>(count) + ix;
+            const int count = keypoint_count(tensor);
+            const size_t ix = offset + static_cast<size_t>(index);
+            const size_t iy = offset + static_cast<size_t>(count) +
+                              static_cast<size_t>(index);
             if (iy >= tensor->host_float.size()) return false;
             *x = data[ix];
             *y = data[iy];
@@ -193,15 +264,21 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                *y < static_cast<float>(config_.roi_size);
     };
 
-    auto read_descriptor = [this](const TrtEngine::TensorBuffer* tensor,
+    auto read_descriptor = [this, &tensor_batch, &batch_stride, &descriptor_count](
+                                  const TrtEngine::TensorBuffer* tensor,
                                   int index,
+                                  int batch_index,
                                   std::vector<float>* descriptor) -> bool {
         if (!tensor || config_.descriptor_dim <= 0) return false;
         descriptor->assign(static_cast<size_t>(config_.descriptor_dim), 0.0f);
         const int last = tensorLastDim(tensor->dims);
         const float* data = tensor->host_float.data();
+        const int batch = std::max(1, tensor_batch(tensor->dims));
+        if (batch_index < 0 || batch_index >= batch) return false;
+        const size_t offset =
+            static_cast<size_t>(batch_index) * batch_stride(tensor);
         if (last == config_.descriptor_dim) {
-            const size_t base = static_cast<size_t>(index) *
+            const size_t base = offset + static_cast<size_t>(index) *
                                 static_cast<size_t>(config_.descriptor_dim);
             if (base + static_cast<size_t>(config_.descriptor_dim) >
                 tensor->host_float.size()) {
@@ -213,9 +290,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         } else if (tensor->dims.nbDims >= 2 &&
                    tensor->dims.d[tensor->dims.nbDims - 2] ==
                        config_.descriptor_dim) {
-            const int count = last;
+            const int count = descriptor_count(tensor);
             for (int c = 0; c < config_.descriptor_dim; ++c) {
-                const size_t idx = static_cast<size_t>(c) *
+                const size_t idx = offset + static_cast<size_t>(c) *
                                    static_cast<size_t>(count) +
                                    static_cast<size_t>(index);
                 if (idx >= tensor->host_float.size()) return false;
@@ -233,25 +310,47 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return inv_norm > 0.0f;
     };
 
-    auto parse_features = [&](std::vector<DirectFeature>* features) -> bool {
-        TrtEngine::TensorBuffer* keypoints = find_keypoint_tensor();
-        TrtEngine::TensorBuffer* descriptors = find_descriptor_tensor();
-        TrtEngine::TensorBuffer* scores = find_score_tensor();
-        const int count = std::min(keypoint_count(keypoints),
-                                   descriptor_count(descriptors));
-        if (!keypoints || !descriptors || count < config_.min_matches) {
+    auto score_at = [&](const TrtEngine::TensorBuffer* tensor,
+                        int index,
+                        int batch_index,
+                        float fallback) {
+        if (!tensor || tensor->host_float.empty()) return fallback;
+        const int batch = std::max(1, tensor_batch(tensor->dims));
+        if (batch_index < 0 || batch_index >= batch) return fallback;
+        const size_t idx =
+            static_cast<size_t>(batch_index) * batch_stride(tensor) +
+            static_cast<size_t>(index);
+        if (idx >= tensor->host_float.size()) return fallback;
+        return tensor->host_float[idx];
+    };
+
+    TrtEngine::TensorBuffer* direct_keypoints = find_keypoint_tensor();
+    TrtEngine::TensorBuffer* direct_descriptors = find_descriptor_tensor();
+    TrtEngine::TensorBuffer* direct_scores = find_score_tensor();
+
+    auto parse_features = [&](int batch_index,
+                              std::vector<DirectFeature>* features) -> bool {
+        const int count = std::min(keypoint_count(direct_keypoints),
+                                   descriptor_count(direct_descriptors));
+        if (!direct_keypoints || !direct_descriptors ||
+            count < config_.min_matches) {
             return false;
         }
         features->clear();
         features->reserve(static_cast<size_t>(std::min(count, config_.top_k)));
         for (int i = 0; i < count; ++i) {
             DirectFeature f;
-            if (scores && static_cast<size_t>(i) < scores->host_float.size()) {
-                f.score = scores->host_float[static_cast<size_t>(i)];
+            f.score = score_at(direct_scores, i, batch_index, f.score);
+            if (!read_keypoint(direct_keypoints, i, batch_index,
+                               &f.x, &f.y, &f.score)) {
+                continue;
             }
-            if (!read_keypoint(keypoints, i, &f.x, &f.y, &f.score)) continue;
             if (!std::isfinite(f.score)) f.score = 1.0f;
-            if (!read_descriptor(descriptors, i, &f.descriptor)) continue;
+            if (f.score <= 0.0f) continue;
+            if (!read_descriptor(direct_descriptors, i, batch_index,
+                                 &f.descriptor)) {
+                continue;
+            }
             features->push_back(std::move(f));
         }
         std::sort(features->begin(), features->end(),
@@ -279,11 +378,16 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
     };
 
     const float context = 1.20f;
-    auto run_one = [&](const Detection& det,
-                       const uint8_t* gray, int pitch,
-                       const uint8_t* bgr, int bgr_pitch,
-                       std::vector<DirectFeature>* features) -> bool {
-        float* dst = static_cast<float*>(input->device);
+    const int input_batch = std::max(1, tensor_batch(input->dims));
+    const size_t input_batch_stride = input->elements /
+                                      static_cast<size_t>(input_batch);
+    auto crop_one = [&](const Detection& det,
+                        const uint8_t* gray, int pitch,
+                        const uint8_t* bgr, int bgr_pitch,
+                        int batch_index) -> bool {
+        if (batch_index < 0 || batch_index >= input_batch) return false;
+        float* dst = static_cast<float*>(input->device) +
+                     static_cast<size_t>(batch_index) * input_batch_stride;
         if (input_channels == 1) {
             cropResizeGPU(gray, pitch, img_width, img_height,
                           dst, config_.roi_size,
@@ -295,32 +399,74 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                                   det.cx, det.cy, det.width, det.height,
                                   context, stream);
         }
-        if (!extractor_.context->enqueueV3(stream) || !copy_outputs()) {
+        return cudaPeekAtLastError() == cudaSuccess;
+    };
+    auto run_one = [&](const Detection& det,
+                       const uint8_t* gray, int pitch,
+                       const uint8_t* bgr, int bgr_pitch,
+                       int batch_index,
+                       std::vector<DirectFeature>* features) -> bool {
+        if (!crop_one(det, gray, pitch, bgr, bgr_pitch, batch_index) ||
+            !extractor_.context->enqueueV3(stream) || !copy_outputs()) {
             return false;
         }
-        return parse_features(features);
+        return parse_features(batch_index, features);
     };
 
     const auto start = std::chrono::steady_clock::now();
     std::vector<DirectFeature> left_features;
     std::vector<DirectFeature> right_features;
-    if (!run_one(left_det,
-                 left_gray_gpu, left_gray_pitch,
-                 left_bgr_gpu, left_bgr_pitch,
-                 &left_features) ||
-        !run_one(right_det,
-                 right_gray_gpu, right_gray_pitch,
-                 right_bgr_gpu, right_bgr_pitch,
-                 &right_features)) {
-        out.status = "unsupported_direct_extractor_schema";
-        return out;
-    }
 
     struct IndexMatch {
         int query_idx = -1;
         int train_idx = -1;
         float score = 1.0f;
     };
+
+    auto append_debug_point =
+        [&](NeuralFeatureMatchResult* result,
+            float lx, float ly, float rx, float ry,
+            float disparity, float score, float second_score,
+            SparseFeatureDebugStage stage,
+            SparseFeatureRejectReason reason) {
+            if (!result ||
+                result->debug_points.size() >=
+                    static_cast<size_t>(kMaxSparseFeatureDebugPoints)) {
+                return;
+            }
+            SparseFeatureDebugPoint p;
+            p.left_x = lx;
+            p.left_y = ly;
+            p.right_x = rx;
+            p.right_y = ry;
+            p.disparity = disparity;
+            p.score = score;
+            p.second_score = second_score;
+            p.y_delta = ly - ry;
+            p.y_residual = p.y_delta;
+            p.disp_delta = disparity - initial_disparity;
+            p.stage = static_cast<int>(stage);
+            p.reject_reason = static_cast<int>(reason);
+            result->debug_points.push_back(p);
+        };
+
+    auto append_debug_match =
+        [&](NeuralFeatureMatchResult* result,
+            const NeuralFeaturePointMatch& m,
+            SparseFeatureDebugStage stage,
+            SparseFeatureRejectReason reason,
+            float second_score = std::numeric_limits<float>::quiet_NaN()) {
+            append_debug_point(result,
+                               m.left_x,
+                               m.left_y,
+                               m.right_x,
+                               m.right_y,
+                               m.disparity,
+                               m.score,
+                               second_score,
+                               stage,
+                               reason);
+        };
 
     const auto map_to_frame = [&](const Detection& det, const DirectFeature& f,
                                   float* x, float* y) {
@@ -332,50 +478,18 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         *y = roi_y + (f.y + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
     };
 
-    auto build_result_from_indices =
-        [&](const std::vector<IndexMatch>& index_matches) {
+    auto build_result_from_candidates =
+        [&](const std::vector<NeuralFeaturePointMatch>& candidates,
+            const char* ok_status) {
             NeuralFeatureMatchResult result;
-            std::vector<NeuralFeaturePointMatch> candidates;
-            std::vector<float> disparities;
-            candidates.reserve(index_matches.size());
-            disparities.reserve(index_matches.size());
-            for (const auto& im : index_matches) {
-                if (im.query_idx < 0 || im.train_idx < 0 ||
-                    im.query_idx >= static_cast<int>(left_features.size()) ||
-                    im.train_idx >= static_cast<int>(right_features.size())) {
-                    continue;
-                }
-                if (im.score < config_.min_score) continue;
-                float lx, ly, rx, ry;
-                map_to_frame(left_det,
-                             left_features[static_cast<size_t>(im.query_idx)],
-                             &lx, &ly);
-                map_to_frame(right_det,
-                             right_features[static_cast<size_t>(im.train_idx)],
-                             &rx, &ry);
-                const float disp = lx - rx;
-                if (disp <= 0.5f ||
-                    disp > static_cast<float>(max_disparity_) ||
-                    std::fabs(ly - ry) > config_.max_y_error_px ||
-                    std::fabs(disp - initial_disparity) >
-                        config_.max_disp_delta_px) {
-                    continue;
-                }
-                NeuralFeaturePointMatch m;
-                m.left_x = lx;
-                m.left_y = ly;
-                m.right_x = rx;
-                m.right_y = ry;
-                m.disparity = disp;
-                m.score = im.score;
-                candidates.push_back(m);
-                disparities.push_back(disp);
-            }
-
-            if (static_cast<int>(disparities.size()) < config_.min_matches) {
+            if (static_cast<int>(candidates.size()) < config_.min_matches) {
                 result.status = "not_enough_matches";
                 return result;
             }
+
+            std::vector<float> disparities;
+            disparities.reserve(candidates.size());
+            for (const auto& m : candidates) disparities.push_back(m.disparity);
             const float median = medianOf(disparities);
             std::vector<float> abs_dev;
             abs_dev.reserve(disparities.size());
@@ -385,21 +499,68 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             const float mad = medianOf(abs_dev);
             const float gate =
                 std::max(config_.final_disp_gate_px, 1.4826f * mad * 2.5f);
+
             float sum = 0.0f;
             float sum2 = 0.0f;
             float score_sum = 0.0f;
+            float min_x = std::numeric_limits<float>::infinity();
+            float max_x = -std::numeric_limits<float>::infinity();
+            float min_y = std::numeric_limits<float>::infinity();
+            float max_y = -std::numeric_limits<float>::infinity();
+            int quadrant_mask = 0;
             for (const auto& m : candidates) {
-                if (std::fabs(m.disparity - median) > gate) continue;
+                if (std::fabs(m.disparity - median) > gate) {
+                    append_debug_match(&result,
+                                       m,
+                                       SparseFeatureDebugStage::GEOMETRY,
+                                       SparseFeatureRejectReason::MAD_OUTLIER);
+                    continue;
+                }
                 result.matches.push_back(m);
+                append_debug_match(&result,
+                                   m,
+                                   SparseFeatureDebugStage::INLIER,
+                                   SparseFeatureRejectReason::NONE);
                 sum += m.disparity;
                 sum2 += m.disparity * m.disparity;
                 score_sum += m.score;
+                min_x = std::min(min_x, m.left_x);
+                max_x = std::max(max_x, m.left_x);
+                min_y = std::min(min_y, m.left_y);
+                max_y = std::max(max_y, m.left_y);
+                const int qx = m.left_x >= left_det.cx ? 1 : 0;
+                const int qy = m.left_y >= left_det.cy ? 1 : 0;
+                quadrant_mask |= 1 << (qy * 2 + qx);
             }
             if (static_cast<int>(result.matches.size()) < config_.min_matches) {
                 result.status = "not_enough_inliers";
                 result.matches.clear();
                 return result;
             }
+
+            const int quadrants =
+                ((quadrant_mask & 1) ? 1 : 0) +
+                ((quadrant_mask & 2) ? 1 : 0) +
+                ((quadrant_mask & 4) ? 1 : 0) +
+                ((quadrant_mask & 8) ? 1 : 0);
+            const float spread =
+                std::max(std::max(0.0f, max_x - min_x),
+                         std::max(0.0f, max_y - min_y));
+            const float min_spread =
+                std::min(left_det.width, left_det.height) *
+                std::max(0.0f, config_.min_spatial_spread_ratio);
+            if (config_.min_spatial_quadrants > 0 &&
+                quadrants < config_.min_spatial_quadrants) {
+                result.status = "poor_spatial_quadrants";
+                result.matches.clear();
+                return result;
+            }
+            if (min_spread > 0.0f && spread < min_spread) {
+                result.status = "poor_spatial_spread";
+                result.matches.clear();
+                return result;
+            }
+
             const float kept = static_cast<float>(result.matches.size());
             result.disparity = sum / kept;
             const float var = std::max(
@@ -415,17 +576,226 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                 (score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
             const float consistency =
                 std::clamp(1.0f / (1.0f + result.stddev_px), 0.0f, 1.0f);
-            result.confidence = std::clamp(0.45f * support_conf +
-                                           0.35f * score_conf +
-                                           0.20f * consistency,
+            const float spatial_conf =
+                std::clamp(0.5f * static_cast<float>(quadrants) / 4.0f +
+                               0.5f * (min_spread > 0.0f
+                                            ? std::min(1.0f, spread / min_spread)
+                                            : 1.0f),
+                           0.0f, 1.0f);
+            result.confidence = std::clamp(0.40f * support_conf +
+                                           0.30f * score_conf +
+                                           0.20f * consistency +
+                                           0.10f * spatial_conf,
                                            0.0f, 1.0f);
             result.inference_ms = static_cast<float>(
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - start).count());
             result.valid = true;
-            result.status = "ok";
+            result.status = ok_status;
             return result;
         };
+
+    auto build_result_from_indices =
+        [&](const std::vector<IndexMatch>& index_matches,
+            const char* ok_status) {
+            NeuralFeatureMatchResult result;
+            std::vector<NeuralFeaturePointMatch> candidates;
+            candidates.reserve(index_matches.size());
+            for (const auto& im : index_matches) {
+                if (im.query_idx < 0 || im.train_idx < 0 ||
+                    im.query_idx >= static_cast<int>(left_features.size()) ||
+                    im.train_idx >= static_cast<int>(right_features.size())) {
+                    continue;
+                }
+                if (im.score < config_.min_score) continue;
+                float lx, ly, rx, ry;
+                map_to_frame(left_det,
+                             left_features[static_cast<size_t>(im.query_idx)],
+                             &lx, &ly);
+                map_to_frame(right_det,
+                             right_features[static_cast<size_t>(im.train_idx)],
+                             &rx, &ry);
+                const float disp = lx - rx;
+                SparseFeatureRejectReason reject =
+                    SparseFeatureRejectReason::NONE;
+                if (disp <= 0.5f ||
+                    disp > static_cast<float>(max_disparity_)) {
+                    reject = SparseFeatureRejectReason::BAD_DISPARITY;
+                } else if (std::fabs(ly - ry) > config_.max_y_error_px) {
+                    reject = SparseFeatureRejectReason::Y_RESIDUAL;
+                } else if (std::fabs(disp - initial_disparity) >
+                           config_.max_disp_delta_px) {
+                    reject = SparseFeatureRejectReason::DISP_DELTA;
+                }
+                if (reject != SparseFeatureRejectReason::NONE) {
+                    append_debug_point(&result,
+                                       lx,
+                                       ly,
+                                       rx,
+                                       ry,
+                                       disp,
+                                       im.score,
+                                       std::numeric_limits<float>::quiet_NaN(),
+                                       SparseFeatureDebugStage::GEOMETRY,
+                                       reject);
+                    continue;
+                }
+                NeuralFeaturePointMatch m;
+                m.left_x = lx;
+                m.left_y = ly;
+                m.right_x = rx;
+                m.right_y = ry;
+                m.disparity = disp;
+                m.score = im.score;
+                append_debug_match(&result,
+                                   m,
+                                   SparseFeatureDebugStage::GEOMETRY,
+                                   SparseFeatureRejectReason::NONE);
+                candidates.push_back(m);
+            }
+
+            NeuralFeatureMatchResult finalized =
+                build_result_from_candidates(candidates, ok_status);
+            finalized.debug_points.insert(finalized.debug_points.begin(),
+                                          result.debug_points.begin(),
+                                          result.debug_points.end());
+            if (finalized.debug_points.size() >
+                static_cast<size_t>(kMaxSparseFeatureDebugPoints)) {
+                finalized.debug_points.resize(
+                    static_cast<size_t>(kMaxSparseFeatureDebugPoints));
+            }
+            return finalized;
+        };
+
+    const int direct_keypoint_count = keypoint_count(direct_keypoints);
+    const int direct_descriptor_count = descriptor_count(direct_descriptors);
+    const int direct_score_count =
+        direct_scores ? score_count(direct_scores)
+                      : std::min(direct_keypoint_count, direct_descriptor_count);
+    const int output_batch = std::min({
+        direct_keypoints ? tensor_batch(direct_keypoints->dims) : 0,
+        direct_descriptors ? tensor_batch(direct_descriptors->dims) : 0,
+        direct_scores ? tensor_batch(direct_scores->dims) : input_batch,
+    });
+    DirectFeatureKeypointLayout direct_kpt_layout = DIRECT_KPTS_K2;
+    DirectFeatureDescriptorLayout direct_desc_layout = DIRECT_DESC_KD;
+
+    if (config_.gpu_postprocess &&
+        input_batch >= 2 &&
+        output_batch >= 2 &&
+        direct_keypoints &&
+        direct_descriptors &&
+        direct_keypoint_count >= config_.min_matches &&
+        direct_descriptor_count >= config_.min_matches &&
+        direct_score_count >= config_.min_matches &&
+        keypoint_layout(direct_keypoints, &direct_kpt_layout) &&
+        descriptor_layout(direct_descriptors, &direct_desc_layout) &&
+        ensureDirectFeatureGpuWorkspace(direct_gpu_workspace_,
+                                        std::max(1, config_.top_k),
+                                        config_.descriptor_dim) &&
+        crop_one(left_det,
+                 left_gray_gpu, left_gray_pitch,
+                 left_bgr_gpu, left_bgr_pitch,
+                 0) &&
+        crop_one(right_det,
+                 right_gray_gpu, right_gray_pitch,
+                 right_bgr_gpu, right_bgr_pitch,
+                 1) &&
+        extractor_.context->enqueueV3(stream)) {
+        const auto* kpt_base =
+            static_cast<const float*>(direct_keypoints->device);
+        const auto* desc_base =
+            static_cast<const float*>(direct_descriptors->device);
+        const auto* score_base = direct_scores
+            ? static_cast<const float*>(direct_scores->device)
+            : nullptr;
+        const size_t kpt_stride = batch_stride(direct_keypoints);
+        const size_t desc_stride = batch_stride(direct_descriptors);
+        const size_t score_stride = direct_scores ? batch_stride(direct_scores) : 0;
+        std::vector<DirectFeatureGpuMatch> gpu_matches;
+        const bool gpu_path_ok = runDirectFeatureGpuPostprocess(
+            direct_gpu_workspace_,
+            kpt_base,
+            kpt_base + kpt_stride,
+            desc_base,
+            desc_base + desc_stride,
+            score_base,
+            score_base ? score_base + score_stride : nullptr,
+            direct_keypoint_count,
+            direct_descriptor_count,
+            direct_score_count,
+            config_.descriptor_dim,
+            direct_kpt_layout,
+            direct_desc_layout,
+            config_.roi_size,
+            config_.min_matches,
+            config_.min_score,
+            config_.match_margin,
+            config_.max_y_error_px,
+            config_.max_disp_delta_px,
+            initial_disparity,
+            max_disparity_,
+            left_det.cx, left_det.cy, left_det.width, left_det.height,
+            right_det.cx, right_det.cy, right_det.width, right_det.height,
+            stream,
+            &gpu_matches);
+        if (gpu_path_ok) {
+            std::vector<NeuralFeaturePointMatch> candidates;
+            candidates.reserve(gpu_matches.size());
+            for (const auto& src : gpu_matches) {
+                NeuralFeaturePointMatch m;
+                m.left_x = src.left_x;
+                m.left_y = src.left_y;
+                m.right_x = src.right_x;
+                m.right_y = src.right_y;
+                m.disparity = src.disparity;
+                m.score = src.score;
+                candidates.push_back(m);
+            }
+            NeuralFeatureMatchResult gpu_result =
+                build_result_from_candidates(candidates, "ok_gpu_b2");
+            if (gpu_result.valid) {
+                return gpu_result;
+            }
+        }
+    }
+
+    bool features_ready = false;
+    if (input_batch >= 2 && output_batch >= 2) {
+        features_ready =
+            crop_one(left_det,
+                     left_gray_gpu, left_gray_pitch,
+                     left_bgr_gpu, left_bgr_pitch,
+                     0) &&
+            crop_one(right_det,
+                     right_gray_gpu, right_gray_pitch,
+                     right_bgr_gpu, right_bgr_pitch,
+                     1) &&
+            extractor_.context->enqueueV3(stream) &&
+            copy_outputs() &&
+            parse_features(0, &left_features) &&
+            parse_features(1, &right_features);
+    }
+    if (!features_ready) {
+        features_ready =
+            run_one(left_det,
+                    left_gray_gpu, left_gray_pitch,
+                    left_bgr_gpu, left_bgr_pitch,
+                    0,
+                    &left_features) &&
+            run_one(right_det,
+                    right_gray_gpu, right_gray_pitch,
+                    right_bgr_gpu, right_bgr_pitch,
+                    0,
+                    &right_features);
+    }
+    if (!features_ready) {
+        out.status = "extractor_failed";
+        out.inference_ms = static_cast<float>(
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count());
+        return out;
+    }
 
     auto run_split_matcher = [&]() {
         NeuralFeatureMatchResult result;
@@ -805,7 +1175,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             result.status = "not_enough_matches";
             return result;
         }
-        return build_result_from_indices(index_matches);
+        return build_result_from_indices(index_matches, "ok_split_matcher");
     };
 
     if (config_.use_lightglue &&
@@ -859,7 +1229,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         im.score = left_score[i];
         mutual_matches.push_back(im);
     }
-    return build_result_from_indices(mutual_matches);
+    return build_result_from_indices(mutual_matches, "ok_cpu");
 }
 
 

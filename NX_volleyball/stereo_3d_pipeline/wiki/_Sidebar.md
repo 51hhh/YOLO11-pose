@@ -39,6 +39,7 @@
     - [P1训练候选深度](P1训练候选深度.md)
     - [GFTT-LK诊断Sidecar](GFTT-LK诊断Sidecar.md)
     - [XFeatTensorRT深度候选](XFeatTensorRT深度候选.md)
+    - [P2 SuperPoint](算法详情/P2-superpoint.md)
     - [CUDA Template/NCC深度候选](CUDA-Template-NCC深度候选.md)
     - [深度候选字段参考](深度候选字段参考.md)
   - 实时测试

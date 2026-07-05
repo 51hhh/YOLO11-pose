@@ -2,9 +2,9 @@
 """Export LightGlue ALIKED/SuperPoint extractors to fixed-shape ONNX.
 
 The realtime C++ path consumes TensorRT engines that output:
-  keypoints   [1, top_k, 2]
-  descriptors [1, top_k, descriptor_dim]
-  scores      [1, top_k]
+  keypoints   [batch_size, top_k, 2]
+  descriptors [batch_size, top_k, descriptor_dim]
+  scores      [batch_size, top_k]
 
 This script exports the real LightGlue extractor models only. Matching is still
 performed by the realtime C++ direct-extractor fallback unless a separate
@@ -191,6 +191,7 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--roi-size", type=int, default=224)
     parser.add_argument("--top-k", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--aliked-model", default="aliked-n16")
     args = parser.parse_args()
@@ -199,12 +200,16 @@ def main() -> int:
         raise ValueError("roi-size must be divisible by 32")
     if args.top_k <= 0:
         raise ValueError("top-k must be positive")
+    if args.batch_size <= 0:
+        raise ValueError("batch-size must be positive")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     model = FixedExtractor(args.backend, args.top_k, args.aliked_model, args.roi_size).eval()
-    dummy = torch.rand(1, 1, args.roi_size, args.roi_size, dtype=torch.float32)
+    dummy = torch.rand(
+        args.batch_size, 1, args.roi_size, args.roi_size, dtype=torch.float32
+    )
     with torch.no_grad():
         keypoints, descriptors, scores = model(dummy)
     print(

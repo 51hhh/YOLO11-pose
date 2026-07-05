@@ -38,6 +38,7 @@ NeuralFeatureMatcher::NeuralFeatureMatcher() = default;
 
 NeuralFeatureMatcher::~NeuralFeatureMatcher() {
     releaseXFeatGpuWorkspace(xfeat_gpu_workspace_);
+    releaseDirectFeatureGpuWorkspace(direct_gpu_workspace_);
     destroyEngine(extractor_);
     destroyEngine(matcher_);
     destroyEngine(fused_);

@@ -42,7 +42,9 @@ struct Object3D {
     float z_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差测距, -1=无效
     float z_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差测距, -1=无效
     float z_roi_ring_edge_profile;///< CUDA ROI ring/edge profile 小范围极线视差测距, -1=无效
-    float z_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差测距, -1=无效
+    float z_roi_neural_feature;///< ROI TensorRT 神经特征通用兼容字段, -1=无效
+    float z_roi_neural_xfeat;///< ROI XFeat TensorRT 神经特征匹配视差测距, -1=无效
+    float z_roi_neural_superpoint;///< ROI SuperPoint TensorRT 神经特征匹配视差测距, -1=无效
     float z_roi_center_patch; ///< ROI 中心 patch ZNCC 视差测距, -1=无效
     float z_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差测距, -1=无效
     float z_yolo_bbox_pair; ///< 左右 YOLO bbox 中心视差测距, -1=无效
@@ -74,7 +76,9 @@ struct Object3D {
     float disparity_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差, -1=无效
     float disparity_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差, -1=无效
     float disparity_roi_ring_edge_profile;///< CUDA ROI ring/edge profile 小范围极线视差, -1=无效
-    float disparity_roi_neural_feature;///< ROI TensorRT 神经特征匹配视差, -1=无效
+    float disparity_roi_neural_feature;///< ROI TensorRT 神经特征通用兼容视差, -1=无效
+    float disparity_roi_neural_xfeat;///< ROI XFeat TensorRT 神经特征匹配视差, -1=无效
+    float disparity_roi_neural_superpoint;///< ROI SuperPoint TensorRT 神经特征匹配视差, -1=无效
     float disparity_roi_center_patch; ///< ROI 中心 patch ZNCC 视差, -1=无效
     float disparity_roi_multi_point;  ///< ROI 多点 ZNCC 亚像素视差, -1=无效
     float disparity_fallback_epipolar; ///< 极线 fallback 视差, -1=无效
@@ -138,9 +142,15 @@ struct Object3D {
     int roi_ring_edge_profile_support; ///< CUDA ring/edge profile 有效采样点数
     float roi_ring_edge_profile_std_px; ///< CUDA ring/edge profile 视差标准差
     float roi_ring_edge_profile_confidence; ///< CUDA ring/edge profile 匹配置信度
-    int roi_neural_feature_support; ///< ROI 神经特征有效匹配点数
-    float roi_neural_feature_std_px; ///< ROI 神经特征视差标准差
-    float roi_neural_feature_confidence; ///< ROI 神经特征匹配置信度
+    int roi_neural_feature_support; ///< ROI 神经特征通用兼容有效匹配点数
+    float roi_neural_feature_std_px; ///< ROI 神经特征通用兼容视差标准差
+    float roi_neural_feature_confidence; ///< ROI 神经特征通用兼容匹配置信度
+    int roi_neural_xfeat_support; ///< ROI XFeat 神经特征有效匹配点数
+    float roi_neural_xfeat_std_px; ///< ROI XFeat 神经特征视差标准差
+    float roi_neural_xfeat_confidence; ///< ROI XFeat 神经特征匹配置信度
+    int roi_neural_superpoint_support; ///< ROI SuperPoint 神经特征有效匹配点数
+    float roi_neural_superpoint_std_px; ///< ROI SuperPoint 神经特征视差标准差
+    float roi_neural_superpoint_confidence; ///< ROI SuperPoint 神经特征匹配置信度
     int fallback_feature_points_support; ///< fallback 特征有效匹配点数
     float fallback_feature_points_std_px; ///< fallback 特征视差标准差
     float fallback_feature_points_confidence; ///< fallback 特征匹配置信度
@@ -190,6 +200,8 @@ struct Object3D {
                  z_roi_cuda_stereo_sgm(-1),
                  z_roi_ring_edge_profile(-1),
                  z_roi_neural_feature(-1),
+                 z_roi_neural_xfeat(-1),
+                 z_roi_neural_superpoint(-1),
                  z_roi_center_patch(-1),
                  z_roi_multi_point(-1),
                  z_yolo_bbox_pair(-1), z_circle(-1), z_subpixel(-1),
@@ -210,6 +222,8 @@ struct Object3D {
                  disparity_roi_cuda_stereo_sgm(-1),
                  disparity_roi_ring_edge_profile(-1),
                  disparity_roi_neural_feature(-1),
+                 disparity_roi_neural_xfeat(-1),
+                 disparity_roi_neural_superpoint(-1),
                  disparity_roi_center_patch(-1),
                  disparity_roi_multi_point(-1), disparity_fallback_epipolar(-1),
                  disparity_fallback_template(-1),
@@ -260,6 +274,10 @@ struct Object3D {
                  roi_ring_edge_profile_confidence(0),
                  roi_neural_feature_support(0), roi_neural_feature_std_px(-1),
                  roi_neural_feature_confidence(0),
+                 roi_neural_xfeat_support(0), roi_neural_xfeat_std_px(-1),
+                 roi_neural_xfeat_confidence(0),
+                 roi_neural_superpoint_support(0), roi_neural_superpoint_std_px(-1),
+                 roi_neural_superpoint_confidence(0),
                  fallback_feature_points_support(0), fallback_feature_points_std_px(-1),
                  fallback_feature_points_confidence(0),
                  pair_initial_disparity(-1), pair_epipolar_dy(-1),
