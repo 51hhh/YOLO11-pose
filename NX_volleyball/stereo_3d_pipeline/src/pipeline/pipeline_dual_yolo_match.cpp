@@ -366,9 +366,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         auto append_p2_artifact = [&](const char* mode,
                                       const SparseFeatureDisparityResult& result,
                                       float initial_disp) {
-            if (!config_.p2_diagnostic_artifacts_enabled ||
+            const bool collect_debug_row =
+                config_.p2_diagnostic_artifacts_enabled ||
+                config_.p2_diagnostic_point_debug_enabled;
+            if (!collect_debug_row ||
                 !mode || !right_det ||
-                (result.debug_match_count <= 0 && !result.debug_patch.valid)) {
+                (result.debug_match_count <= 0 &&
+                 result.debug_point_count <= 0 &&
+                 !result.debug_patch.valid)) {
                 return;
             }
             P2FeatureDiagnosticResultRow row;
@@ -389,6 +394,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             row.support = result.support;
             row.attempted = result.attempted;
             row.initial_disparity = initial_disp;
+            row.fb = fb;
             row.left_det = left_det;
             row.right_det = *right_det;
             row.anchor_cx = result.anchor_cx;
@@ -404,6 +410,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     result.debug_matches[static_cast<size_t>(i)];
             }
             row.debug_patch = result.debug_patch;
+            row.debug_point_count = std::clamp(
+                result.debug_point_count,
+                0,
+                kMaxSparseFeatureDebugPoints);
+            for (int i = 0; i < row.debug_point_count; ++i) {
+                row.debug_points[static_cast<size_t>(i)] =
+                    result.debug_points[static_cast<size_t>(i)];
+            }
             output.p2_artifact_rows.push_back(std::move(row));
         };
 
@@ -984,6 +998,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                     ? "Stage2_NeuralFeatureMatchValid"
                                     : "Stage2_NeuralFeatureMatchInvalid",
                                 0.0);
+            neural_feature_result.low_confidence = !neural.valid;
+            neural_feature_result.attempted =
+                static_cast<int>(neural.debug_points.size());
+            neural_feature_result.debug_point_count = std::min(
+                static_cast<int>(neural.debug_points.size()),
+                kMaxSparseFeatureDebugPoints);
+            for (int i = 0; i < neural_feature_result.debug_point_count; ++i) {
+                neural_feature_result.debug_points[static_cast<size_t>(i)] =
+                    neural.debug_points[static_cast<size_t>(i)];
+            }
             if (neural.valid) {
                 neural_feature_result.valid = true;
                 neural_feature_result.disparity = neural.disparity;
@@ -1027,7 +1051,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                         neural_feature_result, left_det, *right_det,
                         feature_initial_disparity, feature_cfg,
                         focal, baseline)) {
-                    neural_feature_result = SparseFeatureDisparityResult{};
+                    neural_feature_result.valid = false;
+                    neural_feature_result.low_confidence = true;
                 }
             }
             if (neural_feature_result.valid) {

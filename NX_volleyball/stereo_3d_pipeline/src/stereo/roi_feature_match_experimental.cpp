@@ -1301,21 +1301,11 @@ SparseFeatureDisparityResult aggregateGpuPointMatches(
     std::vector<RobustMatchSample> samples;
     samples.reserve(std::min(n, static_cast<size_t>(max_points)));
     for (size_t i = 0; i < n; ++i) {
-        if (!status.empty() &&
-            (i >= status.size() || !status[i])) {
-            continue;
-        }
         const float lx = static_cast<float>(left_rect.x) + left_pts[i].x;
         const float ly = static_cast<float>(left_rect.y) + left_pts[i].y;
         const float rx = static_cast<float>(right_rect.x) + right_pts[i].x;
         const float ry = static_cast<float>(right_rect.y) + right_pts[i].y;
         const float disparity = lx - rx;
-        if (!std::isfinite(disparity) ||
-            disparity <= 0.5f ||
-            disparity > static_cast<float>(max_disparity) ||
-            std::abs(disparity - initial_disp) > max_delta) {
-            continue;
-        }
         RobustMatchSample sample;
         sample.left_x = lx;
         sample.left_y = ly;
@@ -1326,14 +1316,58 @@ SparseFeatureDisparityResult aggregateGpuPointMatches(
             1.0f, std::abs(disparity - initial_disp) /
                       std::max(0.25f, max_delta));
         sample.score = std::max(0.10f, sample.score);
-        if (std::abs(featureYResidual(sample, left_det, cfg)) >
-                strictFeatureYTolerance(cfg) ||
-            !passesFeatureOverlapGate(sample, left_det, right_det,
-                                      initial_disp, cfg) ||
-            !passesSphereRadiusGate(sample, left_det, initial_disp,
-                                    focal, baseline, cfg)) {
+        if (!status.empty() &&
+            (i >= status.size() || !status[i])) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::RAW,
+                             SparseFeatureRejectReason::STATUS,
+                             initial_disp, left_det, cfg);
             continue;
         }
+        if (!std::isfinite(disparity) ||
+            disparity <= 0.5f ||
+            disparity > static_cast<float>(max_disparity)) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::RAW,
+                             SparseFeatureRejectReason::BAD_DISPARITY,
+                             initial_disp, left_det, cfg);
+            continue;
+        }
+        if (std::abs(disparity - initial_disp) > max_delta) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::RAW,
+                             SparseFeatureRejectReason::DISP_DELTA,
+                             initial_disp, left_det, cfg);
+            continue;
+        }
+        if (std::abs(featureYResidual(sample, left_det, cfg)) >
+                strictFeatureYTolerance(cfg)) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::MATCH,
+                             SparseFeatureRejectReason::Y_RESIDUAL,
+                             initial_disp, left_det, cfg);
+            continue;
+        }
+        if (!passesFeatureOverlapGate(sample, left_det, right_det,
+                                      initial_disp, cfg)) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::MATCH,
+                             SparseFeatureRejectReason::OVERLAP,
+                             initial_disp, left_det, cfg);
+            continue;
+        }
+        if (!passesSphereRadiusGate(sample, left_det, initial_disp,
+                                    focal, baseline, cfg)) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::MATCH,
+                             SparseFeatureRejectReason::SPHERE,
+                             initial_disp, left_det, cfg);
+            continue;
+        }
+        appendDebugPoint(result, sample,
+                         SparseFeatureDebugStage::GEOMETRY,
+                         SparseFeatureRejectReason::NONE,
+                         initial_disp, left_det, cfg);
         samples.push_back(sample);
         if (static_cast<int>(samples.size()) >= max_points) {
             break;

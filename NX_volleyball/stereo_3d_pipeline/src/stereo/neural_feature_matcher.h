@@ -12,6 +12,8 @@
 #define STEREO_3D_PIPELINE_NEURAL_FEATURE_MATCHER_H_
 
 #include "neural_feature_config.h"
+#include "neural_feature_xfeat_gpu_postprocess.h"
+#include "roi_feature_result.h"
 #include "pipeline/detection_types.h"
 
 #include <NvInfer.h>
@@ -37,6 +39,7 @@ struct NeuralFeatureMatchResult {
     bool valid = false;
     std::string status;
     std::vector<NeuralFeaturePointMatch> matches;
+    std::vector<SparseFeatureDebugPoint> debug_points;
     float disparity = -1.0f;
     float stddev_px = -1.0f;
     float depth_m = -1.0f;
@@ -103,6 +106,7 @@ private:
     TrtEngine extractor_;
     TrtEngine matcher_;
     TrtEngine fused_;
+    XFeatGpuWorkspace xfeat_gpu_workspace_;
 
     bool loadEngine(const std::string& path, TrtEngine& out);
     void destroyEngine(TrtEngine& engine);

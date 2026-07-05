@@ -37,6 +37,7 @@ const char* neuralFeatureBackendName(NeuralFeatureBackend backend) {
 NeuralFeatureMatcher::NeuralFeatureMatcher() = default;
 
 NeuralFeatureMatcher::~NeuralFeatureMatcher() {
+    releaseXFeatGpuWorkspace(xfeat_gpu_workspace_);
     destroyEngine(extractor_);
     destroyEngine(matcher_);
     destroyEngine(fused_);
@@ -100,6 +101,13 @@ bool NeuralFeatureMatcher::validateConfig() const {
     }
     if (config_.max_y_error_px <= 0.0f || config_.max_disp_delta_px <= 0.0f) {
         LOG_ERROR("neural_feature_matching geometry gates must be positive");
+        return false;
+    }
+    if (config_.match_margin < 0.0f ||
+        config_.min_spatial_quadrants < 0 ||
+        config_.min_spatial_quadrants > 4 ||
+        config_.min_spatial_spread_ratio < 0.0f) {
+        LOG_ERROR("neural_feature_matching quality gates are invalid");
         return false;
     }
     if (config_.fused_engine_path.empty() && config_.extractor_engine_path.empty()) {

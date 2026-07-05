@@ -209,6 +209,7 @@ private:
         int support = 0;
         int attempted = 0;
         float initial_disparity = std::numeric_limits<float>::quiet_NaN();
+        float fb = std::numeric_limits<float>::quiet_NaN();
         Detection left_det;
         Detection right_det;
         float anchor_cx = std::numeric_limits<float>::quiet_NaN();
@@ -217,6 +218,8 @@ private:
         float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
         int debug_match_count = 0;
         std::array<SparseFeatureDebugMatch, kMaxSparseFeatureDebugMatches> debug_matches{};
+        int debug_point_count = 0;
+        std::array<SparseFeatureDebugPoint, kMaxSparseFeatureDebugPoints> debug_points{};
         SparseFeatureDebugPatch debug_patch;
         std::string artifact_path;
         double algo_ms = 0.0;
@@ -381,6 +384,8 @@ private:
     void closeP2FeatureDiagnosticResults();
     void writeP2FeatureDiagnosticResults(
         const std::vector<P2FeatureDiagnosticResultRow>& rows);
+    void writeP2FeatureDiagnosticPointDebug(
+        const std::vector<P2FeatureDiagnosticResultRow>& rows);
     void writeP2FeatureDiagnosticArtifacts(
         std::vector<P2FeatureDiagnosticResultRow>& rows,
         const P2FeatureDiagnosticBuffer& buffer,
@@ -455,6 +460,7 @@ private:
     std::vector<P2FeatureDiagnosticBuffer> p2_feature_diag_buffers_;
     std::mutex p2_feature_diag_results_mutex_;
     std::ofstream p2_feature_diag_results_file_;
+    std::ofstream p2_feature_diag_points_file_;
     int p2_feature_diag_artifacts_saved_ = 0;
 
     // ===== SOT Tracker =====

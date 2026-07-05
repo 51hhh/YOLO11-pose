@@ -2,10 +2,36 @@
 #define STEREO_3D_PIPELINE_ROI_FEATURE_RESULT_H_
 
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
 namespace stereo3d {
+
+enum class SparseFeatureDebugStage : int {
+    RAW = 0,
+    MATCH = 1,
+    GEOMETRY = 2,
+    INLIER = 3,
+};
+
+enum class SparseFeatureRejectReason : int {
+    NONE = 0,
+    STATUS = 1,
+    NO_MUTUAL = 2,
+    LOW_SCORE = 3,
+    BAD_DISPARITY = 4,
+    DISP_DELTA = 5,
+    Y_RESIDUAL = 6,
+    OVERLAP = 7,
+    SPHERE = 8,
+    RATIO = 9,
+    REVERSE = 10,
+    MAD_OUTLIER = 11,
+    FINAL_GEOMETRY = 12,
+    LOW_CONFIDENCE = 13,
+    OTHER = 14,
+};
 
 struct SparseFeatureDebugMatch {
     float left_x = 0.0f;
@@ -18,6 +44,22 @@ struct SparseFeatureDebugMatch {
 
 constexpr int kMaxSparseFeatureDebugMatches = 64;
 constexpr int kMaxSparseFeatureDebugPatchSide = 32;
+constexpr int kMaxSparseFeatureDebugPoints = 256;
+
+struct SparseFeatureDebugPoint {
+    float left_x = std::numeric_limits<float>::quiet_NaN();
+    float left_y = std::numeric_limits<float>::quiet_NaN();
+    float right_x = std::numeric_limits<float>::quiet_NaN();
+    float right_y = std::numeric_limits<float>::quiet_NaN();
+    float disparity = std::numeric_limits<float>::quiet_NaN();
+    float score = std::numeric_limits<float>::quiet_NaN();
+    float second_score = std::numeric_limits<float>::quiet_NaN();
+    float y_delta = std::numeric_limits<float>::quiet_NaN();
+    float y_residual = std::numeric_limits<float>::quiet_NaN();
+    float disp_delta = std::numeric_limits<float>::quiet_NaN();
+    int stage = static_cast<int>(SparseFeatureDebugStage::RAW);
+    int reject_reason = static_cast<int>(SparseFeatureRejectReason::NONE);
+};
 
 struct SparseFeatureDebugPatch {
     bool valid = false;
@@ -52,6 +94,8 @@ struct SparseFeatureDisparityResult {
     bool unsupported = false;
     int debug_match_count = 0;
     std::array<SparseFeatureDebugMatch, kMaxSparseFeatureDebugMatches> debug_matches{};
+    int debug_point_count = 0;
+    std::array<SparseFeatureDebugPoint, kMaxSparseFeatureDebugPoints> debug_points{};
     SparseFeatureDebugPatch debug_patch;
 };
 

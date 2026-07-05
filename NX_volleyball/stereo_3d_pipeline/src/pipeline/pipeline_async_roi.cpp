@@ -7,6 +7,7 @@
 #include "pipeline_depth_modes.h"
 #include "../stereo/roi_feature_match_gpu.h"
 #include "../stereo/neural_feature_matcher.h"
+#include "../stereo/roi_feature_validation.h"
 #include "../utils/logger.h"
 
 #include <algorithm>
@@ -196,6 +197,8 @@ const char* p2DiagnosticModeName(uint32_t mode_bit) {
         return "vpi_orb";
     case P2_DEPTH_MODE_CUDA_GFTT_LK:
         return "opencv_cuda_gftt_lk";
+    case P2_DEPTH_MODE_NEURAL_FEATURE:
+        return "neural_feature";
     case P2_DEPTH_MODE_CUDA_SIFT:
         return "cuda_sift";
     case P2_DEPTH_MODE_LIBSGM:
@@ -242,6 +245,67 @@ void writeP2FeatureDiagnosticResultHeader(std::ostream& out) {
         << "debug_match_count,artifact_path,"
         << "algo_ms,queue_wait_ms,worker_elapsed_ms,deadline_ms,"
         << "over_deadline,depth_mode_mask,triggers\n";
+}
+
+void writeP2FeatureDiagnosticPointDebugHeader(std::ostream& out) {
+    out << "frame_id,left_timestamp_us,right_timestamp_us,"
+        << "lane,mode,status,row_valid,point_index,"
+        << "stage,stage_name,reject_reason,reject_name,"
+        << "left_x,left_y,right_x,right_y,disparity,z_m,"
+        << "score,second_score,y_delta,y_residual,disp_delta,"
+        << "initial_disparity,support,attempted,debug_match_count,"
+        << "left_cx,left_cy,left_w,left_h,right_cx,right_cy,right_w,right_h,"
+        << "algo_ms,worker_elapsed_ms,over_deadline,depth_mode_mask,triggers\n";
+}
+
+const char* sparseFeatureDebugStageName(int stage) {
+    switch (static_cast<SparseFeatureDebugStage>(stage)) {
+    case SparseFeatureDebugStage::RAW:
+        return "raw";
+    case SparseFeatureDebugStage::MATCH:
+        return "match";
+    case SparseFeatureDebugStage::GEOMETRY:
+        return "geometry";
+    case SparseFeatureDebugStage::INLIER:
+        return "inlier";
+    }
+    return "unknown";
+}
+
+const char* sparseFeatureRejectReasonName(int reason) {
+    switch (static_cast<SparseFeatureRejectReason>(reason)) {
+    case SparseFeatureRejectReason::NONE:
+        return "none";
+    case SparseFeatureRejectReason::STATUS:
+        return "status";
+    case SparseFeatureRejectReason::NO_MUTUAL:
+        return "no_mutual";
+    case SparseFeatureRejectReason::LOW_SCORE:
+        return "low_score";
+    case SparseFeatureRejectReason::BAD_DISPARITY:
+        return "bad_disparity";
+    case SparseFeatureRejectReason::DISP_DELTA:
+        return "disp_delta";
+    case SparseFeatureRejectReason::Y_RESIDUAL:
+        return "y_residual";
+    case SparseFeatureRejectReason::OVERLAP:
+        return "overlap";
+    case SparseFeatureRejectReason::SPHERE:
+        return "sphere";
+    case SparseFeatureRejectReason::RATIO:
+        return "ratio";
+    case SparseFeatureRejectReason::REVERSE:
+        return "reverse";
+    case SparseFeatureRejectReason::MAD_OUTLIER:
+        return "mad_outlier";
+    case SparseFeatureRejectReason::FINAL_GEOMETRY:
+        return "final_geometry";
+    case SparseFeatureRejectReason::LOW_CONFIDENCE:
+        return "low_confidence";
+    case SparseFeatureRejectReason::OTHER:
+        return "other";
+    }
+    return "unknown";
 }
 
 bool finitePositive(float value) {
@@ -811,46 +875,87 @@ void Pipeline::destroyP2FeatureDiagnosticBuffers() {
 }
 
 bool Pipeline::openP2FeatureDiagnosticResults() {
-    if (!config_.p2_diagnostic_results_enabled) {
+    if (!config_.p2_diagnostic_results_enabled &&
+        !config_.p2_diagnostic_point_debug_enabled) {
         return true;
     }
-    if (config_.p2_diagnostic_results_path.empty()) {
+    if (config_.p2_diagnostic_results_enabled &&
+        config_.p2_diagnostic_results_path.empty()) {
         LOG_WARN("P2 diagnostic results enabled but path is empty; results "
                  "CSV disabled");
         config_.p2_diagnostic_results_enabled = false;
-        return true;
     }
 
     namespace fs = std::filesystem;
     std::lock_guard<std::mutex> lk(p2_feature_diag_results_mutex_);
-    if (p2_feature_diag_results_file_.is_open()) {
+    if ((!config_.p2_diagnostic_results_enabled ||
+         p2_feature_diag_results_file_.is_open()) &&
+        (!config_.p2_diagnostic_point_debug_enabled ||
+         p2_feature_diag_points_file_.is_open())) {
         return true;
     }
-    const fs::path path(config_.p2_diagnostic_results_path);
-    const fs::path parent = path.parent_path();
-    if (!parent.empty()) {
+    auto ensure_parent = [](const fs::path& path) -> bool {
+        const fs::path parent = path.parent_path();
+        if (parent.empty()) return true;
         std::error_code ec;
         fs::create_directories(parent, ec);
-        if (ec) {
-            LOG_WARN("P2 diagnostic: create results directory failed: %s (%s); "
+        return !ec;
+    };
+    if (config_.p2_diagnostic_results_enabled &&
+        !p2_feature_diag_results_file_.is_open()) {
+        const fs::path path(config_.p2_diagnostic_results_path);
+        if (!ensure_parent(path)) {
+            LOG_WARN("P2 diagnostic: create results directory failed: %s; "
                      "results CSV disabled",
-                      parent.string().c_str(),
-                      ec.message().c_str());
+                     path.parent_path().string().c_str());
             config_.p2_diagnostic_results_enabled = false;
-            return true;
+        } else {
+            p2_feature_diag_results_file_.open(path.string(),
+                                               std::ios::out | std::ios::trunc);
+            if (!p2_feature_diag_results_file_.is_open()) {
+                LOG_WARN("P2 diagnostic: failed to open results CSV: %s; disabled",
+                          path.string().c_str());
+                config_.p2_diagnostic_results_enabled = false;
+            } else {
+                writeP2FeatureDiagnosticResultHeader(p2_feature_diag_results_file_);
+                p2_feature_diag_results_file_.flush();
+                LOG_INFO("P2 diagnostic results CSV: %s", path.string().c_str());
+            }
         }
     }
-    p2_feature_diag_results_file_.open(path.string(),
-                                       std::ios::out | std::ios::trunc);
-    if (!p2_feature_diag_results_file_.is_open()) {
-        LOG_WARN("P2 diagnostic: failed to open results CSV: %s; disabled",
-                  path.string().c_str());
-        config_.p2_diagnostic_results_enabled = false;
-        return true;
+    if (config_.p2_diagnostic_point_debug_enabled &&
+        !p2_feature_diag_points_file_.is_open()) {
+        fs::path path(config_.p2_diagnostic_point_debug_path);
+        if (path.empty()) {
+            if (!config_.p2_diagnostic_results_path.empty()) {
+                path = fs::path(config_.p2_diagnostic_results_path);
+                path.replace_extension(".points_debug.csv");
+            } else {
+                path = fs::path("p2_points_debug.csv");
+            }
+            config_.p2_diagnostic_point_debug_path = path.string();
+        }
+        if (!ensure_parent(path)) {
+            LOG_WARN("P2 diagnostic: create point debug directory failed: %s; "
+                     "point debug CSV disabled",
+                     path.parent_path().string().c_str());
+            config_.p2_diagnostic_point_debug_enabled = false;
+        } else {
+            p2_feature_diag_points_file_.open(path.string(),
+                                              std::ios::out | std::ios::trunc);
+            if (!p2_feature_diag_points_file_.is_open()) {
+                LOG_WARN("P2 diagnostic: failed to open point debug CSV: %s; disabled",
+                         path.string().c_str());
+                config_.p2_diagnostic_point_debug_enabled = false;
+            } else {
+                writeP2FeatureDiagnosticPointDebugHeader(
+                    p2_feature_diag_points_file_);
+                p2_feature_diag_points_file_.flush();
+                LOG_INFO("P2 diagnostic point debug CSV: %s",
+                         path.string().c_str());
+            }
+        }
     }
-    writeP2FeatureDiagnosticResultHeader(p2_feature_diag_results_file_);
-    p2_feature_diag_results_file_.flush();
-    LOG_INFO("P2 diagnostic results CSV: %s", path.string().c_str());
     return true;
 }
 
@@ -859,6 +964,10 @@ void Pipeline::closeP2FeatureDiagnosticResults() {
     if (p2_feature_diag_results_file_.is_open()) {
         p2_feature_diag_results_file_.flush();
         p2_feature_diag_results_file_.close();
+    }
+    if (p2_feature_diag_points_file_.is_open()) {
+        p2_feature_diag_points_file_.flush();
+        p2_feature_diag_points_file_.close();
     }
 }
 
@@ -937,6 +1046,87 @@ void Pipeline::writeP2FeatureDiagnosticResults(
             << row.depth_mode_mask << "," << row.triggers << "\n";
     }
     p2_feature_diag_results_file_.flush();
+}
+
+void Pipeline::writeP2FeatureDiagnosticPointDebug(
+    const std::vector<P2FeatureDiagnosticResultRow>& rows) {
+    if (rows.empty() || !config_.p2_diagnostic_point_debug_enabled) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(p2_feature_diag_results_mutex_);
+    if (!p2_feature_diag_points_file_.is_open()) {
+        return;
+    }
+    for (const auto& row : rows) {
+        const int count = std::clamp(row.debug_point_count,
+                                     0,
+                                     kMaxSparseFeatureDebugPoints);
+        for (int i = 0; i < count; ++i) {
+            const auto& p = row.debug_points[static_cast<size_t>(i)];
+            p2_feature_diag_points_file_ << row.frame_id << ","
+                << row.metadata.left_timestamp_us << ","
+                << row.metadata.right_timestamp_us << ","
+                << row.lane << "," << row.mode << "," << row.status << ","
+                << (row.valid ? 1 : 0) << "," << i << ","
+                << p.stage << "," << sparseFeatureDebugStageName(p.stage) << ","
+                << p.reject_reason << ","
+                << sparseFeatureRejectReasonName(p.reject_reason) << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.left_x);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.left_y);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.right_x);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.right_y);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.disparity);
+            p2_feature_diag_points_file_ << ",";
+            const float point_z =
+                (std::isfinite(row.fb) && row.fb > 0.0f &&
+                 std::isfinite(p.disparity) && p.disparity > 0.5f)
+                    ? row.fb / p.disparity
+                    : std::numeric_limits<float>::quiet_NaN();
+            writeCsvFloat(p2_feature_diag_points_file_, point_z);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.score);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.second_score);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.y_delta);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.y_residual);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, p.disp_delta);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.initial_disparity);
+            p2_feature_diag_points_file_ << ","
+                << row.support << "," << row.attempted << ","
+                << row.debug_match_count << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.left_det.cx);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.left_det.cy);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.left_det.width);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.left_det.height);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.right_det.cx);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.right_det.cy);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.right_det.width);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvFloat(p2_feature_diag_points_file_, row.right_det.height);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvDouble(p2_feature_diag_points_file_, row.algo_ms);
+            p2_feature_diag_points_file_ << ",";
+            writeCsvDouble(p2_feature_diag_points_file_, row.worker_elapsed_ms);
+            p2_feature_diag_points_file_ << ","
+                << (row.over_deadline ? 1 : 0) << ","
+                << row.depth_mode_mask << "," << row.triggers << "\n";
+        }
+    }
+    p2_feature_diag_points_file_.flush();
 }
 
 void Pipeline::writeP2FeatureDiagnosticArtifacts(
@@ -1063,11 +1253,8 @@ void Pipeline::writeP2FeatureDiagnosticArtifacts(
 
     for (const size_t row_index : row_order) {
         auto& row = rows[row_index];
-        const bool diagnostic_valid_priority =
-            row.lane == "diagnostic" && row.valid && row.debug_match_count > 0;
         if (p2_feature_diag_artifacts_saved_ >=
-                config_.p2_diagnostic_artifacts_max &&
-            !diagnostic_valid_priority) {
+            config_.p2_diagnostic_artifacts_max) {
             break;
         }
         if (row.debug_match_count <= 0 && !row.debug_patch.valid) {
@@ -1588,6 +1775,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     row.support = result.support;
                     row.attempted = result.attempted;
                     row.initial_disparity = initial_disp;
+                    row.fb = focal * baseline;
                     row.left_det = left_det;
                     row.right_det = right_det;
                     row.anchor_cx = result.anchor_cx;
@@ -1603,11 +1791,162 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                             result.debug_matches[static_cast<size_t>(i)];
                     }
                     row.debug_patch = result.debug_patch;
+                    row.debug_point_count = std::clamp(
+                        result.debug_point_count,
+                        0,
+                        kMaxSparseFeatureDebugPoints);
+                    for (int i = 0; i < row.debug_point_count; ++i) {
+                        row.debug_points[static_cast<size_t>(i)] =
+                            result.debug_points[static_cast<size_t>(i)];
+                    }
                     row.algo_ms = algo_ms;
                     row.queue_wait_ms = queue_wait_ms;
                     row.deadline_ms = task.job.deadline_ms;
                     row.depth_mode_mask = task.job.depth_mode_mask;
                     row.triggers = task.job.triggers;
+                    result_rows.push_back(std::move(row));
+                    return true;
+                };
+
+                auto run_neural_diagnostic_match = [&]() {
+                    if ((task.job.depth_mode_mask &
+                         P2_DEPTH_MODE_NEURAL_FEATURE) == 0u) {
+                        return false;
+                    }
+
+                    P2FeatureDiagnosticResultRow row;
+                    row.frame_id = task.job.frame_id;
+                    row.metadata = task.metadata;
+                    row.mode = p2DiagnosticModeName(
+                        P2_DEPTH_MODE_NEURAL_FEATURE);
+                    row.queue_wait_ms = queue_wait_ms;
+                    row.deadline_ms = task.job.deadline_ms;
+                    row.depth_mode_mask = task.job.depth_mode_mask;
+                    row.triggers = task.job.triggers;
+                    row.initial_disparity = initial_disp;
+                    row.fb = focal * baseline;
+                    row.left_det = left_det;
+                    row.right_det = right_det;
+
+                    const auto algo_start = Clock::now();
+                    if (config_.p2_realtime_lane_decision_enabled) {
+                        row.status = "skipped_realtime_lane_enabled";
+                    } else if (!config_.neural_features.enabled ||
+                        !neural_feature_matcher_ ||
+                        !neural_feature_matcher_->isReady()) {
+                        row.status = "unavailable";
+                    } else if (neural_feature_matcher_->requiresBgrInput()) {
+                        row.status = "requires_bgr";
+                    } else {
+                        const NeuralFeatureMatchResult neural =
+                            neural_feature_matcher_->matchGpuRoi(
+                                buffer->left_gray_gpu,
+                                static_cast<int>(buffer->left_gray_pitch),
+                                buffer->right_gray_gpu,
+                                static_cast<int>(buffer->right_gray_pitch),
+                                nullptr, 0,
+                                nullptr, 0,
+                                task.width, task.height,
+                                left_det, right_det,
+                                initial_disp,
+                                p2_feature_diag_stream_);
+                        row.status = neural.status.empty()
+                            ? (neural.valid ? "valid" : "invalid")
+                            : neural.status;
+                        row.valid = neural.valid;
+                        row.disparity = neural.disparity;
+                        row.confidence = neural.confidence;
+                        row.stddev = neural.stddev_px;
+                        row.support =
+                            static_cast<int>(neural.matches.size());
+                        row.attempted =
+                            static_cast<int>(neural.matches.size());
+                        row.debug_point_count = std::min(
+                            static_cast<int>(neural.debug_points.size()),
+                            kMaxSparseFeatureDebugPoints);
+                        for (int i = 0; i < row.debug_point_count; ++i) {
+                            row.debug_points[static_cast<size_t>(i)] =
+                                neural.debug_points[static_cast<size_t>(i)];
+                        }
+
+                        float sx = 0.0f;
+                        float sy = 0.0f;
+                        float rx = 0.0f;
+                        float ry = 0.0f;
+                        for (const auto& m : neural.matches) {
+                            sx += m.left_x;
+                            sy += m.left_y;
+                            rx += m.right_x;
+                            ry += m.right_y;
+                        }
+                        if (!neural.matches.empty()) {
+                            const float inv = 1.0f /
+                                static_cast<float>(neural.matches.size());
+                            row.anchor_cx = sx * inv;
+                            row.anchor_cy = sy * inv;
+                            row.right_anchor_cx = rx * inv;
+                            row.right_anchor_cy = ry * inv;
+                        }
+                        row.debug_match_count = std::min(
+                            static_cast<int>(neural.matches.size()),
+                            kMaxSparseFeatureDebugMatches);
+                        for (int i = 0; i < row.debug_match_count; ++i) {
+                            const auto& src =
+                                neural.matches[static_cast<size_t>(i)];
+                            auto& dst =
+                                row.debug_matches[static_cast<size_t>(i)];
+                            dst.left_x = src.left_x;
+                            dst.left_y = src.left_y;
+                            dst.right_x = src.right_x;
+                            dst.right_y = src.right_y;
+                            dst.disparity = src.disparity;
+                            dst.score = src.score;
+                        }
+
+                        if (row.valid) {
+                            SparseFeatureDisparityResult geom;
+                            geom.valid = true;
+                            geom.disparity = neural.disparity;
+                            geom.stddev = neural.stddev_px;
+                            geom.confidence = neural.confidence;
+                            geom.support = row.support;
+                            geom.attempted = row.attempted;
+                            geom.anchor_cx = row.anchor_cx;
+                            geom.anchor_cy = row.anchor_cy;
+                            geom.right_anchor_cx = row.right_anchor_cx;
+                            geom.right_anchor_cy = row.right_anchor_cy;
+                            geom.debug_match_count = row.debug_match_count;
+                            for (int i = 0; i < row.debug_match_count; ++i) {
+                                geom.debug_matches[static_cast<size_t>(i)] =
+                                    row.debug_matches[static_cast<size_t>(i)];
+                            }
+                            if (!validateSparseFeatureGeometry(
+                                    geom, left_det, right_det,
+                                    initial_disp, feature_cfg,
+                                    focal, baseline)) {
+                                row.valid = false;
+                                row.status = "geometry_reject";
+                            }
+                        }
+                        row.z_m = row.valid
+                            ? p2DepthFromDisparity(row.disparity,
+                                                   focal,
+                                                   baseline)
+                            : std::numeric_limits<float>::quiet_NaN();
+                    }
+
+                    const double algo_ms =
+                        std::chrono::duration<double, std::milli>(
+                            Clock::now() - algo_start).count();
+                    row.algo_ms = algo_ms;
+                    globalPerf().record(
+                        "Stage2_P2FeatureJobDiagnosticNeuralFeature",
+                        algo_ms);
+                    globalPerf().record(
+                        row.valid
+                            ? "Stage2_P2FeatureJobDiagnosticNeuralFeatureValid"
+                            : "Stage2_P2FeatureJobDiagnosticNeuralFeatureInvalid",
+                        0.0);
                     result_rows.push_back(std::move(row));
                     return true;
                 };
@@ -1673,6 +2012,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLkValid",
                     "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLkInvalid",
                     matchOpenCVCudaGfttLkDisparityGPU);
+                ran_any |= run_neural_diagnostic_match();
                 ran_any |= run_diagnostic_match(
                     P2_DEPTH_MODE_CUDA_SIFT,
                     "Stage2_P2FeatureJobDiagnosticCudaSift",
@@ -1720,6 +2060,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                                               task.height);
         }
         writeP2FeatureDiagnosticResults(result_rows);
+        writeP2FeatureDiagnosticPointDebug(result_rows);
         if (!result_rows.empty() && config_.p2_diagnostic_results_enabled) {
             const double result_write_ms =
                 std::chrono::duration<double, std::milli>(
@@ -2448,6 +2789,7 @@ void Pipeline::asyncRoiWorkerLoop() {
                                                   task.input.width,
                                                   task.input.height);
             }
+            writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
         } else {
             output.detections = task.input.left_detections;
             output.predict_only = true;

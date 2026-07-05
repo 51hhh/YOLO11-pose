@@ -147,6 +147,10 @@ neural_feature_matching:
   final_disp_gate_px: 3.0
   min_score: 0.05
   use_lightglue: false
+  gpu_postprocess: false # experimental; batch=2 GPU postprocess must be enabled explicitly for XFeat A/B
+  match_margin: 0.015
+  min_spatial_quadrants: 2
+  min_spatial_spread_ratio: 0.10
 
 fusion:
   min_depth: 0.8
@@ -191,6 +195,8 @@ performance:
   p2_diagnostic_deadline_ms: 50.0
   p2_diagnostic_results_enabled: true
   p2_diagnostic_results_path: ""             # empty = derive from recording.output_path or --recording-out
+  p2_diagnostic_point_debug_enabled: false
+  p2_diagnostic_point_debug_path: ""
   p2_diagnostic_artifacts_enabled: false
   p2_diagnostic_artifacts_dir: ""
   p2_diagnostic_artifacts_max: 20

@@ -31,6 +31,10 @@ struct NeuralFeatureConfig {
     float final_disp_gate_px = 2.0f;
     float min_score = 0.0f;
     bool use_lightglue = false;
+    bool gpu_postprocess = false;
+    float match_margin = 0.015f;
+    int min_spatial_quadrants = 2;
+    float min_spatial_spread_ratio = 0.10f;
 };
 
 NeuralFeatureBackend parseNeuralFeatureBackend(const std::string& name);

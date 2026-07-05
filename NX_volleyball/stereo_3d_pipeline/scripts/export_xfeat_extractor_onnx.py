@@ -2,10 +2,10 @@
 """Export the XFeat extractor network to fixed-shape ONNX.
 
 The exported model is an extractor only:
-  input:  images    [1, 1, roi_size, roi_size], float32
-  output: feats     [1, 64, roi_size/8, roi_size/8], float32
-  output: keypoints [1, 65, roi_size/8, roi_size/8], float32
-  output: heatmap   [1, 1, roi_size/8, roi_size/8], float32
+  input:  images    [batch_size, 1, roi_size, roi_size], float32
+  output: feats     [batch_size, 64, roi_size/8, roi_size/8], float32
+  output: keypoints [batch_size, 65, roi_size/8, roi_size/8], float32
+  output: heatmap   [batch_size, 1, roi_size/8, roi_size/8], float32
 
 Realtime matching is done by NeuralFeatureMatcher after TensorRT inference.
 """
@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
                         help="Path to xfeat.pt; defaults to <xfeat-repo>/weights/xfeat.pt")
     parser.add_argument("--out", required=True, help="Output ONNX path")
     parser.add_argument("--roi-size", type=int, default=224)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--opset", type=int, default=17)
     return parser.parse_args()
 
@@ -44,6 +45,8 @@ def main() -> int:
         raise FileNotFoundError(f"XFeat weights not found: {weights}")
     if args.roi_size % 32 != 0:
         raise ValueError("roi-size must be divisible by 32 for fixed XFeat export")
+    if args.batch_size < 1:
+        raise ValueError("batch-size must be positive")
 
     sys.path.insert(0, str(xfeat_repo))
     from modules.model import XFeatModel  # type: ignore
@@ -52,7 +55,8 @@ def main() -> int:
     state = torch.load(str(weights), map_location="cpu")
     model.load_state_dict(state)
 
-    dummy = torch.zeros(1, 1, args.roi_size, args.roi_size, dtype=torch.float32)
+    dummy = torch.zeros(args.batch_size, 1, args.roi_size, args.roi_size,
+                        dtype=torch.float32)
     torch.onnx.export(
         model,
         dummy,

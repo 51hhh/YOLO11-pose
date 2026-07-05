@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace stereo3d {
 namespace {
@@ -303,6 +304,13 @@ void copyDebugMatches(const RobustAggregate& robust,
         dst.right_y = src.right_y;
         dst.disparity = src.disparity;
         dst.score = src.score;
+        appendDebugPoint(result,
+                         src,
+                         SparseFeatureDebugStage::INLIER,
+                         SparseFeatureRejectReason::NONE,
+                         robust.disparity,
+                         Detection{},
+                         ROIFeatureMatchConfig{});
     }
 }
 
@@ -316,6 +324,37 @@ void setSingleDebugMatch(const RobustMatchSample& sample,
     dst.right_y = sample.right_y;
     dst.disparity = sample.disparity;
     dst.score = sample.score;
+}
+
+void appendDebugPoint(SparseFeatureDisparityResult& result,
+                      const RobustMatchSample& sample,
+                      SparseFeatureDebugStage stage,
+                      SparseFeatureRejectReason reject_reason,
+                      float initial_disp,
+                      const Detection& left_det,
+                      const ROIFeatureMatchConfig& cfg,
+                      float second_score) {
+    if (result.debug_point_count >= kMaxSparseFeatureDebugPoints) {
+        return;
+    }
+    auto& dst =
+        result.debug_points[static_cast<size_t>(result.debug_point_count++)];
+    dst.left_x = sample.left_x;
+    dst.left_y = sample.left_y;
+    dst.right_x = sample.right_x;
+    dst.right_y = sample.right_y;
+    dst.disparity = sample.disparity;
+    dst.score = sample.score;
+    dst.second_score = second_score;
+    dst.y_delta = sample.left_y - sample.right_y;
+    dst.y_residual = std::isfinite(left_det.cx) && left_det.width > 0.0f
+        ? featureYResidual(sample, left_det, cfg)
+        : std::numeric_limits<float>::quiet_NaN();
+    dst.disp_delta = std::isfinite(initial_disp)
+        ? sample.disparity - initial_disp
+        : std::numeric_limits<float>::quiet_NaN();
+    dst.stage = static_cast<int>(stage);
+    dst.reject_reason = static_cast<int>(reject_reason);
 }
 
 }  // namespace stereo3d

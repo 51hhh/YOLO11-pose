@@ -150,6 +150,16 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
             cfg.neural_features.min_score = nf["min_score"].as<float>();
         if (nf["use_lightglue"])
             cfg.neural_features.use_lightglue = nf["use_lightglue"].as<bool>();
+        if (nf["gpu_postprocess"])
+            cfg.neural_features.gpu_postprocess = nf["gpu_postprocess"].as<bool>();
+        if (nf["match_margin"])
+            cfg.neural_features.match_margin = nf["match_margin"].as<float>();
+        if (nf["min_spatial_quadrants"])
+            cfg.neural_features.min_spatial_quadrants =
+                nf["min_spatial_quadrants"].as<int>();
+        if (nf["min_spatial_spread_ratio"])
+            cfg.neural_features.min_spatial_spread_ratio =
+                nf["min_spatial_spread_ratio"].as<float>();
     }
 
     // Fusion
@@ -238,6 +248,12 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["p2_diagnostic_results_path"])
             cfg.p2_diagnostic_results_path =
                 perf["p2_diagnostic_results_path"].as<std::string>();
+        if (perf["p2_diagnostic_point_debug_enabled"])
+            cfg.p2_diagnostic_point_debug_enabled =
+                perf["p2_diagnostic_point_debug_enabled"].as<bool>();
+        if (perf["p2_diagnostic_point_debug_path"])
+            cfg.p2_diagnostic_point_debug_path =
+                perf["p2_diagnostic_point_debug_path"].as<std::string>();
         if (perf["p2_diagnostic_artifacts_enabled"])
             cfg.p2_diagnostic_artifacts_enabled =
                 perf["p2_diagnostic_artifacts_enabled"].as<bool>();

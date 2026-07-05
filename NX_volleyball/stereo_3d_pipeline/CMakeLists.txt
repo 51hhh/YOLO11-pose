@@ -281,6 +281,7 @@ set(CUDA_SOURCES
   src/stereo/dual_yolo_depth_gpu.cu
   src/stereo/roi_feature_match_gpu_reduce.cu
   src/stereo/roi_feature_match_gpu_profile.cu
+  src/stereo/neural_feature_xfeat_gpu_postprocess.cu
   src/track/crop_resize.cu
 )
 

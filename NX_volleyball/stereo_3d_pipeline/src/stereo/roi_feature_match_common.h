@@ -8,6 +8,7 @@
 #include <opencv2/core.hpp>
 
 #include <array>
+#include <limits>
 #include <vector>
 
 namespace stereo3d {
@@ -98,6 +99,15 @@ void copyDebugMatches(const RobustAggregate& robust,
 
 void setSingleDebugMatch(const RobustMatchSample& sample,
                          SparseFeatureDisparityResult& result);
+
+void appendDebugPoint(SparseFeatureDisparityResult& result,
+                      const RobustMatchSample& sample,
+                      SparseFeatureDebugStage stage,
+                      SparseFeatureRejectReason reject_reason,
+                      float initial_disp,
+                      const Detection& left_det,
+                      const ROIFeatureMatchConfig& cfg,
+                      float second_score = std::numeric_limits<float>::quiet_NaN());
 
 }  // namespace stereo3d
 
