@@ -1734,10 +1734,12 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 elapsed_ms > static_cast<double>(task.job.deadline_ms);
         }
         const auto result_write_start = Clock::now();
-        writeP2FeatureDiagnosticArtifacts(result_rows,
-                                          *buffer,
-                                          task.width,
-                                          task.height);
+        if (buffer) {
+            writeP2FeatureDiagnosticArtifacts(result_rows,
+                                              *buffer,
+                                              task.width,
+                                              task.height);
+        }
         writeP2FeatureDiagnosticResults(result_rows);
         if (!result_rows.empty() && config_.p2_diagnostic_results_enabled) {
             const double result_write_ms =
