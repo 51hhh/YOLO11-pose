@@ -461,6 +461,8 @@ private:
     std::mutex p2_feature_diag_results_mutex_;
     std::ofstream p2_feature_diag_results_file_;
     std::ofstream p2_feature_diag_points_file_;
+    size_t p2_feature_diag_results_rows_since_flush_ = 0;
+    size_t p2_feature_diag_points_rows_since_flush_ = 0;
     int p2_feature_diag_artifacts_saved_ = 0;
 
     // ===== SOT Tracker =====

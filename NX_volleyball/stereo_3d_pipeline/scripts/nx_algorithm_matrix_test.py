@@ -169,7 +169,7 @@ CASES = (
         {"roi_cuda_template_match": True},
         ("z_roi_cuda_template_match",),
         support_field="roi_cuda_template_match_support",
-        note="OpenCV CUDA TemplateMatching small-ROI epipolar candidate",
+        note="self-written CUDA Template/NCC small-ROI epipolar candidate; set STEREO_CUDA_TEMPLATE_BACKEND=opencv for the legacy baseline",
     ),
     Case(
         "opencv_cuda_stereo_bm",
@@ -528,7 +528,7 @@ RELAXED_CASES = (
             "feature_overlap_scale": "0.85",
             "feature_sphere_radius_scale": "2.5",
         },
-        note="diagnostic only: OpenCV CUDA TemplateMatching with wider search/gates",
+        note="diagnostic only: self-written CUDA Template/NCC with wider search/gates",
     ),
     Case(
         "opencv_cuda_template_match_patch9",
@@ -536,7 +536,7 @@ RELAXED_CASES = (
         ("z_roi_cuda_template_match",),
         support_field="roi_cuda_template_match_support",
         yaml_scalars=TEMPLATE_PATCH9_SWEEP,
-        note="P2 sweep: OpenCV CUDA TemplateMatching patch radius 9",
+        note="P2 sweep: self-written CUDA Template/NCC patch radius 9",
     ),
     Case(
         "opencv_cuda_template_match_diagnostic_only",
@@ -545,7 +545,7 @@ RELAXED_CASES = (
         support_field="roi_cuda_template_match_support",
         yaml_scalars={**TEMPLATE_PATCH9_SWEEP, **P2_DIAGNOSTIC_ONLY},
         algo_stage_override="Stage2_P2FeatureJobDiagnosticCudaTemplate",
-        note="diagnostic lane only: OpenCV CUDA TemplateMatching runs from independent GPU snapshot; no CSV candidate writeback",
+        note="diagnostic lane only: self-written CUDA Template/NCC runs from independent GPU snapshot; no CSV candidate writeback",
     ),
     Case(
         "opencv_cuda_stereo_bm_relaxed",
@@ -1046,7 +1046,7 @@ def profile_stage_for_case(case: Case) -> str:
     if case.modes.get("roi_sift_points"):
         return "Stage2_CPUFeatureOpenCVSIFT"
     if case.modes.get("roi_cuda_template_match"):
-        return "Stage2_OpenCVCudaTemplateMatch"
+        return "Stage2_CudaTemplateNccMatch"
     if case.modes.get("roi_cuda_stereo_bm"):
         return "Stage2_OpenCVCudaStereoBM"
     if case.modes.get("roi_cuda_stereo_sgm"):
@@ -1309,7 +1309,10 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
     subpixel = stage("Stage2_SubpixelMatch")
     neural = stage("Stage2_NeuralFeatureMatch")
     opencv_cuda_orb = stage("Stage2_OpenCVCudaORB")
-    opencv_cuda_template = stage("Stage2_OpenCVCudaTemplateMatch")
+    cuda_template_ncc = stage("Stage2_CudaTemplateNccMatch")
+    opencv_cuda_template = cuda_template_ncc
+    if not opencv_cuda_template[3]:
+        opencv_cuda_template = stage("Stage2_OpenCVCudaTemplateMatch")
     opencv_cuda_bm = stage("Stage2_OpenCVCudaStereoBM")
     opencv_cuda_sgm = stage("Stage2_OpenCVCudaStereoSGM")
     cpu_opencv = stage("Stage2_CPUFeatureOpenCV")
@@ -1393,6 +1396,10 @@ def parse_log(case: Case, log: str, rc: int, log_path: Path) -> dict[str, str]:
         "opencv_cuda_template_max_ms": opencv_cuda_template[2],
         "opencv_cuda_template_p95_ms": opencv_cuda_template[6],
         "opencv_cuda_template_p99_ms": opencv_cuda_template[7],
+        "cuda_template_ncc_avg_ms": cuda_template_ncc[0],
+        "cuda_template_ncc_max_ms": cuda_template_ncc[2],
+        "cuda_template_ncc_p95_ms": cuda_template_ncc[6],
+        "cuda_template_ncc_p99_ms": cuda_template_ncc[7],
         "opencv_cuda_stereo_bm_avg_ms": opencv_cuda_bm[0],
         "opencv_cuda_stereo_bm_max_ms": opencv_cuda_bm[2],
         "opencv_cuda_stereo_bm_p95_ms": opencv_cuda_bm[6],

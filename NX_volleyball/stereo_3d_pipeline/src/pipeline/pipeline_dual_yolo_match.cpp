@@ -862,7 +862,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             const double cuda_template_ms =
                 std::chrono::duration<double, std::milli>(
                     Clock::now() - cuda_template_start).count();
-            globalPerf().record("Stage2_OpenCVCudaTemplateMatch",
+            globalPerf().record("Stage2_CudaTemplateNccMatch",
                                 cuda_template_ms);
             if (cuda_template_match_result.valid) {
                 z_roi_cuda_template_match =

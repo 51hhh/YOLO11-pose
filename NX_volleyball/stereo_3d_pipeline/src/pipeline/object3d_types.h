@@ -38,7 +38,7 @@ struct Object3D {
     float z_roi_sift_points;///< ROI SIFT 特征点视差测距, -1=无效
     float z_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差测距, -1=无效
     float z_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差测距, -1=无效
-    float z_roi_cuda_template_match;///< OpenCV CUDA TemplateMatching ROI 极线视差测距, -1=无效
+    float z_roi_cuda_template_match;///< 自研 CUDA Template/NCC ROI 极线视差测距, -1=无效
     float z_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差测距, -1=无效
     float z_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差测距, -1=无效
     float z_roi_ring_edge_profile;///< CUDA ROI ring/edge profile 小范围极线视差测距, -1=无效
@@ -70,7 +70,7 @@ struct Object3D {
     float disparity_roi_sift_points;///< ROI SIFT 特征点视差, -1=无效
     float disparity_roi_iou_region_color_patch;///< ROI 彩色区域 IoU/patch 视差, -1=无效
     float disparity_roi_patch_iou_color_edge;///< ROI 彩色边缘 IoU/patch 视差, -1=无效
-    float disparity_roi_cuda_template_match;///< OpenCV CUDA TemplateMatching ROI 极线视差, -1=无效
+    float disparity_roi_cuda_template_match;///< 自研 CUDA Template/NCC ROI 极线视差, -1=无效
     float disparity_roi_cuda_stereo_bm;///< OpenCV CUDA StereoBM 小 ROI 视差, -1=无效
     float disparity_roi_cuda_stereo_sgm;///< OpenCV CUDA StereoSGM 小 ROI 视差, -1=无效
     float disparity_roi_ring_edge_profile;///< CUDA ROI ring/edge profile 小范围极线视差, -1=无效
@@ -126,9 +126,9 @@ struct Object3D {
     int roi_patch_iou_color_edge_support; ///< ROI 彩色边缘有效匹配点数
     float roi_patch_iou_color_edge_std_px; ///< ROI 彩色边缘视差标准差
     float roi_patch_iou_color_edge_confidence; ///< ROI 彩色边缘匹配置信度
-    int roi_cuda_template_match_support; ///< OpenCV CUDA TemplateMatching 有效匹配点数
-    float roi_cuda_template_match_std_px; ///< OpenCV CUDA TemplateMatching 视差标准差
-    float roi_cuda_template_match_confidence; ///< OpenCV CUDA TemplateMatching 匹配置信度
+    int roi_cuda_template_match_support; ///< 自研 CUDA Template/NCC 有效匹配点数
+    float roi_cuda_template_match_std_px; ///< 自研 CUDA Template/NCC 视差标准差
+    float roi_cuda_template_match_confidence; ///< 自研 CUDA Template/NCC 匹配置信度
     int roi_cuda_stereo_bm_support; ///< OpenCV CUDA StereoBM 有效采样点数
     float roi_cuda_stereo_bm_std_px; ///< OpenCV CUDA StereoBM 视差标准差
     float roi_cuda_stereo_bm_confidence; ///< OpenCV CUDA StereoBM 匹配置信度

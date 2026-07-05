@@ -67,7 +67,7 @@ detector:
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
       roi_iou_region_color_patch: false # disabled: 2026-07-04 artifacts showed systematic stripe-region mismatch
       roi_patch_iou_color_edge: false # disabled: 2026-07-04 artifacts showed systematic wrong color-edge match
-      roi_cuda_template_match: false # P2 OpenCV CUDA TemplateMatching small ROI epipolar candidate
+      roi_cuda_template_match: false # P2 self-written CUDA Template/NCC small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
       roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 100fps
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate

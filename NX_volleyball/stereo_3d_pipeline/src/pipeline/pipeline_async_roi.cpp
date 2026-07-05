@@ -46,6 +46,8 @@ using DiagnosticGpuMatchFn = SparseFeatureDisparityResult (*)(
     float baseline,
     cudaStream_t stream);
 
+constexpr size_t kP2DiagnosticFlushRows = 128;
+
 bool asyncRoiSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     if (!cfg.depth_roi_subpixel || !cfg.subpixel_enabled) return false;
     std::string solver = cfg.depth_solver;
@@ -794,8 +796,8 @@ bool Pipeline::initP2FeatureDiagnosticBuffers() {
         destroyP2FeatureDiagnosticBuffers();
         return false;
     }
-    err = createLowPriorityNonBlockingStream(
-        &p2_feature_diag_copy_stream_, "P2 diagnostic copy");
+    err = cudaStreamCreateWithFlags(&p2_feature_diag_copy_stream_,
+                                    cudaStreamNonBlocking);
     if (err != cudaSuccess) {
         LOG_ERROR("P2 diagnostic: create copy stream failed: %s",
                   cudaGetErrorString(err));
@@ -923,6 +925,7 @@ bool Pipeline::openP2FeatureDiagnosticResults() {
             } else {
                 writeP2FeatureDiagnosticResultHeader(p2_feature_diag_results_file_);
                 p2_feature_diag_results_file_.flush();
+                p2_feature_diag_results_rows_since_flush_ = 0;
                 LOG_INFO("P2 diagnostic results CSV: %s", path.string().c_str());
             }
         }
@@ -955,6 +958,7 @@ bool Pipeline::openP2FeatureDiagnosticResults() {
                 writeP2FeatureDiagnosticPointDebugHeader(
                     p2_feature_diag_points_file_);
                 p2_feature_diag_points_file_.flush();
+                p2_feature_diag_points_rows_since_flush_ = 0;
                 LOG_INFO("P2 diagnostic point debug CSV: %s",
                          path.string().c_str());
             }
@@ -968,10 +972,12 @@ void Pipeline::closeP2FeatureDiagnosticResults() {
     if (p2_feature_diag_results_file_.is_open()) {
         p2_feature_diag_results_file_.flush();
         p2_feature_diag_results_file_.close();
+        p2_feature_diag_results_rows_since_flush_ = 0;
     }
     if (p2_feature_diag_points_file_.is_open()) {
         p2_feature_diag_points_file_.flush();
         p2_feature_diag_points_file_.close();
+        p2_feature_diag_points_rows_since_flush_ = 0;
     }
 }
 
@@ -1049,7 +1055,11 @@ void Pipeline::writeP2FeatureDiagnosticResults(
             << (row.over_deadline ? 1 : 0) << ","
             << row.depth_mode_mask << "," << row.triggers << "\n";
     }
-    p2_feature_diag_results_file_.flush();
+    p2_feature_diag_results_rows_since_flush_ += rows.size();
+    if (p2_feature_diag_results_rows_since_flush_ >= kP2DiagnosticFlushRows) {
+        p2_feature_diag_results_file_.flush();
+        p2_feature_diag_results_rows_since_flush_ = 0;
+    }
 }
 
 void Pipeline::writeP2FeatureDiagnosticPointDebug(
@@ -1061,6 +1071,7 @@ void Pipeline::writeP2FeatureDiagnosticPointDebug(
     if (!p2_feature_diag_points_file_.is_open()) {
         return;
     }
+    size_t written_points = 0;
     for (const auto& row : rows) {
         const int count = std::clamp(row.debug_point_count,
                                      0,
@@ -1128,9 +1139,14 @@ void Pipeline::writeP2FeatureDiagnosticPointDebug(
             p2_feature_diag_points_file_ << ","
                 << (row.over_deadline ? 1 : 0) << ","
                 << row.depth_mode_mask << "," << row.triggers << "\n";
+            ++written_points;
         }
     }
-    p2_feature_diag_points_file_.flush();
+    p2_feature_diag_points_rows_since_flush_ += written_points;
+    if (p2_feature_diag_points_rows_since_flush_ >= kP2DiagnosticFlushRows) {
+        p2_feature_diag_points_file_.flush();
+        p2_feature_diag_points_rows_since_flush_ = 0;
+    }
 }
 
 void Pipeline::writeP2FeatureDiagnosticArtifacts(
@@ -1692,20 +1708,28 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 &p2_feature_diag_buffers_[static_cast<size_t>(
                     task.buffer_index)];
             if (task.copy_event_recorded && buffer->copy_done) {
-                const auto copy_wait_start = Clock::now();
-                const cudaError_t copy_err =
-                    cudaEventSynchronize(buffer->copy_done);
-                const double copy_wait_ms =
-                    std::chrono::duration<double, std::milli>(
-                        Clock::now() - copy_wait_start).count();
-                globalPerf().record("Stage2_P2FeatureJobDiagnosticCopyWait",
-                                    copy_wait_ms);
-                buffer->copy_event_recorded = false;
-                if (copy_err != cudaSuccess) {
+                if (!p2_feature_diag_stream_) {
                     copy_ready = false;
-                    LOG_WARN("P2 diagnostic: image copy failed frame=%d err=%s",
-                             task.job.frame_id,
-                             cudaGetErrorString(copy_err));
+                    LOG_WARN("P2 diagnostic: image copy wait skipped frame=%d "
+                             "because diagnostic stream is unavailable",
+                             task.job.frame_id);
+                } else {
+                    const auto copy_wait_submit_start = Clock::now();
+                    const cudaError_t copy_err = cudaStreamWaitEvent(
+                        p2_feature_diag_stream_, buffer->copy_done, 0);
+                    const double copy_wait_submit_ms =
+                        std::chrono::duration<double, std::milli>(
+                            Clock::now() - copy_wait_submit_start).count();
+                    globalPerf().record(
+                        "Stage2_P2FeatureJobDiagnosticCopyWaitSubmit",
+                        copy_wait_submit_ms);
+                    if (copy_err != cudaSuccess) {
+                        copy_ready = false;
+                        LOG_WARN("P2 diagnostic: image copy stream wait failed "
+                                 "frame=%d err=%s",
+                                 task.job.frame_id,
+                                 cudaGetErrorString(copy_err));
+                    }
                 }
             }
         }
@@ -2080,6 +2104,25 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
             globalPerf().record(
                 "Stage2_P2FeatureJobDiagnosticResultsWrite",
                 result_write_ms);
+        }
+        if (buffer && buffer->copy_event_recorded && buffer->copy_done) {
+            const auto copy_final_wait_start = Clock::now();
+            cudaError_t copy_err = cudaEventQuery(buffer->copy_done);
+            if (copy_err == cudaErrorNotReady) {
+                copy_err = cudaEventSynchronize(buffer->copy_done);
+            }
+            const double copy_final_wait_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - copy_final_wait_start).count();
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticCopyWait",
+                                copy_final_wait_ms);
+            buffer->copy_event_recorded = false;
+            if (copy_err != cudaSuccess) {
+                LOG_WARN("P2 diagnostic: image copy final wait failed "
+                         "frame=%d err=%s",
+                         task.job.frame_id,
+                         cudaGetErrorString(copy_err));
+            }
         }
         releaseP2FeatureDiagnosticBuffer(release_buffer_index);
 

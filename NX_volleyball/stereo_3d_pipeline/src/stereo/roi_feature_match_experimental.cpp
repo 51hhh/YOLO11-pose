@@ -1439,6 +1439,9 @@ struct OpenCVCudaGfttLkWorkspace {
     cv::cuda::GpuMat prev_pts_gpu;
     cv::cuda::GpuMat next_pts_gpu;
     cv::cuda::GpuMat status_gpu;
+    cv::cuda::HostMem prev_pts_host_mem;
+    cv::cuda::HostMem next_pts_host_mem;
+    cv::cuda::HostMem status_host_mem;
     cv::Mat prev_pts_host;
     cv::Mat next_pts_host;
     cv::Mat status_host;
@@ -1512,10 +1515,13 @@ void warmupOpenCVCudaGfttLkDisparityGPU(cudaStream_t stream) {
                            workspace.status_gpu,
                            cv::noArray(),
                            cv_stream);
-        workspace.prev_pts_gpu.download(workspace.prev_pts_host, cv_stream);
-        workspace.next_pts_gpu.download(workspace.next_pts_host, cv_stream);
-        workspace.status_gpu.download(workspace.status_host, cv_stream);
+        workspace.prev_pts_gpu.download(workspace.prev_pts_host_mem, cv_stream);
+        workspace.next_pts_gpu.download(workspace.next_pts_host_mem, cv_stream);
+        workspace.status_gpu.download(workspace.status_host_mem, cv_stream);
         cv_stream.waitForCompletion();
+        workspace.prev_pts_host = workspace.prev_pts_host_mem.createMatHeader();
+        workspace.next_pts_host = workspace.next_pts_host_mem.createMatHeader();
+        workspace.status_host = workspace.status_host_mem.createMatHeader();
     } catch (const cv::Exception& e) {
         LOG_WARN("OpenCV CUDA GFTT/LK warmup failed: %s", e.what());
     }
@@ -1588,10 +1594,13 @@ SparseFeatureDisparityResult matchOpenCVCudaGfttLkDisparityGPU(
                            cv::noArray(),
                            cv_stream);
 
-        workspace.prev_pts_gpu.download(workspace.prev_pts_host, cv_stream);
-        workspace.next_pts_gpu.download(workspace.next_pts_host, cv_stream);
-        workspace.status_gpu.download(workspace.status_host, cv_stream);
+        workspace.prev_pts_gpu.download(workspace.prev_pts_host_mem, cv_stream);
+        workspace.next_pts_gpu.download(workspace.next_pts_host_mem, cv_stream);
+        workspace.status_gpu.download(workspace.status_host_mem, cv_stream);
         cv_stream.waitForCompletion();
+        workspace.prev_pts_host = workspace.prev_pts_host_mem.createMatHeader();
+        workspace.next_pts_host = workspace.next_pts_host_mem.createMatHeader();
+        workspace.status_host = workspace.status_host_mem.createMatHeader();
         if (workspace.prev_pts_host.empty() || workspace.next_pts_host.empty()) {
             result.low_confidence = true;
             return result;

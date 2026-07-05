@@ -15,6 +15,8 @@
 #endif
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -784,7 +786,9 @@ SparseFeatureDisparityResult matchOpenCVORBDisparityGPU(
 #endif
 }
 
-SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
+namespace {
+
+SparseFeatureDisparityResult matchOpenCVCudaTemplateDisparityGPUImpl(
     const uint8_t* left_gpu, int left_pitch,
     const uint8_t* right_gpu, int right_pitch,
     int img_w, int img_h,
@@ -917,9 +921,206 @@ SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
         result.support = 1;
         return result;
     } catch (const cv::Exception& e) {
-        LOG_WARN("OpenCV CUDA TemplateMatching ROI match failed: %s", e.what());
+        LOG_WARN("OpenCV CUDA TemplateMatching baseline ROI match failed: %s",
+                 e.what());
         return result;
     }
+}
+
+SparseFeatureDisparityResult matchCustomCudaTemplateDisparityGPUImpl(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream)
+{
+    SparseFeatureDisparityResult result;
+    if (!left_gpu || !right_gpu || left_pitch <= 0 || right_pitch <= 0 ||
+        img_w <= 0 || img_h <= 0 || !stream ||
+        !std::isfinite(initial_disp) || initial_disp <= 0.5f ||
+        left_det.width < 6.0f || left_det.height < 6.0f ||
+        right_det.width < 6.0f || right_det.height < 6.0f) {
+        return result;
+    }
+
+    const int patch_radius = std::clamp(cfg.subpixel_patch_radius, 3, 16);
+    const int patch_size = patch_radius * 2 + 1;
+    const int search_radius = std::clamp(cfg.subpixel_search_radius_px, 2, 64);
+    const int y_radius = std::max(
+        1,
+        static_cast<int>(std::ceil(strictFeatureYTolerance(cfg))));
+    const float max_delta = computeFeatureDeltaGate(initial_disp, focal, baseline, cfg);
+    const float anchor_x = left_det.cx;
+    const float anchor_y = left_det.cy;
+    const int templ_x = static_cast<int>(std::round(anchor_x)) - patch_radius;
+    const int templ_y = static_cast<int>(std::round(anchor_y)) - patch_radius;
+    const cv::Rect templ_rect =
+        clampRectToImage(templ_x, templ_y, patch_size, patch_size, img_w, img_h);
+    if (templ_rect.width != patch_size || templ_rect.height != patch_size) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    const float predicted_right_x = anchor_x - initial_disp;
+    const int search_x = static_cast<int>(std::round(predicted_right_x)) -
+                         patch_radius - search_radius;
+    const int search_y = static_cast<int>(std::round(anchor_y)) -
+                         patch_radius - y_radius;
+    const int search_w = patch_size + search_radius * 2;
+    const int search_h = patch_size + y_radius * 2;
+    const cv::Rect search_rect =
+        clampRectToImage(search_x, search_y, search_w, search_h, img_w, img_h);
+    if (search_rect.width != search_w || search_rect.height != search_h ||
+        search_rect.width < patch_size || search_rect.height < patch_size) {
+        result.low_confidence = true;
+        return result;
+    }
+
+    try {
+        const int score_w = search_rect.width - patch_size + 1;
+        const int score_h = search_rect.height - patch_size + 1;
+        if (score_w <= 0 || score_h <= 0) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        thread_local cv::cuda::GpuMat score_gpu;
+        score_gpu.create(score_h, score_w, CV_32FC1);
+        const cudaError_t score_err = computeCudaTemplateCcoeffNormedScoreMap(
+            left_gpu,
+            static_cast<size_t>(left_pitch),
+            right_gpu,
+            static_cast<size_t>(right_pitch),
+            templ_rect.x,
+            templ_rect.y,
+            search_rect.x,
+            search_rect.y,
+            patch_size,
+            score_gpu.ptr<float>(),
+            score_gpu.step,
+            score_w,
+            score_h,
+            stream);
+        if (score_err != cudaSuccess) {
+            LOG_WARN("Custom CUDA Template/NCC score kernel failed: %s",
+                     cudaGetErrorString(score_err));
+            result.low_confidence = true;
+            return result;
+        }
+
+        double max_val = 0.0;
+        cv::Point max_loc;
+        if (!findTemplatePeakOnGpu(score_gpu, stream, &max_val, &max_loc)) {
+            result.low_confidence = true;
+            return result;
+        }
+        if (cfg.debug_patch_enabled) {
+            cv::cuda::Stream cv_stream = cv::cuda::StreamAccessor::wrapStream(stream);
+            cv::Mat score_cpu;
+            score_gpu.download(score_cpu, cv_stream);
+            cv_stream.waitForCompletion();
+            setScoreDebugPatch(result, score_cpu, search_rect, patch_radius);
+        }
+
+        const float right_anchor_x =
+            static_cast<float>(search_rect.x + max_loc.x + patch_radius);
+        const float right_anchor_y =
+            static_cast<float>(search_rect.y + max_loc.y + patch_radius);
+        const float disparity = anchor_x - right_anchor_x;
+        RobustMatchSample sample;
+        sample.left_x = anchor_x;
+        sample.left_y = anchor_y;
+        sample.right_x = right_anchor_x;
+        sample.right_y = right_anchor_y;
+        sample.disparity = disparity;
+        sample.score = static_cast<float>(std::clamp(max_val, 0.0, 1.0));
+        result.disparity = disparity;
+        result.confidence = sample.score;
+        result.anchor_cx = anchor_x;
+        result.anchor_cy = anchor_y;
+        result.right_anchor_cx = right_anchor_x;
+        result.right_anchor_cy = right_anchor_y;
+        setSingleDebugMatch(sample, result);
+
+        result.attempted = 1;
+        if (sample.score < std::max(0.05f, cfg.subpixel_min_confidence) ||
+            disparity <= 0.5f ||
+            disparity > static_cast<float>(max_disparity) ||
+            std::abs(disparity - initial_disp) > max_delta ||
+            std::abs(featureYResidual(sample, left_det, cfg)) >
+                strictFeatureYTolerance(cfg) ||
+            !passesFeatureOverlapGate(sample, left_det, right_det,
+                                      initial_disp, cfg) ||
+            !passesSphereRadiusGate(sample, left_det, initial_disp,
+                                    focal, baseline, cfg)) {
+            result.low_confidence = true;
+            return result;
+        }
+
+        result.valid = true;
+        result.stddev = 0.0f;
+        result.support = 1;
+        return result;
+    } catch (const cv::Exception& e) {
+        LOG_WARN("Custom CUDA Template/NCC ROI match failed: %s", e.what());
+        return result;
+    }
+}
+
+bool useOpenCVCudaTemplateBaseline()
+{
+    const char* backend = std::getenv("STEREO_CUDA_TEMPLATE_BACKEND");
+    return backend &&
+           (std::strcmp(backend, "opencv") == 0 ||
+            std::strcmp(backend, "OpenCV") == 0 ||
+            std::strcmp(backend, "baseline") == 0);
+}
+
+}  // namespace
+
+SparseFeatureDisparityResult matchCudaTemplateDisparityGPU(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    int img_w, int img_h,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    int max_disparity,
+    float focal,
+    float baseline,
+    cudaStream_t stream)
+{
+    if (useOpenCVCudaTemplateBaseline()) {
+        return matchOpenCVCudaTemplateDisparityGPUImpl(
+            left_gpu, left_pitch,
+            right_gpu, right_pitch,
+            img_w, img_h,
+            left_det, right_det,
+            initial_disp,
+            cfg,
+            max_disparity,
+            focal,
+            baseline,
+            stream);
+    }
+    return matchCustomCudaTemplateDisparityGPUImpl(
+        left_gpu, left_pitch,
+        right_gpu, right_pitch,
+        img_w, img_h,
+        left_det, right_det,
+        initial_disp,
+        cfg,
+        max_disparity,
+        focal,
+        baseline,
+        stream);
 }
 
 namespace {

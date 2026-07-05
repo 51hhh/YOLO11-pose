@@ -2,6 +2,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdint>
 #include <math_constants.h>
 
 namespace stereo3d {
@@ -9,6 +10,109 @@ namespace stereo3d {
 namespace {
 
 constexpr int kTemplateScoreReduceThreads = 256;
+constexpr int kTemplateCcoeffThreads = 128;
+
+__global__ void computeTemplateCcoeffNormedKernel(
+    const uint8_t* left,
+    size_t left_pitch_bytes,
+    const uint8_t* right,
+    size_t right_pitch_bytes,
+    int templ_x,
+    int templ_y,
+    int search_x,
+    int search_y,
+    int patch_size,
+    float* score,
+    size_t score_pitch_bytes,
+    int score_width,
+    int score_height) {
+    const int ox = blockIdx.x;
+    const int oy = blockIdx.y;
+    if (ox >= score_width || oy >= score_height) {
+        return;
+    }
+
+    __shared__ float sum_t[kTemplateCcoeffThreads];
+    __shared__ float sum_i[kTemplateCcoeffThreads];
+    __shared__ float sum_tt[kTemplateCcoeffThreads];
+    __shared__ float sum_ii[kTemplateCcoeffThreads];
+    __shared__ float sum_ti[kTemplateCcoeffThreads];
+    __shared__ float sum_sse[kTemplateCcoeffThreads];
+
+    const int tid = threadIdx.x;
+    float local_t = 0.0f;
+    float local_i = 0.0f;
+    float local_tt = 0.0f;
+    float local_ii = 0.0f;
+    float local_ti = 0.0f;
+    float local_sse = 0.0f;
+    const int total = patch_size * patch_size;
+    const int right_x0 = search_x + ox;
+    const int right_y0 = search_y + oy;
+
+    for (int idx = tid; idx < total; idx += blockDim.x) {
+        const int py = idx / patch_size;
+        const int px = idx - py * patch_size;
+        const auto* left_row = left +
+            static_cast<size_t>(templ_y + py) * left_pitch_bytes;
+        const auto* right_row = right +
+            static_cast<size_t>(right_y0 + py) * right_pitch_bytes;
+        const float tv = static_cast<float>(left_row[templ_x + px]);
+        const float iv = static_cast<float>(right_row[right_x0 + px]);
+        local_t += tv;
+        local_i += iv;
+        local_tt += tv * tv;
+        local_ii += iv * iv;
+        local_ti += tv * iv;
+        const float diff = tv - iv;
+        local_sse += diff * diff;
+    }
+
+    sum_t[tid] = local_t;
+    sum_i[tid] = local_i;
+    sum_tt[tid] = local_tt;
+    sum_ii[tid] = local_ii;
+    sum_ti[tid] = local_ti;
+    sum_sse[tid] = local_sse;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            sum_t[tid] += sum_t[tid + stride];
+            sum_i[tid] += sum_i[tid + stride];
+            sum_tt[tid] += sum_tt[tid + stride];
+            sum_ii[tid] += sum_ii[tid + stride];
+            sum_ti[tid] += sum_ti[tid + stride];
+            sum_sse[tid] += sum_sse[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        const float n = static_cast<float>(total);
+        const float numerator = sum_ti[0] - (sum_t[0] * sum_i[0]) / n;
+        const float denom_t = sum_tt[0] - (sum_t[0] * sum_t[0]) / n;
+        const float denom_i = sum_ii[0] - (sum_i[0] * sum_i[0]) / n;
+        float value = -1.0f;
+        const float denom = denom_t * denom_i;
+        if (denom > 1e-6f) {
+            value = numerator / sqrtf(denom);
+            value = fminf(1.0f, fmaxf(-1.0f, value));
+        } else {
+            const float rms = sqrtf(fmaxf(0.0f, sum_sse[0] / n));
+            value = 1.0f - fminf(1.0f, rms * (1.0f / 255.0f));
+        }
+        const float cx = 0.5f * static_cast<float>(score_width - 1);
+        const float cy = 0.5f * static_cast<float>(score_height - 1);
+        const float dx = static_cast<float>(ox) - cx;
+        const float dy = static_cast<float>(oy) - cy;
+        value -= 1e-5f * (dx * dx + dy * dy);
+        auto* row = reinterpret_cast<float*>(
+            reinterpret_cast<char*>(score) +
+            static_cast<size_t>(oy) * score_pitch_bytes);
+        row[ox] = value;
+    }
+}
 
 __global__ void reduceTemplateScorePeakKernel(
     const float* score,
@@ -80,6 +184,47 @@ __global__ void reduceTemplateScorePeakKernel(
 }
 
 }  // namespace
+
+cudaError_t computeCudaTemplateCcoeffNormedScoreMap(
+    const uint8_t* left_gpu,
+    size_t left_pitch_bytes,
+    const uint8_t* right_gpu,
+    size_t right_pitch_bytes,
+    int templ_x,
+    int templ_y,
+    int search_x,
+    int search_y,
+    int patch_size,
+    float* score_gpu,
+    size_t score_pitch_bytes,
+    int score_width,
+    int score_height,
+    cudaStream_t stream) {
+    if (!left_gpu || !right_gpu || left_pitch_bytes == 0 ||
+        right_pitch_bytes == 0 || templ_x < 0 || templ_y < 0 ||
+        search_x < 0 || search_y < 0 || patch_size <= 0 ||
+        !score_gpu || score_pitch_bytes == 0 ||
+        score_width <= 0 || score_height <= 0 || !stream) {
+        return cudaErrorInvalidValue;
+    }
+    const dim3 block(kTemplateCcoeffThreads, 1, 1);
+    const dim3 grid(score_width, score_height, 1);
+    computeTemplateCcoeffNormedKernel<<<grid, block, 0, stream>>>(
+        left_gpu,
+        left_pitch_bytes,
+        right_gpu,
+        right_pitch_bytes,
+        templ_x,
+        templ_y,
+        search_x,
+        search_y,
+        patch_size,
+        score_gpu,
+        score_pitch_bytes,
+        score_width,
+        score_height);
+    return cudaGetLastError();
+}
 
 cudaError_t findCudaTemplateScorePeak(
     const float* score_gpu,
