@@ -30,7 +30,9 @@ enum class SparseFeatureRejectReason : int {
     MAD_OUTLIER = 11,
     FINAL_GEOMETRY = 12,
     LOW_CONFIDENCE = 13,
-    OTHER = 14,
+    SUPPORT = 14,
+    STDDEV = 15,
+    OTHER = 16,
 };
 
 struct SparseFeatureDebugMatch {

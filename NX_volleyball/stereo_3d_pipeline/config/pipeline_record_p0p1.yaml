@@ -133,13 +133,13 @@ stereo:
   quality: 6
 
 neural_feature_matching:
-  enabled: false # XFeat TensorRT is wired but not default: xfeat_only was 98.3fps and combo was 94.4fps on 2026-07-04
+  enabled: true # XFeat runs in the async diagnostic sidecar lane; realtime inline lane remains disabled below
   backend: "xfeat"
-  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_128.engine"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_160_b2.engine"
   matcher_engine_path: ""
   fused_engine_path: ""
-  roi_size: 128
-  top_k: 32
+  roi_size: 160
+  top_k: 64
   descriptor_dim: 64
   min_matches: 4
   max_y_error_px: 2.0
@@ -147,8 +147,8 @@ neural_feature_matching:
   final_disp_gate_px: 3.0
   min_score: 0.05
   use_lightglue: false
-  gpu_postprocess: false # experimental; batch=2 GPU postprocess must be enabled explicitly for XFeat A/B
-  match_margin: 0.015
+  gpu_postprocess: true # required for the stable 100fps XFeat sidecar path
+  match_margin: 0.0
   min_spatial_quadrants: 2
   min_spatial_spread_ratio: 0.10
 
@@ -178,7 +178,7 @@ performance:
   async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
   p2_feature_job_scaffold_enabled: true      # enable diagnostic sidecar jobs without blocking main recorder
   p2_realtime_lane_decision_enabled: false   # default P2 is diagnostic-only; enable explicitly for XFeat/inline P2 A/B
-  p2_diagnostic_lane_decision_enabled: true  # record OpenCV CUDA GFTT/LK in *.p2_diagnostic.csv
+  p2_diagnostic_lane_decision_enabled: true  # record XFeat + GFTT/LK in *.p2_diagnostic.csv without blocking main ROI worker
   p2_selective_trigger: false
   p2_trigger_on_fallback: true
   p2_trigger_on_direct_pair: false
@@ -189,7 +189,7 @@ performance:
   p2_pair_quality_min_shifted_iou: 0.0
   p2_pair_quality_max_epipolar_dy: 0.0
   p2_pair_quality_min_confidence: 0.0
-  p2_diagnostic_stride: 10
+  p2_diagnostic_stride: 1
   p2_diagnostic_max_in_flight: 1
   p2_realtime_deadline_ms: 10.0
   p2_diagnostic_deadline_ms: 50.0

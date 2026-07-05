@@ -9,6 +9,7 @@
 #include "../stereo/depth_candidate_builder.h"
 #include "../stereo/depth_match_contract.h"
 #include "../stereo/neural_feature_matcher.h"
+#include "../stereo/roi_feature_match_common.h"
 #include "../stereo/roi_feature_match_cpu.h"
 #include "../stereo/roi_feature_match_gpu.h"
 #include "../stereo/roi_feature_validation.h"
@@ -1047,10 +1048,33 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     dst.disparity = src.disparity;
                     dst.score = src.score;
                 }
-                if (!validateSparseFeatureGeometry(
+                const SparseFeatureRejectReason final_reason =
+                    sparseFeatureGeometryRejectReason(
                         neural_feature_result, left_det, *right_det,
                         feature_initial_disparity, feature_cfg,
-                        focal, baseline)) {
+                        focal, baseline);
+                if (final_reason != SparseFeatureRejectReason::NONE) {
+                    RobustMatchSample final_sample;
+                    final_sample.left_x = neural_feature_result.anchor_cx;
+                    final_sample.left_y = neural_feature_result.anchor_cy;
+                    final_sample.right_x =
+                        std::isfinite(neural_feature_result.right_anchor_cx)
+                            ? neural_feature_result.right_anchor_cx
+                            : neural_feature_result.anchor_cx -
+                                  neural_feature_result.disparity;
+                    final_sample.right_y =
+                        std::isfinite(neural_feature_result.right_anchor_cy)
+                            ? neural_feature_result.right_anchor_cy
+                            : neural_feature_result.anchor_cy;
+                    final_sample.disparity = neural_feature_result.disparity;
+                    final_sample.score = neural_feature_result.confidence;
+                    appendDebugPoint(neural_feature_result,
+                                     final_sample,
+                                     SparseFeatureDebugStage::GEOMETRY,
+                                     final_reason,
+                                     feature_initial_disparity,
+                                     left_det,
+                                     feature_cfg);
                     neural_feature_result.valid = false;
                     neural_feature_result.low_confidence = true;
                 }

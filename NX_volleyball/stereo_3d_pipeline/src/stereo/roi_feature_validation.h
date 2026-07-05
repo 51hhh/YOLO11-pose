@@ -22,6 +22,15 @@ bool validateSparseFeatureGeometry(
     float focal,
     float baseline);
 
+SparseFeatureRejectReason sparseFeatureGeometryRejectReason(
+    const SparseFeatureDisparityResult& result,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    float focal,
+    float baseline);
+
 }  // namespace stereo3d
 
 #endif  // STEREO_3D_PIPELINE_ROI_FEATURE_VALIDATION_H_

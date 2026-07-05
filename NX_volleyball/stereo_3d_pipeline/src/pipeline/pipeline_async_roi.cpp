@@ -302,6 +302,10 @@ const char* sparseFeatureRejectReasonName(int reason) {
         return "final_geometry";
     case SparseFeatureRejectReason::LOW_CONFIDENCE:
         return "low_confidence";
+    case SparseFeatureRejectReason::SUPPORT:
+        return "support";
+    case SparseFeatureRejectReason::STDDEV:
+        return "stddev";
     case SparseFeatureRejectReason::OTHER:
         return "other";
     }
@@ -1629,6 +1633,14 @@ void Pipeline::enqueueP2FeatureDiagnosticJobs(
 
 void Pipeline::p2FeatureDiagnosticWorkerLoop() {
     using Clock = std::chrono::steady_clock;
+    if (config_.dual_yolo.depth_roi_cuda_gftt_lk && p2_feature_diag_stream_) {
+        const auto warmup_start = Clock::now();
+        warmupOpenCVCudaGfttLkDisparityGPU(p2_feature_diag_stream_);
+        globalPerf().record(
+            "Stage2_P2FeatureJobDiagnosticOpenCVCudaGfttLkWarmup",
+            std::chrono::duration<double, std::milli>(
+                Clock::now() - warmup_start).count());
+    }
     while (true) {
         P2FeatureDiagnosticTask task;
         {

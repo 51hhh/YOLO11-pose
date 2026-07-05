@@ -89,6 +89,8 @@ SparseFeatureDisparityResult matchOpenCVCudaGfttLkDisparityGPU(
     float baseline,
     cudaStream_t stream);
 
+void warmupOpenCVCudaGfttLkDisparityGPU(cudaStream_t stream);
+
 SparseFeatureDisparityResult matchCudaCannyHoughCircleDisparityGPU(
     const uint8_t* left_gpu, int left_pitch,
     const uint8_t* right_gpu, int right_pitch,

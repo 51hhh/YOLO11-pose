@@ -15,7 +15,7 @@ bool pointInsideDetectionEllipseForFeature(
     return pointInsideDetectionEllipse(det, x, y, scale);
 }
 
-bool validateSparseFeatureGeometry(
+SparseFeatureRejectReason sparseFeatureGeometryRejectReason(
     const SparseFeatureDisparityResult& result,
     const Detection& left_det,
     const Detection& right_det,
@@ -25,15 +25,15 @@ bool validateSparseFeatureGeometry(
     float baseline) {
     if (!result.valid || result.disparity <= 0.5f ||
         initial_disp <= 0.5f || focal <= 1e-3f || baseline <= 1e-6f) {
-        return false;
+        return SparseFeatureRejectReason::BAD_DISPARITY;
     }
     const int min_support = std::max(1, cfg.subpixel_min_points);
     if (result.support < min_support) {
-        return false;
+        return SparseFeatureRejectReason::SUPPORT;
     }
     const float max_stddev = std::max(0.05f, cfg.subpixel_max_stddev_px);
     if (result.stddev > max_stddev) {
-        return false;
+        return SparseFeatureRejectReason::STDDEV;
     }
 
     const float left_x = result.anchor_cx;
@@ -54,12 +54,37 @@ bool validateSparseFeatureGeometry(
     sample.disparity = result.disparity;
     sample.score = result.confidence;
 
-    return std::abs(featureYResidual(sample, left_det, cfg)) <=
-               strictFeatureYTolerance(cfg) &&
-           passesFeatureOverlapGate(sample, left_det, right_det,
-                                    initial_disp, cfg) &&
-           passesSphereRadiusGate(sample, left_det, initial_disp,
-                                  focal, baseline, cfg);
+    if (std::abs(featureYResidual(sample, left_det, cfg)) >
+        strictFeatureYTolerance(cfg)) {
+        return SparseFeatureRejectReason::Y_RESIDUAL;
+    }
+    if (!passesFeatureOverlapGate(sample, left_det, right_det,
+                                  initial_disp, cfg)) {
+        return SparseFeatureRejectReason::OVERLAP;
+    }
+    if (!passesSphereRadiusGate(sample, left_det, initial_disp,
+                                focal, baseline, cfg)) {
+        return SparseFeatureRejectReason::SPHERE;
+    }
+    return SparseFeatureRejectReason::NONE;
+}
+
+bool validateSparseFeatureGeometry(
+    const SparseFeatureDisparityResult& result,
+    const Detection& left_det,
+    const Detection& right_det,
+    float initial_disp,
+    const ROIFeatureMatchConfig& cfg,
+    float focal,
+    float baseline) {
+    return sparseFeatureGeometryRejectReason(result,
+                                             left_det,
+                                             right_det,
+                                             initial_disp,
+                                             cfg,
+                                             focal,
+                                             baseline) ==
+           SparseFeatureRejectReason::NONE;
 }
 
 }  // namespace stereo3d

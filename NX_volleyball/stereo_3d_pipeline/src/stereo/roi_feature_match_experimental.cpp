@@ -1382,6 +1382,12 @@ SparseFeatureDisparityResult aggregateGpuPointMatches(
         samples, min_points, max_points, initial_disp, max_delta,
         max_stddev, cfg);
     if (!robust.valid) {
+        for (const auto& sample : samples) {
+            appendDebugPoint(result, sample,
+                             SparseFeatureDebugStage::GEOMETRY,
+                             robust.reject_reason,
+                             initial_disp, left_det, cfg);
+        }
         result.low_confidence = true;
         return result;
     }
@@ -1426,7 +1432,95 @@ SparseFeatureDisparityResult unsupportedBackend(const char* name) {
     return result;
 }
 
+#ifdef HAS_OPENCV_CUDAOPTFLOW
+struct OpenCVCudaGfttLkWorkspace {
+    cv::cuda::GpuMat left_work;
+    cv::cuda::GpuMat right_work;
+    cv::cuda::GpuMat prev_pts_gpu;
+    cv::cuda::GpuMat next_pts_gpu;
+    cv::cuda::GpuMat status_gpu;
+    cv::Mat prev_pts_host;
+    cv::Mat next_pts_host;
+    cv::Mat status_host;
+    std::vector<cv::Point2f> prev_pts;
+    std::vector<cv::Point2f> next_pts;
+    std::vector<uint8_t> status;
+    cv::Ptr<cv::cuda::CornersDetector> gftt;
+    cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> lk;
+    int gftt_max = 0;
+    int lk_win = 0;
+    int lk_max_level = -1;
+    int lk_iters = 0;
+};
+
+OpenCVCudaGfttLkWorkspace& openCVCudaGfttLkWorkspace() {
+    static thread_local OpenCVCudaGfttLkWorkspace workspace;
+    return workspace;
+}
+
+void ensureOpenCVCudaGfttLkOperators(OpenCVCudaGfttLkWorkspace& workspace,
+                                     int max_corners,
+                                     int win,
+                                     int max_level,
+                                     int iters) {
+    if (!workspace.gftt || workspace.gftt_max != max_corners) {
+        workspace.gftt_max = max_corners;
+        workspace.gftt = cv::cuda::createGoodFeaturesToTrackDetector(
+            CV_8UC1, max_corners, 0.01, 3.0, 3, true, 0.04);
+    }
+    if (!workspace.lk ||
+        workspace.lk_win != win ||
+        workspace.lk_max_level != max_level ||
+        workspace.lk_iters != iters) {
+        workspace.lk_win = win;
+        workspace.lk_max_level = max_level;
+        workspace.lk_iters = iters;
+        workspace.lk = cv::cuda::SparsePyrLKOpticalFlow::create(
+            cv::Size(win, win), max_level, iters, false);
+    }
+}
+#endif
+
 }  // namespace
+
+void warmupOpenCVCudaGfttLkDisparityGPU(cudaStream_t stream) {
+#ifndef HAS_OPENCV_CUDAOPTFLOW
+    (void)stream;
+#else
+    if (!stream) return;
+    try {
+        cv::cuda::Stream cv_stream =
+            cv::cuda::StreamAccessor::wrapStream(stream);
+        auto& workspace = openCVCudaGfttLkWorkspace();
+        ensureOpenCVCudaGfttLkOperators(workspace, 48, 11, 0, 8);
+
+        cv::Mat warmup(96, 96, CV_8UC1, cv::Scalar(0));
+        warmup(cv::Rect(16, 16, 18, 18)).setTo(cv::Scalar(255));
+        warmup(cv::Rect(58, 18, 16, 24)).setTo(cv::Scalar(180));
+        warmup(cv::Rect(26, 60, 22, 12)).setTo(cv::Scalar(220));
+        warmup(cv::Rect(62, 62, 14, 14)).setTo(cv::Scalar(160));
+        workspace.left_work.upload(warmup, cv_stream);
+        workspace.right_work.upload(warmup, cv_stream);
+        workspace.gftt->detect(workspace.left_work,
+                               workspace.prev_pts_gpu,
+                               cv::noArray(),
+                               cv_stream);
+        workspace.lk->calc(workspace.left_work,
+                           workspace.right_work,
+                           workspace.prev_pts_gpu,
+                           workspace.next_pts_gpu,
+                           workspace.status_gpu,
+                           cv::noArray(),
+                           cv_stream);
+        workspace.prev_pts_gpu.download(workspace.prev_pts_host, cv_stream);
+        workspace.next_pts_gpu.download(workspace.next_pts_host, cv_stream);
+        workspace.status_gpu.download(workspace.status_host, cv_stream);
+        cv_stream.waitForCompletion();
+    } catch (const cv::Exception& e) {
+        LOG_WARN("OpenCV CUDA GFTT/LK warmup failed: %s", e.what());
+    }
+#endif
+}
 
 SparseFeatureDisparityResult matchOpenCVCudaGfttLkDisparityGPU(
     const uint8_t* left_gpu, int left_pitch,
@@ -1473,62 +1567,51 @@ SparseFeatureDisparityResult matchOpenCVCudaGfttLkDisparityGPU(
                                     static_cast<size_t>(right_pitch));
         cv::cuda::GpuMat left_view(left_full, left_rect);
         cv::cuda::GpuMat right_view(right_full, right_rect);
-        thread_local cv::cuda::GpuMat left_work;
-        thread_local cv::cuda::GpuMat right_work;
-        left_view.copyTo(left_work, cv_stream);
-        right_view.copyTo(right_work, cv_stream);
+        auto& workspace = openCVCudaGfttLkWorkspace();
+        left_view.copyTo(workspace.left_work, cv_stream);
+        right_view.copyTo(workspace.right_work, cv_stream);
 
         const int max_corners =
-            std::clamp(std::max(cfg.subpixel_max_points * 8, 64), 32, 192);
-        thread_local cv::Ptr<cv::cuda::CornersDetector> gftt;
-        thread_local cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> lk;
-        thread_local int gftt_max = 0;
-        thread_local int lk_win = 0;
-        const int win = std::clamp(patch_radius * 2 + 1, 9, 25) | 1;
-        if (!gftt || gftt_max != max_corners) {
-            gftt_max = max_corners;
-            gftt = cv::cuda::createGoodFeaturesToTrackDetector(
-                CV_8UC1, max_corners, 0.01, 3.0, 3, true, 0.04);
-        }
-        if (!lk || lk_win != win) {
-            lk_win = win;
-            lk = cv::cuda::SparsePyrLKOpticalFlow::create(
-                cv::Size(win, win), 1, 12, false);
-        }
+            std::clamp(std::max(cfg.subpixel_max_points * 4, 48), 32, 96);
+        const int win = std::clamp(patch_radius * 2 + 1, 9, 21) | 1;
+        ensureOpenCVCudaGfttLkOperators(workspace, max_corners, win, 0, 8);
 
-        cv::cuda::GpuMat prev_pts_gpu;
-        cv::cuda::GpuMat next_pts_gpu;
-        cv::cuda::GpuMat status_gpu;
-        cv::cuda::GpuMat err_gpu;
-        gftt->detect(left_work, prev_pts_gpu, cv::noArray(), cv_stream);
-        lk->calc(left_work, right_work, prev_pts_gpu, next_pts_gpu,
-                 status_gpu, err_gpu, cv_stream);
+        workspace.gftt->detect(workspace.left_work,
+                               workspace.prev_pts_gpu,
+                               cv::noArray(),
+                               cv_stream);
+        workspace.lk->calc(workspace.left_work,
+                           workspace.right_work,
+                           workspace.prev_pts_gpu,
+                           workspace.next_pts_gpu,
+                           workspace.status_gpu,
+                           cv::noArray(),
+                           cv_stream);
 
-        cv::Mat prev_pts_mat;
-        cv::Mat next_pts_mat;
-        cv::Mat status_mat;
-        prev_pts_gpu.download(prev_pts_mat, cv_stream);
-        next_pts_gpu.download(next_pts_mat, cv_stream);
-        status_gpu.download(status_mat, cv_stream);
+        workspace.prev_pts_gpu.download(workspace.prev_pts_host, cv_stream);
+        workspace.next_pts_gpu.download(workspace.next_pts_host, cv_stream);
+        workspace.status_gpu.download(workspace.status_host, cv_stream);
         cv_stream.waitForCompletion();
-        if (prev_pts_mat.empty() || next_pts_mat.empty()) {
+        if (workspace.prev_pts_host.empty() || workspace.next_pts_host.empty()) {
             result.low_confidence = true;
             return result;
         }
 
-        const auto* prev_ptr = prev_pts_mat.ptr<cv::Point2f>();
-        const auto* next_ptr = next_pts_mat.ptr<cv::Point2f>();
+        const auto* prev_ptr = workspace.prev_pts_host.ptr<cv::Point2f>();
+        const auto* next_ptr = workspace.next_pts_host.ptr<cv::Point2f>();
         const size_t count =
-            static_cast<size_t>(prev_pts_mat.total());
-        std::vector<cv::Point2f> prev(prev_ptr, prev_ptr + count);
-        std::vector<cv::Point2f> next(next_ptr, next_ptr + count);
-        std::vector<uint8_t> status;
-        if (!status_mat.empty()) {
-            const auto* status_ptr = status_mat.ptr<uint8_t>();
-            status.assign(status_ptr, status_ptr + status_mat.total());
+            static_cast<size_t>(workspace.prev_pts_host.total());
+        workspace.prev_pts.assign(prev_ptr, prev_ptr + count);
+        workspace.next_pts.assign(next_ptr, next_ptr + count);
+        workspace.status.clear();
+        if (!workspace.status_host.empty()) {
+            const auto* status_ptr = workspace.status_host.ptr<uint8_t>();
+            workspace.status.assign(status_ptr,
+                                    status_ptr + workspace.status_host.total());
         }
         return aggregateGpuPointMatches(
-            prev, next, status, left_rect, right_rect,
+            workspace.prev_pts, workspace.next_pts, workspace.status,
+            left_rect, right_rect,
             left_det, right_det, initial_disp, cfg, max_disparity,
             focal, baseline);
     } catch (const cv::Exception& e) {

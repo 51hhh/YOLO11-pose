@@ -68,6 +68,13 @@ P2_DIAGNOSTIC_MODE_COLUMNS = {
         "std": "roi_opencv_cuda_gftt_lk_std_px",
         "confidence": "roi_opencv_cuda_gftt_lk_confidence",
     },
+    "neural_feature": {
+        "z": "z_roi_neural_feature",
+        "disparity": "disparity_roi_neural_feature",
+        "support": "roi_neural_feature_support",
+        "std": "roi_neural_feature_std_px",
+        "confidence": "roi_neural_feature_confidence",
+    },
 }
 
 
@@ -249,11 +256,11 @@ def merge_p2_diagnostic_candidates(
             _set_if_missing(row, columns["std"], "-1")
             _set_if_missing(row, columns["confidence"], "0")
             continue
-        _set_if_missing(row, columns["z"], candidate.get("z_m", "-1"))
-        _set_if_missing(row, columns["disparity"], candidate.get("disparity", "-1"))
-        _set_if_missing(row, columns["support"], candidate.get("support", "0"))
-        _set_if_missing(row, columns["std"], candidate.get("stddev", "-1"))
-        _set_if_missing(row, columns["confidence"], candidate.get("confidence", "0"))
+        row[columns["z"]] = candidate.get("z_m", "-1")
+        row[columns["disparity"]] = candidate.get("disparity", "-1")
+        row[columns["support"]] = candidate.get("support", "0")
+        row[columns["std"]] = candidate.get("stddev", "-1")
+        row[columns["confidence"]] = candidate.get("confidence", "0")
 
 
 def load_legacy_sequences(

@@ -32,6 +32,7 @@ struct RobustAggregate {
     float stddev = 0.0f;
     float mean_score = 0.0f;
     int support = 0;
+    SparseFeatureRejectReason reject_reason = SparseFeatureRejectReason::NONE;
     int debug_inlier_count = 0;
     std::array<RobustMatchSample, kMaxSparseFeatureDebugMatches> debug_inliers{};
 };

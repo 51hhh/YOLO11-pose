@@ -188,7 +188,10 @@ RobustAggregate aggregateRobustMatches(
     const ROIFeatureMatchConfig& cfg)
 {
     RobustAggregate out;
-    if (static_cast<int>(samples.size()) < min_points) return out;
+    if (static_cast<int>(samples.size()) < min_points) {
+        out.reject_reason = SparseFeatureRejectReason::SUPPORT;
+        return out;
+    }
 
     std::vector<float> sorted;
     sorted.reserve(samples.size());
@@ -239,11 +242,18 @@ RobustAggregate aggregateRobustMatches(
             inliers.push_back(s);
         }
     }
-    if (static_cast<int>(inliers.size()) < min_points) return out;
+    if (static_cast<int>(inliers.size()) < min_points) {
+        out.reject_reason = SparseFeatureRejectReason::MAD_OUTLIER;
+        return out;
+    }
 
     out.disparity = weightedMedianDisparity(inliers);
-    if (std::abs(out.disparity - initial_disp) > max_delta ||
-        out.disparity <= 0.5f) {
+    if (out.disparity <= 0.5f) {
+        out.reject_reason = SparseFeatureRejectReason::BAD_DISPARITY;
+        return out;
+    }
+    if (std::abs(out.disparity - initial_disp) > max_delta) {
+        out.reject_reason = SparseFeatureRejectReason::DISP_DELTA;
         return out;
     }
 
@@ -275,7 +285,10 @@ RobustAggregate aggregateRobustMatches(
         out.debug_inliers[static_cast<size_t>(i)] =
             inliers[std::min(idx, inliers.size() - 1U)];
     }
-    if (sum_w <= 0.0) return out;
+    if (sum_w <= 0.0) {
+        out.reject_reason = SparseFeatureRejectReason::LOW_SCORE;
+        return out;
+    }
 
     out.anchor_x = static_cast<float>(sum_x / sum_w);
     out.anchor_y = static_cast<float>(sum_y / sum_w);
@@ -287,6 +300,15 @@ RobustAggregate aggregateRobustMatches(
     out.valid = out.stddev <= max_stddev &&
                 out.support >= min_points &&
                 out.support <= std::max(min_points, max_points);
+    if (!out.valid) {
+        if (out.stddev > max_stddev) {
+            out.reject_reason = SparseFeatureRejectReason::STDDEV;
+        } else if (out.support < min_points) {
+            out.reject_reason = SparseFeatureRejectReason::SUPPORT;
+        } else {
+            out.reject_reason = SparseFeatureRejectReason::OTHER;
+        }
+    }
     return out;
 }
 
