@@ -100,14 +100,16 @@
 | z_roi_sift_points | float | ROI OpenCV CPU SIFT 实验候选视差三角测距;当前 NX 无 true CUDA SIFT 后端 |
 | z_roi_iou_region_color_patch | float | ROI GPU 彩色区域 IoU + patch 视差三角测距 |
 | z_roi_patch_iou_color_edge | float | ROI GPU 彩色边缘 IoU + patch 视差三角测距 |
-| z_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 小 ROI 极线视差三角测距 |
+| z_roi_cuda_template_match | float | 自研 CUDA Template/NCC 小 ROI 极线视差三角测距；主 CSV 或 sidecar `mode=cuda_template` 合并 |
 | z_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 小 ROI dense disparity 三角测距 |
 | z_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 小 ROI dense disparity 三角测距 |
 | z_roi_vpi_template_match | float | `*.p2_diagnostic.csv` 中 `mode=vpi_template_match` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_vpi_orb | float | `*.p2_diagnostic.csv` 中 `mode=vpi_orb` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_opencv_cuda_gftt_lk | float | `*.p2_diagnostic.csv` 中 `mode=opencv_cuda_gftt_lk` 合并出的训练候选；不在主 trajectory CSV header |
 | z_roi_ring_edge_profile | float | CUDA ring/edge profile 小范围极线视差三角测距 |
-| z_roi_neural_feature | float | ROI TensorRT 神经特征匹配视差三角测距 |
+| z_roi_neural_feature | float | ROI TensorRT 神经特征兼容字段；split 模式下仅作旧字段兼容 |
+| z_roi_neural_xfeat | float | ROI XFeat TensorRT 神经特征匹配视差三角测距；主 CSV 或 sidecar `mode=neural_xfeat` 合并 |
+| z_roi_neural_superpoint | float | ROI SuperPoint TensorRT 神经特征匹配视差三角测距；主 CSV 或 sidecar `mode=neural_superpoint` 合并 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
 | z_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差三角测距 |
 | z_fallback | float | fallback 测距兼容汇总字段，优先 feature，其次 epipolar/template |
@@ -134,14 +136,16 @@
 | disparity_roi_sift_points | float | ROI OpenCV CPU SIFT 聚合视差 |
 | disparity_roi_iou_region_color_patch | float | ROI 彩色区域 IoU 聚合视差 |
 | disparity_roi_patch_iou_color_edge | float | ROI 彩色边缘 IoU 聚合视差 |
-| disparity_roi_cuda_template_match | float | OpenCV CUDA TemplateMatching 聚合视差 |
+| disparity_roi_cuda_template_match | float | 自研 CUDA Template/NCC 聚合视差；由 `trajectory_fusion/dataset.py` 可从 sidecar 合并 |
 | disparity_roi_cuda_stereo_bm | float | OpenCV CUDA StereoBM 聚合视差 |
 | disparity_roi_cuda_stereo_sgm | float | OpenCV CUDA StereoSGM 聚合视差 |
 | disparity_roi_vpi_template_match | float | sidecar `vpi_template_match` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_vpi_orb | float | sidecar `vpi_orb` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_opencv_cuda_gftt_lk | float | sidecar `opencv_cuda_gftt_lk` 聚合视差；由 `trajectory_fusion/dataset.py` 合并 |
 | disparity_roi_ring_edge_profile | float | CUDA ring/edge profile 聚合视差 |
-| disparity_roi_neural_feature | float | ROI 神经特征聚合视差 |
+| disparity_roi_neural_feature | float | ROI 神经特征兼容聚合视差 |
+| disparity_roi_neural_xfeat | float | ROI XFeat 神经特征聚合视差 |
+| disparity_roi_neural_superpoint | float | ROI SuperPoint 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
 | disparity_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差 |
 | disparity_fallback_epipolar | float | 极线搜索 fallback 视差 |
@@ -182,6 +186,9 @@
 | roi_patch_iou_color_edge_support | int | 彩色边缘 IoU/patch 匹配支撑点数 |
 | roi_patch_iou_color_edge_std_px | float | 彩色边缘 IoU/patch 视差标准差 |
 | roi_patch_iou_color_edge_confidence | float | 彩色边缘 IoU/patch 匹配置信度 |
+| roi_cuda_template_match_support | int | 自研 CUDA Template/NCC 支撑点数；主 CSV 或 sidecar `cuda_template` 合并 |
+| roi_cuda_template_match_std_px | float | 自研 CUDA Template/NCC 视差标准差 |
+| roi_cuda_template_match_confidence | float | 自研 CUDA Template/NCC 匹配置信度 |
 | roi_cuda_stereo_sgm_support | int | OpenCV CUDA StereoSGM 有效采样点数 |
 | roi_cuda_stereo_sgm_std_px | float | OpenCV CUDA StereoSGM 视差标准差 |
 | roi_cuda_stereo_sgm_confidence | float | OpenCV CUDA StereoSGM 匹配置信度 |
@@ -200,6 +207,12 @@
 | roi_neural_feature_support | int | 神经特征匹配支撑点数 |
 | roi_neural_feature_std_px | float | 神经特征视差标准差 |
 | roi_neural_feature_confidence | float | 神经特征匹配置信度 |
+| roi_neural_xfeat_support | int | XFeat 神经特征匹配支撑点数 |
+| roi_neural_xfeat_std_px | float | XFeat 神经特征视差标准差 |
+| roi_neural_xfeat_confidence | float | XFeat 神经特征匹配置信度 |
+| roi_neural_superpoint_support | int | SuperPoint 神经特征匹配支撑点数 |
+| roi_neural_superpoint_std_px | float | SuperPoint 神经特征视差标准差 |
+| roi_neural_superpoint_confidence | float | SuperPoint 神经特征匹配置信度 |
 | fallback_feature_points_support | int | 单侧漏检特征 fallback 支撑点数 |
 | fallback_feature_points_std_px | float | 单侧漏检特征 fallback 视差标准差 |
 | fallback_feature_points_confidence | float | 单侧漏检特征 fallback 置信度 |
@@ -306,7 +319,8 @@ z_roi_orb_points,z_roi_brisk_points,z_roi_akaze_points,z_roi_sift_points,
 z_roi_iou_region_color_patch,z_roi_patch_iou_color_edge,
 z_roi_cuda_template_match,z_roi_cuda_stereo_bm,z_roi_cuda_stereo_sgm,
 z_roi_opencv_cuda_gftt_lk,z_roi_ring_edge_profile,
-z_roi_neural_feature,z_roi_center_patch,z_roi_multi_point,
+z_roi_neural_feature,z_roi_neural_xfeat,z_roi_neural_superpoint,
+z_roi_center_patch,z_roi_multi_point,
 z_fallback,z_fallback_epipolar,z_fallback_template,z_fallback_feature_points,z,
 epipolar_dy,size_ratio,subpixel_valid,subpixel_attempted,subpixel_support,
 subpixel_std_px,subpixel_confidence,subpixel_gate_px,

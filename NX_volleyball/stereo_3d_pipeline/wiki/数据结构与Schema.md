@@ -1,6 +1,6 @@
 # 数据结构与 Schema
 
-最后核对: 2026-07-03
+最后核对: 2026-07-05
 
 本页连接实时 C++ 数据结构、CSV 记录器和离线训练 schema。字段新增不能只改一个位置。
 
@@ -42,7 +42,7 @@
 | 描述子/近似描述子 | `z_roi_orb_points`, `z_roi_brisk_points`, `z_roi_akaze_points`, `z_roi_sift_points` |
 | 彩色 IoU/patch | `z_roi_iou_region_color_patch`, `z_roi_patch_iou_color_edge` |
 | CUDA/OpenCV P2 | `z_roi_cuda_template_match`, `z_roi_cuda_stereo_bm`, `z_roi_cuda_stereo_sgm`, `z_roi_ring_edge_profile` |
-| 神经特征 | `z_roi_neural_feature` |
+| 神经特征 | `z_roi_neural_feature`, `z_roi_neural_xfeat`, `z_roi_neural_superpoint` |
 | patch/subpixel | `z_roi_center_patch`, `z_roi_multi_point` |
 | fallback | `z_fallback`, `z_fallback_epipolar`, `z_fallback_template`, `z_fallback_feature_points` |
 | 诊断 | disparity、support、confidence、std、bbox/circle、`pair_*`、sync watermark |
@@ -113,7 +113,7 @@ recording:
 
 实时 recorder 还会生成同名前缀 `*.frames.csv` sidecar。它记录每帧同步水印、`result_count`、direct/fallback 数量、pair gate 统计、P2 候选 observed/valid 计数，以及 P2 调度状态字段 `p2_depth_modes_enabled`、`p2_depth_mode_mask`、`p2_realtime_requested`、`p2_diagnostic_requested`、`p2_feature_job_count` 和 trigger mask。该 sidecar 用于区分“未触发 P2”和“触发但候选无效”。
 
-OpenCV CUDA GFTT/LK 当前不回写主 `Object3D` 和 trajectory CSV header。录制配置通过 P2 diagnostic lane 写同名前缀 `*.p2_diagnostic.csv`，再由 `trajectory_fusion/dataset.py` 合并为训练候选 `z_roi_opencv_cuda_gftt_lk`。因此新增或排查 diagnostic 字段时要同时看主 CSV、`.frames.csv` 和 `.p2_diagnostic.csv`，不能只检查 `Object3D`。
+P1 sidecar 候选当前通过 diagnostic lane 写同名前缀 `*.p2_diagnostic.csv`，再由 `trajectory_fusion/dataset.py` 合并为训练候选: `mode=cuda_template` -> `z_roi_cuda_template_match`，`mode=neural_xfeat` -> `z_roi_neural_xfeat`，`mode=neural_superpoint` -> `z_roi_neural_superpoint`。OpenCV CUDA GFTT/LK 等 A/B 项也可通过同一 sidecar 合并，例如 `mode=opencv_cuda_gftt_lk` -> `z_roi_opencv_cuda_gftt_lk`。因此新增或排查 diagnostic 字段时要同时看主 CSV、`.frames.csv` 和 `.p2_diagnostic.csv`，不能只检查 `Object3D`。
 
 ## 基准片段 CSV
 

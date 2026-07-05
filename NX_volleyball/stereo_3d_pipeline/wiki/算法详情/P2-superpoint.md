@@ -35,16 +35,16 @@ left/right rectified gray GPU
   -> TensorRT SuperPoint fixed extractor 一次 enqueue
   -> GPU descriptor mutual-NN + score/margin/y/disparity gate
   -> 回传通过 gate 的点对
-  -> median/MAD + spatial gate 输出 z_roi_neural_feature 或 sidecar row
+  -> median/MAD + spatial gate 输出 z_roi_neural_superpoint 或 sidecar row
 ```
 
 ## 输出字段
 
 | 字段 | 含义 |
 |---|---|
-| `z_roi_neural_feature` | 神经特征候选深度；sidecar 时不回写主 CSV 字段 |
-| `disparity_roi_neural_feature` | 神经特征鲁棒视差 |
-| sidecar `mode=neural_feature` | P2 diagnostic lane 输出 |
+| `z_roi_neural_superpoint` | SuperPoint 神经特征候选深度；sidecar 时由训练 loader 合并 |
+| `disparity_roi_neural_superpoint` | SuperPoint 神经特征鲁棒视差 |
+| sidecar `mode=neural_superpoint` | diagnostic lane 输出，训练 loader 合并为 P1 sidecar 候选 |
 
 ## 实测结论
 
@@ -55,6 +55,7 @@ NX 上 `superpoint_extractor_160_top64_b2.engine` 的 `trtexec` 单模型 mean G
 | b2 stride=1 strict | `98.4` | `110/992` | `3.4810/0.0008m` | 外层 stddev gate 过严，且拖低主 FPS |
 | b2 stride=2 strict | `98.1` | `194/916` | `3.4050/0.0009m` | 仍不适合默认 |
 | b2 stride=2 relaxed stddev=6px | `99.6` | `920/920` | `3.4403/0.0050m` | 可作为低频训练候选 sidecar |
+| P0/P1+NCC+XFeat+SuperPoint 联合 run | `99.95` | `317/317` | `3.4090/0.0047m` | 已归入 P1 sidecar 训练候选 |
 
 代表样张:
 
@@ -65,4 +66,4 @@ NX 上 `superpoint_extractor_160_top64_b2.engine` 的 `trtexec` 单模型 mean G
 
 ## 当前判断
 
-SuperPoint 点对质量有潜力，适合用 `p2_diagnostic_stride=2` 和宽松外层 stddev gate 记录训练候选。它不应进入 P0/P1 默认主字段，也不应替换几何主深度；后续若要每帧 100fps，需要 fused matcher 或进一步减少与 YOLO 的 GPU 竞争。
+SuperPoint 点对质量有潜力，已归入 P1 sidecar 训练候选。它不应替换 P0 几何主深度，也不应抢占 legacy `z_stereo/obj.z`；后续若要进入每帧主路径，需要 fused matcher 或进一步减少与 YOLO 的 GPU 竞争。

@@ -46,11 +46,11 @@
 
 ## 主管线路径矩阵
 
-当前主管线配置以 P0 + P1 基线为准，GFTT/LK 走 diagnostic sidecar，XFeat 是未准入测试态。字段落点按左右检测分支拆开看:
+当前主管线配置以 P0 + P1 为准。P1 包含主 CSV `z_roi_multi_point` / `z_roi_center_patch`，以及 sidecar `z_roi_cuda_template_match` / `z_roi_neural_xfeat` / `z_roi_neural_superpoint`。字段落点按左右检测分支拆开看:
 
 | 路径 | `stereo_match_source` | 运行条件 | 主 trajectory CSV 字段 | diagnostic sidecar 字段 | 不会产生的字段 |
 |---|---:|---|---|---|---|
-| 直接左右 YOLO pair | `1` | 左右都有 YOLO 框，且通过类别、正视差、极线 y、尺寸比、shifted IoU gate | P0: `z_bbox_center`, `z_circle_center`, `z_roi_edge_centroid`, `z_roi_radial_center`, `z_roi_edge_pair_center`; P1: `z_roi_multi_point`, `z_roi_center_patch`, `z_roi_patch_iou_color_edge`, `z_roi_iou_region_color_patch`, `z_roi_cuda_stereo_sgm` | `mode=vpi_template_match` -> `z_roi_vpi_template_match`; `mode=vpi_orb` -> `z_roi_vpi_orb` | `z_fallback_epipolar`, `z_fallback_template`, `z_fallback_feature_points` |
+| 直接左右 YOLO pair | `1` | 左右都有 YOLO 框，且通过类别、正视差、极线 y、尺寸比、shifted IoU gate | P0: `z_bbox_center`, `z_circle_center`, `z_roi_edge_centroid`, `z_roi_radial_center`, `z_roi_edge_pair_center`; P1 主 CSV: `z_roi_multi_point`, `z_roi_center_patch` | P1 sidecar: `mode=cuda_template` -> `z_roi_cuda_template_match`; `mode=neural_xfeat` -> `z_roi_neural_xfeat`; `mode=neural_superpoint` -> `z_roi_neural_superpoint` | `z_fallback_epipolar`, `z_fallback_template`, `z_fallback_feature_points` |
 | 左 YOLO 单侧 fallback | `2` | 左框未被 direct pair 占用，右侧 direct pair 缺失或未通过 gate，host gray 可用 | `z_fallback_epipolar`, `z_fallback`; 若开启 CPU fallback 才可能有 `z_fallback_template`, `z_fallback_feature_points` | 当前不把 VPI/颜色/SGM direct pair 字段回写到 fallback 行 | `z_bbox_center`, `z_circle_center`, `z_roi_*` direct pair 字段 |
 | 右 YOLO 单侧 fallback | `3` | 右框未被 direct pair 占用，左侧 direct pair 缺失或未通过 gate，host gray 可用 | 同左到右 fallback；左侧可能是 `left_proxy` | 当前不把 VPI/颜色/SGM direct pair 字段回写到 fallback 行 | `z_bbox_center`, `z_circle_center`, `z_roi_*` direct pair 字段 |
 | 无有效左右观测 | `0` | 无检测、过期丢弃或全部 gate/reject | raw_mode 下目标 CSV 不写 raw 行；非 raw 模式可能只有滤波预测 | 无 | 所有 raw `z_*` |
@@ -84,12 +84,14 @@
 | `z_roi_multi_point`, `z_roi_center_patch` | 对应 mode 开启并通过自身 gate | 写入原始字段，但当前不参与 legacy `z_stereo/obj.z` 选择 |
 | `z_roi_patch_iou_color_edge`, `z_roi_iou_region_color_patch` | BGR GPU snapshot 可用，且对应 mode 开启 | 字段保留；2026-07-04 artifact 显示错配，当前默认关闭，不参与 legacy `z_stereo/obj.z` |
 | `z_roi_cuda_stereo_sgm` | gray GPU snapshot 和 CUDA stream 可用，且对应 mode 开启 | 字段保留；联合运行长尾/覆盖率不准入，当前默认关闭 |
-| `z_roi_neural_feature` | TensorRT engine 可用，`neural_feature_matching.enabled=true`，direct pair 成功 | 写入主 CSV；当前 XFeat 128/top32 已接入但组合实测只有 `93-95fps`，正式 100fps 采集前应关闭或低频化 |
-| `z_roi_opencv_cuda_gftt_lk` | P2 diagnostic lane 命中 stride，且 gray GPU snapshot 已复制到 sidecar buffer | 写入 `*.p2_diagnostic.csv`，由 `trajectory_fusion/dataset.py` 合并为训练候选；不回写主 `Object3D` |
+| `z_roi_cuda_template_match` | direct pair 成功，NCC sidecar 命中，gray GPU snapshot 可用 | 写入 `*.p2_diagnostic.csv` 的 `mode=cuda_template`，由 `trajectory_fusion/dataset.py` 合并为 P1 训练候选；不回写主 `Object3D` |
+| `z_roi_neural_xfeat` | XFeat engine 可用，direct pair 成功，neural sidecar 命中 | 写入 `*.p2_diagnostic.csv` 的 `mode=neural_xfeat`，由 `trajectory_fusion/dataset.py` 合并为 P1 训练候选；不回写主 `Object3D` |
+| `z_roi_neural_superpoint` | SuperPoint engine 可用，direct pair 成功，neural sidecar 命中 | 写入 `*.p2_diagnostic.csv` 的 `mode=neural_superpoint`，由 `trajectory_fusion/dataset.py` 合并为 P1 训练候选；不回写主 `Object3D` |
+| `z_roi_opencv_cuda_gftt_lk` | GFTT/LK A/B 配置开启，diagnostic lane 命中 stride，gray GPU snapshot 可用 | 写入 `*.p2_diagnostic.csv`，由 `trajectory_fusion/dataset.py` 合并为 A/B 训练候选；当前默认关闭 |
 | `z_roi_vpi_template_match`, `z_roi_vpi_orb` | VPI diagnostic mode 开启且命中 stride | 字段保留；当前默认去 VPI，以避免联合运行尾延迟 |
 | `z_fallback*` | 直接 pair | 无效 |
 
-主管线当前默认 `p2_realtime_lane_decision_enabled=false`，P2 只保留 OpenCV CUDA GFTT/LK 低频 diagnostic sidecar；SGM、VPI Template/ORB、color/color-edge 和 XFeat 都不进入正式 100fps 主 Stage2。P2 isolated 或 XFeat inline A/B 测试需要显式打开对应算法和 realtime/diagnostic lane。
+主管线当前默认 `p2_realtime_lane_decision_enabled=false`，NCC/XFeat/SuperPoint 通过 diagnostic worker 作为 P1 sidecar 训练候选记录。SGM、VPI Template/ORB、color/color-edge 和 GFTT/LK 都不进入默认 P1；P2 isolated 或 inline A/B 测试需要显式打开对应算法和 realtime/diagnostic lane。
 
 ## 单侧 Fallback
 

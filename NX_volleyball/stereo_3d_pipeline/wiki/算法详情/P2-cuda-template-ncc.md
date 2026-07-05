@@ -37,6 +37,7 @@ z = fb / disparity
 | `disparity_roi_cuda_template_match` | peak 视差 |
 | `roi_cuda_template_match_support` | 单点模板 support，通常为 `1` |
 | `roi_cuda_template_match_confidence` | peak score |
+| sidecar `mode=cuda_template` | diagnostic lane 输出，训练 loader 合并为 P1 sidecar 候选 |
 
 ## 实现位置
 
@@ -50,4 +51,4 @@ z = fb / disparity
 
 ## 当前结论
 
-自研 CUDA Template/NCC isolated A/B: `100.1fps`、`1372/1374` 有效、algo `avg/p95/p99/max=0.30/1.06/1.20/4.89ms`。它满足单算法 isolated 准入，但仍是 P2 单点模板候选，默认关闭，尚未证明和 XFeat/P0/P1 联合长测稳定。
+自研 CUDA Template/NCC isolated A/B: `100.1fps`、`1372/1374` 有效、algo `avg/p95/p99/max=0.30/1.06/1.20/4.89ms`。2026-07-05 P0/P1+NCC+XFeat+SuperPoint 联合 run 中主线 `99.95fps`，`mode=cuda_template` 为 `317/317` 有效，median/MAD `3.5032/0.0020m`，algo `avg/p95/max=1.08/1.07/4.32ms`。它已归入 P1 sidecar 训练候选，但仍是单点模板观测，不参与 legacy `z_stereo`。

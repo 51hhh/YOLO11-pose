@@ -33,9 +33,9 @@ z = fb / robust disparity
 
 | 字段 | 含义 |
 |---|---|
-| `z_roi_neural_feature` | 神经特征候选深度 |
-| `disparity_roi_neural_feature` | 神经特征鲁棒视差 |
-| sidecar `mode=neural_feature` | diagnostic lane 输出 |
+| `z_roi_neural_xfeat` | XFeat 神经特征候选深度 |
+| `disparity_roi_neural_xfeat` | XFeat 神经特征鲁棒视差 |
+| sidecar `mode=neural_xfeat` | diagnostic lane 输出，训练 loader 合并为 P1 sidecar 候选 |
 
 ## 实现位置
 
@@ -43,8 +43,8 @@ z = fb / robust disparity
 |---|---|
 | matcher | `neural_feature_matcher_xfeat.cpp` |
 | GPU postprocess | `neural_feature_xfeat_gpu_postprocess.cu` |
-| config | `neural_feature_matching` |
+| config | `neural_feature_matching_xfeat` |
 
 ## 当前结论
 
-XFeat 160_b2/top64 + GPU postprocess + diagnostic sidecar 曾测得主 CSV `100.10fps`，但这是 sidecar-only 口径。主 CSV inline 路径和默认联合组合仍未通过稳定 100fps 准入。XFeat 可作为 diagnostic sidecar 候选，不应直接视为默认主线。
+XFeat 160_b2/top64 + GPU postprocess + diagnostic sidecar 曾测得主 CSV `100.10fps`，但这是 sidecar-only 口径。2026-07-05 P0/P1+NCC+XFeat+SuperPoint 联合 run 中主线 `99.95fps`，`mode=neural_xfeat` 为 `185/317` 有效，median/MAD `3.4627/0.0085m`，algo `avg/p95/max=5.70/6.66/10.13ms`。XFeat 已归入 P1 sidecar 训练候选，但不进入在线主深度。

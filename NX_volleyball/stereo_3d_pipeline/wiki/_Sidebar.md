@@ -39,10 +39,11 @@
     - [P1训练候选深度](P1训练候选深度.md)
     - [GFTT-LK诊断Sidecar](GFTT-LK诊断Sidecar.md)
     - [XFeatTensorRT深度候选](XFeatTensorRT深度候选.md)
-    - [P2 SuperPoint](算法详情/P2-superpoint.md)
+    - [SuperPoint TensorRT](算法详情/P2-superpoint.md)
     - [CUDA Template/NCC深度候选](CUDA-Template-NCC深度候选.md)
     - [深度候选字段参考](深度候选字段参考.md)
   - 实时测试
+    - [P0/P1+三算法联合测试](P0P1与P2三算法联合测试20260705.md)
     - [实时特征算法矩阵](实时特征算法矩阵.md)
     - [P2算法NX测试排查指南](P2算法NX测试排查指南.md)
     - [实时调度细节](实时调度细节.md)

@@ -1,14 +1,14 @@
 # P2 算法 NX 测试排查指南
 
-最后核对: 2026-07-04
+最后核对: 2026-07-05
 
-本页用于在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个候选能否在实时管线里单项跑通”。当前默认 100fps 采集不再提升 color/SGM/VPI；GFTT/LK 只作为低频 diagnostic sidecar，XFeat 虽已接主 CSV 字段但未通过 100fps 准入。
+本页用于在 NX 上测试 P2 算法时判断问题来源。P2 测试默认只证明“某个新候选能否在实时管线里单项跑通”。当前 P1 已包含主 CSV `z_roi_multi_point` / `z_roi_center_patch` 和 sidecar `cuda_template` / `neural_xfeat` / `neural_superpoint`；color/SGM/VPI/GFTT-LK 等仍属于 P2 A/B 或历史项。
 
 ## 是否已经完成本地准备
 
 当前本地已完成:
 
-- P2 默认关闭字段和矩阵 case 已准备好；当前 `pipeline_record_p0p1.yaml` 只保留 P0/P1 主 CSV 和 GFTT/LK 低频 diagnostic sidecar，XFeat/其他 P2 A/B 必须用临时 YAML 显式打开。
+- P2 默认关闭字段和矩阵 case 已准备好；当前 `pipeline_record_p0p1.yaml` 保留 P0/P1 主 CSV 和 P1 sidecar 三算法。其它 P2 A/B 必须用临时 YAML 显式打开。
 - `scripts/nx_algorithm_matrix_test.py` 已按单算法隔离生成临时 YAML。
 - 报告会写出算法级 `algo_stage` 用时、完整 async worker 用时、deadline/drop 诊断、候选有效率和 CSV 行数；diagnostic-only case 会额外写 `p2_diag_*` 逐帧结果统计。
 - `--debug-on-failure` 可在失败 case 后额外抓 feature debug 图和实时 zoom 图；`--debug-all` 可为每个选中 case 强制抓图。
