@@ -248,7 +248,7 @@ summary.txt
 限制:
 
 - 当前 `debugFeatureMatchesOnce()` 主要画 sparse-lite 和 OpenCV CPU ORB/BRISK/AKAZE/SIFT debug 图。
-- 它不等价于 OpenCV CUDA Template/BM/SGM、XFeat、SuperPoint 的内部匹配可视化。
+- 它不等价于自研 CUDA Template/NCC、OpenCV CUDA BM/SGM、XFeat、SuperPoint 的内部匹配可视化。
 - 它也不等价于 VPI ORB、VPI Harris/LK、Fixstars libSGM、CUDA Hough 或自研 color patch/ring-edge 的内部可视化。
 - 对神经特征和离线 zoom，使用保存的 baseline pair 再跑 `tools/neural_feature_probe.py` 或 `tools/offline_volleyball_keypoint_probe.py`。
 
@@ -261,7 +261,7 @@ summary.txt
 - 已有: OpenCV CUDA GFTT/LK 左右点对 overlay。
 - 已有: OpenCV CUDA ORB 左右点对 overlay。
 - 已有: VPI ORB 左右点对 overlay，来自 10:53 debug run；11:08 final 段未复现。
-- 已有: OpenCV CUDA Template 和 VPI Template 单点峰值图；13:49 更新测试已补 `SCORE PATCH`。
+- 已有: 自研 CUDA Template/NCC 单点峰值图、OpenCV CUDA Template baseline 和 VPI Template 单点峰值图；13:49 更新测试已补旧 OpenCV/VPI `SCORE PATCH`。
 - 已有: OpenCV CUDA StereoSGM 有效 disparity 样本点和 32x32 disparity patch。
 - 已有: OpenCV CUDA StereoBM、VPI Stereo、Fixstars libSGM 的 32x32 dense patch；VPI Stereo 额外有 confidence patch。
 - 已有: XFeat TensorRT 真实左右 keypoint pair overlay。

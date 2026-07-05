@@ -21,8 +21,8 @@
   - 颜色 patch、神经特征和主结果融合仍未迁移。
 - [ ] 缩小或移除 `roi_postprocess_mutex_` 对独立 P2 job 的影响。
 - [ ] OpenCV CUDA P2 使用独立 stream/scratch/matcher 实例，测试多个 OpenCV CUDA 算法并行是否存在隐式同步或尾延迟放大。
-- [ ] Template/BM/SGM 尽量在 GPU 内完成 peak/robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
-  - TemplateMatching 已新增 CUDA score peak reduction，只下载最终 peak 结构；NX `opencv_cuda_template_match_patch9` 实测仍 `0/414` 有效，p95 `3.91ms`、max `43.30ms`，不准入。BM/SGM dense map 聚合仍待迁移。
+- [ ] BM/SGM 尽量在 GPU 内完成 robust 聚合，只下载最终 `disparity/support/stddev/confidence/valid`。
+  - Template 已迁移为自研 CUDA Template/NCC + GPU peak reduce；2026-07-05 NX A/B `100.1fps`、`1372/1374` 有效、algo p95 `1.06ms`、max `4.89ms`。BM/SGM dense map 聚合仍待迁移。
 - [ ] 增加 P2 选择性触发: P0/P1 分歧、pair gate 变差、fallback、帧间跳变或运动残差异常时才运行。
   - 已接入 fallback/direct/host-gray/BGR 初始触发开关和 direct pair quality 触发；selective no-trigger 会跳过 inline P2、BGR snapshot 和 host gray D2H。
   - P0/P1 分歧、帧间跳变和运动残差触发仍待实现。
@@ -35,7 +35,7 @@
 - [ ] debug 特殊情况才下载 score map、disparity map、keypoint/match 可视化数据。
 - [x] 增加 P2 算法级可视化 artifact 基础能力，不能再用 realtime status zoom 代替特征点/采样点匹配图。
   - 已输出 OpenCV CUDA ORB、OpenCV CUDA GFTT/LK、VPI ORB 点对 overlay。
-  - 已输出 OpenCV CUDA Template、VPI Template 峰值图和 score patch。
+  - 已输出自研 CUDA Template/NCC 峰值图、OpenCV CUDA Template baseline 和 VPI Template score patch。
   - 已输出 OpenCV CUDA StereoSGM 少量 disparity 样本点和 CUDA Hough refined center。
 - [ ] 补齐剩余 P2 artifact。
   - XFeat 和 SuperPoint 160/top64 已输出真实左右点对 overlay；SuperPoint 仍不准入。
@@ -53,9 +53,9 @@
 - [x] 复测 `roi_iou_region_color_patch_wide_search`。
 - [x] 复测 `patch_iou_color_edge_offline_tuned`。
 - [x] 复测 `patch_iou_color_edge_wide_search`。
-- [x] 接入 OpenCV CUDA TemplateMatching 小 ROI 极线匹配字段。
-- [x] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配。
-- [x] 实测 `opencv_cuda_template_match_patch9`。
+- [x] 接入 `z_roi_cuda_template_match` 小 ROI 极线匹配字段。
+- [x] 实测 OpenCV CUDA TemplateMatching 小 ROI 极线匹配 baseline。
+- [x] 实现并实测自研 CUDA Template/NCC 默认后端。
 - [x] 实测 VPI CUDA Template Matching / NCC 小 ROI 极线匹配。
   - 已接真实 VPI CUDA diagnostic-only 后端并通过 NX build；有球测试 `99.4fps`、`0/645` 有效，不准入。
   - 已修正 VPI scratch 复用和 GPU peak reduce；下一轮只需重测修正后耗时，不改变当前不准入结论。
