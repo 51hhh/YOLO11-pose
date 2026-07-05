@@ -89,7 +89,7 @@
 | `z_roi_vpi_template_match`, `z_roi_vpi_orb` | VPI diagnostic mode 开启且命中 stride | 字段保留；当前默认去 VPI，以避免联合运行尾延迟 |
 | `z_fallback*` | 直接 pair | 无效 |
 
-主管线中 `p2_realtime_lane_decision_enabled=true` 时，当前 diagnostic sidecar 只保留 OpenCV CUDA GFTT/LK；SGM、VPI Template/ORB 和 color/color-edge 已退出默认配置。P2 isolated diagnostic-only 测试把 realtime lane 关闭，仍可单独跑 OpenCV CUDA、VPI、libSGM 等其他后端。
+主管线当前默认 `p2_realtime_lane_decision_enabled=false`，P2 只保留 OpenCV CUDA GFTT/LK 低频 diagnostic sidecar；SGM、VPI Template/ORB、color/color-edge 和 XFeat 都不进入正式 100fps 主 Stage2。P2 isolated 或 XFeat inline A/B 测试需要显式打开对应算法和 realtime/diagnostic lane。
 
 ## 单侧 Fallback
 

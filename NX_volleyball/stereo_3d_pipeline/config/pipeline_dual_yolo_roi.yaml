@@ -135,7 +135,7 @@ stereo:
   quality: 6
 
 neural_feature_matching:
-  enabled: true
+  enabled: false # XFeat TensorRT is wired but not default: xfeat_only was 98.3fps and combo was 94.4fps on 2026-07-04
   backend: "xfeat"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_128.engine"
   matcher_engine_path: ""
@@ -173,7 +173,7 @@ performance:
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
   async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
   p2_feature_job_scaffold_enabled: true       # enable diagnostic sidecar jobs without blocking main recorder
-  p2_realtime_lane_decision_enabled: true     # keep inline P1 promoted candidates in the main trajectory CSV
+  p2_realtime_lane_decision_enabled: false    # default P2 is diagnostic-only; enable explicitly for XFeat/inline P2 A/B
   p2_diagnostic_lane_decision_enabled: true   # record OpenCV CUDA GFTT/LK in *.p2_diagnostic.csv
   p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
   p2_trigger_on_fallback: true

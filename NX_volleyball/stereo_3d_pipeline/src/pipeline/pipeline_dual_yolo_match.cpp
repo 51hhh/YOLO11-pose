@@ -962,6 +962,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (neural_feature_depth_enabled && direct_yolo_match &&
             right_det && feature_initial_disparity > 0.0f &&
             gpu_image_available && stream != nullptr) {
+            const auto neural_start = Clock::now();
             const NeuralFeatureMatchResult neural =
                 neural_feature_matcher_->matchGpuRoi(
                     left_gpu, left_gpu_pitch,
@@ -972,10 +973,17 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     left_det, *right_det,
                     feature_initial_disparity,
                     stream);
-            if (neural.inference_ms > 0.0f) {
-                globalPerf().record("Stage2_NeuralFeatureMatch",
-                                    neural.inference_ms);
-            }
+            const double neural_elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - neural_start).count();
+            globalPerf().record("Stage2_NeuralFeatureMatch",
+                                neural.inference_ms > 0.0f
+                                    ? static_cast<double>(neural.inference_ms)
+                                    : neural_elapsed_ms);
+            globalPerf().record(neural.valid
+                                    ? "Stage2_NeuralFeatureMatchValid"
+                                    : "Stage2_NeuralFeatureMatchInvalid",
+                                0.0);
             if (neural.valid) {
                 neural_feature_result.valid = true;
                 neural_feature_result.disparity = neural.disparity;

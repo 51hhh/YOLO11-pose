@@ -8,7 +8,7 @@
 
 当前本地已完成:
 
-- P2 默认关闭字段和矩阵 case 已准备好；排序 `1/2/5/7/8` 已在 `pipeline_record_p0p1.yaml` 作为录制候选启用。
+- P2 默认关闭字段和矩阵 case 已准备好；当前 `pipeline_record_p0p1.yaml` 只保留 P0/P1 主 CSV 和 GFTT/LK 低频 diagnostic sidecar，XFeat/其他 P2 A/B 必须用临时 YAML 显式打开。
 - `scripts/nx_algorithm_matrix_test.py` 已按单算法隔离生成临时 YAML。
 - 报告会写出算法级 `algo_stage` 用时、完整 async worker 用时、deadline/drop 诊断、候选有效率和 CSV 行数；diagnostic-only case 会额外写 `p2_diag_*` 逐帧结果统计。
 - `--debug-on-failure` 可在失败 case 后额外抓 feature debug 图和实时 zoom 图；`--debug-all` 可为每个选中 case 强制抓图。
