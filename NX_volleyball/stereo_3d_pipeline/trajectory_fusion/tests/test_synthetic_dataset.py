@@ -28,6 +28,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     read_metadata,
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
+from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 
 
@@ -374,6 +375,24 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(second["roi_cuda_stereo_bm_support"], 8.0)
             self.assertEqual(second["z_roi_ring_edge_profile"], 3.35)
             self.assertEqual(second["roi_ring_edge_profile_support"], 11.0)
+
+    def test_correlated_depth_measurements_are_grouped_by_family(self) -> None:
+        grouped = group_correlated_z_measurements(
+            [
+                (3.00, 0.01, "bbox_center"),
+                (3.02, 0.0025, "bbox_left_edge"),
+                (3.20, 0.01, "circle_center"),
+                (3.30, 0.01, "roi_edge_centroid"),
+                (3.34, 0.0025, "roi_radial_center"),
+            ]
+        )
+        by_group = {name: (z_value, variance) for z_value, variance, name in grouped}
+        self.assertIn("bbox", by_group)
+        self.assertIn("circle", by_group)
+        self.assertIn("roi_geometry", by_group)
+        self.assertAlmostEqual(by_group["bbox"][0], 3.01, places=6)
+        self.assertGreaterEqual(by_group["bbox"][1], 0.0001)
+        self.assertAlmostEqual(by_group["roi_geometry"][0], 3.32, places=6)
 
     def test_check_dataset_and_evaluate_run_on_known_z_clip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

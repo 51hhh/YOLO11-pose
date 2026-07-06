@@ -12,7 +12,7 @@ import csv
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 
@@ -33,6 +33,10 @@ class SmootherConfig:
     use_method_depths: bool = True
     use_online_position: bool = False
     use_static_known_z: bool = True
+
+
+ZMeasurement = Tuple[float, float, str]
+ZMeasurementProvider = Callable[[int, Dict[str, float]], List[ZMeasurement]]
 
 
 def _dt(rows: List[Dict[str, float]], index: int) -> float:
@@ -206,6 +210,35 @@ def _z_measurements(row: Dict[str, float], cfg: SmootherConfig) -> List[Tuple[fl
     return out
 
 
+def group_correlated_z_measurements(
+    values: List[Tuple[float, float, str]],
+    *,
+    relative_floor: float = 0.01,
+) -> List[ZMeasurement]:
+    """Group correlated per-method depth observations by method family.
+
+    Multiple depth candidates produced from the same ROI and disparity prior
+    are not independent measurements. This helper keeps one robust observation
+    per family and preserves disagreement inside the family as extra variance.
+    """
+
+    grouped: Dict[str, List[Tuple[float, float]]] = {}
+    for z_value, variance, method_name in values:
+        if z_value <= 0.1 or variance <= 0.0 or not math.isfinite(z_value) or not math.isfinite(variance):
+            continue
+        grouped.setdefault(_method_group(method_name), []).append((z_value, variance))
+
+    out: List[ZMeasurement] = []
+    for group, group_values in grouped.items():
+        zs = [item[0] for item in group_values]
+        variances = [item[1] for item in group_values]
+        z_group = _median(zs)
+        spread = _median([abs(value - z_group) for value in zs])
+        variance = max(min(variances), spread * spread, (relative_floor * max(1.0, z_group)) ** 2)
+        out.append((z_group, variance, group))
+    return out
+
+
 def _initial_z(row: Dict[str, float]) -> float:
     candidates = [row.get(key, -1.0) for _, key in METHOD_COLUMNS]
     valid = [value for value in candidates if value > 0.1]
@@ -236,7 +269,11 @@ def _metadata_bool(sequence: LegacySequence, *keys: str) -> bool:
     return False
 
 
-def smooth_sequence(sequence: LegacySequence, cfg: SmootherConfig) -> Tuple[List[Dict[str, float]], Dict[str, float]]:
+def smooth_sequence(
+    sequence: LegacySequence,
+    cfg: SmootherConfig,
+    z_measurement_provider: ZMeasurementProvider | None = None,
+) -> Tuple[List[Dict[str, float]], Dict[str, float]]:
     rows = sequence.rows
     first = rows[0]
     state = np.array([first["x"], first["y"], _initial_z(first), 0.0, 0.0, 0.0], dtype=np.float64)
@@ -259,7 +296,12 @@ def smooth_sequence(sequence: LegacySequence, cfg: SmootherConfig) -> Tuple[List
             state, cov, inn = _robust_update(state, cov, meas, h_xyz, r_diag, cfg)
             innovations.append(inn)
 
-        for z_value, z_var, _name in _z_measurements(row, cfg):
+        z_measurements = (
+            z_measurement_provider(i, row)
+            if z_measurement_provider is not None
+            else _z_measurements(row, cfg)
+        )
+        for z_value, z_var, _name in z_measurements:
             state, cov, inn = _robust_update(
                 state,
                 cov,
