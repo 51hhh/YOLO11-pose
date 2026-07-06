@@ -109,7 +109,10 @@ private:
     TrtEngine fused_;
     XFeatGpuWorkspace xfeat_gpu_workspace_;
     DirectFeatureGpuWorkspace direct_gpu_workspace_;
+    void* plugin_library_handle_ = nullptr;
 
+    bool loadPluginLibrary();
+    void closePluginLibrary();
     bool loadEngine(const std::string& path, TrtEngine& out);
     void destroyEngine(TrtEngine& engine);
     bool validateConfig() const;

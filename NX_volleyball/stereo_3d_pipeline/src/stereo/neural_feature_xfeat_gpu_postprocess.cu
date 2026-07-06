@@ -309,7 +309,11 @@ __global__ void collectMatchesKernel(const XFeatGpuFeature* left_features,
                          static_cast<float>(roi_size) -
                      0.5f;
     const float disp = lx - rx;
-    if (disp <= 0.5f ||
+    if (!isfinite(score) ||
+        !isfinite(lx) || !isfinite(ly) ||
+        !isfinite(rx) || !isfinite(ry) ||
+        !isfinite(disp) ||
+        disp <= 0.5f ||
         disp > static_cast<float>(max_disparity) ||
         fabsf(ly - ry) > max_y_error_px ||
         fabsf(disp - initial_disparity) > max_disp_delta_px) {

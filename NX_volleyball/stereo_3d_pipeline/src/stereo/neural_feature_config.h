@@ -21,6 +21,7 @@ struct NeuralFeatureConfig {
     std::string extractor_engine_path;
     std::string matcher_engine_path;
     std::string fused_engine_path;
+    std::string plugin_library_path;
 
     int roi_size = 224;
     int top_k = 128;
@@ -33,10 +34,17 @@ struct NeuralFeatureConfig {
     float min_score = 0.0f;
     bool use_lightglue = false;
     bool gpu_postprocess = false;
+    bool soft_topk_scoring = false;
     float match_margin = 0.015f;
     int min_spatial_quadrants = 2;
     float min_spatial_spread_ratio = 0.10f;
     bool final_geometry_gate_enabled = true;
+    int final_min_support = 0;  // <=0 means reuse min_matches.
+    float final_max_stddev_px = 4.0f;
+    float final_y_tolerance_px = 4.0f;
+    float final_overlap_scale = 0.85f;
+    float final_sphere_radius_scale = 3.5f;
+    float final_sphere_margin_m = 0.04f;
 };
 
 NeuralFeatureBackend parseNeuralFeatureBackend(const std::string& name);

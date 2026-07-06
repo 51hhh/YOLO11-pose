@@ -47,6 +47,7 @@ struct SparseFeatureDebugMatch {
 constexpr int kMaxSparseFeatureDebugMatches = 64;
 constexpr int kMaxSparseFeatureDebugPatchSide = 32;
 constexpr int kMaxSparseFeatureDebugPoints = 256;
+constexpr int kMaxSparseFeatureTopPoints = 5;
 
 struct SparseFeatureDebugPoint {
     float left_x = std::numeric_limits<float>::quiet_NaN();
@@ -81,6 +82,18 @@ struct SparseFeatureDebugPatch {
     std::vector<float> confidence;
 };
 
+struct SparseFeatureTopPoint {
+    float left_x = std::numeric_limits<float>::quiet_NaN();
+    float left_y = std::numeric_limits<float>::quiet_NaN();
+    float right_x = std::numeric_limits<float>::quiet_NaN();
+    float right_y = std::numeric_limits<float>::quiet_NaN();
+    float disparity = -1.0f;
+    float depth_m = -1.0f;
+    float score = 0.0f;
+    float y_delta = std::numeric_limits<float>::quiet_NaN();
+    float rank_score = 0.0f;
+};
+
 struct SparseFeatureDisparityResult {
     bool valid = false;
     bool low_confidence = false;
@@ -99,6 +112,8 @@ struct SparseFeatureDisparityResult {
     int debug_point_count = 0;
     std::array<SparseFeatureDebugPoint, kMaxSparseFeatureDebugPoints> debug_points{};
     SparseFeatureDebugPatch debug_patch;
+    int top_point_count = 0;
+    std::array<SparseFeatureTopPoint, kMaxSparseFeatureTopPoints> top_points{};
 };
 
 }  // namespace stereo3d

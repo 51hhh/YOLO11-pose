@@ -6,9 +6,48 @@
 #include "trajectory_recorder.h"
 #include "trajectory_recorder_summary.h"
 
+#include <array>
 #include <iomanip>
+#include <ostream>
 
 namespace stereo3d {
+
+namespace {
+
+void writeNeuralTopPointHeader(std::ostream& os, const char* prefix) {
+    os << "," << prefix << "_top_count";
+    for (int i = 1; i <= kRecordedFeatureTopPoints; ++i) {
+        os << "," << prefix << "_top" << i << "_left_x"
+           << "," << prefix << "_top" << i << "_left_y"
+           << "," << prefix << "_top" << i << "_right_x"
+           << "," << prefix << "_top" << i << "_right_y"
+           << "," << prefix << "_top" << i << "_z"
+           << "," << prefix << "_top" << i << "_disparity"
+           << "," << prefix << "_top" << i << "_score"
+           << "," << prefix << "_top" << i << "_y_delta"
+           << "," << prefix << "_top" << i << "_rank_score";
+    }
+}
+
+void writeNeuralTopPointRow(
+    std::ostream& os,
+    int count,
+    const std::array<FeatureTopPointRecord, kRecordedFeatureTopPoints>& points) {
+    os << "," << count;
+    for (const auto& point : points) {
+        os << "," << point.left_x
+           << "," << point.left_y
+           << "," << point.right_x
+           << "," << point.right_y
+           << "," << point.z
+           << "," << point.disparity
+           << "," << point.score
+           << "," << point.y_delta
+           << "," << point.rank_score;
+    }
+}
+
+}  // namespace
 
 void TrajectoryRecorder::writeHeader() {
     file_ << "frame_id,timestamp,track_id,"
@@ -92,6 +131,14 @@ void TrajectoryRecorder::writeHeader() {
               << "raw_observation_valid,predicted_z,innovation_z,"
               << "innovation_norm,kalman_sigma_z,"
               << "left_circle_source,right_circle_source,"
+              << "p0p1_dy_center,p0p1_dy_mad,p0p1_dy_sample_count,"
+              << "p0p1_untrusted_mask,"
+              << "p0p1_bbox_center_trust,p0p1_circle_center_trust,"
+              << "p0p1_edge_centroid_trust,p0p1_radial_center_trust,"
+              << "p0p1_edge_pair_center_trust,p0p1_center_patch_trust,"
+              << "p0p1_multi_point_trust,"
+              << "p0p1_cuda_template_match_trust,"
+              << "p0p1_neural_xfeat_trust,"
               << "stereo_match_source,stereo_depth_source,";
     }
     if (cfg_.recordExtendedGeometry()) {
@@ -117,6 +164,9 @@ void TrajectoryRecorder::writeHeader() {
               << "roi_neural_superpoint_confidence,"
               << "roi_neural_aliked_support,roi_neural_aliked_std_px,"
               << "roi_neural_aliked_confidence";
+        writeNeuralTopPointHeader(file_, "roi_neural_xfeat");
+        writeNeuralTopPointHeader(file_, "roi_neural_superpoint");
+        writeNeuralTopPointHeader(file_, "roi_neural_aliked");
     }
     file_ << "\n";
     header_written_ = true;
@@ -308,6 +358,19 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                   << r.innovation_norm << ","
                   << r.kalman_sigma_z << ","
                   << r.left_circle_source << "," << r.right_circle_source << ","
+                  << r.p0p1_dy_center << ","
+                  << r.p0p1_dy_mad << ","
+                  << r.p0p1_dy_sample_count << ","
+                  << r.p0p1_untrusted_mask << ","
+                  << r.p0p1_bbox_center_trust << ","
+                  << r.p0p1_circle_center_trust << ","
+                  << r.p0p1_edge_centroid_trust << ","
+                  << r.p0p1_radial_center_trust << ","
+                  << r.p0p1_edge_pair_center_trust << ","
+                  << r.p0p1_center_patch_trust << ","
+                  << r.p0p1_multi_point_trust << ","
+                  << r.p0p1_cuda_template_match_trust << ","
+                  << r.p0p1_neural_xfeat_trust << ","
                   << r.stereo_match_source << "," << r.stereo_depth_source << ",";
         }
         if (cfg_.recordExtendedGeometry()) {
@@ -351,6 +414,18 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                   << "," << r.roi_neural_aliked_support
                   << "," << r.roi_neural_aliked_std_px
                   << "," << r.roi_neural_aliked_confidence;
+            writeNeuralTopPointRow(
+                file_,
+                r.roi_neural_xfeat_top_count,
+                r.roi_neural_xfeat_top_points);
+            writeNeuralTopPointRow(
+                file_,
+                r.roi_neural_superpoint_top_count,
+                r.roi_neural_superpoint_top_points);
+            writeNeuralTopPointRow(
+                file_,
+                r.roi_neural_aliked_top_count,
+                r.roi_neural_aliked_top_points);
         }
         file_ << "\n";
     }

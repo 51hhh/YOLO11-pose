@@ -9,6 +9,9 @@
 #include "utils/logger.h"
 
 #include <algorithm>
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
 #include <fstream>
 #include <utility>
 #include <vector>
@@ -42,6 +45,7 @@ NeuralFeatureMatcher::~NeuralFeatureMatcher() {
     destroyEngine(extractor_);
     destroyEngine(matcher_);
     destroyEngine(fused_);
+    closePluginLibrary();
 }
 
 bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
@@ -57,6 +61,9 @@ bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
         return true;
     }
     if (!validateConfig()) {
+        return false;
+    }
+    if (!loadPluginLibrary()) {
         return false;
     }
 
@@ -128,6 +135,44 @@ bool NeuralFeatureMatcher::validateConfig() const {
                  "matching is used");
     }
     return true;
+}
+
+bool NeuralFeatureMatcher::loadPluginLibrary() {
+    if (config_.plugin_library_path.empty()) {
+        return true;
+    }
+    if (plugin_library_handle_) {
+        return true;
+    }
+#if defined(__linux__)
+    dlerror();
+    plugin_library_handle_ =
+        dlopen(config_.plugin_library_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (!plugin_library_handle_) {
+        const char* err = dlerror();
+        LOG_ERROR("Failed to load neural TensorRT plugin library: %s (%s)",
+                  config_.plugin_library_path.c_str(),
+                  err ? err : "unknown dlopen error");
+        return false;
+    }
+    LOG_INFO("Loaded neural TensorRT plugin library: %s",
+             config_.plugin_library_path.c_str());
+    return true;
+#else
+    LOG_ERROR("plugin_library_path is configured but dlopen is unavailable: %s",
+              config_.plugin_library_path.c_str());
+    return false;
+#endif
+}
+
+void NeuralFeatureMatcher::closePluginLibrary() {
+    if (!plugin_library_handle_) {
+        return;
+    }
+#if defined(__linux__)
+    dlclose(plugin_library_handle_);
+#endif
+    plugin_library_handle_ = nullptr;
 }
 
 bool NeuralFeatureMatcher::loadEngine(const std::string& path, TrtEngine& out) {

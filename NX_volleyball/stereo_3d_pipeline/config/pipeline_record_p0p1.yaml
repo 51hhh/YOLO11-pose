@@ -144,19 +144,27 @@ neural_feature_matching_xfeat:
   roi_size: 160
   top_k: 64
   descriptor_dim: 64
-  min_matches: 4
-  max_y_error_px: 2.0
-  max_disp_delta_px: 6.0
-  final_disp_gate_px: 3.0
-  min_score: 0.05
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
+  min_score: 0.0
   use_lightglue: false
   gpu_postprocess: true # required for the stable 100fps XFeat sidecar path
+  soft_topk_scoring: true
   match_margin: 0.0
-  min_spatial_quadrants: 2
-  min_spatial_spread_ratio: 0.10
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 4.0
+  final_overlap_scale: 0.85
+  final_sphere_radius_scale: 3.5
+  final_sphere_margin_m: 0.04
 
 neural_feature_matching_superpoint:
-  enabled: false # keep the independent SuperPoint slot, but exclude it from the NCC+XFeat+ALIKED realtime test
+  enabled: false # keep the independent SuperPoint slot, but exclude it from the P0/P1+NCC+XFeat realtime recording config
   backend: "superpoint_lightglue"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/superpoint_extractor_160_top64_b2.engine"
   matcher_engine_path: ""
@@ -165,37 +173,52 @@ neural_feature_matching_superpoint:
   top_k: 64
   descriptor_dim: 256
   realtime_stride: 2
-  min_matches: 4
-  max_y_error_px: 2.0
-  max_disp_delta_px: 32.0
-  final_disp_gate_px: 6.0
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
   min_score: 0.0
   use_lightglue: false
   gpu_postprocess: true
   match_margin: 0.0
-  min_spatial_quadrants: 2
-  min_spatial_spread_ratio: 0.10
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 5.0
+  final_overlap_scale: 0.90
+  final_sphere_radius_scale: 4.0
+  final_sphere_margin_m: 0.06
 
 neural_feature_matching_aliked:
-  enabled: true # ALIKED runs as an independent neural field, not through the SuperPoint slot
+  enabled: false # diagnostic only for now: current ALIKED support/latency is not stable enough for default recording
   backend: "aliked"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/aliked_t16_nodcn_extractor_128_top64_b2.engine"
   matcher_engine_path: ""
   fused_engine_path: ""
+  plugin_library_path: ""
   roi_size: 128
   top_k: 64
   descriptor_dim: 64
   realtime_stride: 1
-  min_matches: 4
-  max_y_error_px: 2.0
-  max_disp_delta_px: 32.0
-  final_disp_gate_px: 6.0
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
   min_score: 0.0
   use_lightglue: false
   gpu_postprocess: true
   match_margin: 0.0
-  min_spatial_quadrants: 2
-  min_spatial_spread_ratio: 0.10
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 5.0
+  final_overlap_scale: 0.90
+  final_sphere_radius_scale: 4.0
+  final_sphere_margin_m: 0.06
 
 fusion:
   min_depth: 0.8

@@ -237,6 +237,7 @@ set(PIPELINE_SOURCES
   src/stereo/depth_candidate_builder.cpp
   src/stereo/depth_candidate_builder_feature.cpp
   src/stereo/depth_match_contract.cpp
+  src/stereo/p0p1_soft_gate.cpp
   src/stereo/dual_yolo_depth_gpu.cpp
   src/stereo/roi_feature_validation.cpp
   src/stereo/roi_feature_match_common.cpp
@@ -326,6 +327,7 @@ target_link_libraries(stereo_pipeline
   # yaml-cpp
   yaml-cpp
   # 系统
+  ${CMAKE_DL_LIBS}
   pthread
   stdc++fs
 )

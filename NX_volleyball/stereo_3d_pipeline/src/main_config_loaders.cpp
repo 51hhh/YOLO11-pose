@@ -136,6 +136,9 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (nf["fused_engine_path"])
             nc.fused_engine_path =
                 nf["fused_engine_path"].as<std::string>();
+        if (nf["plugin_library_path"])
+            nc.plugin_library_path =
+                nf["plugin_library_path"].as<std::string>();
         if (nf["roi_size"])
             nc.roi_size = nf["roi_size"].as<int>();
         if (nf["top_k"])
@@ -158,6 +161,8 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
             nc.use_lightglue = nf["use_lightglue"].as<bool>();
         if (nf["gpu_postprocess"])
             nc.gpu_postprocess = nf["gpu_postprocess"].as<bool>();
+        if (nf["soft_topk_scoring"])
+            nc.soft_topk_scoring = nf["soft_topk_scoring"].as<bool>();
         if (nf["match_margin"])
             nc.match_margin = nf["match_margin"].as<float>();
         if (nf["min_spatial_quadrants"])
@@ -169,6 +174,21 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (nf["final_geometry_gate_enabled"])
             nc.final_geometry_gate_enabled =
                 nf["final_geometry_gate_enabled"].as<bool>();
+        if (nf["final_min_support"])
+            nc.final_min_support = nf["final_min_support"].as<int>();
+        if (nf["final_max_stddev_px"])
+            nc.final_max_stddev_px = nf["final_max_stddev_px"].as<float>();
+        if (nf["final_y_tolerance_px"])
+            nc.final_y_tolerance_px =
+                nf["final_y_tolerance_px"].as<float>();
+        if (nf["final_overlap_scale"])
+            nc.final_overlap_scale = nf["final_overlap_scale"].as<float>();
+        if (nf["final_sphere_radius_scale"])
+            nc.final_sphere_radius_scale =
+                nf["final_sphere_radius_scale"].as<float>();
+        if (nf["final_sphere_margin_m"])
+            nc.final_sphere_margin_m =
+                nf["final_sphere_margin_m"].as<float>();
     };
 
     // Legacy single-backend block (kept for backward compatibility).

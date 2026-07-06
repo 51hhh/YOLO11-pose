@@ -147,9 +147,7 @@ __global__ void dualYoloDepthCandidatesKernel(
     const int color_min_points = clampInt(max(min_points, 4), 3, color_points);
     const int color_search_radius = clampInt((search_radius_px + 2) / 3, 2, 3);
     if (initial_disp <= 0.5f ||
-        initial_disp > static_cast<float>(max_disparity) ||
-        fabsf(left_cy - (out->right_circle.valid ? out->right_circle.cy : pair.right.cy)) >
-            fmaxf(1.0f, epipolar_y_tolerance)) {
+        initial_disp > static_cast<float>(max_disparity)) {
         return;
     }
 

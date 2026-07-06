@@ -9,6 +9,7 @@
 #include "../stereo/depth_candidate_builder.h"
 #include "../stereo/depth_match_contract.h"
 #include "../stereo/neural_feature_matcher.h"
+#include "../stereo/p0p1_soft_gate.h"
 #include "../stereo/roi_feature_match_common.h"
 #include "../stereo/roi_feature_match_cpu.h"
 #include "../stereo/roi_feature_match_gpu.h"
@@ -18,14 +19,339 @@
 #include "../utils/logger.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace stereo3d {
+
+namespace {
+
+float medianCopy(std::vector<float> values) {
+    if (values.empty()) {
+        return 0.0f;
+    }
+    const size_t mid = values.size() / 2;
+    std::nth_element(values.begin(), values.begin() + mid, values.end());
+    float med = values[mid];
+    if ((values.size() % 2) == 0 && mid > 0) {
+        std::nth_element(values.begin(), values.begin() + mid - 1, values.end());
+        med = 0.5f * (med + values[mid - 1]);
+    }
+    return med;
+}
+
+float robustMad(const std::vector<float>& values, float center) {
+    std::vector<float> dev;
+    dev.reserve(values.size());
+    for (float v : values) {
+        if (std::isfinite(v)) {
+            dev.push_back(std::abs(v - center));
+        }
+    }
+    return medianCopy(std::move(dev));
+}
+
+float normalizedFeatureScore(float score) {
+    if (!std::isfinite(score)) {
+        return 0.0f;
+    }
+    if (score >= 0.0f && score <= 1.0f) {
+        return score;
+    }
+    return std::clamp((score + 1.0f) * 0.5f, 0.0f, 1.0f);
+}
+
+float gaussianConsistency(float residual, float sigma) {
+    const float s = std::max(0.25f, sigma);
+    const float x = residual / s;
+    return std::exp(-0.5f * x * x);
+}
+
+void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
+                      float lx,
+                      float ly,
+                      float rx,
+                      float ry,
+                      float disparity,
+                      float score,
+                      float focal,
+                      float baseline) {
+    if (!candidates ||
+        !std::isfinite(lx) || !std::isfinite(ly) ||
+        !std::isfinite(rx) || !std::isfinite(ry) ||
+        !std::isfinite(disparity) || disparity <= 0.5f ||
+        focal <= 1e-3f || baseline <= 1e-6f) {
+        return;
+    }
+    for (const auto& existing : *candidates) {
+        if (std::abs(existing.left_x - lx) < 0.25f &&
+            std::abs(existing.left_y - ly) < 0.25f &&
+            std::abs(existing.right_x - rx) < 0.25f &&
+            std::abs(existing.right_y - ry) < 0.25f &&
+            std::abs(existing.disparity - disparity) < 0.25f) {
+            return;
+        }
+    }
+    SparseFeatureTopPoint point;
+    point.left_x = lx;
+    point.left_y = ly;
+    point.right_x = rx;
+    point.right_y = ry;
+    point.disparity = disparity;
+    point.depth_m = focal * baseline / std::max(0.5f, disparity);
+    point.score = std::isfinite(score) ? score : 0.0f;
+    point.y_delta = ly - ry;
+    candidates->push_back(point);
+}
+
+void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
+                                  float initial_disparity,
+                                  float focal,
+                                  float baseline) {
+    (void)initial_disparity;
+    result.top_point_count = 0;
+    result.top_points = {};
+
+    std::vector<SparseFeatureTopPoint> candidates;
+    candidates.reserve(static_cast<size_t>(
+        result.debug_point_count + result.debug_match_count));
+    for (int i = 0; i < result.debug_match_count; ++i) {
+        const auto& m = result.debug_matches[static_cast<size_t>(i)];
+        addRankCandidate(&candidates,
+                         m.left_x,
+                         m.left_y,
+                         m.right_x,
+                         m.right_y,
+                         m.disparity,
+                         m.score,
+                         focal,
+                         baseline);
+    }
+    for (int i = 0; i < result.debug_point_count; ++i) {
+        const auto& p = result.debug_points[static_cast<size_t>(i)];
+        const auto reason =
+            static_cast<SparseFeatureRejectReason>(p.reject_reason);
+        if (reason == SparseFeatureRejectReason::BAD_DISPARITY) {
+            continue;
+        }
+        addRankCandidate(&candidates,
+                         p.left_x,
+                         p.left_y,
+                         p.right_x,
+                         p.right_y,
+                         p.disparity,
+                         p.score,
+                         focal,
+                         baseline);
+    }
+    if (candidates.empty()) {
+        return;
+    }
+
+    std::vector<float> disparities;
+    std::vector<float> y_deltas;
+    disparities.reserve(candidates.size());
+    y_deltas.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        disparities.push_back(c.disparity);
+        y_deltas.push_back(c.y_delta);
+    }
+    const float y_median = medianCopy(y_deltas);
+    const float y_mad = robustMad(y_deltas, y_median);
+
+    const float y_cluster_gate = std::max(2.0f, 2.5f * 1.4826f * y_mad);
+    float y_sum = 0.0f;
+    int y_count = 0;
+    for (float y : y_deltas) {
+        if (std::abs(y - y_median) <= y_cluster_gate) {
+            y_sum += y;
+            ++y_count;
+        }
+    }
+    const float y_center = y_count > 0
+        ? y_sum / static_cast<float>(y_count)
+        : y_median;
+
+    const float y_sigma = std::max(1.0f, 1.4826f * y_mad);
+    const float global_disparity_center = medianCopy(disparities);
+    const float global_disparity_mad =
+        robustMad(disparities, global_disparity_center);
+    const float cluster_eps =
+        std::max(1.5f, 2.5f * 1.4826f * global_disparity_mad);
+
+    std::vector<std::pair<float, int>> sorted_disparities;
+    sorted_disparities.reserve(candidates.size());
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        sorted_disparities.emplace_back(candidates[i].disparity,
+                                        static_cast<int>(i));
+    }
+    std::sort(sorted_disparities.begin(), sorted_disparities.end());
+
+    std::vector<int> cluster_ids(candidates.size(), -1);
+    std::vector<int> cluster_sizes;
+    int current_cluster = -1;
+    float previous_disparity = std::numeric_limits<float>::quiet_NaN();
+    for (const auto& item : sorted_disparities) {
+        if (current_cluster < 0 ||
+            !std::isfinite(previous_disparity) ||
+            item.first - previous_disparity > cluster_eps) {
+            ++current_cluster;
+            cluster_sizes.push_back(0);
+        }
+        cluster_ids[static_cast<size_t>(item.second)] = current_cluster;
+        ++cluster_sizes[static_cast<size_t>(current_cluster)];
+        previous_disparity = item.first;
+    }
+
+    int main_cluster = 0;
+    for (size_t i = 1; i < cluster_sizes.size(); ++i) {
+        if (cluster_sizes[i] >
+            cluster_sizes[static_cast<size_t>(main_cluster)]) {
+            main_cluster = static_cast<int>(i);
+        }
+    }
+    std::vector<float> main_cluster_disparities;
+    main_cluster_disparities.reserve(candidates.size());
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (cluster_ids[i] == main_cluster) {
+            main_cluster_disparities.push_back(candidates[i].disparity);
+        }
+    }
+    const float disparity_center = main_cluster_disparities.empty()
+        ? global_disparity_center
+        : medianCopy(main_cluster_disparities);
+    const float disparity_mad = main_cluster_disparities.empty()
+        ? global_disparity_mad
+        : robustMad(main_cluster_disparities, disparity_center);
+    const float disparity_sigma = std::max(1.0f, 1.4826f * disparity_mad);
+
+    std::vector<SparseFeatureTopPoint> ranked;
+    ranked.reserve(candidates.size());
+    auto cluster_score_for = [&](size_t index) {
+        const int cid = cluster_ids[index];
+        if (cid < 0) {
+            return 0.1f;
+        }
+        if (cid == main_cluster) {
+            return 1.0f;
+        }
+        const int size = cluster_sizes[static_cast<size_t>(cid)];
+        return size >= 2 ? 0.45f : 0.15f;
+    };
+    auto score_candidate = [&](SparseFeatureTopPoint c, size_t index) {
+        const float y_residual = std::abs(c.y_delta - y_center);
+        const float disparity_residual =
+            std::abs(c.disparity - disparity_center);
+        const float match_score = normalizedFeatureScore(c.score);
+        const float margin_score = match_score;
+        const float y_score = gaussianConsistency(y_residual, y_sigma);
+        const float cluster_score =
+            std::max(cluster_score_for(index),
+                     0.2f * gaussianConsistency(disparity_residual,
+                                                disparity_sigma));
+        const float roi_inside_score = 1.0f;
+        c.rank_score = std::clamp(0.30f * match_score +
+                                      0.20f * margin_score +
+                                      0.20f * y_score +
+                                      0.20f * cluster_score +
+                                      0.10f * roi_inside_score,
+                                  0.0f,
+                                  1.0f);
+        return c;
+    };
+
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        ranked.push_back(score_candidate(candidates[i], i));
+    }
+    std::sort(ranked.begin(), ranked.end(),
+              [](const auto& a, const auto& b) {
+                  return a.rank_score > b.rank_score;
+              });
+
+    result.top_point_count = std::min(
+        static_cast<int>(ranked.size()), kMaxSparseFeatureTopPoints);
+    for (int i = 0; i < result.top_point_count; ++i) {
+        result.top_points[static_cast<size_t>(i)] =
+            ranked[static_cast<size_t>(i)];
+    }
+    if (result.top_point_count <= 0) {
+        return;
+    }
+
+    float weight_sum = 0.0f;
+    float disparity_sum = 0.0f;
+    float score_sum = 0.0f;
+    float lx_sum = 0.0f;
+    float ly_sum = 0.0f;
+    float rx_sum = 0.0f;
+    float ry_sum = 0.0f;
+    for (int i = 0; i < result.top_point_count; ++i) {
+        const auto& p = result.top_points[static_cast<size_t>(i)];
+        const float w = std::max(0.05f, p.rank_score);
+        weight_sum += w;
+        disparity_sum += w * p.disparity;
+        score_sum += p.rank_score;
+        lx_sum += w * p.left_x;
+        ly_sum += w * p.left_y;
+        rx_sum += w * p.right_x;
+        ry_sum += w * p.right_y;
+    }
+    if (weight_sum <= 0.0f) {
+        return;
+    }
+    result.disparity = disparity_sum / weight_sum;
+    result.anchor_cx = lx_sum / weight_sum;
+    result.anchor_cy = ly_sum / weight_sum;
+    result.right_anchor_cx = rx_sum / weight_sum;
+    result.right_anchor_cy = ry_sum / weight_sum;
+    float var = 0.0f;
+    for (int i = 0; i < result.top_point_count; ++i) {
+        const auto& p = result.top_points[static_cast<size_t>(i)];
+        const float w = std::max(0.05f, p.rank_score);
+        const float d = p.disparity - result.disparity;
+        var += w * d * d;
+    }
+    result.stddev = std::sqrt(std::max(0.0f, var / weight_sum));
+    result.confidence = std::max(
+        result.confidence,
+        score_sum / static_cast<float>(result.top_point_count));
+    result.support = std::max(result.support, result.top_point_count);
+    result.valid = true;
+    result.low_confidence = false;
+}
+
+void copyTopFeaturePoints(
+    const SparseFeatureDisparityResult& source,
+    int* count,
+    std::array<FeatureTopPointRecord, kRecordedFeatureTopPoints>* points) {
+    if (!count || !points) {
+        return;
+    }
+    *count = std::min(source.top_point_count, kRecordedFeatureTopPoints);
+    *points = {};
+    for (int i = 0; i < *count; ++i) {
+        const auto& src = source.top_points[static_cast<size_t>(i)];
+        auto& dst = (*points)[static_cast<size_t>(i)];
+        dst.left_x = src.left_x;
+        dst.left_y = src.left_y;
+        dst.right_x = src.right_x;
+        dst.right_y = src.right_y;
+        dst.z = src.depth_m;
+        dst.disparity = src.disparity;
+        dst.score = src.score;
+        dst.y_delta = src.y_delta;
+        dst.rank_score = src.rank_score;
+    }
+}
+
+}  // namespace
 
 Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const std::vector<Detection>& left_detections,
@@ -677,12 +1003,15 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 right_edge_centroid_measure =
                     edge_centroid(right_cpu, right_pitch, *right_det);
             }
-            if (left_edge_centroid_measure.valid && right_edge_centroid_measure.valid &&
-                std::abs(left_edge_centroid_measure.cy -
-                         right_edge_centroid_measure.cy) <= y_tol) {
+            if (left_edge_centroid_measure.valid &&
+                right_edge_centroid_measure.valid) {
                 disparity_roi_edge_centroid =
                     left_edge_centroid_measure.cx - right_edge_centroid_measure.cx;
                 z_roi_edge_centroid = depth_from_disparity(disparity_roi_edge_centroid);
+                if (z_roi_edge_centroid <= 0.0f) {
+                    disparity_roi_edge_centroid = -1.0f;
+                    z_roi_edge_centroid = -1.0f;
+                }
             }
         }
 
@@ -703,11 +1032,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 right_radial_measure =
                     radial_center(right_cpu, right_pitch, *right_det);
             }
-            if (left_radial_measure.valid && right_radial_measure.valid &&
-                std::abs(left_radial_measure.cy - right_radial_measure.cy) <= y_tol) {
+            if (left_radial_measure.valid && right_radial_measure.valid) {
                 disparity_roi_radial_center =
                     left_radial_measure.cx - right_radial_measure.cx;
                 z_roi_radial_center = depth_from_disparity(disparity_roi_radial_center);
+                if (z_roi_radial_center <= 0.0f) {
+                    disparity_roi_radial_center = -1.0f;
+                    z_roi_radial_center = -1.0f;
+                }
             }
         }
 
@@ -728,15 +1060,19 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 right_edge_pair_measure =
                     edge_pair_center(right_cpu, right_pitch, *right_det);
             }
-            if (left_edge_pair_measure.valid && right_edge_pair_measure.valid &&
-                std::abs(left_edge_pair_measure.cy - right_edge_pair_measure.cy) <= y_tol) {
+            if (left_edge_pair_measure.valid && right_edge_pair_measure.valid) {
                 disparity_roi_edge_pair_center =
                     left_edge_pair_measure.cx - right_edge_pair_measure.cx;
                 z_roi_edge_pair_center = depth_from_disparity(disparity_roi_edge_pair_center);
+                if (z_roi_edge_pair_center <= 0.0f) {
+                    disparity_roi_edge_pair_center = -1.0f;
+                    z_roi_edge_pair_center = -1.0f;
+                }
             }
         }
 
-        const float refined_dy = std::abs(left_circle.cy - right_circle.cy);
+        const float circle_y_delta = left_circle.cy - right_circle.cy;
+        const float refined_dy = std::abs(circle_y_delta);
         bool circle_geometry_valid = true;
         bool epipolar_bad = false;
         bool size_bad = false;
@@ -766,7 +1102,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (!circle_vertical_axis_ok) {
             ++local_stats.circle_axis_reject;
             globalPerf().record("Stage2_CircleAxisInvalid", 0.0);
-            circle_geometry_valid = false;
         }
         const bool circle_disp_positive =
             circle_disparity > 0.0f &&
@@ -834,7 +1169,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 circle_sources_ok &&
                 !has_feature_proxy_circle &&
                 circle_geometry_valid &&
-                circle_vertical_axis_ok &&
                 circle_disp_positive &&
                 z_circle_match > 0.0f;
             circle_match_result.low_confidence = !circle_match_result.valid;
@@ -1317,64 +1651,134 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             const bool is_superpoint =
                 artifact_name &&
                 std::strcmp(artifact_name, "neural_superpoint") == 0;
-            auto record_superpoint_status = [&](const std::string& status) {
-                if (!is_superpoint) {
+            auto neural_final_reject_prefix = [&]() -> const char* {
+                if (!artifact_name) {
+                    return nullptr;
+                }
+                if (std::strcmp(artifact_name, "neural_xfeat") == 0) {
+                    return "Stage2_NeuralXFeatFinalReject";
+                }
+                if (std::strcmp(artifact_name, "neural_superpoint") == 0) {
+                    return "Stage2_NeuralSuperPointFinalReject";
+                }
+                if (std::strcmp(artifact_name, "neural_aliked") == 0) {
+                    return "Stage2_NeuralAlikedFinalReject";
+                }
+                if (std::strcmp(artifact_name, "neural_feature") == 0) {
+                    return "Stage2_NeuralFeatureFinalReject";
+                }
+                return nullptr;
+            };
+            auto neural_status_prefix = [&]() -> const char* {
+                if (!artifact_name) {
+                    return nullptr;
+                }
+                if (std::strcmp(artifact_name, "neural_xfeat") == 0) {
+                    return "Stage2_NeuralXFeatStatus";
+                }
+                if (std::strcmp(artifact_name, "neural_superpoint") == 0) {
+                    return "Stage2_NeuralSuperPointStatus";
+                }
+                if (std::strcmp(artifact_name, "neural_aliked") == 0) {
+                    return "Stage2_NeuralAlikedStatus";
+                }
+                if (std::strcmp(artifact_name, "neural_feature") == 0) {
+                    return "Stage2_NeuralFeatureStatus";
+                }
+                return nullptr;
+            };
+            auto make_neural_final_cfg =
+                [&](const NeuralFeatureConfig& cfg) {
+                ROIFeatureMatchConfig final_cfg = feature_cfg;
+                final_cfg.subpixel_min_points =
+                    cfg.final_min_support > 0
+                        ? cfg.final_min_support
+                        : std::max(1, cfg.min_matches);
+                final_cfg.subpixel_max_stddev_px =
+                    std::max(0.05f, cfg.final_max_stddev_px);
+                final_cfg.feature_y_tolerance_px =
+                    std::max(0.05f, cfg.final_y_tolerance_px);
+                final_cfg.feature_overlap_scale =
+                    cfg.final_overlap_scale;
+                final_cfg.feature_sphere_radius_scale =
+                    cfg.final_sphere_radius_scale;
+                final_cfg.feature_sphere_margin_m =
+                    cfg.final_sphere_margin_m;
+                return final_cfg;
+            };
+            auto record_neural_status = [&](const std::string& status) {
+                const char* prefix = neural_status_prefix();
+                if (!prefix) {
                     return;
                 }
+                std::string metric(prefix);
                 if (status == "ok_gpu_b2") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusOkGpuB2", 0.0);
+                    globalPerf().record(metric + "OkGpuB2", 0.0);
                 } else if (status == "ok_gpu") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusOkGpu", 0.0);
+                    globalPerf().record(metric + "OkGpu", 0.0);
                 } else if (status == "not_enough_matches") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusNotEnoughMatches", 0.0);
+                    globalPerf().record(metric + "NotEnoughMatches", 0.0);
+                } else if (status == "not_enough_inliers") {
+                    globalPerf().record(metric + "NotEnoughInliers", 0.0);
+                } else if (status == "poor_spatial_quadrants") {
+                    globalPerf().record(metric + "PoorSpatialQuadrants", 0.0);
+                } else if (status == "poor_spatial_spread") {
+                    globalPerf().record(metric + "PoorSpatialSpread", 0.0);
                 } else if (status == "extractor_failed") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusExtractorFailed", 0.0);
+                    globalPerf().record(metric + "ExtractorFailed", 0.0);
+                } else if (status == "extractor_not_ready") {
+                    globalPerf().record(metric + "ExtractorNotReady", 0.0);
+                } else if (status == "extractor_enqueue_or_copy_failed") {
+                    globalPerf().record(metric + "ExtractorEnqueueOrCopyFailed", 0.0);
                 } else if (status == "stream_wait_failed") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusStreamWaitFailed", 0.0);
+                    globalPerf().record(metric + "StreamWaitFailed", 0.0);
                 } else if (status == "unavailable") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusUnavailable", 0.0);
+                    globalPerf().record(metric + "Unavailable", 0.0);
                 } else if (status == "unsupported_input_schema" ||
                            status == "unsupported_direct_extractor_schema" ||
-                           status == "unsupported_split_matcher_schema") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusUnsupportedSchema", 0.0);
+                           status == "unsupported_split_matcher_schema" ||
+                           status == "unsupported_extractor_schema") {
+                    globalPerf().record(metric + "UnsupportedSchema", 0.0);
                 } else if (status == "requires_bgr") {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusRequiresBgr", 0.0);
+                    globalPerf().record(metric + "RequiresBgr", 0.0);
                 } else {
-                    globalPerf().record("Stage2_NeuralSuperPointStatusOther", 0.0);
+                    globalPerf().record(metric + "Other", 0.0);
                 }
             };
-            auto record_superpoint_final_reject =
+            auto record_neural_final_reject =
                 [&](SparseFeatureRejectReason reason) {
-                if (!is_superpoint) {
+                const char* prefix = neural_final_reject_prefix();
+                if (!prefix) {
                     return;
                 }
+                std::string metric(prefix);
                 switch (reason) {
                 case SparseFeatureRejectReason::BAD_DISPARITY:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectBadDisparity", 0.0);
+                    globalPerf().record(metric + "BadDisparity", 0.0);
                     break;
                 case SparseFeatureRejectReason::SUPPORT:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectSupport", 0.0);
+                    globalPerf().record(metric + "Support", 0.0);
                     break;
                 case SparseFeatureRejectReason::STDDEV:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectStddev", 0.0);
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectStddevPx",
+                    globalPerf().record(metric + "Stddev", 0.0);
+                    globalPerf().record(metric + "StddevPx",
                                         static_cast<double>(result.stddev));
                     break;
                 case SparseFeatureRejectReason::Y_RESIDUAL:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectYResidual", 0.0);
+                    globalPerf().record(metric + "YResidual", 0.0);
                     break;
                 case SparseFeatureRejectReason::OVERLAP:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectOverlap", 0.0);
+                    globalPerf().record(metric + "Overlap", 0.0);
                     break;
                 case SparseFeatureRejectReason::SPHERE:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectSphere", 0.0);
+                    globalPerf().record(metric + "Sphere", 0.0);
                     break;
                 default:
-                    globalPerf().record("Stage2_NeuralSuperPointFinalRejectOther", 0.0);
+                    globalPerf().record(metric + "Other", 0.0);
                     break;
                 }
             };
-            record_superpoint_status(neural.status);
+            record_neural_status(neural.status);
             globalPerf().record(perf_name,
                                 neural.inference_ms > 0.0f
                                     ? static_cast<double>(neural.inference_ms)
@@ -1427,38 +1831,46 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     dst.disparity = src.disparity;
                     dst.score = src.score;
                 }
-                const SparseFeatureRejectReason final_reason =
-                    neural_cfg.final_geometry_gate_enabled
-                        ? sparseFeatureGeometryRejectReason(
-                              result, left_det, *right_det,
-                              feature_initial_disparity, feature_cfg,
-                              focal, baseline)
-                        : SparseFeatureRejectReason::NONE;
-                if (final_reason != SparseFeatureRejectReason::NONE) {
-                    record_superpoint_final_reject(final_reason);
-                    RobustMatchSample final_sample;
-                    final_sample.left_x = result.anchor_cx;
-                    final_sample.left_y = result.anchor_cy;
-                    final_sample.right_x =
-                        std::isfinite(result.right_anchor_cx)
-                            ? result.right_anchor_cx
-                            : result.anchor_cx - result.disparity;
-                    final_sample.right_y =
-                        std::isfinite(result.right_anchor_cy)
-                            ? result.right_anchor_cy
-                            : result.anchor_cy;
-                    final_sample.disparity = result.disparity;
-                    final_sample.score = result.confidence;
-                    appendDebugPoint(result,
-                                     final_sample,
-                                     SparseFeatureDebugStage::GEOMETRY,
-                                     final_reason,
-                                     feature_initial_disparity,
-                                     left_det,
-                                     feature_cfg);
-                    result.valid = false;
-                    result.low_confidence = true;
-                }
+            }
+            populateSoftTopFeaturePoints(result,
+                                         feature_initial_disparity,
+                                         focal,
+                                         baseline);
+            const ROIFeatureMatchConfig neural_final_cfg =
+                make_neural_final_cfg(neural_cfg);
+            const SparseFeatureRejectReason final_reason =
+                (result.valid &&
+                 neural_cfg.final_geometry_gate_enabled &&
+                 !neural_cfg.soft_topk_scoring)
+                    ? sparseFeatureGeometryRejectReason(
+                          result, left_det, *right_det,
+                          feature_initial_disparity, neural_final_cfg,
+                          focal, baseline)
+                    : SparseFeatureRejectReason::NONE;
+            if (final_reason != SparseFeatureRejectReason::NONE) {
+                record_neural_final_reject(final_reason);
+                RobustMatchSample final_sample;
+                final_sample.left_x = result.anchor_cx;
+                final_sample.left_y = result.anchor_cy;
+                final_sample.right_x =
+                    std::isfinite(result.right_anchor_cx)
+                        ? result.right_anchor_cx
+                        : result.anchor_cx - result.disparity;
+                final_sample.right_y =
+                    std::isfinite(result.right_anchor_cy)
+                        ? result.right_anchor_cy
+                        : result.anchor_cy;
+                final_sample.disparity = result.disparity;
+                final_sample.score = result.confidence;
+                appendDebugPoint(result,
+                                 final_sample,
+                                 SparseFeatureDebugStage::GEOMETRY,
+                                 final_reason,
+                                 feature_initial_disparity,
+                                 left_det,
+                                 neural_final_cfg);
+                result.low_confidence = true;
+                result.confidence *= 0.75f;
             }
             if (result.valid) {
                 z_out = depth_from_disparity(result.disparity);
@@ -1883,17 +2295,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             return false;
         }
 
-        const bool measured_circle_geometry_valid =
-            circle_geometry_valid && !has_feature_proxy_circle;
+        const bool circle_sources_valid =
+            !has_feature_proxy_circle &&
+            left_circle.source == kCircleSourceRoiFit &&
+            right_circle.source == kCircleSourceRoiFit;
+        const bool circle_seed_valid =
+            circle_sources_valid && circle_disp_positive;
         const float z_circle_raw =
-            measured_circle_geometry_valid ? (fb / circle_disparity) : -1.0f;
-        const bool circle_depth_valid =
-            z_circle_raw >= config_.depth.min_depth &&
-            z_circle_raw <= config_.depth.max_depth;
+            circle_seed_valid ? depth_from_disparity(circle_disparity) : -1.0f;
+        const bool circle_depth_valid = z_circle_raw > 0.0f;
         const bool circle_candidate_valid =
             circle_depth_enabled &&
-            left_circle.source == kCircleSourceRoiFit &&
-            right_circle.source == kCircleSourceRoiFit &&
+            circle_seed_valid &&
             circle_depth_valid;
         bool epipolar_fallback_depth_valid =
             is_fallback_match &&
@@ -1921,7 +2334,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SubpixelDisparityResult center_patch_result;
         bool center_patch_valid_for_obj = false;
         if (roi_center_patch_depth_enabled &&
-            measured_circle_geometry_valid) {
+            circle_seed_valid &&
+            circle_depth_valid) {
             if (gpu_candidate) {
                 center_patch_result =
                     subpixelFromGpuCandidate(gpu_candidate->center_patch);
@@ -1935,13 +2349,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     focal,
                     baseline);
             }
-            center_patch_valid_for_obj = center_patch_result.valid;
         }
         float z_roi_center_patch =
-            center_patch_valid_for_obj
-                ? depth_from_disparity(center_patch_result.disparity)
-                : -1.0f;
-        center_patch_valid_for_obj = z_roi_center_patch > 0.0f;
+            depth_from_disparity(center_patch_result.disparity);
+        center_patch_valid_for_obj =
+            z_roi_center_patch > 0.0f &&
+            center_patch_result.support > 0 &&
+            std::isfinite(center_patch_result.confidence);
+        if (!center_patch_valid_for_obj) {
+            z_roi_center_patch = -1.0f;
+        }
 
         float disparity = -1.0f;
         int depth_source = 0;
@@ -1952,7 +2369,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const float subpixel_budget_ms =
             std::max(0.0f, config_.dual_yolo.subpixel_time_budget_ms);
         if (use_subpixel_depth &&
-            measured_circle_geometry_valid &&
+            circle_seed_valid &&
+            circle_depth_valid &&
             (subpixel_budget_ms <= 0.0f ||
              local_stats.subpixel_time_ms < static_cast<double>(subpixel_budget_ms))) {
             ++local_stats.subpixel_attempted;
@@ -1984,7 +2402,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             }
             globalPerf().record("Stage2_SubpixelMatch", subpixel_ms);
             subpixel_result = refined;
-            if (refined.valid) {
+            const float refined_z = depth_from_disparity(refined.disparity);
+            const bool refined_measurement_valid =
+                refined_z > 0.0f &&
+                refined.support > 0 &&
+                std::isfinite(refined.confidence);
+            if (refined_measurement_valid) {
                 disparity = refined.disparity;
                 subpixel_valid_for_obj = true;
                 disparity_conf = std::clamp(0.70f + 0.30f * refined.confidence,
@@ -1999,12 +2422,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     ++local_stats.subpixel_low_conf;
                 }
             }
-        } else if (use_subpixel_depth && measured_circle_geometry_valid) {
+        } else if (use_subpixel_depth && circle_seed_valid && circle_depth_valid) {
             ++local_stats.subpixel_budget_skip;
         }
 
         float z_subpixel =
-            subpixel_valid_for_obj ? fb / subpixel_result.disparity : -1.0f;
+            subpixel_valid_for_obj
+                ? depth_from_disparity(subpixel_result.disparity)
+                : -1.0f;
 
         if (is_fallback_match && any_fallback_depth_valid) {
             const float consistency_gate_px = computeSubpixelDispDeltaGateCPU(
@@ -2046,6 +2471,143 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 any_fallback_depth_valid = false;
             }
         }
+
+        std::vector<P0P1SoftGateSample> p0p1_samples;
+        auto add_p0p1_sample = [&](P0P1SoftGateCandidate candidate,
+                                   float disparity_px,
+                                   float z_m,
+                                   float y_delta,
+                                   float source_score,
+                                   float geometry_score) {
+            p0p1_samples.push_back({candidate,
+                                    disparity_px,
+                                    z_m,
+                                    y_delta,
+                                    source_score,
+                                    geometry_score});
+        };
+        auto feature_result_y_delta =
+            [](const SparseFeatureDisparityResult& result) {
+                if (std::isfinite(result.anchor_cy) &&
+                    std::isfinite(result.right_anchor_cy)) {
+                    return result.anchor_cy - result.right_anchor_cy;
+                }
+                if (result.top_point_count > 0) {
+                    std::vector<float> dy_values;
+                    dy_values.reserve(static_cast<size_t>(result.top_point_count));
+                    for (int i = 0; i < result.top_point_count; ++i) {
+                        const auto& point =
+                            result.top_points[static_cast<size_t>(i)];
+                        if (std::isfinite(point.y_delta)) {
+                            dy_values.push_back(point.y_delta);
+                        }
+                    }
+                    if (!dy_values.empty()) {
+                        return medianCopy(std::move(dy_values));
+                    }
+                }
+                return std::numeric_limits<float>::quiet_NaN();
+        };
+        const float circle_size_score =
+            std::isfinite(radius_ratio) && radius_ratio > 0.0f
+                ? std::exp(-std::abs(std::log(radius_ratio)) / 0.25f)
+                : 0.5f;
+        if (direct_yolo_match && right_det) {
+            add_p0p1_sample(P0P1SoftGateCandidate::BBOX_CENTER,
+                            yolo_disparity, z_yolo,
+                            left_det.cy - right_det->cy,
+                            left_det.confidence * right_det->confidence,
+                            1.0f);
+        }
+        add_p0p1_sample(P0P1SoftGateCandidate::CIRCLE_CENTER,
+                        circle_disparity, z_circle_raw, circle_y_delta,
+                        std::min(left_circle.confidence,
+                                 right_circle.confidence),
+                        circle_size_score);
+        if (left_edge_centroid_measure.valid &&
+            right_edge_centroid_measure.valid) {
+            add_p0p1_sample(
+                P0P1SoftGateCandidate::ROI_EDGE_CENTROID,
+                disparity_roi_edge_centroid,
+                z_roi_edge_centroid,
+                left_edge_centroid_measure.cy - right_edge_centroid_measure.cy,
+                1.0f,
+                1.0f);
+        }
+        if (left_radial_measure.valid && right_radial_measure.valid) {
+            add_p0p1_sample(
+                P0P1SoftGateCandidate::ROI_RADIAL_CENTER,
+                disparity_roi_radial_center,
+                z_roi_radial_center,
+                left_radial_measure.cy - right_radial_measure.cy,
+                1.0f,
+                1.0f);
+        }
+        if (left_edge_pair_measure.valid && right_edge_pair_measure.valid) {
+            add_p0p1_sample(
+                P0P1SoftGateCandidate::ROI_EDGE_PAIR_CENTER,
+                disparity_roi_edge_pair_center,
+                z_roi_edge_pair_center,
+                left_edge_pair_measure.cy - right_edge_pair_measure.cy,
+                1.0f,
+                1.0f);
+        }
+        add_p0p1_sample(P0P1SoftGateCandidate::ROI_CENTER_PATCH,
+                        center_patch_result.disparity,
+                        z_roi_center_patch,
+                        circle_y_delta,
+                        center_patch_result.confidence,
+                        circle_size_score);
+        add_p0p1_sample(P0P1SoftGateCandidate::ROI_MULTI_POINT,
+                        subpixel_result.disparity,
+                        z_subpixel,
+                        circle_y_delta,
+                        subpixel_result.confidence,
+                        circle_size_score);
+        add_p0p1_sample(P0P1SoftGateCandidate::ROI_CUDA_TEMPLATE_MATCH,
+                        cuda_template_match_result.disparity,
+                        z_roi_cuda_template_match,
+                        feature_result_y_delta(cuda_template_match_result),
+                        cuda_template_match_result.confidence,
+                        1.0f);
+        add_p0p1_sample(P0P1SoftGateCandidate::ROI_NEURAL_XFEAT,
+                        neural_xfeat_result.disparity,
+                        z_roi_neural_xfeat,
+                        feature_result_y_delta(neural_xfeat_result),
+                        neural_xfeat_result.confidence,
+                        1.0f);
+
+        const std::vector<P0P1SoftGateCandidateState> p0p1_candidate_states = {
+            {P0P1SoftGateCandidate::BBOX_CENTER,
+             direct_yolo_match && bbox_depth_enabled && right_det,
+             z_yolo},
+            {P0P1SoftGateCandidate::CIRCLE_CENTER,
+             direct_yolo_match && circle_depth_enabled,
+             z_circle_raw},
+            {P0P1SoftGateCandidate::ROI_EDGE_CENTROID,
+             direct_yolo_match && roi_edge_centroid_depth_enabled,
+             z_roi_edge_centroid},
+            {P0P1SoftGateCandidate::ROI_RADIAL_CENTER,
+             direct_yolo_match && roi_radial_center_depth_enabled,
+             z_roi_radial_center},
+            {P0P1SoftGateCandidate::ROI_EDGE_PAIR_CENTER,
+             direct_yolo_match && roi_edge_pair_center_depth_enabled,
+             z_roi_edge_pair_center},
+            {P0P1SoftGateCandidate::ROI_CENTER_PATCH,
+             direct_yolo_match && roi_center_patch_depth_enabled,
+             z_roi_center_patch},
+            {P0P1SoftGateCandidate::ROI_MULTI_POINT,
+             direct_yolo_match && use_subpixel_depth,
+             z_subpixel},
+            {P0P1SoftGateCandidate::ROI_CUDA_TEMPLATE_MATCH,
+             direct_yolo_match && roi_cuda_template_match_depth_enabled,
+             z_roi_cuda_template_match},
+            {P0P1SoftGateCandidate::ROI_NEURAL_XFEAT,
+             direct_yolo_match && neural_xfeat_depth_enabled,
+             z_roi_neural_xfeat},
+        };
+        const P0P1SoftGateOutput p0p1_gate =
+            evaluateP0P1SoftGate(p0p1_samples, p0p1_candidate_states);
 
         DepthCandidateBuilderInput depth_candidate_input;
         depth_candidate_input.left_detection = left_det;
@@ -2340,6 +2902,29 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.size_ratio = radius_ratio;
         obj.left_circle_conf = left_circle.confidence;
         obj.right_circle_conf = right_circle.confidence;
+        obj.p0p1_dy_center = p0p1_gate.dy_center_px;
+        obj.p0p1_dy_mad = p0p1_gate.dy_mad_px;
+        obj.p0p1_dy_sample_count = p0p1_gate.sample_count;
+        obj.p0p1_untrusted_mask = p0p1_gate.untrusted_mask;
+        obj.p0p1_bbox_center_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::BBOX_CENTER);
+        obj.p0p1_circle_center_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::CIRCLE_CENTER);
+        obj.p0p1_edge_centroid_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_EDGE_CENTROID);
+        obj.p0p1_radial_center_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_RADIAL_CENTER);
+        obj.p0p1_edge_pair_center_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_EDGE_PAIR_CENTER);
+        obj.p0p1_center_patch_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_CENTER_PATCH);
+        obj.p0p1_multi_point_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_MULTI_POINT);
+        obj.p0p1_cuda_template_match_trust =
+            p0p1_gate.trustOf(
+                P0P1SoftGateCandidate::ROI_CUDA_TEMPLATE_MATCH);
+        obj.p0p1_neural_xfeat_trust =
+            p0p1_gate.trustOf(P0P1SoftGateCandidate::ROI_NEURAL_XFEAT);
         obj.subpixel_valid = subpixel_valid_for_obj ? 1 : 0;
         obj.subpixel_attempted = subpixel_attempted_for_obj ? 1 : 0;
         obj.subpixel_support = subpixel_result.support;
@@ -2431,17 +3016,26 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.roi_neural_xfeat_std_px =
             neural_xfeat_result.valid ? neural_xfeat_result.stddev : -1.0f;
         obj.roi_neural_xfeat_confidence = neural_xfeat_result.confidence;
+        copyTopFeaturePoints(neural_xfeat_result,
+                             &obj.roi_neural_xfeat_top_count,
+                             &obj.roi_neural_xfeat_top_points);
         obj.roi_neural_superpoint_support = neural_superpoint_result.support;
         obj.roi_neural_superpoint_std_px =
             neural_superpoint_result.valid ? neural_superpoint_result.stddev
                                            : -1.0f;
         obj.roi_neural_superpoint_confidence =
             neural_superpoint_result.confidence;
+        copyTopFeaturePoints(neural_superpoint_result,
+                             &obj.roi_neural_superpoint_top_count,
+                             &obj.roi_neural_superpoint_top_points);
         obj.roi_neural_aliked_support = neural_aliked_result.support;
         obj.roi_neural_aliked_std_px =
             neural_aliked_result.valid ? neural_aliked_result.stddev : -1.0f;
         obj.roi_neural_aliked_confidence =
             neural_aliked_result.confidence;
+        copyTopFeaturePoints(neural_aliked_result,
+                             &obj.roi_neural_aliked_top_count,
+                             &obj.roi_neural_aliked_top_points);
         obj.fallback_feature_points_support = fallback_feature_result.support;
         obj.fallback_feature_points_std_px =
             fallback_feature_result.valid ? fallback_feature_result.stddev : -1.0f;

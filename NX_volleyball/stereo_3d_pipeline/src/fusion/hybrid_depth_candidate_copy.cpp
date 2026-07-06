@@ -102,6 +102,20 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
     obj.size_ratio = roi.size_ratio;
     obj.left_circle_conf = roi.left_circle_conf;
     obj.right_circle_conf = roi.right_circle_conf;
+    obj.p0p1_dy_center = roi.p0p1_dy_center;
+    obj.p0p1_dy_mad = roi.p0p1_dy_mad;
+    obj.p0p1_dy_sample_count = roi.p0p1_dy_sample_count;
+    obj.p0p1_untrusted_mask = roi.p0p1_untrusted_mask;
+    obj.p0p1_bbox_center_trust = roi.p0p1_bbox_center_trust;
+    obj.p0p1_circle_center_trust = roi.p0p1_circle_center_trust;
+    obj.p0p1_edge_centroid_trust = roi.p0p1_edge_centroid_trust;
+    obj.p0p1_radial_center_trust = roi.p0p1_radial_center_trust;
+    obj.p0p1_edge_pair_center_trust = roi.p0p1_edge_pair_center_trust;
+    obj.p0p1_center_patch_trust = roi.p0p1_center_patch_trust;
+    obj.p0p1_multi_point_trust = roi.p0p1_multi_point_trust;
+    obj.p0p1_cuda_template_match_trust =
+        roi.p0p1_cuda_template_match_trust;
+    obj.p0p1_neural_xfeat_trust = roi.p0p1_neural_xfeat_trust;
     obj.subpixel_valid = roi.subpixel_valid;
     obj.subpixel_attempted = roi.subpixel_attempted;
     obj.subpixel_support = roi.subpixel_support;
@@ -177,18 +191,30 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
         roi.roi_neural_xfeat_std_px;
     obj.roi_neural_xfeat_confidence =
         roi.roi_neural_xfeat_confidence;
+    obj.roi_neural_xfeat_top_count =
+        roi.roi_neural_xfeat_top_count;
+    obj.roi_neural_xfeat_top_points =
+        roi.roi_neural_xfeat_top_points;
     obj.roi_neural_superpoint_support =
         roi.roi_neural_superpoint_support;
     obj.roi_neural_superpoint_std_px =
         roi.roi_neural_superpoint_std_px;
     obj.roi_neural_superpoint_confidence =
         roi.roi_neural_superpoint_confidence;
+    obj.roi_neural_superpoint_top_count =
+        roi.roi_neural_superpoint_top_count;
+    obj.roi_neural_superpoint_top_points =
+        roi.roi_neural_superpoint_top_points;
     obj.roi_neural_aliked_support =
         roi.roi_neural_aliked_support;
     obj.roi_neural_aliked_std_px =
         roi.roi_neural_aliked_std_px;
     obj.roi_neural_aliked_confidence =
         roi.roi_neural_aliked_confidence;
+    obj.roi_neural_aliked_top_count =
+        roi.roi_neural_aliked_top_count;
+    obj.roi_neural_aliked_top_points =
+        roi.roi_neural_aliked_top_points;
     obj.fallback_feature_points_support = roi.fallback_feature_points_support;
     obj.fallback_feature_points_std_px = roi.fallback_feature_points_std_px;
     obj.fallback_feature_points_confidence = roi.fallback_feature_points_confidence;

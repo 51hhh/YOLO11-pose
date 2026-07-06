@@ -64,6 +64,7 @@ class Case:
     yaml_scalars: dict[str, str] = field(default_factory=dict)
     neural_backend: str | None = None
     neural_engine: str | None = None
+    neural_plugin: str | None = None
     roi_size: int = 224
     top_k: int = 128
     descriptor_dim: int = 64
@@ -73,7 +74,15 @@ class Case:
     neural_final_disp_gate_px: float = 2.0
     neural_min_score: float = 0.0
     neural_gpu_postprocess: bool = True
+    neural_min_spatial_quadrants: int = 2
+    neural_min_spatial_spread_ratio: float = 0.10
     neural_final_geometry_gate_enabled: bool = True
+    neural_final_min_support: int = 4
+    neural_final_max_stddev_px: float = 6.0
+    neural_final_y_tolerance_px: float = 4.0
+    neural_final_overlap_scale: float = 0.85
+    neural_final_sphere_radius_scale: float = 3.5
+    neural_final_sphere_margin_m: float = 0.04
     neural_slot: str = "legacy"
     algo_stage_override: str | None = None
     note: str = ""
@@ -716,13 +725,18 @@ RELAXED_CASES = (
         roi_size=160,
         top_k=64,
         descriptor_dim=64,
-        neural_min_matches=4,
-        neural_max_disp_delta_px=6.0,
-        neural_final_disp_gate_px=3.0,
-        neural_min_score=0.05,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_score=0.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
         neural_slot="xfeat",
         algo_stage_override="Stage2_NeuralXFeatMatch",
-        note="current split slot: XFeat 160/b2 top64 with production gates",
+        note="current split slot: XFeat 160/b2 top64 with soft top5 scoring",
     ),
     Case(
         "neural_xfeat_160_b2_top64_gate_off",
@@ -739,7 +753,10 @@ RELAXED_CASES = (
         neural_max_disp_delta_px=999.0,
         neural_final_disp_gate_px=999.0,
         neural_min_score=0.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
         neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
         neural_slot="xfeat",
         algo_stage_override="Stage2_NeuralXFeatMatch",
         note="diagnostic only: current XFeat with neural and final geometry gates relaxed/off",
@@ -886,11 +903,22 @@ RELAXED_CASES = (
         roi_size=160,
         top_k=64,
         descriptor_dim=256,
-        neural_min_matches=4,
-        neural_final_disp_gate_px=6.0,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
+        neural_final_max_stddev_px=6.0,
+        neural_final_y_tolerance_px=5.0,
+        neural_final_overlap_scale=0.90,
+        neural_final_sphere_radius_scale=4.0,
+        neural_final_sphere_margin_m=0.06,
         neural_slot="superpoint",
         algo_stage_override="Stage2_NeuralSuperPointMatch",
-        note="current split slot: SuperPoint 160/top64/b2 with production gates",
+        note="current split slot: SuperPoint 160/top64/b2 with soft top5 scoring",
     ),
     Case(
         "neural_superpoint_160_top64_b2_gate_off",
@@ -907,7 +935,10 @@ RELAXED_CASES = (
         neural_max_disp_delta_px=999.0,
         neural_final_disp_gate_px=999.0,
         neural_min_score=0.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
         neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
         neural_slot="superpoint",
         algo_stage_override="Stage2_NeuralSuperPointMatch",
         note="diagnostic only: current SuperPoint with neural and final geometry gates relaxed/off",
@@ -1015,11 +1046,22 @@ RELAXED_CASES = (
         roi_size=128,
         top_k=64,
         descriptor_dim=64,
-        neural_min_matches=4,
-        neural_final_disp_gate_px=6.0,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
+        neural_final_max_stddev_px=6.0,
+        neural_final_y_tolerance_px=5.0,
+        neural_final_overlap_scale=0.90,
+        neural_final_sphere_radius_scale=4.0,
+        neural_final_sphere_margin_m=0.06,
         neural_slot="aliked",
         algo_stage_override="Stage2_NeuralAlikedMatch",
-        note="current split slot: ALIKED t16 no-DCN 128/top64/b2 with production gates",
+        note="current split slot: ALIKED t16 no-DCN 128/top64/b2 with soft top5 scoring",
     ),
     Case(
         "neural_aliked_t16_128_top64_b2_gate_off",
@@ -1036,10 +1078,36 @@ RELAXED_CASES = (
         neural_max_disp_delta_px=999.0,
         neural_final_disp_gate_px=999.0,
         neural_min_score=0.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
         neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
         neural_slot="aliked",
         algo_stage_override="Stage2_NeuralAlikedMatch",
-        note="diagnostic only: current ALIKED with neural and final geometry gates relaxed/off",
+        note="diagnostic only: current ALIKED no-DCN with neural and final geometry gates relaxed/off",
+    ),
+    Case(
+        "neural_aliked_t16_nodcn_128_top64_b2_gate_off",
+        candidate_fields=("z_roi_neural_aliked",),
+        support_field="roi_neural_aliked_support",
+        yaml_scalars=NEURAL_GATE_OFF_SWEEP,
+        neural_backend="aliked",
+        neural_engine="aliked_t16_nodcn_extractor_128_top64_b2.engine",
+        roi_size=128,
+        top_k=64,
+        descriptor_dim=64,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_score=0.0,
+        neural_min_spatial_quadrants=0,
+        neural_min_spatial_spread_ratio=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_final_min_support=1,
+        neural_slot="aliked",
+        algo_stage_override="Stage2_NeuralAlikedMatch",
+        note="diagnostic only: ALIKED t16 no-DCN baseline with neural and final geometry gates relaxed/off",
     ),
     Case(
         "neural_aliked_224_top64",
@@ -1124,12 +1192,16 @@ def render_neural_block(case: Case, neural_model_dir: Path) -> str:
     extractor_engine_path = ""
     if case.neural_engine:
         extractor_engine_path = str(neural_model_dir / case.neural_engine)
+    plugin_library_path = ""
+    if case.neural_plugin:
+        plugin_library_path = str(neural_model_dir / case.neural_plugin)
     return f"""{neural_block_name(case)}:
   enabled: true
   backend: "{case.neural_backend}"
   extractor_engine_path: "{extractor_engine_path}"
   matcher_engine_path: ""
   fused_engine_path: ""
+  plugin_library_path: "{plugin_library_path}"
   roi_size: {case.roi_size}
   top_k: {case.top_k}
   descriptor_dim: {case.descriptor_dim}
@@ -1140,7 +1212,15 @@ def render_neural_block(case: Case, neural_model_dir: Path) -> str:
   min_score: {case.neural_min_score}
   use_lightglue: {use_lightglue}
   gpu_postprocess: {str(case.neural_gpu_postprocess).lower()}
+  min_spatial_quadrants: {case.neural_min_spatial_quadrants}
+  min_spatial_spread_ratio: {case.neural_min_spatial_spread_ratio}
   final_geometry_gate_enabled: {str(case.neural_final_geometry_gate_enabled).lower()}
+  final_min_support: {case.neural_final_min_support}
+  final_max_stddev_px: {case.neural_final_max_stddev_px}
+  final_y_tolerance_px: {case.neural_final_y_tolerance_px}
+  final_overlap_scale: {case.neural_final_overlap_scale}
+  final_sphere_radius_scale: {case.neural_final_sphere_radius_scale}
+  final_sphere_margin_m: {case.neural_final_sphere_margin_m}
 """
 
 

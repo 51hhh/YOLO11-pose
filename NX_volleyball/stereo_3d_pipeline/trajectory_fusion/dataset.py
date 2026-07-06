@@ -38,6 +38,7 @@ METHOD_COLUMNS = (
     ("roi_neural_feature", "z_roi_neural_feature"),
     ("roi_neural_xfeat", "z_roi_neural_xfeat"),
     ("roi_neural_superpoint", "z_roi_neural_superpoint"),
+    ("roi_neural_aliked", "z_roi_neural_aliked"),
     ("roi_center_patch", "z_roi_center_patch"),
     ("roi_multi_point", "z_roi_multi_point"),
     ("epipolar_fallback", "z_fallback_epipolar"),
@@ -45,6 +46,66 @@ METHOD_COLUMNS = (
     ("fallback_feature_points", "z_fallback_feature_points"),
 )
 METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
+NEURAL_TOP_BACKENDS = (
+    "roi_neural_xfeat",
+    "roi_neural_superpoint",
+    "roi_neural_aliked",
+)
+NEURAL_TOP_FIELDS = (
+    "left_x",
+    "left_y",
+    "right_x",
+    "right_y",
+    "z",
+    "disparity",
+    "score",
+    "y_delta",
+    "rank_score",
+)
+NEURAL_TOP_K = 5
+P0P1_UNTRUSTED_BITS = (
+    ("bbox_center", 0),
+    ("circle_center", 1),
+    ("roi_edge_centroid", 2),
+    ("roi_radial_center", 3),
+    ("roi_edge_pair_center", 4),
+    ("roi_center_patch", 5),
+    ("roi_multi_point", 6),
+    ("roi_cuda_template_match", 7),
+    ("roi_neural_xfeat", 8),
+)
+P0P1_TRUST_FIELDS = (
+    "p0p1_bbox_center_trust",
+    "p0p1_circle_center_trust",
+    "p0p1_edge_centroid_trust",
+    "p0p1_radial_center_trust",
+    "p0p1_edge_pair_center_trust",
+    "p0p1_center_patch_trust",
+    "p0p1_multi_point_trust",
+    "p0p1_cuda_template_match_trust",
+    "p0p1_neural_xfeat_trust",
+)
+
+
+def neural_top_feature_names() -> List[str]:
+    names: List[str] = []
+    for backend in NEURAL_TOP_BACKENDS:
+        names.append(f"{backend}_top_count")
+        for idx in range(1, NEURAL_TOP_K + 1):
+            for field in NEURAL_TOP_FIELDS:
+                names.append(f"{backend}_top{idx}_{field}")
+    return names
+
+
+def p0p1_quality_feature_names() -> List[str]:
+    return [
+        "p0p1_dy_center",
+        "p0p1_dy_mad",
+        "p0p1_dy_sample_count",
+        "p0p1_untrusted_mask",
+        *P0P1_TRUST_FIELDS,
+        *[f"p0p1_{name}_untrusted" for name, _ in P0P1_UNTRUSTED_BITS],
+    ]
 
 P2_DIAGNOSTIC_MODE_COLUMNS = {
     "cuda_template": {
@@ -116,6 +177,13 @@ P2_DIAGNOSTIC_MODE_COLUMNS = {
         "support": "roi_neural_superpoint_support",
         "std": "roi_neural_superpoint_std_px",
         "confidence": "roi_neural_superpoint_confidence",
+    },
+    "neural_aliked": {
+        "z": "z_roi_neural_aliked",
+        "disparity": "disparity_roi_neural_aliked",
+        "support": "roi_neural_aliked_support",
+        "std": "roi_neural_aliked_std_px",
+        "confidence": "roi_neural_aliked_confidence",
     },
 }
 
@@ -325,6 +393,7 @@ def load_legacy_sequences(
         track_id = _safe_int(row.get("track_id"), -1)
         if track_id < 0:
             continue
+        p0p1_untrusted_mask = _safe_int(row.get("p0p1_untrusted_mask"), 0)
         parsed = {
             "frame_id": _safe_float(row.get("frame_id")),
             "timestamp": _safe_float(row.get("timestamp")),
@@ -366,6 +435,7 @@ def load_legacy_sequences(
             "z_roi_neural_feature": _safe_float(row.get("z_roi_neural_feature"), -1.0),
             "z_roi_neural_xfeat": _safe_float(row.get("z_roi_neural_xfeat"), -1.0),
             "z_roi_neural_superpoint": _safe_float(row.get("z_roi_neural_superpoint"), -1.0),
+            "z_roi_neural_aliked": _safe_float(row.get("z_roi_neural_aliked"), -1.0),
             "z_roi_center_patch": _safe_float(row.get("z_roi_center_patch"), -1.0),
             "z_roi_multi_point": _safe_float(row.get("z_roi_multi_point", row.get("z_subpixel")), -1.0),
             "z_yolo_bbox_pair": _safe_float(row.get("z_yolo_bbox_pair"), -1.0),
@@ -408,6 +478,7 @@ def load_legacy_sequences(
             "disparity_roi_neural_feature": _safe_float(row.get("disparity_roi_neural_feature"), -1.0),
             "disparity_roi_neural_xfeat": _safe_float(row.get("disparity_roi_neural_xfeat"), -1.0),
             "disparity_roi_neural_superpoint": _safe_float(row.get("disparity_roi_neural_superpoint"), -1.0),
+            "disparity_roi_neural_aliked": _safe_float(row.get("disparity_roi_neural_aliked"), -1.0),
             "disparity_roi_center_patch": _safe_float(row.get("disparity_roi_center_patch"), -1.0),
             "disparity_roi_multi_point": _safe_float(row.get("disparity_roi_multi_point", row.get("disparity_subpixel")), -1.0),
             "disparity_fallback_epipolar": _safe_float(row.get("disparity_fallback_epipolar"), -1.0),
@@ -428,6 +499,19 @@ def load_legacy_sequences(
             "pair_positive_disparity": _safe_float(row.get("pair_positive_disparity"), 0.0),
             "left_circle_conf": _safe_float(row.get("left_circle_conf"), 0.0),
             "right_circle_conf": _safe_float(row.get("right_circle_conf"), 0.0),
+            "p0p1_dy_center": _safe_float(row.get("p0p1_dy_center"), 0.0),
+            "p0p1_dy_mad": _safe_float(row.get("p0p1_dy_mad"), 0.0),
+            "p0p1_dy_sample_count": _safe_float(row.get("p0p1_dy_sample_count"), 0.0),
+            "p0p1_untrusted_mask": float(p0p1_untrusted_mask),
+            "p0p1_bbox_center_trust": _safe_float(row.get("p0p1_bbox_center_trust"), 0.0),
+            "p0p1_circle_center_trust": _safe_float(row.get("p0p1_circle_center_trust"), 0.0),
+            "p0p1_edge_centroid_trust": _safe_float(row.get("p0p1_edge_centroid_trust"), 0.0),
+            "p0p1_radial_center_trust": _safe_float(row.get("p0p1_radial_center_trust"), 0.0),
+            "p0p1_edge_pair_center_trust": _safe_float(row.get("p0p1_edge_pair_center_trust"), 0.0),
+            "p0p1_center_patch_trust": _safe_float(row.get("p0p1_center_patch_trust"), 0.0),
+            "p0p1_multi_point_trust": _safe_float(row.get("p0p1_multi_point_trust"), 0.0),
+            "p0p1_cuda_template_match_trust": _safe_float(row.get("p0p1_cuda_template_match_trust"), 0.0),
+            "p0p1_neural_xfeat_trust": _safe_float(row.get("p0p1_neural_xfeat_trust"), 0.0),
             "subpixel_valid": _safe_float(row.get("subpixel_valid"), 0.0),
             "subpixel_attempted": _safe_float(row.get("subpixel_attempted"), 0.0),
             "subpixel_support": _safe_float(row.get("subpixel_support"), 0.0),
@@ -491,6 +575,9 @@ def load_legacy_sequences(
             "roi_neural_superpoint_support": _safe_float(row.get("roi_neural_superpoint_support"), 0.0),
             "roi_neural_superpoint_std_px": _safe_float(row.get("roi_neural_superpoint_std_px"), -1.0),
             "roi_neural_superpoint_confidence": _safe_float(row.get("roi_neural_superpoint_confidence"), 0.0),
+            "roi_neural_aliked_support": _safe_float(row.get("roi_neural_aliked_support"), 0.0),
+            "roi_neural_aliked_std_px": _safe_float(row.get("roi_neural_aliked_std_px"), -1.0),
+            "roi_neural_aliked_confidence": _safe_float(row.get("roi_neural_aliked_confidence"), 0.0),
             "fallback_feature_points_support": _safe_float(row.get("fallback_feature_points_support"), 0.0),
             "fallback_feature_points_std_px": _safe_float(row.get("fallback_feature_points_std_px"), -1.0),
             "fallback_feature_points_confidence": _safe_float(row.get("fallback_feature_points_confidence"), 0.0),
@@ -523,6 +610,12 @@ def load_legacy_sequences(
             "right_circle_cy": _safe_float(row.get("right_circle_cy"), -1.0),
             "right_circle_r": _safe_float(row.get("right_circle_r"), -1.0),
         }
+        for name, bit in P0P1_UNTRUSTED_BITS:
+            parsed[f"p0p1_{name}_untrusted"] = (
+                1.0 if p0p1_untrusted_mask & (1 << bit) else 0.0
+            )
+        for name in neural_top_feature_names():
+            parsed[name] = _safe_float(row.get(name), 0.0)
         grouped.setdefault(track_id, []).append(parsed)
 
     sequences: List[LegacySequence] = []
@@ -571,6 +664,7 @@ def legacy_feature_names() -> List[str]:
         "z_roi_neural_feature",
         "z_roi_neural_xfeat",
         "z_roi_neural_superpoint",
+        "z_roi_neural_aliked",
         "z_roi_center_patch",
         "z_roi_multi_point",
         "z_fallback",
@@ -605,6 +699,7 @@ def legacy_feature_names() -> List[str]:
         "disparity_roi_neural_feature",
         "disparity_roi_neural_xfeat",
         "disparity_roi_neural_superpoint",
+        "disparity_roi_neural_aliked",
         "disparity_roi_center_patch",
         "disparity_roi_multi_point",
         "disparity_fallback_epipolar",
@@ -620,6 +715,7 @@ def legacy_feature_names() -> List[str]:
         "pair_score",
         "pair_bbox_prior_penalty",
         "pair_positive_disparity",
+        *p0p1_quality_feature_names(),
         "left_circle_conf",
         "right_circle_conf",
         "subpixel_valid",
@@ -685,6 +781,10 @@ def legacy_feature_names() -> List[str]:
         "roi_neural_superpoint_support",
         "roi_neural_superpoint_std_px",
         "roi_neural_superpoint_confidence",
+        "roi_neural_aliked_support",
+        "roi_neural_aliked_std_px",
+        "roi_neural_aliked_confidence",
+        *neural_top_feature_names(),
         "fallback_feature_points_support",
         "fallback_feature_points_std_px",
         "fallback_feature_points_confidence",
@@ -873,6 +973,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["z_roi_neural_feature"] if valid_by_key["z_roi_neural_feature"] else 0.0,
                 row["z_roi_neural_xfeat"] if valid_by_key["z_roi_neural_xfeat"] else 0.0,
                 row["z_roi_neural_superpoint"] if valid_by_key["z_roi_neural_superpoint"] else 0.0,
+                row["z_roi_neural_aliked"] if valid_by_key["z_roi_neural_aliked"] else 0.0,
                 row["z_roi_center_patch"] if valid_by_key["z_roi_center_patch"] else 0.0,
                 row["z_roi_multi_point"] if valid_by_key["z_roi_multi_point"] else 0.0,
                 row["z_fallback"] if row["z_fallback"] > 0.1 else 0.0,
@@ -907,6 +1008,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["disparity_roi_neural_feature"],
                 row["disparity_roi_neural_xfeat"],
                 row["disparity_roi_neural_superpoint"],
+                row["disparity_roi_neural_aliked"],
                 row["disparity_roi_center_patch"],
                 row["disparity_roi_multi_point"],
                 row["disparity_fallback_epipolar"],
@@ -922,6 +1024,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["pair_score"],
                 row["pair_bbox_prior_penalty"],
                 row["pair_positive_disparity"],
+                *[row[name] for name in p0p1_quality_feature_names()],
                 row["left_circle_conf"],
                 row["right_circle_conf"],
                 row["subpixel_valid"],
@@ -987,6 +1090,10 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["roi_neural_superpoint_support"],
                 row["roi_neural_superpoint_std_px"],
                 row["roi_neural_superpoint_confidence"],
+                row["roi_neural_aliked_support"],
+                row["roi_neural_aliked_std_px"],
+                row["roi_neural_aliked_confidence"],
+                *[row[name] for name in neural_top_feature_names()],
                 row["fallback_feature_points_support"],
                 row["fallback_feature_points_std_px"],
                 row["fallback_feature_points_confidence"],

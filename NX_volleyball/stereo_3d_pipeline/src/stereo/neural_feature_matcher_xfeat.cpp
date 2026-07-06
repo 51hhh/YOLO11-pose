@@ -249,7 +249,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     auto finalize_candidates =
         [&](const std::vector<NeuralFeaturePointMatch>& candidates,
             const char* ok_status) -> bool {
-            if (static_cast<int>(candidates.size()) < config_.min_matches) {
+            const int required_matches =
+                config_.soft_topk_scoring ? 1 : config_.min_matches;
+            if (static_cast<int>(candidates.size()) < required_matches) {
                 out.status = "not_enough_matches";
                 return false;
             }
@@ -273,7 +275,8 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             int quadrant_mask = 0;
             out.matches.clear();
             for (const auto& m : candidates) {
-                if (std::fabs(m.disparity - median) > gate) {
+                if (!config_.soft_topk_scoring &&
+                    std::fabs(m.disparity - median) > gate) {
                     append_debug_match(m,
                                        SparseFeatureDebugStage::GEOMETRY,
                                        SparseFeatureRejectReason::MAD_OUTLIER);
@@ -294,7 +297,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
                 const int qy = m.left_y >= left_det.cy ? 1 : 0;
                 quadrant_mask |= 1 << (qy * 2 + qx);
             }
-            if (static_cast<int>(out.matches.size()) < config_.min_matches) {
+            if (static_cast<int>(out.matches.size()) < required_matches) {
                 out.status = "not_enough_inliers";
                 out.matches.clear();
                 return false;
@@ -310,13 +313,15 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             const float min_spread =
                 std::min(left_det.width, left_det.height) *
                 std::max(0.0f, config_.min_spatial_spread_ratio);
-            if (config_.min_spatial_quadrants > 0 &&
+            if (!config_.soft_topk_scoring &&
+                config_.min_spatial_quadrants > 0 &&
                 quadrants < config_.min_spatial_quadrants) {
                 out.status = "poor_spatial_quadrants";
                 out.matches.clear();
                 return false;
             }
-            if (min_spread > 0.0f && spread < min_spread) {
+            if (!config_.soft_topk_scoring &&
+                min_spread > 0.0f && spread < min_spread) {
                 out.status = "poor_spatial_spread";
                 out.matches.clear();
                 return false;
@@ -331,7 +336,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             const float support_conf =
                 std::min(1.0f, kept /
                                    static_cast<float>(
-                                       std::max(1, config_.min_matches * 2)));
+                                   std::max(1, required_matches * 2)));
             const float score_conf =
                 std::clamp((score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
             const float consistency =
@@ -417,6 +422,18 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
         const float* heatmap_base = static_cast<const float*>(heatmap->device);
         std::vector<XFeatGpuMatch> gpu_matches;
         const auto post_start = std::chrono::steady_clock::now();
+        const int post_min_matches =
+            config_.soft_topk_scoring ? 1 : config_.min_matches;
+        const float post_max_y_error_px =
+            config_.soft_topk_scoring
+                ? std::max(config_.max_y_error_px,
+                           static_cast<float>(std::max(1, img_height)))
+                : config_.max_y_error_px;
+        const float post_max_disp_delta_px =
+            config_.soft_topk_scoring
+                ? std::max(config_.max_disp_delta_px,
+                           static_cast<float>(std::max(1, max_disparity_)))
+                : config_.max_disp_delta_px;
         const bool gpu_path_ok = runXFeatGpuPostprocess(
             xfeat_gpu_workspace_,
             feat_base,
@@ -426,11 +443,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             keypoint_base + keypoint_batch_stride,
             heatmap_base + heatmap_batch_stride,
             config_.roi_size,
-            config_.min_matches,
+            post_min_matches,
             config_.min_score,
             config_.match_margin,
-            config_.max_y_error_px,
-            config_.max_disp_delta_px,
+            post_max_y_error_px,
+            post_max_disp_delta_px,
             initial_disparity,
             max_disparity_,
             left_det.cx, left_det.cy, left_det.width, left_det.height,
@@ -515,6 +532,18 @@ xfeat_gpu_b2_fallback:
         if (gpu_path_ok) {
             std::vector<XFeatGpuMatch> gpu_matches;
             const auto post_start = std::chrono::steady_clock::now();
+            const int post_min_matches =
+                config_.soft_topk_scoring ? 1 : config_.min_matches;
+            const float post_max_y_error_px =
+                config_.soft_topk_scoring
+                    ? std::max(config_.max_y_error_px,
+                               static_cast<float>(std::max(1, img_height)))
+                    : config_.max_y_error_px;
+            const float post_max_disp_delta_px =
+                config_.soft_topk_scoring
+                    ? std::max(config_.max_disp_delta_px,
+                               static_cast<float>(std::max(1, max_disparity_)))
+                    : config_.max_disp_delta_px;
             gpu_path_ok = runXFeatGpuPostprocess(
                 xfeat_gpu_workspace_,
                 xfeat_gpu_workspace_.left_feats,
@@ -524,11 +553,11 @@ xfeat_gpu_b2_fallback:
                 static_cast<const float*>(keypoints->device),
                 static_cast<const float*>(heatmap->device),
                 config_.roi_size,
-                config_.min_matches,
+                post_min_matches,
                 config_.min_score,
                 config_.match_margin,
-                config_.max_y_error_px,
-                config_.max_disp_delta_px,
+                post_max_y_error_px,
+                post_max_disp_delta_px,
                 initial_disparity,
                 max_disparity_,
                 left_det.cx, left_det.cy, left_det.width, left_det.height,
@@ -748,14 +777,16 @@ xfeat_gpu_b2_fallback:
                                SparseFeatureRejectReason::BAD_DISPARITY);
             continue;
         }
-        if (std::fabs(ly - ry) > config_.max_y_error_px) {
+        if (!config_.soft_topk_scoring &&
+            std::fabs(ly - ry) > config_.max_y_error_px) {
             append_debug_point(lx, ly, rx, ry, disp, score,
                                std::numeric_limits<float>::quiet_NaN(),
                                SparseFeatureDebugStage::MATCH,
                                SparseFeatureRejectReason::Y_RESIDUAL);
             continue;
         }
-        if (std::fabs(disp - initial_disparity) > config_.max_disp_delta_px) {
+        if (!config_.soft_topk_scoring &&
+            std::fabs(disp - initial_disparity) > config_.max_disp_delta_px) {
             append_debug_point(lx, ly, rx, ry, disp, score,
                                std::numeric_limits<float>::quiet_NaN(),
                                SparseFeatureDebugStage::MATCH,

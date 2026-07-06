@@ -1,9 +1,24 @@
 #ifndef STEREO_3D_PIPELINE_OBJECT3D_TYPES_H_
 #define STEREO_3D_PIPELINE_OBJECT3D_TYPES_H_
 
+#include <array>
 #include <cstdint>
 
 namespace stereo3d {
+
+constexpr int kRecordedFeatureTopPoints = 5;
+
+struct FeatureTopPointRecord {
+    float left_x = -1.0f;
+    float left_y = -1.0f;
+    float right_x = -1.0f;
+    float right_y = -1.0f;
+    float z = -1.0f;
+    float disparity = -1.0f;
+    float score = 0.0f;
+    float y_delta = 0.0f;
+    float rank_score = 0.0f;
+};
 
 /**
  * @brief 3D 定位结果
@@ -99,6 +114,19 @@ struct Object3D {
     float size_ratio;      ///< 左右圆半径比例, -1=无效
     float left_circle_conf;///< 左目圆拟合置信度
     float right_circle_conf;///< 右目圆拟合置信度
+    float p0p1_dy_center;  ///< P0/P1 多候选 y delta robust center
+    float p0p1_dy_mad;     ///< P0/P1 多候选 y delta MAD
+    int p0p1_dy_sample_count; ///< 参与 P0/P1 dy robust center 的候选数
+    int p0p1_untrusted_mask; ///< bit0 bbox,1 circle,2 edge centroid,3 radial,4 edge pair,5 center patch,6 multi point,7 NCC,8 XFeat
+    float p0p1_bbox_center_trust; ///< bbox center soft gate trust [0,1]
+    float p0p1_circle_center_trust; ///< circle center soft gate trust [0,1]
+    float p0p1_edge_centroid_trust; ///< edge centroid soft gate trust [0,1]
+    float p0p1_radial_center_trust; ///< radial center soft gate trust [0,1]
+    float p0p1_edge_pair_center_trust; ///< edge pair center soft gate trust [0,1]
+    float p0p1_center_patch_trust; ///< center patch soft gate trust [0,1]
+    float p0p1_multi_point_trust; ///< multi point soft gate trust [0,1]
+    float p0p1_cuda_template_match_trust; ///< CUDA Template/NCC soft gate trust [0,1]
+    float p0p1_neural_xfeat_trust; ///< XFeat soft gate trust [0,1]
     int subpixel_valid;    ///< 1=亚像素测距被采用
     int subpixel_attempted;///< 1=尝试过亚像素测距
     int subpixel_support;  ///< 亚像素有效采样点数
@@ -150,12 +178,21 @@ struct Object3D {
     int roi_neural_xfeat_support; ///< ROI XFeat 神经特征有效匹配点数
     float roi_neural_xfeat_std_px; ///< ROI XFeat 神经特征视差标准差
     float roi_neural_xfeat_confidence; ///< ROI XFeat 神经特征匹配置信度
+    int roi_neural_xfeat_top_count = 0; ///< ROI XFeat top ranked point 数量
+    std::array<FeatureTopPointRecord, kRecordedFeatureTopPoints>
+        roi_neural_xfeat_top_points{};
     int roi_neural_superpoint_support; ///< ROI SuperPoint 神经特征有效匹配点数
     float roi_neural_superpoint_std_px; ///< ROI SuperPoint 神经特征视差标准差
     float roi_neural_superpoint_confidence; ///< ROI SuperPoint 神经特征匹配置信度
+    int roi_neural_superpoint_top_count = 0; ///< ROI SuperPoint top ranked point 数量
+    std::array<FeatureTopPointRecord, kRecordedFeatureTopPoints>
+        roi_neural_superpoint_top_points{};
     int roi_neural_aliked_support; ///< ROI ALIKED 神经特征有效匹配点数
     float roi_neural_aliked_std_px; ///< ROI ALIKED 神经特征视差标准差
     float roi_neural_aliked_confidence; ///< ROI ALIKED 神经特征匹配置信度
+    int roi_neural_aliked_top_count = 0; ///< ROI ALIKED top ranked point 数量
+    std::array<FeatureTopPointRecord, kRecordedFeatureTopPoints>
+        roi_neural_aliked_top_points{};
     int fallback_feature_points_support; ///< fallback 特征有效匹配点数
     float fallback_feature_points_std_px; ///< fallback 特征视差标准差
     float fallback_feature_points_confidence; ///< fallback 特征匹配置信度
@@ -245,6 +282,14 @@ struct Object3D {
                  left_circle_source(0), right_circle_source(0),
                  epipolar_dy(-1), size_ratio(-1),
                  left_circle_conf(0), right_circle_conf(0),
+                 p0p1_dy_center(0), p0p1_dy_mad(0),
+                 p0p1_dy_sample_count(0), p0p1_untrusted_mask(0),
+                 p0p1_bbox_center_trust(0), p0p1_circle_center_trust(0),
+                 p0p1_edge_centroid_trust(0), p0p1_radial_center_trust(0),
+                 p0p1_edge_pair_center_trust(0), p0p1_center_patch_trust(0),
+                 p0p1_multi_point_trust(0),
+                 p0p1_cuda_template_match_trust(0),
+                 p0p1_neural_xfeat_trust(0),
                  subpixel_valid(0), subpixel_attempted(0), subpixel_support(0),
                  subpixel_std_px(-1), subpixel_confidence(0), subpixel_gate_px(0),
                  roi_corner_points_support(0), roi_corner_points_std_px(-1),
@@ -283,10 +328,16 @@ struct Object3D {
                  roi_neural_feature_confidence(0),
                  roi_neural_xfeat_support(0), roi_neural_xfeat_std_px(-1),
                  roi_neural_xfeat_confidence(0),
+                 roi_neural_xfeat_top_count(0),
+                 roi_neural_xfeat_top_points{},
                  roi_neural_superpoint_support(0), roi_neural_superpoint_std_px(-1),
                  roi_neural_superpoint_confidence(0),
+                 roi_neural_superpoint_top_count(0),
+                 roi_neural_superpoint_top_points{},
                  roi_neural_aliked_support(0), roi_neural_aliked_std_px(-1),
                  roi_neural_aliked_confidence(0),
+                 roi_neural_aliked_top_count(0),
+                 roi_neural_aliked_top_points{},
                  fallback_feature_points_support(0), fallback_feature_points_std_px(-1),
                  fallback_feature_points_confidence(0),
                  pair_initial_disparity(-1), pair_epipolar_dy(-1),
