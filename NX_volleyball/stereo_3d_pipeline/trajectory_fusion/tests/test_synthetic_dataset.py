@@ -20,6 +20,11 @@ if str(PROJECT) not in sys.path:
 from trajectory_fusion import evaluate_fusion  # noqa: E402
 from trajectory_fusion import run_reliability_sweep as sweep_module  # noqa: E402
 from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
+from trajectory_fusion.build_dataset_manifest import (  # noqa: E402
+    build_manifest,
+    discover_csvs,
+    write_manifest,
+)
 from trajectory_fusion.check_dataset import analyze_dataset  # noqa: E402
 from trajectory_fusion.dataset import (  # noqa: E402
     METHOD_COLUMNS,
@@ -537,6 +542,62 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(clips[0].metadata, root / "traj_p0p1_001.metadata.yaml")
             self.assertEqual(clips[0].split, "train")
             self.assertEqual(clips[0].name, "static_3m")
+
+    def test_build_dataset_manifest_discovers_main_csvs_and_splits_known_z(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = _write_synthetic_clip(root)
+            second = root / "traj_p0p1_002.csv"
+            second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+            (root / "traj_p0p1_002.metadata.yaml").write_text(
+                "known_z: 3.1\nstatic: true\n",
+                encoding="utf-8",
+            )
+            (root / "traj_p0p1_002.frames.csv").write_text("frame_id\n1\n", encoding="utf-8")
+            (root / "traj_p0p1_002.p2_diagnostic.csv").write_text("frame_id,mode\n1,x\n", encoding="utf-8")
+            (root / "suite_metrics.csv").write_text("clip,variant\nx,raw\n", encoding="utf-8")
+
+            discovered = discover_csvs([root])
+            self.assertEqual(discovered, [first.resolve(), second.resolve()])
+
+            manifest_path = root / "dataset_manifest.yaml"
+            entries = build_manifest(
+                [root],
+                output_path=manifest_path,
+                val_ratio=0.5,
+                seed=3,
+            )
+            write_manifest(manifest_path, entries)
+            clips = load_manifest(manifest_path)
+
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(len(clips), 2)
+            self.assertEqual({clip.split for clip in clips}, {"train", "val"})
+            self.assertEqual({clip.metadata for clip in clips}, {
+                root / "traj_p0p1_001.metadata.yaml",
+                root / "traj_p0p1_002.metadata.yaml",
+            })
+            text = manifest_path.read_text(encoding="utf-8")
+            self.assertIn("csv: traj_p0p1_001.csv", text)
+            self.assertNotIn(".frames.csv", text)
+            self.assertNotIn(".p2_diagnostic.csv", text)
+
+    def test_build_dataset_manifest_can_mark_unlabeled_eval_clips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = _write_synthetic_clip(root)
+            (root / "traj_p0p1_001.metadata.yaml").unlink()
+            manifest_path = root / "dataset_manifest.yaml"
+
+            entries = build_manifest(
+                [first],
+                output_path=manifest_path,
+                split_mode="auto",
+                unlabeled_split="eval",
+            )
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].split, "eval")
+            self.assertIsNone(entries[0].metadata)
 
     def test_train_reliability_resolves_manifest_splits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
