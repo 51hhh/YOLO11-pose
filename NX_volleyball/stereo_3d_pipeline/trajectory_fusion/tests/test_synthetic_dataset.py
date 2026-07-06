@@ -886,8 +886,10 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(report["clip_count"], 2)
             self.assertEqual(report["split_counts"], {"train": 1, "val": 1})
             self.assertEqual(report["known_z_counts"], {"train": 1, "val": 1})
+            self.assertEqual(report["known_z_bucket_counts"], {"3.000": {"train": 1}, "3.100": {"val": 1}})
             self.assertNotIn("missing_val_split", report["warnings"])
             self.assertNotIn("missing_known_z_val_split", report["warnings"])
+            self.assertNotIn("known_z_bucket_missing_val_split", report["warnings"])
 
             train_only_manifest = root / "train_only_manifest.yaml"
             train_only_manifest.write_text(
@@ -905,6 +907,44 @@ class SyntheticDatasetTest(unittest.TestCase):
             train_only = analyze_manifest(train_only_manifest, min_rows=1, min_fps=0.0, min_p0_hit=0.0)
             self.assertIn("missing_val_split", train_only["warnings"])
             self.assertIn("missing_known_z_val_split", train_only["warnings"])
+
+    def test_validate_dataset_manifest_can_require_known_z_bucket_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_3m_a", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_3m_b", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_5m_single", 5.0, rows=4)
+            manifest_path = root / "dataset_manifest.yaml"
+            entries = build_manifest(
+                [root],
+                output_path=manifest_path,
+                val_ratio=0.5,
+                stratify_known_z=True,
+                seed=11,
+            )
+            write_manifest(manifest_path, entries)
+
+            report = analyze_manifest(
+                manifest_path,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+                require_stratified_known_z=True,
+            )
+
+            self.assertEqual(report["known_z_bucket_counts"]["3.000"], {"train": 1, "val": 1})
+            self.assertEqual(report["known_z_bucket_counts"]["5.000"], {"train": 1})
+            self.assertEqual(report["warning_counts"]["known_z_bucket_missing_val_split"], 1)
+            self.assertEqual(
+                report["known_z_bucket_warnings"],
+                [
+                    {
+                        "known_z_bucket": "5.000",
+                        "missing_split": "val",
+                        "counts": {"train": 1},
+                    }
+                ],
+            )
 
     def test_candidate_consistency_uses_known_z_and_pairwise_bias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1532,6 +1572,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(summary["manifest"]["stratify_known_z"])
             self.assertTrue(summary["config"]["stratify_known_z"])
             self.assertEqual(summary["validation"]["known_z_counts"], {"train": 2, "val": 2})
+            self.assertEqual(summary["validation"]["known_z_bucket_warnings"], [])
             self.assertEqual(split_by_z[3.0], {"train", "val"})
             self.assertEqual(split_by_z[4.0], {"train", "val"})
 

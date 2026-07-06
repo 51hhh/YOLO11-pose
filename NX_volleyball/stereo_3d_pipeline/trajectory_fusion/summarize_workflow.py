@@ -107,6 +107,10 @@ def _derive_actions(summary: Dict[str, Any], selection_rows: List[Dict[str, str]
         actions.append("Record static known-distance clips before selecting a final model.")
     if "missing_val_split" in validation_counts:
         actions.append("Add heldout val clips or regenerate the manifest with a val split.")
+    if "known_z_bucket_missing_val_split" in validation_counts:
+        actions.append("For stratified known_z runs, record at least two clips per static distance or add heldout val clips for missing buckets.")
+    if "known_z_bucket_missing_train_split" in validation_counts:
+        actions.append("For stratified known_z runs, ensure every evaluated distance also has train coverage or intentionally disable stratified validation.")
     if "frame_gaps>0" in validation_counts:
         actions.append("Inspect frame gaps and synchronization before trusting dynamic metrics.")
     if not bool(summary.get("calibration", {}).get("used_for_suite", False)):
@@ -198,6 +202,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
         f"- validation warnings: `{validation.get('warning_counts', {})}`",
         f"- splits: `{validation.get('split_counts', {})}`",
         f"- known_z: `{validation.get('known_z_counts', {})}`",
+        f"- known_z buckets: `{validation.get('known_z_bucket_counts', {})}`",
         f"- calibration methods: `{calibration.get('method_count', 0)}`",
         f"- calibration used: `{calibration.get('used_for_suite', False)}`",
         f"- top selection: `{top.get('config', '')}` / `{top.get('decision', selection.get('decision', ''))}`",

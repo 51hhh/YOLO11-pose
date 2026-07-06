@@ -251,6 +251,7 @@ def run_workflow(
         min_fps=min_fps,
         min_p0_hit=min_p0_hit,
         max_frame_gaps=max_frame_gaps,
+        require_stratified_known_z=stratify_known_z,
     )
     validation_json = root / "manifest_validation.json"
     _write_json(validation_json, validation)
@@ -331,6 +332,8 @@ def run_workflow(
             "clip_count": validation.get("clip_count", 0),
             "split_counts": validation.get("split_counts", {}),
             "known_z_counts": validation.get("known_z_counts", {}),
+            "known_z_bucket_counts": validation.get("known_z_bucket_counts", {}),
+            "known_z_bucket_warnings": validation.get("known_z_bucket_warnings", []),
             "warning_counts": validation.get("warning_counts", {}),
             "warnings": validation.get("warnings", []),
         },

@@ -77,6 +77,7 @@ def analyze_manifest(
     min_fps: float = 80.0,
     min_p0_hit: float = 0.85,
     max_frame_gaps: int = 0,
+    require_stratified_known_z: bool = False,
 ) -> Dict[str, Any]:
     clips = load_manifest(manifest_path)
     clip_reports: List[Dict[str, Any]] = []
@@ -84,6 +85,7 @@ def analyze_manifest(
     known_by_split: Counter[str] = Counter()
     warnings_by_kind: Counter[str] = Counter()
     known_z_values: Dict[str, List[float]] = defaultdict(list)
+    known_z_bucket_counts: Dict[str, Counter[str]] = defaultdict(Counter)
 
     for clip in clips:
         split_counts[clip.split] += 1
@@ -113,6 +115,7 @@ def analyze_manifest(
             if known_z is not None and known_z > 0.0:
                 known_by_split[clip.split] += 1
                 known_z_values[clip.split].append(known_z)
+                known_z_bucket_counts[f"{known_z:.3f}"][clip.split] += 1
             totals = _frame_summary_totals(report)
             watermarks = report.get("watermarks", {})
             watermark_nonzero = any(
@@ -159,6 +162,21 @@ def analyze_manifest(
         dataset_warnings.append("missing_known_z_clips")
     if known_by_split and known_by_split.get("val", 0) == 0:
         dataset_warnings.append("missing_known_z_val_split")
+    known_z_bucket_warnings: List[Dict[str, Any]] = []
+    if require_stratified_known_z:
+        for bucket, counts in sorted(known_z_bucket_counts.items()):
+            for split in ("train", "val"):
+                if counts.get(split, 0) > 0:
+                    continue
+                warning = f"known_z_bucket_missing_{split}_split"
+                dataset_warnings.append(warning)
+                known_z_bucket_warnings.append(
+                    {
+                        "known_z_bucket": bucket,
+                        "missing_split": split,
+                        "counts": dict(counts),
+                    }
+                )
     warnings_by_kind.update(dataset_warnings)
 
     return {
@@ -167,6 +185,10 @@ def analyze_manifest(
         "split_counts": dict(split_counts),
         "known_z_counts": dict(known_by_split),
         "known_z_values": {key: sorted(values) for key, values in known_z_values.items()},
+        "known_z_bucket_counts": {
+            bucket: dict(counts) for bucket, counts in sorted(known_z_bucket_counts.items())
+        },
+        "known_z_bucket_warnings": known_z_bucket_warnings,
         "warnings": dataset_warnings,
         "warning_counts": dict(warnings_by_kind),
         "clips": clip_reports,
@@ -175,6 +197,7 @@ def analyze_manifest(
             "min_fps": min_fps,
             "min_p0_hit": min_p0_hit,
             "max_frame_gaps": max_frame_gaps,
+            "require_stratified_known_z": require_stratified_known_z,
         },
     }
 
@@ -188,6 +211,8 @@ def _write_json(path: str | Path, report: Dict[str, Any]) -> None:
 def print_report(report: Dict[str, Any]) -> None:
     print(f"manifest={report['manifest']}")
     print(f"clips={report['clip_count']} splits={report['split_counts']} known_z={report['known_z_counts']}")
+    if report.get("known_z_bucket_counts"):
+        print(f"known_z_buckets={report['known_z_bucket_counts']}")
     print(f"warnings={report['warning_counts']}")
     for clip in report["clips"]:
         print(
@@ -213,6 +238,11 @@ def main() -> int:
     parser.add_argument("--min-fps", type=float, default=80.0)
     parser.add_argument("--min-p0-hit", type=float, default=0.85)
     parser.add_argument("--max-frame-gaps", type=int, default=0)
+    parser.add_argument(
+        "--require-stratified-known-z",
+        action="store_true",
+        help="Warn if any known_z bucket lacks train or val coverage.",
+    )
     parser.add_argument("--fail-on-warning", action="store_true")
     args = parser.parse_args()
 
@@ -222,6 +252,7 @@ def main() -> int:
         min_fps=args.min_fps,
         min_p0_hit=args.min_p0_hit,
         max_frame_gaps=args.max_frame_gaps,
+        require_stratified_known_z=args.require_stratified_known_z,
     )
     print_report(report)
     if args.json_out:
