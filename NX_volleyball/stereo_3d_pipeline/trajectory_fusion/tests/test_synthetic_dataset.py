@@ -17,6 +17,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 from trajectory_fusion import evaluate_fusion  # noqa: E402
+from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
 from trajectory_fusion.check_dataset import analyze_dataset  # noqa: E402
 from trajectory_fusion.dataset import (  # noqa: E402
     METHOD_COLUMNS,
@@ -616,6 +617,29 @@ class SyntheticDatasetTest(unittest.TestCase):
             train_only = analyze_manifest(train_only_manifest, min_rows=1, min_fps=0.0, min_p0_hit=0.0)
             self.assertIn("missing_val_split", train_only["warnings"])
             self.assertIn("missing_known_z_val_split", train_only["warnings"])
+
+    def test_candidate_consistency_uses_known_z_and_pairwise_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _write_synthetic_clip(Path(tmp))
+            report = analyze_candidate_consistency(
+                [str(csv_path)],
+                reference="auto",
+                min_pair_count=1,
+            )
+
+            aggregate = report["aggregate"]
+            self.assertEqual(aggregate["frames"], 4)
+            self.assertEqual(aggregate["reference_counts"], {"known_z": 4})
+            bbox = aggregate["methods"]["bbox_center"]
+            self.assertEqual(bbox["valid"], 4)
+            self.assertAlmostEqual(bbox["residual"]["median"], 0.005, places=6)
+            self.assertIn("circle_center", aggregate["methods"])
+            pairs = {
+                (item["left"], item["right"]): item
+                for item in aggregate["pairwise"]
+            }
+            self.assertIn(("bbox_center", "circle_center"), pairs)
+            self.assertEqual(pairs[("bbox_center", "circle_center")]["count"], 2)
 
     def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
