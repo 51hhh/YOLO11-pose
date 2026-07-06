@@ -14,11 +14,11 @@ from typing import Any, Dict, List, Sequence
 try:
     from .rank_sweep_metrics import rank_metrics, write_ranking
     from .run_evaluation_suite import run_suite
-    from .summarize_evaluation_suite import summarize_suite
+    from .summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
 except ImportError:  # pragma: no cover - direct script execution
     from rank_sweep_metrics import rank_metrics, write_ranking
     from run_evaluation_suite import run_suite
-    from summarize_evaluation_suite import summarize_suite
+    from summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
 
 
 DEFAULT_CONFIGS: List[Dict[str, Any]] = [
@@ -211,9 +211,11 @@ def run_sweep(
         "rank_split": rank_split,
         "sweep_ranking": str(root / "sweep_ranking.csv"),
         "sweep_variant_ranking": str(root / "sweep_variant_ranking.csv"),
+        "sweep_reliability_methods": str(root / "sweep_reliability_methods.csv"),
         "runs": [],
     }
     combined_rows: List[Dict[str, Any]] = []
+    combined_method_rows: List[Dict[str, Any]] = []
 
     for config in configs:
         name = _safe_name(str(config["name"]))
@@ -242,8 +244,19 @@ def run_sweep(
         )
         metrics_path = suite_dir / "suite_metrics.csv"
         rows = summarize_suite(suite_dir, metrics_path)
+        method_metrics_path = suite_dir / "suite_reliability_methods.csv"
+        method_rows = summarize_reliability_methods(suite_dir, method_metrics_path)
         for row in rows:
             combined_rows.append(
+                {
+                    "config": name,
+                    "checkpoint": str(checkpoint),
+                    "suite_dir": str(suite_dir),
+                    **row,
+                }
+            )
+        for row in method_rows:
+            combined_method_rows.append(
                 {
                     "config": name,
                     "checkpoint": str(checkpoint),
@@ -260,6 +273,7 @@ def run_sweep(
                 "suite_dir": str(suite_dir),
                 "suite_summary": str(suite_dir / "suite_summary.json"),
                 "suite_metrics": str(metrics_path),
+                "suite_reliability_methods": str(method_metrics_path),
                 "train_command": train_cmd,
                 "clip_count": len(suite_report.get("clips", [])),
             }
@@ -267,6 +281,7 @@ def run_sweep(
         _write_sweep_summary(root / "sweep_summary.json", summary)
         metrics_path = root / "sweep_metrics.csv"
         _write_combined_metrics(metrics_path, combined_rows)
+        _write_combined_metrics(root / "sweep_reliability_methods.csv", combined_method_rows)
         ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)
         variant_ranking = rank_metrics(metrics_path, variant="all", split=rank_split)

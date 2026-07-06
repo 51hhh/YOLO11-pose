@@ -51,7 +51,7 @@ from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
-from trajectory_fusion.summarize_evaluation_suite import summarize_suite  # noqa: E402
+from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 from trajectory_fusion.validate_dataset_manifest import analyze_manifest  # noqa: E402
 
@@ -873,6 +873,68 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("known_z_bias", polyfit_row)
             self.assertIn("ballistic_residual_rms_mps2", smooth_row)
 
+    def test_summarize_reliability_methods_reads_apply_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            clip_dir = root / "suite" / "clip"
+            clip_dir.mkdir(parents=True)
+            apply_json = clip_dir / "reliability_smoother_apply.json"
+            apply_json.write_text(
+                json.dumps(
+                    {
+                        "sequences": [
+                            {
+                                "track_id": 0.0,
+                                "method_summary": {
+                                    "bbox_center": {
+                                        "valid": 10.0,
+                                        "top_count": 6.0,
+                                        "top_rate": 0.6,
+                                        "mean_weight": 100.0,
+                                        "mean_sigma": 0.02,
+                                        "mean_bias": 0.03,
+                                        "mean_abs_bias": 0.03,
+                                        "mean_inlier_prob": 0.9,
+                                        "mean_raw_z": 3.50,
+                                        "mean_corrected_z": 3.47,
+                                        "mean_corrected_minus_raw_z": -0.03,
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            suite_summary = root / "suite" / "suite_summary.json"
+            suite_summary.write_text(
+                json.dumps(
+                    {
+                        "clips": [
+                            {
+                                "name": "clip",
+                                "split": "val",
+                                "reliability_smoother_apply_json": str(apply_json),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_csv = root / "suite" / "suite_reliability_methods.csv"
+            rows = summarize_reliability_methods(root / "suite", output_csv)
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(output_csv.exists())
+            row = rows[0]
+            self.assertEqual(row["clip"], "clip")
+            self.assertEqual(row["split"], "val")
+            self.assertEqual(row["variant"], "reliability_smoother")
+            self.assertEqual(row["method"], "bbox_center")
+            self.assertEqual(row["valid"], 10.0)
+            self.assertEqual(row["top_count"], 6.0)
+            self.assertEqual(row["mean_corrected_minus_raw_z"], -0.03)
+
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -930,6 +992,16 @@ class SyntheticDatasetTest(unittest.TestCase):
                 "known_z_bias": "0.01",
                 "known_z_mad": "0.002",
             }
+            method_row = {
+                "clip": "clip",
+                "split": "val",
+                "variant": "reliability_smoother",
+                "track_id": "0",
+                "method": "bbox_center",
+                "valid": "10",
+                "top_count": "4",
+                "mean_sigma": "0.02",
+            }
 
             with mock.patch.object(sweep_module.subprocess, "run") as run_mock, mock.patch.object(
                 sweep_module,
@@ -939,6 +1011,10 @@ class SyntheticDatasetTest(unittest.TestCase):
                 sweep_module,
                 "summarize_suite",
                 return_value=[metric_row],
+            ), mock.patch.object(
+                sweep_module,
+                "summarize_reliability_methods",
+                return_value=[method_row],
             ):
                 with contextlib.redirect_stdout(io.StringIO()):
                     summary = sweep_module.run_sweep(
@@ -956,6 +1032,11 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(summary["runs"][0]["calibration"], str(calibration_path))
             self.assertEqual(summary["sweep_variant_ranking"], str(root / "sweep_out" / "sweep_variant_ranking.csv"))
             self.assertTrue((root / "sweep_out" / "sweep_variant_ranking.csv").exists())
+            self.assertEqual(
+                summary["sweep_reliability_methods"],
+                str(root / "sweep_out" / "sweep_reliability_methods.csv"),
+            )
+            self.assertTrue((root / "sweep_out" / "sweep_reliability_methods.csv").exists())
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

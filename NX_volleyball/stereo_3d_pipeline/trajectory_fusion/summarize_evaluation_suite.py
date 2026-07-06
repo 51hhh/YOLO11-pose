@@ -22,6 +22,37 @@ VARIANT_JSON_KEYS = (
     ("reliability_rts_smoother", "reliability_rts_smoother_eval_json"),
 )
 
+RELIABILITY_APPLY_JSON_KEYS = (
+    ("reliability_direct", "reliability_direct_apply_json"),
+    ("reliability_smoother", "reliability_smoother_apply_json"),
+    ("reliability_rts_smoother", "reliability_rts_smoother_apply_json"),
+)
+
+RELIABILITY_METHOD_FIELDNAMES = [
+    "clip",
+    "split",
+    "variant",
+    "track_id",
+    "method",
+    "rows",
+    "fps_intervals",
+    "direct_pair_count",
+    "fallback_l2r_count",
+    "fallback_r2l_count",
+    "valid",
+    "top_count",
+    "top_rate",
+    "mean_weight",
+    "max_weight",
+    "mean_sigma",
+    "mean_bias",
+    "mean_abs_bias",
+    "mean_inlier_prob",
+    "mean_raw_z",
+    "mean_corrected_z",
+    "mean_corrected_minus_raw_z",
+]
+
 
 def _load_json(path: str | Path | None) -> Dict[str, Any]:
     if not path:
@@ -106,13 +137,53 @@ def iter_summary_rows(suite_summary: Dict[str, Any]) -> Iterable[Dict[str, Any]]
                 }
 
 
-def write_csv(path: str | Path, rows: List[Dict[str, Any]]) -> None:
-    if not rows:
+def iter_reliability_method_rows(suite_summary: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    """Yield one row per clip/variant/track/method from reliability apply JSON."""
+
+    for clip in suite_summary.get("clips", []):
+        context = _check_context(clip)
+        for variant, key in RELIABILITY_APPLY_JSON_KEYS:
+            report = _load_json(clip.get(key))
+            if not report:
+                continue
+            for sequence in report.get("sequences", []):
+                track_id = sequence.get("track_id", "")
+                for method, stats in (sequence.get("method_summary") or {}).items():
+                    if not isinstance(stats, dict):
+                        continue
+                    yield {
+                        "clip": clip.get("name", ""),
+                        "split": clip.get("split", ""),
+                        "variant": variant,
+                        "track_id": track_id,
+                        "method": method,
+                        "rows": context["rows"],
+                        "fps_intervals": context["fps_intervals"],
+                        "direct_pair_count": context["direct_pair_count"],
+                        "fallback_l2r_count": context["fallback_l2r_count"],
+                        "fallback_r2l_count": context["fallback_r2l_count"],
+                        "valid": _value(stats, "valid"),
+                        "top_count": _value(stats, "top_count"),
+                        "top_rate": _value(stats, "top_rate"),
+                        "mean_weight": _value(stats, "mean_weight"),
+                        "max_weight": _value(stats, "max_weight"),
+                        "mean_sigma": _value(stats, "mean_sigma"),
+                        "mean_bias": _value(stats, "mean_bias"),
+                        "mean_abs_bias": _value(stats, "mean_abs_bias"),
+                        "mean_inlier_prob": _value(stats, "mean_inlier_prob"),
+                        "mean_raw_z": _value(stats, "mean_raw_z"),
+                        "mean_corrected_z": _value(stats, "mean_corrected_z"),
+                        "mean_corrected_minus_raw_z": _value(stats, "mean_corrected_minus_raw_z"),
+                    }
+
+
+def write_csv(path: str | Path, rows: List[Dict[str, Any]], fieldnames: List[str] | None = None) -> None:
+    if not rows and fieldnames is None:
         return
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames or list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
@@ -155,10 +226,25 @@ def summarize_suite(path: str | Path, output_csv: str | Path | None = None) -> L
     return rows
 
 
+def summarize_reliability_methods(path: str | Path, output_csv: str | Path | None = None) -> List[Dict[str, Any]]:
+    summary_path = _suite_summary_path(path)
+    summary = _load_json(summary_path)
+    if not summary:
+        raise FileNotFoundError(f"missing suite summary: {summary_path}")
+    rows = list(iter_reliability_method_rows(summary))
+    if output_csv:
+        write_csv(output_csv, rows, RELIABILITY_METHOD_FIELDNAMES)
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", help="Suite directory or suite_summary.json")
     parser.add_argument("-o", "--output")
+    parser.add_argument(
+        "--methods-output",
+        help="Optional CSV for reliability per-method diagnostics from *_apply.json",
+    )
     args = parser.parse_args()
 
     output = args.output
@@ -168,6 +254,9 @@ def main() -> int:
     rows = summarize_suite(args.suite, output)
     print_table(rows)
     print(f"wrote {len(rows)} rows to {output}")
+    if args.methods_output:
+        method_rows = summarize_reliability_methods(args.suite, args.methods_output)
+        print(f"wrote {len(method_rows)} reliability method rows to {args.methods_output}")
     return 0
 
 
