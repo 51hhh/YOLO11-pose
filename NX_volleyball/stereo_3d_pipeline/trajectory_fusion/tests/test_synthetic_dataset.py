@@ -56,6 +56,7 @@ from trajectory_fusion.run_dataset_workflow import run_workflow  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
 from trajectory_fusion.select_reliability_model import select_reliability_models  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
+from trajectory_fusion.summarize_workflow import build_workflow_report  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 from trajectory_fusion.validate_dataset_manifest import analyze_manifest  # noqa: E402
 
@@ -1321,6 +1322,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue((output_dir / "dataset_manifest.yaml").exists())
             self.assertTrue((output_dir / "manifest_validation.json").exists())
             self.assertTrue((output_dir / "workflow_summary.json").exists())
+            self.assertTrue((output_dir / "workflow_report.json").exists())
+            self.assertTrue((output_dir / "workflow_report.md").exists())
             self.assertEqual(summary["manifest"]["clip_count"], 2)
             self.assertEqual(summary["validation"]["split_counts"], {"train": 1, "val": 1})
             self.assertFalse(summary["config"]["use_static_known_z"])
@@ -1332,6 +1335,10 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("robust_smooth", summary["baseline_suite"]["variants"])
             self.assertIn("calibrated_smoother", summary["baseline_suite"]["variants"])
             self.assertNotIn("robust_rts_smooth", summary["baseline_suite"]["variants"])
+            report = build_workflow_report(output_dir)
+            self.assertIn("sweep:skipped", report["warnings"])
+            self.assertIn("calibrated_smoother", report["baseline_suite"]["variants"])
+            self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
 
     def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

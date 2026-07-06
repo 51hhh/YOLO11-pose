@@ -15,6 +15,7 @@ try:
     from .run_evaluation_suite import run_suite
     from .run_reliability_sweep import run_sweep
     from .summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
+    from .summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from .validate_dataset_manifest import analyze_manifest
 except ImportError:  # pragma: no cover - direct script execution
     from build_dataset_manifest import build_manifest, write_manifest
@@ -23,6 +24,7 @@ except ImportError:  # pragma: no cover - direct script execution
     from run_evaluation_suite import run_suite
     from run_reliability_sweep import run_sweep
     from summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
+    from summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from validate_dataset_manifest import analyze_manifest
 
 
@@ -342,8 +344,13 @@ def run_workflow(
             "include_candidate_consistency": include_candidate_consistency,
             "candidate_reference": candidate_reference,
         },
+        "workflow_report_json": str(root / "workflow_report.json"),
+        "workflow_report_md": str(root / "workflow_report.md"),
     }
     _write_json(root / "workflow_summary.json", summary)
+    report = build_workflow_report(root / "workflow_summary.json")
+    write_json_report(root / "workflow_report.json", report)
+    write_markdown_report(root / "workflow_report.md", report)
     return summary
 
 
@@ -426,6 +433,7 @@ def main() -> int:
     print(f"manifest: {summary['manifest']['path']}")
     print(f"validation warnings: {summary['validation']['warning_counts']}")
     print(f"baseline suite: {summary['baseline_suite']['metrics_csv']}")
+    print(f"workflow report: {summary['workflow_report_md']}")
     if summary["sweep"]["skipped"]:
         print(f"sweep: skipped ({summary['sweep']['reason']})")
     else:
