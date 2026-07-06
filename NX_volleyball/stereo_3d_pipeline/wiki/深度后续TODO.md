@@ -96,10 +96,10 @@
 - [x] 构建并实测 `superpoint_extractor_128_top64.engine`。
 - [x] 构建并实测 `superpoint_extractor_160_top64.engine`。
 - [x] 构建并实测 `superpoint_extractor_224_top64.engine`。
-- [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_160_top64`。
-- [ ] 若可获得 ALIKED TensorRT engine，实测 `neural_aliked_224_top64`。
+- [x] 构建并实测官方 ALIKED-t16 DCN `128/top64/b2` TensorRT plugin engine。
+- [ ] 若继续 ALIKED，优先调 `128/top64/b2` matching/gate/topK；`160/224` vanilla engine 不再作为默认方向。
 - [ ] 将 XFeat NMS/descriptor sampling/mutual-NN 从 CPU 后处理迁移到 GPU 或 fused engine。
-  - XFeat/SuperPoint 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。2026-07-04 有球测试中，XFeat 96/top32 为 `97.9fps`、`3/627` 有效，128/top32 为 `94.5fps`、`44/604` 有效，160/top64 为 `93.5fps`、`32/601` 有效；SuperPoint 224/top64 为 `59.2fps`、`151/402` 有效。ALIKED 缺 `aliked_extractor_*_top64.engine`。
+  - XFeat/SuperPoint/ALIKED 勾选仅表示 engine 构建和实时矩阵实测完成；当前有效率/FPS 未通过默认准入。2026-07-04 有球测试中，XFeat 96/top32 为 `97.9fps`、`3/627` 有效，128/top32 为 `94.5fps`、`44/604` 有效，160/top64 为 `93.5fps`、`32/601` 有效；SuperPoint 224/top64 为 `59.2fps`、`151/402` 有效。2026-07-06 ALIKED-t16 DCN current `0/572`，gate-off `68/572`，联合 `NCC+XFeat+ALIKED-DCN` 中 `0/1034`。
 
 ## 动态录制验证
 

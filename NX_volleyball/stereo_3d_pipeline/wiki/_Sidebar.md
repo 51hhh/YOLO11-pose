@@ -40,6 +40,7 @@
     - [GFTT-LK诊断Sidecar](GFTT-LK诊断Sidecar.md)
     - [XFeatTensorRT深度候选](XFeatTensorRT深度候选.md)
     - [SuperPoint TensorRT](算法详情/P2-superpoint.md)
+    - [ALIKED-t16 DCN](算法详情/P2-aliked-t16.md)
     - [CUDA Template/NCC深度候选](CUDA-Template-NCC深度候选.md)
     - [深度候选字段参考](深度候选字段参考.md)
   - 实时测试
