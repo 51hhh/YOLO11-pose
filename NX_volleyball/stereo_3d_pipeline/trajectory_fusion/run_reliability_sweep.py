@@ -292,7 +292,7 @@ def run_sweep(
         _write_combined_metrics(methods_path, combined_method_rows)
         if combined_method_rows:
             write_method_audit(method_audit_path, audit_reliability_methods(methods_path))
-            selection = select_reliability_models(metrics_path, audit_csv=method_audit_path)
+            selection = select_reliability_models(metrics_path, audit_csv=method_audit_path, split=rank_split)
             write_selection(root / "sweep_model_selection.csv", selection)
         ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)

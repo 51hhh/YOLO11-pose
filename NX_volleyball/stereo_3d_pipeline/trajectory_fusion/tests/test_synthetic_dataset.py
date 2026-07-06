@@ -1167,7 +1167,11 @@ class SyntheticDatasetTest(unittest.TestCase):
                 sweep_module,
                 "summarize_reliability_methods",
                 return_value=[method_row],
-            ):
+            ), mock.patch.object(
+                sweep_module,
+                "select_reliability_models",
+                return_value=[{"decision": "recommended"}],
+            ) as select_mock:
                 with contextlib.redirect_stdout(io.StringIO()):
                     summary = sweep_module.run_sweep(
                         ["dataset_manifest.yaml"],
@@ -1175,6 +1179,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         configs_path=config_path,
                         calibration=calibration_path,
                         gravity_y=0.0,
+                        rank_split="val",
                     )
 
             run_mock.assert_called_once()
@@ -1199,6 +1204,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                 str(root / "sweep_out" / "sweep_model_selection.csv"),
             )
             self.assertTrue((root / "sweep_out" / "sweep_model_selection.csv").exists())
+            self.assertEqual(select_mock.call_args.kwargs["split"], "val")
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
