@@ -29,6 +29,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
+from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 
 
@@ -540,6 +541,24 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(len(heldout_items), 1)
             self.assertEqual(train_items[0][0].split, "train")
             self.assertEqual(heldout_items[0][0].split, "val")
+
+    def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root)
+            output_dir = root / "suite"
+
+            report = run_suite([str(csv_path)], output_dir, gravity_y=0.0)
+
+            self.assertEqual(len(report["clips"]), 1)
+            clip = report["clips"][0]
+            self.assertEqual(clip["check_rows"], 4)
+            self.assertEqual(clip["robust_rows"], 4)
+            self.assertTrue((output_dir / "suite_summary.json").exists())
+            self.assertTrue(Path(clip["check_dataset_json"]).exists())
+            self.assertTrue(Path(clip["raw_eval_json"]).exists())
+            self.assertTrue(Path(clip["robust_smooth_csv"]).exists())
+            self.assertTrue(Path(clip["robust_smooth_eval_json"]).exists())
 
 
 if __name__ == "__main__":
