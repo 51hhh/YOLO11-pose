@@ -39,6 +39,12 @@ QUALITY_FIELDS = [
     "roi_neural_aliked_support",
 ]
 
+P1_FIELDS = [
+    "z_roi_center_patch",
+    "z_roi_multi_point",
+    "z_roi_cuda_template_match",
+]
+
 TRUST_FIELDS = [
     "p0p1_bbox_center_trust",
     "p0p1_circle_center_trust",
@@ -50,6 +56,14 @@ TRUST_FIELDS = [
     "p0p1_cuda_template_match_trust",
     "p0p1_neural_xfeat_trust",
 ]
+
+CIRCLE_SOURCE_NAMES = {
+    1: "bbox_proxy",
+    2: "roi_fit",
+    3: "epipolar_search",
+    4: "template_search",
+    5: "feature_proxy",
+}
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -75,6 +89,10 @@ def valid_depth_values(rows: Iterable[dict[str, str]], field: str) -> list[float
     return values
 
 
+def valid_depth_count(rows: Iterable[dict[str, str]], field: str) -> int:
+    return len(valid_depth_values(rows, field))
+
+
 def finite_values(rows: Iterable[dict[str, str]], field: str) -> list[float]:
     values: list[float] = []
     for row in rows:
@@ -89,6 +107,72 @@ def mad(values: list[float]) -> float:
         return math.nan
     center = median(values)
     return median([abs(value - center) for value in values])
+
+
+def safe_int(value: str | None) -> int | None:
+    number = safe_float(value)
+    if not math.isfinite(number):
+        return None
+    return int(number)
+
+
+def circle_source_name(value: int | None) -> str:
+    if value is None:
+        return "missing"
+    return CIRCLE_SOURCE_NAMES.get(value, f"source_{value}")
+
+
+def print_circle_source_summary(rows: list[dict[str, str]]) -> None:
+    if not rows or "left_circle_source" not in rows[0] or "right_circle_source" not in rows[0]:
+        return
+
+    groups: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        left_source = safe_int(row.get("left_circle_source"))
+        right_source = safe_int(row.get("right_circle_source"))
+        pair_name = f"{circle_source_name(left_source)}/{circle_source_name(right_source)}"
+        groups.setdefault(pair_name, []).append(row)
+
+    print("\nCircle source groups:")
+    header_fields = [
+        "group",
+        "rows",
+        "z_circle_rate",
+        "bbox_rate",
+        "center_patch_rate",
+        "multi_point_rate",
+        "cuda_template_rate",
+    ]
+    print(",".join(header_fields))
+    for group, group_rows in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0])):
+        total = len(group_rows)
+        def rate(field: str) -> float:
+            if field not in group_rows[0] or total == 0:
+                return math.nan
+            return 100.0 * valid_depth_count(group_rows, field) / total
+
+        print(
+            f"{group},{total},"
+            f"{rate('z_circle_center'):.1f},"
+            f"{rate('z_bbox_center'):.1f},"
+            f"{rate('z_roi_center_patch'):.1f},"
+            f"{rate('z_roi_multi_point'):.1f},"
+            f"{rate('z_roi_cuda_template_match'):.1f}"
+        )
+
+    non_roi_rows = [
+        row for row in rows
+        if safe_int(row.get("left_circle_source")) != 2 or
+           safe_int(row.get("right_circle_source")) != 2
+    ]
+    if non_roi_rows:
+        total = len(non_roi_rows)
+        print("\nNon-ROI circle-source P1 signal:")
+        for field in P1_FIELDS:
+            if field not in rows[0]:
+                continue
+            count = valid_depth_count(non_roi_rows, field)
+            print(f"{field}: {count}/{total} ({100.0 * count / total:.1f}%)")
 
 
 def companion(path: Path, suffix: str) -> Path:
@@ -148,6 +232,8 @@ def print_depth_summary(path: Path, rows: list[dict[str, str]]) -> None:
                 f"median p0p1_dy_center={median(dy_values):.2f}px. "
                 "Check per-pair signed y prior in P1 search."
             )
+
+    print_circle_source_summary(rows)
 
 
 def print_sidecar_summary(path: Path) -> None:

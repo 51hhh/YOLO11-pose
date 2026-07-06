@@ -2325,6 +2325,15 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             circle_depth_enabled &&
             circle_seed_valid &&
             circle_depth_valid;
+        // The GPU candidate kernel falls back to the YOLO bbox center when the
+        // ROI circle fit is not trustworthy. Keep circle_center itself strict,
+        // but do not let a failed circle fit suppress P1 training candidates.
+        const bool gpu_p1_seed_available =
+            direct_yolo_match && right_det && gpu_candidate;
+        const bool circle_p1_seed_available =
+            circle_seed_valid && circle_depth_valid;
+        const bool p1_seed_available =
+            gpu_p1_seed_available || circle_p1_seed_available;
         bool epipolar_fallback_depth_valid =
             is_fallback_match &&
             epipolar_fallback_enabled &&
@@ -2351,12 +2360,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         SubpixelDisparityResult center_patch_result;
         bool center_patch_valid_for_obj = false;
         if (roi_center_patch_depth_enabled &&
-            circle_seed_valid &&
-            circle_depth_valid) {
+            p1_seed_available) {
             if (gpu_candidate) {
                 center_patch_result =
                     subpixelFromGpuCandidate(gpu_candidate->center_patch);
-            } else if (image_available) {
+            } else if (circle_p1_seed_available && image_available) {
                 center_patch_result = refineDisparityByROICenterPatchCPU(
                     left_cpu, left_pitch, right_cpu, right_pitch,
                     img_width, img_height,
@@ -2386,23 +2394,25 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         const float subpixel_budget_ms =
             std::max(0.0f, config_.dual_yolo.subpixel_time_budget_ms);
         if (use_subpixel_depth &&
-            circle_seed_valid &&
-            circle_depth_valid &&
+            p1_seed_available &&
             (subpixel_budget_ms <= 0.0f ||
              local_stats.subpixel_time_ms < static_cast<double>(subpixel_budget_ms))) {
             ++local_stats.subpixel_attempted;
             subpixel_attempted_for_obj = true;
             const auto subpixel_start = Clock::now();
-            const SubpixelDisparityResult refined = gpu_candidate
-                ? subpixelFromGpuCandidate(gpu_candidate->multi_point)
-                : refineDisparityByROIMultiPointCPU(
-                      left_cpu, left_pitch, right_cpu, right_pitch,
-                      img_width, img_height,
-                      left_circle, right_circle,
-                      config_.dual_yolo,
-                      config_.max_disparity,
-                      focal,
-                      baseline);
+            SubpixelDisparityResult refined;
+            if (gpu_candidate) {
+                refined = subpixelFromGpuCandidate(gpu_candidate->multi_point);
+            } else if (circle_p1_seed_available && image_available) {
+                refined = refineDisparityByROIMultiPointCPU(
+                    left_cpu, left_pitch, right_cpu, right_pitch,
+                    img_width, img_height,
+                    left_circle, right_circle,
+                    config_.dual_yolo,
+                    config_.max_disparity,
+                    focal,
+                    baseline);
+            }
             const double subpixel_ms = std::chrono::duration<double, std::milli>(
                 Clock::now() - subpixel_start).count();
             local_stats.subpixel_time_ms += subpixel_ms;
@@ -2439,7 +2449,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     ++local_stats.subpixel_low_conf;
                 }
             }
-        } else if (use_subpixel_depth && circle_seed_valid && circle_depth_valid) {
+        } else if (use_subpixel_depth && p1_seed_available) {
             ++local_stats.subpixel_budget_skip;
         }
 

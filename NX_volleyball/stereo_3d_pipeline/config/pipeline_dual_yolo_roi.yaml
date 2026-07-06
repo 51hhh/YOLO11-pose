@@ -245,7 +245,7 @@ performance:
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
   async_roi_deadline_ms: 11.1   # 90Hz 下给 ROI 后处理的软预算
   p2_feature_job_scaffold_enabled: true       # keep P2 lane decisions visible in frame summary
-  p2_realtime_lane_decision_enabled: true     # run NCC + XFeat + SuperPoint inline on each 90Hz frame; circle_center is a P0/P1 candidate
+  p2_realtime_lane_decision_enabled: true     # run NCC + XFeat inline on each 90Hz frame; SuperPoint/ALIKED remain disabled in this config
   p2_diagnostic_lane_decision_enabled: false  # no async sidecar sampling; write candidates to main CSV fields
   p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
   p2_trigger_on_fallback: true
