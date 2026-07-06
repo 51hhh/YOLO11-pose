@@ -21,7 +21,7 @@ try:
     from .evaluate_fusion import _read as read_eval_rows
     from .evaluate_fusion import build_report
     from .manifest import DatasetClip, is_manifest_path, load_manifest
-    from .robust_smoother import SmootherConfig, smooth_sequence, write_output
+    from .robust_smoother import SmootherConfig, smooth_sequence, smooth_sequence_rts, write_output
 except ImportError:  # pragma: no cover - direct script execution
     from analyze_candidate_consistency import (
         analyze_candidate_clips,
@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - direct script execution
     from evaluate_fusion import _read as read_eval_rows
     from evaluate_fusion import build_report
     from manifest import DatasetClip, is_manifest_path, load_manifest
-    from robust_smoother import SmootherConfig, smooth_sequence, write_output
+    from robust_smoother import SmootherConfig, smooth_sequence, smooth_sequence_rts, write_output
 
 
 def _safe_stem(value: str) -> str:
@@ -81,9 +81,11 @@ def _run_robust_smoother(
     clip: DatasetClip,
     output_csv: Path,
     *,
+    metadata_path: Path | None,
     gravity_y: float,
     use_online_position: bool,
     use_static_known_z: bool,
+    rts: bool = False,
 ) -> Dict[str, Any]:
     cfg = SmootherConfig(
         gravity_y=gravity_y,
@@ -92,8 +94,9 @@ def _run_robust_smoother(
     )
     all_rows: List[Dict[str, float]] = []
     metrics: List[Dict[str, float]] = []
-    for sequence in load_legacy_sequences(clip.csv, metadata_path=clip.metadata):
-        rows, seq_metrics = smooth_sequence(sequence, cfg)
+    smoother = smooth_sequence_rts if rts else smooth_sequence
+    for sequence in load_legacy_sequences(clip.csv, metadata_path=metadata_path):
+        rows, seq_metrics = smoother(sequence, cfg)
         all_rows.extend(rows)
         metrics.append(seq_metrics)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +115,7 @@ def run_suite(
     gravity_y: float = 9.81,
     use_online_position: bool = False,
     use_static_known_z: bool = False,
+    include_rts_smoother: bool = True,
     include_candidate_consistency: bool = True,
     candidate_reference: str = "auto",
 ) -> Dict[str, Any]:
@@ -127,6 +131,7 @@ def run_suite(
             "gravity_y": gravity_y,
             "use_online_position": use_online_position,
             "use_static_known_z": use_static_known_z,
+            "include_rts_smoother": include_rts_smoother,
             "include_candidate_consistency": include_candidate_consistency,
             "candidate_reference": candidate_reference,
         },
@@ -175,6 +180,7 @@ def run_suite(
         robust_summary = _run_robust_smoother(
             clip,
             robust_csv,
+            metadata_path=metadata_path,
             gravity_y=gravity_y,
             use_online_position=use_online_position,
             use_static_known_z=use_static_known_z,
@@ -197,6 +203,27 @@ def run_suite(
             "robust_rows": robust_summary["rows"],
             "robust_track_count": robust_report.get("track_count", 0),
         }
+        if include_rts_smoother:
+            robust_rts_csv = clip_dir / "robust_rts_smooth.csv"
+            robust_rts_summary = _run_robust_smoother(
+                clip,
+                robust_rts_csv,
+                metadata_path=metadata_path,
+                gravity_y=gravity_y,
+                use_online_position=use_online_position,
+                use_static_known_z=use_static_known_z,
+                rts=True,
+            )
+            robust_rts_eval_json = clip_dir / "robust_rts_smooth_eval.json"
+            robust_rts_report = _evaluate_csv(robust_rts_csv, metadata_path, robust_rts_eval_json)
+            clip_report.update(
+                {
+                    "robust_rts_smooth_csv": str(robust_rts_csv),
+                    "robust_rts_smooth_eval_json": str(robust_rts_eval_json),
+                    "robust_rts_rows": robust_rts_summary["rows"],
+                    "robust_rts_track_count": robust_rts_report.get("track_count", 0),
+                }
+            )
         if include_candidate_consistency:
             clip_report.update(
                 {
@@ -310,6 +337,7 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--candidate-reference", default="auto")
+    parser.add_argument("--skip-rts-smoother", action="store_true")
     parser.add_argument("--skip-candidate-consistency", action="store_true")
     parser.set_defaults(use_static_known_z=False)
     args = parser.parse_args()
@@ -324,16 +352,18 @@ def main() -> int:
         gravity_y=args.gravity_y,
         use_online_position=args.use_online_position,
         use_static_known_z=args.use_static_known_z,
+        include_rts_smoother=not args.skip_rts_smoother,
         include_candidate_consistency=not args.skip_candidate_consistency,
         candidate_reference=args.candidate_reference,
     )
     print(f"wrote suite for {len(report['clips'])} clip(s) to {report['output_dir']}")
     for clip in report["clips"]:
         print(
-            "clip={name} rows={rows} robust_rows={robust_rows} dir={directory}".format(
+            "clip={name} rows={rows} robust_rows={robust_rows} rts_rows={rts_rows} dir={directory}".format(
                 name=clip["name"],
                 rows=clip["check_rows"],
                 robust_rows=clip["robust_rows"],
+                rts_rows=clip.get("robust_rts_rows", 0),
                 directory=Path(clip["robust_smooth_csv"]).parent,
             )
         )

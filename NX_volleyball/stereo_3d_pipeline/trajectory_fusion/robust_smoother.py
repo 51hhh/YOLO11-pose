@@ -47,7 +47,7 @@ def _dt(rows: List[Dict[str, float]], index: int) -> float:
     return max(1e-4, min(0.2, rows[index]["timestamp"] - rows[index - 1]["timestamp"]))
 
 
-def _predict(state: np.ndarray, cov: np.ndarray, dt: float, cfg: SmootherConfig) -> Tuple[np.ndarray, np.ndarray]:
+def _transition(dt: float, cfg: SmootherConfig) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     f = np.eye(6, dtype=np.float64)
     f[0, 3] = dt
     f[1, 4] = dt
@@ -64,8 +64,7 @@ def _predict(state: np.ndarray, cov: np.ndarray, dt: float, cfg: SmootherConfig)
         q[axis, axis + 3] = q_cross
         q[axis + 3, axis] = q_cross
 
-    return f @ state + control, f @ cov @ f.T + q
-
+    return f, control, q
 
 def _robust_update(
     state: np.ndarray,
@@ -274,6 +273,68 @@ def smooth_sequence(
     cfg: SmootherConfig,
     z_measurement_provider: ZMeasurementProvider | None = None,
 ) -> Tuple[List[Dict[str, float]], Dict[str, float]]:
+    output, metrics, _history = _forward_filter_sequence(sequence, cfg, z_measurement_provider)
+    return output, metrics
+
+
+def smooth_sequence_rts(
+    sequence: LegacySequence,
+    cfg: SmootherConfig,
+    z_measurement_provider: ZMeasurementProvider | None = None,
+) -> Tuple[List[Dict[str, float]], Dict[str, float]]:
+    output, _metrics, history = _forward_filter_sequence(sequence, cfg, z_measurement_provider)
+    filtered_states = history["filtered_states"]
+    filtered_covs = history["filtered_covs"]
+    predicted_states = history["predicted_states"]
+    predicted_covs = history["predicted_covs"]
+    transitions = history["transitions"]
+    if not filtered_states:
+        return output, _metrics
+
+    smoothed_states = [state.copy() for state in filtered_states]
+    smoothed_covs = [cov.copy() for cov in filtered_covs]
+    for index in range(len(filtered_states) - 2, -1, -1):
+        f_next = transitions[index + 1]
+        filtered_cov = filtered_covs[index]
+        predicted_cov_next = predicted_covs[index + 1]
+        gain = filtered_cov @ f_next.T @ np.linalg.pinv(predicted_cov_next)
+        smoothed_states[index] = filtered_states[index] + gain @ (
+            smoothed_states[index + 1] - predicted_states[index + 1]
+        )
+        smoothed_covs[index] = filtered_cov + gain @ (
+            smoothed_covs[index + 1] - predicted_cov_next
+        ) @ gain.T
+        smoothed_covs[index] = 0.5 * (smoothed_covs[index] + smoothed_covs[index].T)
+
+    for index, row in enumerate(output):
+        row.update(
+            {
+                "filter_x": row["smooth_x"],
+                "filter_y": row["smooth_y"],
+                "filter_z": row["smooth_z"],
+                "filter_vx": row["smooth_vx"],
+                "filter_vy": row["smooth_vy"],
+                "filter_vz": row["smooth_vz"],
+                "filter_sigma_z": row["smooth_sigma_z"],
+                "smooth_x": float(smoothed_states[index][0]),
+                "smooth_y": float(smoothed_states[index][1]),
+                "smooth_z": float(smoothed_states[index][2]),
+                "smooth_vx": float(smoothed_states[index][3]),
+                "smooth_vy": float(smoothed_states[index][4]),
+                "smooth_vz": float(smoothed_states[index][5]),
+                "smooth_sigma_z": float(math.sqrt(max(smoothed_covs[index][2, 2], 0.0))),
+            }
+        )
+    metrics = _sequence_metrics(sequence, output, history["innovations"])
+    metrics["rts"] = 1.0
+    return output, metrics
+
+
+def _forward_filter_sequence(
+    sequence: LegacySequence,
+    cfg: SmootherConfig,
+    z_measurement_provider: ZMeasurementProvider | None = None,
+) -> Tuple[List[Dict[str, float]], Dict[str, float], Dict[str, List[np.ndarray] | List[float]]]:
     rows = sequence.rows
     first = rows[0]
     state = np.array([first["x"], first["y"], _initial_z(first), 0.0, 0.0, 0.0], dtype=np.float64)
@@ -287,10 +348,20 @@ def smooth_sequence(
 
     output: List[Dict[str, float]] = []
     innovations: List[float] = []
+    predicted_states: List[np.ndarray] = []
+    predicted_covs: List[np.ndarray] = []
+    filtered_states: List[np.ndarray] = []
+    filtered_covs: List[np.ndarray] = []
+    transitions: List[np.ndarray] = []
     known_z = _metadata_float(sequence, "known_z_m", "known_z", "known_distance_m")
     use_known_z = cfg.use_static_known_z and known_z > 0.0 and _metadata_bool(sequence, "static", "is_static")
     for i, row in enumerate(rows):
-        state, cov = _predict(state, cov, _dt(rows, i), cfg)
+        f, control, q = _transition(_dt(rows, i), cfg)
+        state = f @ state + control
+        cov = f @ cov @ f.T + q
+        predicted_states.append(state.copy())
+        predicted_covs.append(cov.copy())
+        transitions.append(f)
         if cfg.use_online_position:
             meas, r_diag = _position_measurement(row, cfg)
             state, cov, inn = _robust_update(state, cov, meas, h_xyz, r_diag, cfg)
@@ -322,6 +393,8 @@ def smooth_sequence(
             )
             innovations.append(inn)
 
+        filtered_states.append(state.copy())
+        filtered_covs.append(cov.copy())
         out = dict(row)
         out.update(
             {
@@ -337,9 +410,27 @@ def smooth_sequence(
         )
         output.append(out)
 
+    metrics = _sequence_metrics(sequence, output, innovations)
+    history: Dict[str, List[np.ndarray] | List[float]] = {
+        "predicted_states": predicted_states,
+        "predicted_covs": predicted_covs,
+        "filtered_states": filtered_states,
+        "filtered_covs": filtered_covs,
+        "transitions": transitions,
+        "innovations": innovations,
+    }
+    return output, metrics, history
+
+
+def _sequence_metrics(
+    sequence: LegacySequence,
+    output: List[Dict[str, float]],
+    innovations: List[float],
+) -> Dict[str, float]:
+    rows = sequence.rows
     z_raw = [row["z"] for row in rows if row["z"] > 0.1]
     z_smooth = [row["smooth_z"] for row in output if row["smooth_z"] > 0.1]
-    metrics = {
+    return {
         "track_id": float(sequence.track_id),
         "frames": float(len(rows)),
         "raw_z_std": _std(z_raw),
@@ -347,7 +438,6 @@ def smooth_sequence(
         "innovation_norm_mean": float(np.mean(innovations)) if innovations else 0.0,
         "innovation_norm_max": float(np.max(innovations)) if innovations else 0.0,
     }
-    return output, metrics
 
 
 def _std(values: List[float]) -> float:
@@ -366,6 +456,13 @@ def write_output(path: str | Path, rows: List[Dict[str, float]]) -> None:
         "x",
         "y",
         "z",
+        "filter_x",
+        "filter_y",
+        "filter_z",
+        "filter_vx",
+        "filter_vy",
+        "filter_vz",
+        "filter_sigma_z",
         "smooth_x",
         "smooth_y",
         "smooth_z",
@@ -394,6 +491,7 @@ def main() -> int:
     parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
     parser.add_argument("--no-method-depths", action="store_true", help="Do not use raw candidate z_* updates")
     parser.add_argument("--use-online-position", action="store_true", help="Also use legacy online x/y/z as a position update")
+    parser.add_argument("--rts", action="store_true", help="Run an offline Rauch-Tung-Striebel backward pass after forward filtering")
     parser.add_argument(
         "--use-static-known-z",
         dest="use_static_known_z",
@@ -420,7 +518,8 @@ def main() -> int:
     all_rows: List[Dict[str, float]] = []
     metrics: List[Dict[str, float]] = []
     for seq in sequences:
-        rows, seq_metrics = smooth_sequence(seq, cfg)
+        smoother = smooth_sequence_rts if args.rts else smooth_sequence
+        rows, seq_metrics = smoother(seq, cfg)
         all_rows.extend(rows)
         metrics.append(seq_metrics)
 
