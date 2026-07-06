@@ -12,10 +12,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 try:
+    from .audit_reliability_methods import audit_reliability_methods, write_csv as write_method_audit
     from .rank_sweep_metrics import rank_metrics, write_ranking
     from .run_evaluation_suite import run_suite
     from .summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
 except ImportError:  # pragma: no cover - direct script execution
+    from audit_reliability_methods import audit_reliability_methods, write_csv as write_method_audit
     from rank_sweep_metrics import rank_metrics, write_ranking
     from run_evaluation_suite import run_suite
     from summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
@@ -212,6 +214,7 @@ def run_sweep(
         "sweep_ranking": str(root / "sweep_ranking.csv"),
         "sweep_variant_ranking": str(root / "sweep_variant_ranking.csv"),
         "sweep_reliability_methods": str(root / "sweep_reliability_methods.csv"),
+        "sweep_reliability_method_audit": str(root / "sweep_reliability_method_audit.csv"),
         "runs": [],
     }
     combined_rows: List[Dict[str, Any]] = []
@@ -280,8 +283,11 @@ def run_sweep(
         )
         _write_sweep_summary(root / "sweep_summary.json", summary)
         metrics_path = root / "sweep_metrics.csv"
+        methods_path = root / "sweep_reliability_methods.csv"
         _write_combined_metrics(metrics_path, combined_rows)
-        _write_combined_metrics(root / "sweep_reliability_methods.csv", combined_method_rows)
+        _write_combined_metrics(methods_path, combined_method_rows)
+        if combined_method_rows:
+            write_method_audit(root / "sweep_reliability_method_audit.csv", audit_reliability_methods(methods_path))
         ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)
         variant_ranking = rank_metrics(metrics_path, variant="all", split=rank_split)

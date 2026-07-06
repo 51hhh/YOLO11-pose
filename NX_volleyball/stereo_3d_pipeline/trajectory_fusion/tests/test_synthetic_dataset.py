@@ -20,6 +20,7 @@ if str(PROJECT) not in sys.path:
 from trajectory_fusion import evaluate_fusion  # noqa: E402
 from trajectory_fusion import run_reliability_sweep as sweep_module  # noqa: E402
 from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
+from trajectory_fusion.audit_reliability_methods import audit_reliability_methods  # noqa: E402
 from trajectory_fusion.build_dataset_manifest import (  # noqa: E402
     build_manifest,
     discover_csvs,
@@ -935,6 +936,69 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(row["top_count"], 6.0)
             self.assertEqual(row["mean_corrected_minus_raw_z"], -0.03)
 
+    def test_audit_reliability_methods_flags_low_coverage_top_weight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sweep_reliability_methods.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "clip",
+                    "track_id",
+                    "method",
+                    "rows",
+                    "valid",
+                    "top_count",
+                    "mean_sigma",
+                    "mean_abs_bias",
+                    "mean_inlier_prob",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "net_a",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "clip": "clip",
+                        "track_id": "0",
+                        "method": "bbox_center",
+                        "rows": "100",
+                        "valid": "100",
+                        "top_count": "10",
+                        "mean_sigma": "0.05",
+                        "mean_abs_bias": "0.01",
+                        "mean_inlier_prob": "0.9",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "net_a",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "clip": "clip",
+                        "track_id": "0",
+                        "method": "roi_neural_xfeat",
+                        "rows": "100",
+                        "valid": "5",
+                        "top_count": "90",
+                        "mean_sigma": "0.01",
+                        "mean_abs_bias": "0.12",
+                        "mean_inlier_prob": "0.2",
+                    }
+                )
+
+            rows = audit_reliability_methods(path)
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["dominant_top_method"], "roi_neural_xfeat")
+            self.assertGreater(row["low_coverage_top_share"], 0.8)
+            self.assertIn("low_coverage_methods_receive_top_weight", row["warnings"])
+            self.assertIn("low_coverage_methods_have_tiny_sigma", row["warnings"])
+            self.assertIn("large_method_bias", row["warnings"])
+            self.assertIn("low_inlier_method_receives_top_weight", row["warnings"])
+
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1037,6 +1101,11 @@ class SyntheticDatasetTest(unittest.TestCase):
                 str(root / "sweep_out" / "sweep_reliability_methods.csv"),
             )
             self.assertTrue((root / "sweep_out" / "sweep_reliability_methods.csv").exists())
+            self.assertEqual(
+                summary["sweep_reliability_method_audit"],
+                str(root / "sweep_out" / "sweep_reliability_method_audit.csv"),
+            )
+            self.assertTrue((root / "sweep_out" / "sweep_reliability_method_audit.csv").exists())
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
