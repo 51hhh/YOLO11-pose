@@ -17,6 +17,7 @@ try:
     )
     from .check_dataset import analyze_dataset
     from .dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from .evaluate_calibrated_smoother import apply_calibrated_smoother
     from .evaluate_fusion import _read as read_eval_rows
     from .evaluate_fusion import build_report
     from .manifest import DatasetClip, is_manifest_path, load_manifest
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - direct script execution
     )
     from check_dataset import analyze_dataset
     from dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from evaluate_calibrated_smoother import apply_calibrated_smoother
     from evaluate_fusion import _read as read_eval_rows
     from evaluate_fusion import build_report
     from manifest import DatasetClip, is_manifest_path, load_manifest
@@ -105,6 +107,7 @@ def run_suite(
     *,
     metadata: str | None = None,
     checkpoint: str | Path | None = None,
+    calibration: str | Path | None = None,
     device: str = "cpu",
     gravity_y: float = 9.81,
     use_online_position: bool = False,
@@ -119,6 +122,7 @@ def run_suite(
     suite_report: Dict[str, Any] = {
         "output_dir": str(root),
         "checkpoint": str(checkpoint) if checkpoint else None,
+        "calibration": str(calibration) if calibration else None,
         "config": {
             "gravity_y": gravity_y,
             "use_online_position": use_online_position,
@@ -202,6 +206,31 @@ def run_suite(
                 }
             )
 
+        if calibration:
+            calibrated_csv = clip_dir / "calibrated_smoother.csv"
+            calibrated_json = clip_dir / "calibrated_smoother_apply.json"
+            calibrated_report = apply_calibrated_smoother(
+                input_csv=clip.csv,
+                calibration_path=calibration,
+                output_csv=calibrated_csv,
+                metadata_path=metadata_path,
+                smoother_cfg=SmootherConfig(
+                    gravity_y=gravity_y,
+                    use_online_position=use_online_position,
+                    use_static_known_z=use_static_known_z,
+                ),
+            )
+            _write_json(calibrated_json, calibrated_report)
+            calibrated_eval_json = clip_dir / "calibrated_smoother_eval.json"
+            _evaluate_csv(calibrated_csv, metadata_path, calibrated_eval_json)
+            clip_report.update(
+                {
+                    "calibrated_smoother_csv": str(calibrated_csv),
+                    "calibrated_smoother_apply_json": str(calibrated_json),
+                    "calibrated_smoother_eval_json": str(calibrated_eval_json),
+                }
+            )
+
         if checkpoint:
             try:
                 from .evaluate_reliability_checkpoint import apply_checkpoint
@@ -264,6 +293,7 @@ def main() -> int:
     parser.add_argument("-o", "--output-dir", required=True)
     parser.add_argument("--metadata", help="Optional metadata YAML for a single CSV")
     parser.add_argument("--checkpoint", help="Optional ReliabilityNet checkpoint")
+    parser.add_argument("--calibration", help="Optional per-method calibration JSON")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--use-online-position", action="store_true")
@@ -289,6 +319,7 @@ def main() -> int:
         output_dir=args.output_dir,
         metadata=args.metadata,
         checkpoint=args.checkpoint,
+        calibration=args.calibration,
         device=args.device,
         gravity_y=args.gravity_y,
         use_online_position=args.use_online_position,

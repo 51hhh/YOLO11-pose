@@ -28,6 +28,12 @@ from trajectory_fusion.dataset import (  # noqa: E402
     load_legacy_sequences,
     read_metadata,
 )
+from trajectory_fusion.evaluate_calibrated_smoother import apply_calibrated_smoother  # noqa: E402
+from trajectory_fusion.fit_method_calibration import (  # noqa: E402
+    CalibrationConfig,
+    fit_method_calibration,
+    write_calibration,
+)
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
 from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
@@ -640,6 +646,61 @@ class SyntheticDatasetTest(unittest.TestCase):
             }
             self.assertIn(("bbox_center", "circle_center"), pairs)
             self.assertEqual(pairs[("bbox_center", "circle_center")]["count"], 2)
+
+    def test_method_calibration_fits_and_applies_smoother(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root)
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            calibration = fit_method_calibration(
+                load_manifest(manifest_path),
+                cfg=CalibrationConfig(min_count=1, min_sigma=0.01),
+            )
+            self.assertIn("bbox_center", calibration["methods"])
+            self.assertAlmostEqual(
+                calibration["methods"]["bbox_center"]["bias_median"],
+                0.005,
+                places=6,
+            )
+            calibration_path = root / "method_calibration.json"
+            write_calibration(calibration_path, calibration)
+            output_csv = root / "calibrated_smooth.csv"
+            report = apply_calibrated_smoother(
+                csv_path,
+                calibration_path,
+                output_csv,
+                metadata_path=root / "traj_p0p1_001.metadata.yaml",
+            )
+            self.assertEqual(report["rows"], 4)
+            self.assertTrue(output_csv.exists())
+            text = output_csv.read_text(encoding="utf-8")
+            self.assertIn("calibrated_smoother_valid_count", text)
+            self.assertGreater(len(report["calibrated_methods"]), 0)
+
+            suite_dir = root / "calibrated_suite"
+            suite_report = run_suite(
+                [str(csv_path)],
+                suite_dir,
+                metadata=str(root / "traj_p0p1_001.metadata.yaml"),
+                calibration=calibration_path,
+                gravity_y=0.0,
+            )
+            self.assertIn("calibrated_smoother_eval_json", suite_report["clips"][0])
+            rows = summarize_suite(suite_dir, suite_dir / "suite_metrics.csv")
+            self.assertIn("calibrated_smoother", {row["variant"] for row in rows})
 
     def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
