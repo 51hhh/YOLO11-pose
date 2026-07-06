@@ -32,7 +32,8 @@ bool dualYoloCircleDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
 }
 
 bool dualYoloCircleEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
-    return cfg.depth_circle_edges && cfg.center_refine;
+    (void)cfg;
+    return false;
 }
 
 bool dualYoloROIEdgeCentroidDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
@@ -143,7 +144,6 @@ bool dualYoloCpuFallbackSearchEnabled(const PipelineConfig::DualYoloConfig& cfg)
 bool dualYoloNeedsCircleSeedRefine(const PipelineConfig::DualYoloConfig& cfg) {
     return cfg.center_refine &&
            (cfg.depth_circle_center ||
-            cfg.depth_circle_edges ||
             cfg.depth_roi_edge_centroid ||
             cfg.depth_roi_center_patch ||
             dualYoloSubpixelDepthEnabled(cfg) ||

@@ -36,7 +36,7 @@
 | 原始/滤波 3D | `raw_x/y/z`, `x/y/z`, `vx/vy/vz`, `ax/ay/az` |
 | 单目深度 | `z_mono` |
 | bbox 双目 | `z_bbox_center`, `z_bbox_left_edge`, `z_bbox_right_edge` |
-| 圆拟合双目 | `z_circle_center`, `z_circle_left_edge`, `z_circle_right_edge` |
+| 圆拟合双目 | `z_circle_center`；`z_circle_left_edge/right_edge` 仅旧兼容列 |
 | ROI 几何 | `z_roi_edge_centroid`, `z_roi_radial_center`, `z_roi_edge_pair_center` |
 | ROI sparse | `z_roi_corner_points`, `z_roi_texture_points`, `z_roi_binary_points` |
 | 描述子/近似描述子 | `z_roi_orb_points`, `z_roi_brisk_points`, `z_roi_akaze_points`, `z_roi_sift_points` |

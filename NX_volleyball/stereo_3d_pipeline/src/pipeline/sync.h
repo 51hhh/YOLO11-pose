@@ -36,6 +36,9 @@ struct PipelineStreams {
     cudaStream_t cudaStreamGPU  = nullptr;   ///< GPU 视差 CUDA Stream
     cudaStream_t cudaStreamFuse = nullptr;   ///< 融合 Stage CUDA Stream
     cudaStream_t cudaStreamBGR  = nullptr;   ///< Bayer→BGR CUDA kernel Stream
+    cudaStream_t cudaStreamP2Ncc = nullptr;  ///< P2 inline NCC/Template Stream
+    cudaStream_t cudaStreamP2XFeat = nullptr; ///< P2 inline XFeat Stream
+    cudaStream_t cudaStreamP2SuperPoint = nullptr; ///< P2 inline SuperPoint Stream
 
     /**
      * @brief 初始化所有 Streams
@@ -95,6 +98,32 @@ struct PipelineStreams {
             return false;
         }
 
+        err = cudaStreamCreateWithFlags(&cudaStreamP2Ncc, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create P2 NCC stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamP2XFeat, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create P2 XFeat stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamP2SuperPoint,
+                                        cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr,
+                    "[Sync] Failed to create P2 SuperPoint stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
         return true;
     }
 
@@ -109,6 +138,11 @@ struct PipelineStreams {
         if (cudaStreamGPU) cudaStreamSynchronize(cudaStreamGPU);
         if (cudaStreamFuse) cudaStreamSynchronize(cudaStreamFuse);
         if (cudaStreamBGR)  cudaStreamSynchronize(cudaStreamBGR);
+        if (cudaStreamP2Ncc) cudaStreamSynchronize(cudaStreamP2Ncc);
+        if (cudaStreamP2XFeat) cudaStreamSynchronize(cudaStreamP2XFeat);
+        if (cudaStreamP2SuperPoint) {
+            cudaStreamSynchronize(cudaStreamP2SuperPoint);
+        }
     }
 
     /**
@@ -122,6 +156,18 @@ struct PipelineStreams {
         if (cudaStreamGPU) { cudaStreamDestroy(cudaStreamGPU); cudaStreamGPU = nullptr; }
         if (cudaStreamFuse){ cudaStreamDestroy(cudaStreamFuse); cudaStreamFuse = nullptr; }
         if (cudaStreamBGR) { cudaStreamDestroy(cudaStreamBGR);  cudaStreamBGR = nullptr; }
+        if (cudaStreamP2Ncc) {
+            cudaStreamDestroy(cudaStreamP2Ncc);
+            cudaStreamP2Ncc = nullptr;
+        }
+        if (cudaStreamP2XFeat) {
+            cudaStreamDestroy(cudaStreamP2XFeat);
+            cudaStreamP2XFeat = nullptr;
+        }
+        if (cudaStreamP2SuperPoint) {
+            cudaStreamDestroy(cudaStreamP2SuperPoint);
+            cudaStreamP2SuperPoint = nullptr;
+        }
     }
 };
 

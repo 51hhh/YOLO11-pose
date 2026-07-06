@@ -380,6 +380,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                       const SparseFeatureDisparityResult& result,
                                       float initial_disp) {
             const bool collect_debug_row =
+                config_.p2_diagnostic_results_enabled ||
                 config_.p2_diagnostic_artifacts_enabled ||
                 config_.p2_diagnostic_point_debug_enabled;
             if (!collect_debug_row ||
@@ -563,6 +564,19 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         }
 
         const float circle_disparity = left_circle.cx - right_circle.cx;
+        const float circle_top_y_delta =
+            std::abs((left_circle.cy - left_circle.radius) -
+                     (right_circle.cy - right_circle.radius));
+        const float circle_bottom_y_delta =
+            std::abs((left_circle.cy + left_circle.radius) -
+                     (right_circle.cy + right_circle.radius));
+        const bool circle_vertical_axis_ok =
+            circle_top_y_delta <= y_tol && circle_bottom_y_delta <= y_tol;
+        if (!circle_vertical_axis_ok) {
+            ++local_stats.circle_axis_reject;
+            globalPerf().record("Stage2_CircleAxisInvalid", 0.0);
+            circle_geometry_valid = false;
+        }
         const bool circle_disp_positive =
             circle_disparity > 0.0f &&
             circle_disparity <= static_cast<float>(config_.max_disparity);
@@ -574,6 +588,77 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
              yolo_disparity <= static_cast<float>(config_.max_disparity))
                 ? yolo_disparity
                 : (circle_disp_positive ? circle_disparity : -1.0f);
+        SparseFeatureDisparityResult circle_match_result;
+        float z_circle_match = -1.0f;
+        const bool circle_match_due =
+            p2_inline_feature_jobs_enabled &&
+            circle_depth_enabled &&
+            direct_yolo_match &&
+            right_det;
+        if (circle_match_due) {
+            const auto circle_match_start = Clock::now();
+            circle_match_result.attempted = 3;
+            circle_match_result.support =
+                (left_circle.valid && right_circle.valid) ? 3 : 0;
+            circle_match_result.disparity = circle_disparity;
+            circle_match_result.anchor_cx = left_circle.cx;
+            circle_match_result.anchor_cy = left_circle.cy;
+            circle_match_result.right_anchor_cx = right_circle.cx;
+            circle_match_result.right_anchor_cy = right_circle.cy;
+            const float circle_axis_residual =
+                std::max(refined_dy,
+                         0.5f * (circle_top_y_delta + circle_bottom_y_delta));
+            circle_match_result.stddev =
+                std::max(std::abs(left_circle.radius - right_circle.radius),
+                         circle_axis_residual);
+            circle_match_result.confidence =
+                std::sqrt(std::max(0.0f, left_circle.confidence) *
+                          std::max(0.0f, right_circle.confidence));
+            if (left_circle.valid && right_circle.valid) {
+                auto set_circle_axis_match =
+                    [&](int index, float left_y, float right_y) {
+                        auto& match = circle_match_result.debug_matches[
+                            static_cast<size_t>(index)];
+                        match.left_x = left_circle.cx;
+                        match.left_y = left_y;
+                        match.right_x = right_circle.cx;
+                        match.right_y = right_y;
+                        match.disparity = circle_disparity;
+                        match.score = circle_match_result.confidence;
+                    };
+                circle_match_result.debug_match_count = 3;
+                set_circle_axis_match(0, left_circle.cy, right_circle.cy);
+                set_circle_axis_match(1,
+                                      left_circle.cy - left_circle.radius,
+                                      right_circle.cy - right_circle.radius);
+                set_circle_axis_match(2,
+                                      left_circle.cy + left_circle.radius,
+                                      right_circle.cy + right_circle.radius);
+            }
+            const bool circle_sources_ok =
+                left_circle.source == kCircleSourceRoiFit &&
+                right_circle.source == kCircleSourceRoiFit;
+            z_circle_match = depth_from_disparity(circle_disparity);
+            circle_match_result.valid =
+                circle_sources_ok &&
+                !has_feature_proxy_circle &&
+                circle_geometry_valid &&
+                circle_vertical_axis_ok &&
+                circle_disp_positive &&
+                z_circle_match > 0.0f;
+            circle_match_result.low_confidence = !circle_match_result.valid;
+            const double circle_match_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - circle_match_start).count();
+            globalPerf().record("Stage2_CircleMatch", circle_match_ms);
+            globalPerf().record(circle_match_result.valid
+                                    ? "Stage2_CircleMatchValid"
+                                    : "Stage2_CircleMatchInvalid",
+                                0.0);
+            append_p2_artifact("circle_match",
+                               circle_match_result,
+                               feature_initial_disparity);
+        }
         auto record_cpu_feature_elapsed =
             [](const char* aggregate_metric,
                const char* mode_metric,
@@ -856,36 +941,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         SparseFeatureDisparityResult cuda_template_match_result;
         float z_roi_cuda_template_match = -1.0f;
-        if (roi_cuda_template_match_depth_enabled && direct_yolo_match &&
-            right_det && feature_initial_disparity > 0.0f &&
-            gpu_image_available && stream != nullptr) {
-            const auto cuda_template_start = Clock::now();
-            cuda_template_match_result = matchCudaTemplateDisparityGPU(
-                left_gpu, left_gpu_pitch,
-                right_gpu, right_gpu_pitch,
-                img_width, img_height,
-                left_det, *right_det,
-                feature_initial_disparity,
-                feature_cfg,
-                config_.max_disparity,
-                focal,
-                baseline,
-                stream);
-            const double cuda_template_ms =
-                std::chrono::duration<double, std::milli>(
-                    Clock::now() - cuda_template_start).count();
-            globalPerf().record("Stage2_CudaTemplateNccMatch",
-                                cuda_template_ms);
-            if (cuda_template_match_result.valid) {
-                z_roi_cuda_template_match =
-                    depth_from_disparity(cuda_template_match_result.disparity);
-                cuda_template_match_result.valid =
-                    z_roi_cuda_template_match > 0.0f;
-            }
-            append_p2_artifact("cuda_template",
-                               cuda_template_match_result,
-                               feature_initial_disparity);
-        }
 
         SparseFeatureDisparityResult cuda_stereo_bm_result;
         float z_roi_cuda_stereo_bm = -1.0f;
@@ -984,35 +1039,138 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                feature_initial_disparity);
         }
 
-        // Split neural matchers: XFeat and SuperPoint each run on their own
-        // TensorRT context and write their own z_roi_neural_{xfeat,superpoint}
-        // candidate. They are invoked sequentially on the same stream (safe:
-        // independent contexts/workspaces) so both can populate fields in one
-        // frame instead of being an A/B choice.
+        // P2 inline feature candidates: NCC, XFeat and SuperPoint are
+        // independent algorithms. When more than one is enabled, dispatch them
+        // on independent CUDA streams and collect on the caller thread so their
+        // result fields stay deterministic and geometry gates remain centralized.
         SparseFeatureDisparityResult neural_xfeat_result;
         SparseFeatureDisparityResult neural_superpoint_result;
         SparseFeatureDisparityResult neural_feature_result;
         float z_roi_neural_feature = -1.0f;
         float z_roi_neural_xfeat = -1.0f;
         float z_roi_neural_superpoint = -1.0f;
-        const bool neural_common_gate =
+        const auto p2_inline_feature_start = Clock::now();
+        const bool p2_inline_gpu_common_gate =
             direct_yolo_match && right_det &&
             feature_initial_disparity > 0.0f &&
             gpu_image_available && stream != nullptr;
-        auto run_one_neural =
-            [&](NeuralFeatureMatcher* matcher,
-                const char* perf_name,
-                const char* perf_valid,
-                const char* perf_invalid,
-                const char* artifact_name,
-                SparseFeatureDisparityResult& neural_feature_result) -> float {
-            float z_out = -1.0f;
-            if (!matcher || !matcher->isReady()) {
-                return z_out;
+        const bool cuda_template_due =
+            roi_cuda_template_match_depth_enabled && p2_inline_gpu_common_gate;
+        const bool neural_feature_due =
+            neural_feature_depth_enabled && p2_inline_gpu_common_gate;
+        const bool neural_xfeat_due =
+            neural_xfeat_depth_enabled && p2_inline_gpu_common_gate;
+        const bool neural_superpoint_due =
+            neural_superpoint_depth_enabled && p2_inline_gpu_common_gate;
+        const int p2_parallel_algo_count =
+            (cuda_template_due ? 1 : 0) +
+            (neural_xfeat_due ? 1 : 0) +
+            (neural_superpoint_due ? 1 : 0);
+        const int p2_inline_algo_count =
+            (neural_feature_due ? 1 : 0) +
+            p2_parallel_algo_count;
+        if (p2_inline_algo_count > 0) {
+            globalPerf().record("Stage2_P2InlineFeatureAlgoCount",
+                                static_cast<double>(p2_inline_algo_count));
+        }
+
+        struct CudaEventGuard {
+            cudaEvent_t event = nullptr;
+            ~CudaEventGuard() {
+                if (event) {
+                    cudaEventDestroy(event);
+                }
             }
-            const auto neural_start = Clock::now();
-            const NeuralFeatureMatchResult neural =
-                matcher->matchGpuRoi(
+        };
+        CudaEventGuard p2_ready;
+        bool p2_parallel_enabled = false;
+        if (p2_parallel_algo_count > 1) {
+            cudaError_t err =
+                cudaEventCreateWithFlags(&p2_ready.event,
+                                         cudaEventDisableTiming);
+            if (err == cudaSuccess) {
+                err = cudaEventRecord(p2_ready.event, stream);
+            }
+            if (err == cudaSuccess) {
+                p2_parallel_enabled = true;
+            } else {
+                LOG_WARN("P2 inline: failed to create/record ready event, "
+                         "falling back to sequential feature candidates: %s",
+                         cudaGetErrorString(err));
+                globalPerf().record("Stage2_P2InlineReadyEventFallback",
+                                    0.0);
+                if (p2_ready.event) {
+                    cudaEventDestroy(p2_ready.event);
+                    p2_ready.event = nullptr;
+                }
+            }
+        }
+        const cudaEvent_t ready_event =
+            p2_parallel_enabled ? p2_ready.event : nullptr;
+
+        auto wait_p2_ready = [&](cudaStream_t algo_stream,
+                                 const char* label) -> bool {
+            if (!ready_event) {
+                return true;
+            }
+            if (!algo_stream) {
+                LOG_WARN("P2 inline %s stream unavailable", label);
+                return false;
+            }
+            const cudaError_t err =
+                cudaStreamWaitEvent(algo_stream, ready_event, 0);
+            if (err != cudaSuccess) {
+                LOG_WARN("P2 inline %s stream wait failed: %s",
+                         label, cudaGetErrorString(err));
+                return false;
+            }
+            return true;
+        };
+
+        struct CudaTemplateOutcome {
+            SparseFeatureDisparityResult result;
+            double elapsed_ms = 0.0;
+        };
+        auto run_cuda_template = [&](cudaStream_t algo_stream,
+                                     const char* label) {
+            CudaTemplateOutcome outcome;
+            const auto algo_start = Clock::now();
+            if (!wait_p2_ready(algo_stream, label)) {
+                outcome.result.low_confidence = true;
+            } else {
+                outcome.result = matchCudaTemplateDisparityGPU(
+                    left_gpu, left_gpu_pitch,
+                    right_gpu, right_gpu_pitch,
+                    img_width, img_height,
+                    left_det, *right_det,
+                    feature_initial_disparity,
+                    feature_cfg,
+                    config_.max_disparity,
+                    focal,
+                    baseline,
+                    algo_stream);
+            }
+            outcome.elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - algo_start).count();
+            return outcome;
+        };
+
+        struct NeuralOutcome {
+            NeuralFeatureMatchResult neural;
+            double elapsed_ms = 0.0;
+        };
+        auto run_neural = [&](NeuralFeatureMatcher* matcher,
+                              cudaStream_t algo_stream,
+                              const char* label) {
+            NeuralOutcome outcome;
+            const auto algo_start = Clock::now();
+            if (!matcher || !matcher->isReady()) {
+                outcome.neural.status = "unavailable";
+            } else if (!wait_p2_ready(algo_stream, label)) {
+                outcome.neural.status = "stream_wait_failed";
+            } else {
+                outcome.neural = matcher->matchGpuRoi(
                     left_gpu, left_gpu_pitch,
                     right_gpu, right_gpu_pitch,
                     left_bgr_gpu, left_bgr_pitch,
@@ -1020,34 +1178,46 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     img_width, img_height,
                     left_det, *right_det,
                     feature_initial_disparity,
-                    stream);
-            const double neural_elapsed_ms =
+                    algo_stream);
+            }
+            outcome.elapsed_ms =
                 std::chrono::duration<double, std::milli>(
-                    Clock::now() - neural_start).count();
+                    Clock::now() - algo_start).count();
+            return outcome;
+        };
+
+        auto finish_neural =
+            [&](const NeuralOutcome& outcome,
+                const char* perf_name,
+                const char* perf_valid,
+                const char* perf_invalid,
+                const char* artifact_name,
+                SparseFeatureDisparityResult& result) -> float {
+            float z_out = -1.0f;
+            const NeuralFeatureMatchResult& neural = outcome.neural;
             globalPerf().record(perf_name,
                                 neural.inference_ms > 0.0f
                                     ? static_cast<double>(neural.inference_ms)
-                                    : neural_elapsed_ms);
-            globalPerf().record(neural.valid ? perf_valid : perf_invalid, 0.0);
-            neural_feature_result.low_confidence = !neural.valid;
-            neural_feature_result.attempted =
+                                    : outcome.elapsed_ms);
+            result.low_confidence = !neural.valid;
+            result.unsupported = neural.status == "unsupported_input_schema" ||
+                                 neural.status == "requires_bgr";
+            result.attempted =
                 static_cast<int>(neural.debug_points.size());
-            neural_feature_result.debug_point_count = std::min(
+            result.debug_point_count = std::min(
                 static_cast<int>(neural.debug_points.size()),
                 kMaxSparseFeatureDebugPoints);
-            for (int i = 0; i < neural_feature_result.debug_point_count; ++i) {
-                neural_feature_result.debug_points[static_cast<size_t>(i)] =
+            for (int i = 0; i < result.debug_point_count; ++i) {
+                result.debug_points[static_cast<size_t>(i)] =
                     neural.debug_points[static_cast<size_t>(i)];
             }
             if (neural.valid) {
-                neural_feature_result.valid = true;
-                neural_feature_result.disparity = neural.disparity;
-                neural_feature_result.stddev = neural.stddev_px;
-                neural_feature_result.confidence = neural.confidence;
-                neural_feature_result.support =
-                    static_cast<int>(neural.matches.size());
-                neural_feature_result.attempted =
-                    static_cast<int>(neural.matches.size());
+                result.valid = true;
+                result.disparity = neural.disparity;
+                result.stddev = neural.stddev_px;
+                result.confidence = neural.confidence;
+                result.support = static_cast<int>(neural.matches.size());
+                result.attempted = static_cast<int>(neural.matches.size());
                 float sx = 0.0f;
                 float sy = 0.0f;
                 float rx = 0.0f;
@@ -1059,18 +1229,17 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     ry += m.right_y;
                 }
                 const float inv = 1.0f /
-                    static_cast<float>(std::max(1, neural_feature_result.support));
-                neural_feature_result.anchor_cx = sx * inv;
-                neural_feature_result.anchor_cy = sy * inv;
-                neural_feature_result.right_anchor_cx = rx * inv;
-                neural_feature_result.right_anchor_cy = ry * inv;
-                neural_feature_result.debug_match_count = std::min(
+                    static_cast<float>(std::max(1, result.support));
+                result.anchor_cx = sx * inv;
+                result.anchor_cy = sy * inv;
+                result.right_anchor_cx = rx * inv;
+                result.right_anchor_cy = ry * inv;
+                result.debug_match_count = std::min(
                     static_cast<int>(neural.matches.size()),
                     kMaxSparseFeatureDebugMatches);
-                for (int i = 0; i < neural_feature_result.debug_match_count; ++i) {
+                for (int i = 0; i < result.debug_match_count; ++i) {
                     const auto& src = neural.matches[static_cast<size_t>(i)];
-                    auto& dst =
-                        neural_feature_result.debug_matches[static_cast<size_t>(i)];
+                    auto& dst = result.debug_matches[static_cast<size_t>(i)];
                     dst.left_x = src.left_x;
                     dst.left_y = src.left_y;
                     dst.right_x = src.right_x;
@@ -1080,65 +1249,196 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
                 const SparseFeatureRejectReason final_reason =
                     sparseFeatureGeometryRejectReason(
-                        neural_feature_result, left_det, *right_det,
+                        result, left_det, *right_det,
                         feature_initial_disparity, feature_cfg,
                         focal, baseline);
                 if (final_reason != SparseFeatureRejectReason::NONE) {
                     RobustMatchSample final_sample;
-                    final_sample.left_x = neural_feature_result.anchor_cx;
-                    final_sample.left_y = neural_feature_result.anchor_cy;
+                    final_sample.left_x = result.anchor_cx;
+                    final_sample.left_y = result.anchor_cy;
                     final_sample.right_x =
-                        std::isfinite(neural_feature_result.right_anchor_cx)
-                            ? neural_feature_result.right_anchor_cx
-                            : neural_feature_result.anchor_cx -
-                                  neural_feature_result.disparity;
+                        std::isfinite(result.right_anchor_cx)
+                            ? result.right_anchor_cx
+                            : result.anchor_cx - result.disparity;
                     final_sample.right_y =
-                        std::isfinite(neural_feature_result.right_anchor_cy)
-                            ? neural_feature_result.right_anchor_cy
-                            : neural_feature_result.anchor_cy;
-                    final_sample.disparity = neural_feature_result.disparity;
-                    final_sample.score = neural_feature_result.confidence;
-                    appendDebugPoint(neural_feature_result,
+                        std::isfinite(result.right_anchor_cy)
+                            ? result.right_anchor_cy
+                            : result.anchor_cy;
+                    final_sample.disparity = result.disparity;
+                    final_sample.score = result.confidence;
+                    appendDebugPoint(result,
                                      final_sample,
                                      SparseFeatureDebugStage::GEOMETRY,
                                      final_reason,
                                      feature_initial_disparity,
                                      left_det,
                                      feature_cfg);
-                    neural_feature_result.valid = false;
-                    neural_feature_result.low_confidence = true;
+                    result.valid = false;
+                    result.low_confidence = true;
                 }
             }
-            if (neural_feature_result.valid) {
-                z_out = depth_from_disparity(neural_feature_result.disparity);
-                neural_feature_result.valid = z_out > 0.0f;
+            if (result.valid) {
+                z_out = depth_from_disparity(result.disparity);
+                result.valid = z_out > 0.0f;
+                result.low_confidence = !result.valid;
             }
-            append_p2_artifact(artifact_name,
-                               neural_feature_result,
+            globalPerf().record(result.valid ? perf_valid : perf_invalid, 0.0);
+            append_p2_artifact(artifact_name, result,
                                feature_initial_disparity);
             return z_out;
         };
-        if (neural_feature_depth_enabled && neural_common_gate) {
-            z_roi_neural_feature = run_one_neural(
-                neural_feature_matcher_.get(),
+
+        CudaTemplateOutcome cuda_template_outcome;
+        NeuralOutcome neural_feature_outcome;
+        NeuralOutcome neural_xfeat_outcome;
+        NeuralOutcome neural_superpoint_outcome;
+        bool cuda_template_submitted = false;
+        bool neural_xfeat_submitted = false;
+        bool neural_superpoint_submitted = false;
+
+        auto record_submit_fallback = [](const char* perf_name) {
+            globalPerf().record("Stage2_P2InlineSubmitFallback", 0.0);
+            globalPerf().record(perf_name, 0.0);
+        };
+
+        const auto p2_parallel_start = Clock::now();
+        if (cuda_template_due) {
+            const cudaStream_t algo_stream = p2_parallel_enabled
+                ? streams_.cudaStreamP2Ncc
+                : stream;
+            if (p2_parallel_enabled) {
+                cuda_template_submitted = submitP2InlineFeatureTask(
+                    p2_inline_ncc_worker_,
+                    [&, algo_stream] {
+                        cuda_template_outcome =
+                            run_cuda_template(algo_stream, "NCC");
+                    });
+            }
+            if (!cuda_template_submitted) {
+                if (p2_parallel_enabled) {
+                    record_submit_fallback(
+                        "Stage2_P2InlineSubmitFallbackNcc");
+                }
+                const cudaStream_t fallback_stream =
+                    p2_parallel_enabled ? stream : algo_stream;
+                cuda_template_outcome =
+                    run_cuda_template(fallback_stream, "NCC");
+            }
+        }
+        if (neural_xfeat_due) {
+            const cudaStream_t algo_stream = p2_parallel_enabled
+                ? streams_.cudaStreamP2XFeat
+                : stream;
+            if (p2_parallel_enabled) {
+                neural_xfeat_submitted = submitP2InlineFeatureTask(
+                    p2_inline_xfeat_worker_,
+                    [&, algo_stream] {
+                        neural_xfeat_outcome =
+                            run_neural(neural_xfeat_matcher_.get(),
+                                       algo_stream,
+                                       "XFeat");
+                    });
+            }
+            if (!neural_xfeat_submitted) {
+                if (p2_parallel_enabled) {
+                    record_submit_fallback(
+                        "Stage2_P2InlineSubmitFallbackXFeat");
+                }
+                const cudaStream_t fallback_stream =
+                    p2_parallel_enabled ? stream : algo_stream;
+                neural_xfeat_outcome =
+                    run_neural(neural_xfeat_matcher_.get(),
+                               fallback_stream,
+                               "XFeat");
+            }
+        }
+        if (neural_superpoint_due) {
+            const cudaStream_t algo_stream = p2_parallel_enabled
+                ? streams_.cudaStreamP2SuperPoint
+                : stream;
+            if (p2_parallel_enabled) {
+                neural_superpoint_submitted = submitP2InlineFeatureTask(
+                    p2_inline_superpoint_worker_,
+                    [&, algo_stream] {
+                        neural_superpoint_outcome =
+                            run_neural(neural_superpoint_matcher_.get(),
+                                       algo_stream,
+                                       "SuperPoint");
+                    });
+            }
+            if (!neural_superpoint_submitted) {
+                if (p2_parallel_enabled) {
+                    record_submit_fallback(
+                        "Stage2_P2InlineSubmitFallbackSuperPoint");
+                }
+                const cudaStream_t fallback_stream =
+                    p2_parallel_enabled ? stream : algo_stream;
+                neural_superpoint_outcome =
+                    run_neural(neural_superpoint_matcher_.get(),
+                               fallback_stream,
+                               "SuperPoint");
+            }
+        }
+
+        if (cuda_template_submitted) {
+            waitP2InlineFeatureTask(p2_inline_ncc_worker_);
+        }
+        if (neural_xfeat_submitted) {
+            waitP2InlineFeatureTask(p2_inline_xfeat_worker_);
+        }
+        if (neural_superpoint_submitted) {
+            waitP2InlineFeatureTask(p2_inline_superpoint_worker_);
+        }
+        if (cuda_template_submitted ||
+            neural_xfeat_submitted ||
+            neural_superpoint_submitted) {
+            const double p2_parallel_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - p2_parallel_start).count();
+            globalPerf().record("Stage2_P2InlineFeatureParallelJoin",
+                                p2_parallel_ms);
+        }
+
+        if (cuda_template_due) {
+            cuda_template_match_result = cuda_template_outcome.result;
+            globalPerf().record("Stage2_CudaTemplateNccMatch",
+                                cuda_template_outcome.elapsed_ms);
+            if (cuda_template_match_result.valid) {
+                z_roi_cuda_template_match =
+                    depth_from_disparity(cuda_template_match_result.disparity);
+                cuda_template_match_result.valid =
+                    z_roi_cuda_template_match > 0.0f;
+                cuda_template_match_result.low_confidence =
+                    !cuda_template_match_result.valid;
+            }
+            append_p2_artifact("cuda_template",
+                               cuda_template_match_result,
+                               feature_initial_disparity);
+        }
+
+        if (neural_feature_due) {
+            neural_feature_outcome =
+                run_neural(neural_feature_matcher_.get(), stream, "neural_feature");
+            z_roi_neural_feature = finish_neural(
+                neural_feature_outcome,
                 "Stage2_NeuralFeatureMatch",
                 "Stage2_NeuralFeatureMatchValid",
                 "Stage2_NeuralFeatureMatchInvalid",
                 "neural_feature",
                 neural_feature_result);
         }
-        if (neural_xfeat_depth_enabled && neural_common_gate) {
-            z_roi_neural_xfeat = run_one_neural(
-                neural_xfeat_matcher_.get(),
+        if (neural_xfeat_due) {
+            z_roi_neural_xfeat = finish_neural(
+                neural_xfeat_outcome,
                 "Stage2_NeuralXFeatMatch",
                 "Stage2_NeuralXFeatMatchValid",
                 "Stage2_NeuralXFeatMatchInvalid",
                 "neural_xfeat",
                 neural_xfeat_result);
         }
-        if (neural_superpoint_depth_enabled && neural_common_gate) {
-            z_roi_neural_superpoint = run_one_neural(
-                neural_superpoint_matcher_.get(),
+        if (neural_superpoint_due) {
+            z_roi_neural_superpoint = finish_neural(
+                neural_superpoint_outcome,
                 "Stage2_NeuralSuperPointMatch",
                 "Stage2_NeuralSuperPointMatchValid",
                 "Stage2_NeuralSuperPointMatchInvalid",
@@ -1156,6 +1456,14 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             z_roi_neural_feature =
                 z_roi_neural_xfeat > 0.0f ? z_roi_neural_xfeat
                                           : z_roi_neural_superpoint;
+        }
+        if (cuda_template_due || neural_feature_due ||
+            neural_xfeat_due || neural_superpoint_due) {
+            const double p2_inline_feature_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - p2_inline_feature_start).count();
+            globalPerf().record("Stage2_P2InlineFeatureEndToEnd",
+                                p2_inline_feature_ms);
         }
 
         SparseFeatureDisparityResult fallback_feature_result;
@@ -1320,19 +1628,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         float disparity_circle_right_edge = -1.0f;
         float z_circle_left_edge = -1.0f;
         float z_circle_right_edge = -1.0f;
-        if (circle_edges_depth_enabled &&
-            measured_circle_geometry_valid &&
-            left_circle.source == kCircleSourceRoiFit &&
-            right_circle.source == kCircleSourceRoiFit) {
-            disparity_circle_left_edge =
-                (left_circle.cx - left_circle.radius) -
-                (right_circle.cx - right_circle.radius);
-            disparity_circle_right_edge =
-                (left_circle.cx + left_circle.radius) -
-                (right_circle.cx + right_circle.radius);
-            z_circle_left_edge = depth_from_disparity(disparity_circle_left_edge);
-            z_circle_right_edge = depth_from_disparity(disparity_circle_right_edge);
-        }
+        // Sphere silhouette left/right edges are not the same physical surface
+        // point across cameras. Keep legacy CSV fields invalid; circle_match
+        // logs center/top/bottom axis points for diagnostics.
 
         SubpixelDisparityResult center_patch_result;
         bool center_patch_valid_for_obj = false;
@@ -2030,12 +2328,18 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 std::max(local_stats.iou_edge_attempted_max,
                          gpu_candidate->patch_iou_color_edge.attempted);
         }
+        const auto circle_fit_start = Clock::now();
         CircleFit2D left_circle = gpu_candidate
             ? circleFromGpuCandidate(gpu_candidate->left_circle, left)
             : refine_detection(left_cpu, left_pitch, left);
         CircleFit2D right_circle = gpu_candidate
             ? circleFromGpuCandidate(gpu_candidate->right_circle, right)
             : refine_detection(right_cpu, right_pitch, right);
+        globalPerf().record(
+            gpu_candidate ? "Stage2_CircleMatchGpuCandidate"
+                          : "Stage2_CircleMatchFit",
+            std::chrono::duration<double, std::milli>(
+                Clock::now() - circle_fit_start).count());
         if (!left_circle.valid || !right_circle.valid) {
             ++local_stats.circle_fit_fail;
             if (!direct_depth_without_circle_enabled) {

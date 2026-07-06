@@ -56,7 +56,7 @@ detector:
       bbox_pair: true          # cheap left/right YOLO bbox-center disparity candidate
       bbox_edges: true         # bbox left/right edge disparity candidates
       circle_center: true      # actual ROI circle-fit triangulation candidate (needs center_refine)
-      circle_edges: true       # circle left/right edge disparity candidates
+      circle_edges: false      # legacy left/right silhouette depth off; circle_center uses top/bottom contour check
       roi_edge_centroid: true  # gradient-weighted ROI edge centroid disparity candidate
       roi_radial_center: true  # radial-gradient center disparity candidate
       roi_edge_pair_center: true # paired left/right ROI edge center disparity candidate
@@ -69,7 +69,7 @@ detector:
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
       roi_iou_region_color_patch: false # disabled: 2026-07-04 artifacts showed systematic stripe-region mismatch
       roi_patch_iou_color_edge: false # disabled: 2026-07-04 artifacts showed systematic wrong color-edge match
-      roi_cuda_template_match: false # P2 self-written CUDA Template/NCC small ROI epipolar candidate
+      roi_cuda_template_match: true # P2 self-written CUDA Template/NCC small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
       roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 100fps
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
@@ -77,7 +77,7 @@ detector:
       roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
       roi_vpi_harris_lk: false # P2 VPI Harris + Pyramidal LK candidate
       roi_vpi_orb: false # disabled: current stable config removes VPI tail latency
-      roi_cuda_gftt_lk: true # P2 sidecar: OpenCV CUDA GFTT/Harris + SparsePyrLK candidate
+      roi_cuda_gftt_lk: false # P2 sidecar A/B candidate; disabled in P0/P1+XFeat+SuperPoint+NCC collection config
       roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
       roi_libsgm: false # P2 Fixstars libSGM candidate
       roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
@@ -135,7 +135,10 @@ stereo:
   quality: 6
 
 neural_feature_matching:
-  enabled: true # XFeat runs in the async diagnostic sidecar lane; realtime inline lane remains disabled below
+  enabled: false # legacy single-backend alias disabled; split blocks below write independent fields
+
+neural_feature_matching_xfeat:
+  enabled: true # XFeat runs inline on synchronized 90Hz frames
   backend: "xfeat"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_160_b2.engine"
   matcher_engine_path: ""
@@ -154,6 +157,26 @@ neural_feature_matching:
   min_spatial_quadrants: 2
   min_spatial_spread_ratio: 0.10
 
+neural_feature_matching_superpoint:
+  enabled: true # SuperPoint 160/top64 batch=2 runs inline on synchronized 90Hz frames
+  backend: "superpoint_lightglue"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/superpoint_extractor_160_top64_b2.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  roi_size: 160
+  top_k: 64
+  descriptor_dim: 256
+  min_matches: 4
+  max_y_error_px: 2.0
+  max_disp_delta_px: 32.0
+  final_disp_gate_px: 6.0
+  min_score: 0.0
+  use_lightglue: false
+  gpu_postprocess: true
+  match_margin: 0.0
+  min_spatial_quadrants: 2
+  min_spatial_spread_ratio: 0.10
+
 fusion:
   min_depth: 0.8
   max_depth: 20.0
@@ -168,17 +191,17 @@ fusion:
   ivw_R_stereo: 0.025
 
 performance:
-  pwm_frequency: 100.0
-  target_fps: 100
-  log_interval: 100
+  pwm_frequency: 90.0
+  target_fps: 90
+  log_interval: 90
   enable_profiling: true
   drop_stale_roi_frames: true  # 若后一帧 YOLO 已完成，跳过旧帧 IoU/特征/深度后处理以控制实时延迟
   async_roi_stage2: true        # 检测帧 ROI/IoU/特征候选异步执行；tracker detect_interval>1 时自动禁用，避免倒序更新深度
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
-  async_roi_deadline_ms: 10.0   # 100Hz 下给 ROI 后处理的软预算
-  p2_feature_job_scaffold_enabled: true       # enable diagnostic sidecar jobs without blocking main recorder
-  p2_realtime_lane_decision_enabled: false    # default P2 is diagnostic-only; enable explicitly for XFeat/inline P2 A/B
-  p2_diagnostic_lane_decision_enabled: true   # record XFeat + GFTT/LK in *.p2_diagnostic.csv without blocking main ROI worker
+  async_roi_deadline_ms: 11.1   # 90Hz 下给 ROI 后处理的软预算
+  p2_feature_job_scaffold_enabled: true       # keep P2 lane decisions visible in frame summary
+  p2_realtime_lane_decision_enabled: true     # run NCC + XFeat + SuperPoint inline on each 90Hz frame; circle_center is a P0/P1 candidate
+  p2_diagnostic_lane_decision_enabled: false  # no async sidecar sampling; write candidates to main CSV fields
   p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
   p2_trigger_on_fallback: true
   p2_trigger_on_direct_pair: false
@@ -189,11 +212,15 @@ performance:
   p2_pair_quality_min_shifted_iou: 0.0       # >0 时低于该 shifted IoU 触发 P2
   p2_pair_quality_max_epipolar_dy: 0.0       # >0 时超过该 y 偏差触发 P2
   p2_pair_quality_min_confidence: 0.0        # >0 时低于该 direct pair 语义置信度触发 P2
-  p2_diagnostic_stride: 1
+  p2_diagnostic_stride: 1                    # unused while diagnostic lane is disabled; keep unsampled semantics
+  p2_diagnostic_stride_cuda_template: 1
+  p2_diagnostic_stride_neural_xfeat: 1
+  p2_diagnostic_stride_neural_superpoint: 1
   p2_diagnostic_max_in_flight: 1
-  p2_realtime_deadline_ms: 10.0
+  p2_realtime_deadline_ms: 11.1
   p2_diagnostic_deadline_ms: 50.0
-  p2_diagnostic_results_enabled: true
+  p2_diagnostic_use_source_snapshot: false   # diagnostic lane disabled for synchronized 90Hz capture
+  p2_diagnostic_results_enabled: false
   p2_diagnostic_results_path: ""           # empty = derive from recording.output_path or --recording-out
   p2_diagnostic_point_debug_enabled: false # true 时写 *.points_debug.csv，记录 raw/match/reject/inlier 点
   p2_diagnostic_point_debug_path: ""       # empty = derive from p2_diagnostic_results_path

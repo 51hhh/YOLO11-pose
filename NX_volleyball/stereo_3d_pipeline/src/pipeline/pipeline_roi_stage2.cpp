@@ -150,7 +150,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
             LOG_INFO("[DualYOLO] frame=%d left=%d right=%d matches=%d valid=%d "
                      "missL=%d missR=%d fb=%d/%d fail=%d prior=%d l2r=%d r2l=%d "
                      "noCand=%d cls=%d badBox=%d d<=0=%d dMax=%d epi=%d "
-                     "size=%d iou=%d circle=%d subpx=%d/%d rej=%d low=%d skip=%d "
+                     "size=%d iou=%d circle=%d axis=%d subpx=%d/%d rej=%d low=%d skip=%d "
                      "subMs=%.2f/%.2f sup=%.1f/%d gate=%.2f-%.2f depth=%d lock=%d "
                      "iouSup=%d/%d iouEdgeSup=%d/%d",
                      input.frame_id,
@@ -175,6 +175,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
                      match_stats.size_reject,
                      match_stats.low_iou,
                      match_stats.circle_fit_fail,
+                     match_stats.circle_axis_reject,
                      match_stats.subpixel_refined,
                      match_stats.subpixel_attempted,
                      match_stats.subpixel_rejected,
@@ -431,7 +432,8 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     slot.p2_left_count = p2_decision.left_count;
     slot.p2_right_count = p2_decision.right_count;
     slot.p2_valid_direct_pair_count = p2_decision.valid_direct_pair_count;
-    enqueueP2FeatureDiagnosticJobs(makeFrameMetadata(slot), p2_feature_jobs);
+    const FrameMetadata frame_metadata = makeFrameMetadata(slot);
+    enqueueP2FeatureDiagnosticJobs(frame_metadata, p2_feature_jobs);
     VPIImageData hostDataL, hostDataR;
     bool lockedL = false;
     bool lockedR = false;
@@ -461,6 +463,18 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
         output = runRoiStage2Core(input);
     }
+
+    for (auto& row : output.p2_artifact_rows) {
+        if (row.frame_id < 0) {
+            row.frame_id = slot.frame_id;
+        }
+        row.metadata = frame_metadata;
+        row.depth_mode_mask = p2_decision.depth_mode_mask;
+        row.triggers = p2_decision.realtime_triggers;
+        row.deadline_ms = config_.async_roi_deadline_ms;
+    }
+    writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
+    writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
 
     if (lockedL) vpiImageUnlock(slot.rectGray_vpiL);
     if (lockedR) vpiImageUnlock(slot.rectGray_vpiR);

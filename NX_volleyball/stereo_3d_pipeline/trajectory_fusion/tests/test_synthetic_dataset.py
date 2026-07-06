@@ -116,8 +116,8 @@ def _write_synthetic_clip(root: Path) -> Path:
                 "z_bbox_left_edge": f"{z - 0.02:.3f}",
                 "z_bbox_right_edge": f"{z:.3f}",
                 "z_circle_center": "-1" if is_fallback or is_r2l_fallback else f"{z:.3f}",
-                "z_circle_left_edge": f"{z - 0.01:.3f}",
-                "z_circle_right_edge": f"{z + 0.01:.3f}",
+                "z_circle_left_edge": "-1",
+                "z_circle_right_edge": "-1",
                 "z_roi_edge_centroid": f"{z + 0.001:.3f}",
                 "z_roi_radial_center": f"{z + 0.002:.3f}",
                 "z_roi_edge_pair_center": f"{z + 0.003:.3f}",
@@ -239,8 +239,14 @@ class SyntheticDatasetTest(unittest.TestCase):
         feature_names = set(legacy_feature_names())
         self.assertNotIn("z_stereo", method_keys)
         self.assertNotIn("z", method_keys)
+        self.assertNotIn("z_circle_left_edge", method_keys)
+        self.assertNotIn("z_circle_right_edge", method_keys)
         self.assertNotIn("z_stereo", feature_names)
         self.assertNotIn("z", feature_names)
+        self.assertNotIn("z_circle_left_edge", feature_names)
+        self.assertNotIn("z_circle_right_edge", feature_names)
+        self.assertNotIn("disparity_circle_left_edge", feature_names)
+        self.assertNotIn("disparity_circle_right_edge", feature_names)
         for online_state_name in (
             "x",
             "y",

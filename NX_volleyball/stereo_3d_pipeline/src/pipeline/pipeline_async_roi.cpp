@@ -111,7 +111,6 @@ bool asyncRoiNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
     }
     const bool circle_seed_refine = cfg.center_refine &&
         (cfg.depth_circle_center ||
-         cfg.depth_circle_edges ||
          cfg.depth_roi_edge_centroid ||
          cfg.depth_roi_center_patch ||
          asyncRoiSubpixelDepthEnabled(cfg) ||
@@ -283,7 +282,11 @@ void writeP2FeatureDiagnosticResultHeader(std::ostream& out) {
         << "left_cx,left_cy,left_w,left_h,left_conf,"
         << "right_cx,right_cy,right_w,right_h,right_conf,"
         << "anchor_cx,anchor_cy,right_anchor_cx,right_anchor_cy,"
-        << "debug_match_count,artifact_path,"
+        << "debug_match_count,"
+        << "debug0_left_x,debug0_left_y,debug0_right_x,debug0_right_y,debug0_disparity,debug0_score,"
+        << "debug1_left_x,debug1_left_y,debug1_right_x,debug1_right_y,debug1_disparity,debug1_score,"
+        << "debug2_left_x,debug2_left_y,debug2_right_x,debug2_right_y,debug2_disparity,debug2_score,"
+        << "artifact_path,"
         << "algo_ms,queue_wait_ms,worker_elapsed_ms,deadline_ms,"
         << "over_deadline,depth_mode_mask,triggers\n";
 }
@@ -1096,8 +1099,28 @@ void Pipeline::writeP2FeatureDiagnosticResults(
         p2_feature_diag_results_file_ << ",";
         writeCsvFloat(p2_feature_diag_results_file_, row.right_anchor_cy);
         p2_feature_diag_results_file_ << ","
-            << row.debug_match_count << ","
-            << row.artifact_path << ",";
+            << row.debug_match_count << ",";
+        for (int i = 0; i < 3; ++i) {
+            if (i < row.debug_match_count) {
+                const auto& match =
+                    row.debug_matches[static_cast<size_t>(i)];
+                writeCsvFloat(p2_feature_diag_results_file_, match.left_x);
+                p2_feature_diag_results_file_ << ",";
+                writeCsvFloat(p2_feature_diag_results_file_, match.left_y);
+                p2_feature_diag_results_file_ << ",";
+                writeCsvFloat(p2_feature_diag_results_file_, match.right_x);
+                p2_feature_diag_results_file_ << ",";
+                writeCsvFloat(p2_feature_diag_results_file_, match.right_y);
+                p2_feature_diag_results_file_ << ",";
+                writeCsvFloat(p2_feature_diag_results_file_, match.disparity);
+                p2_feature_diag_results_file_ << ",";
+                writeCsvFloat(p2_feature_diag_results_file_, match.score);
+            } else {
+                p2_feature_diag_results_file_ << ",,,,,";
+            }
+            p2_feature_diag_results_file_ << ",";
+        }
+        p2_feature_diag_results_file_ << row.artifact_path << ",";
         writeCsvDouble(p2_feature_diag_results_file_, row.algo_ms);
         p2_feature_diag_results_file_ << ",";
         writeCsvDouble(p2_feature_diag_results_file_, row.queue_wait_ms);
@@ -1284,6 +1307,7 @@ void Pipeline::writeP2FeatureDiagnosticArtifacts(
     constexpr int kMaxDrawMatches = 24;
     const cv::Scalar yellow(0, 220, 255);
     const cv::Scalar cyan(255, 220, 0);
+    const cv::Scalar fitted_blue(255, 140, 40);
     const cv::Scalar white(245, 245, 245);
     const cv::Scalar muted(170, 170, 170);
     const std::array<cv::Scalar, 8> palette = {
@@ -1417,9 +1441,9 @@ void Pipeline::writeP2FeatureDiagnosticArtifacts(
         cv::Mat left_panel;
         cv::Mat right_panel;
         cv::resize(left_bgr(left_crop), left_panel, cv::Size(panel_w, panel_h),
-                   0.0, 0.0, cv::INTER_NEAREST);
+                   0.0, 0.0, cv::INTER_LINEAR);
         cv::resize(right_bgr(right_crop), right_panel, cv::Size(panel_w, panel_h),
-                   0.0, 0.0, cv::INTER_NEAREST);
+                   0.0, 0.0, cv::INTER_LINEAR);
 
         const int patch_area_h = row.debug_patch.valid ? 168 : 0;
         cv::Mat canvas(kTopMargin + panel_h + patch_area_h,
@@ -1446,6 +1470,49 @@ void Pipeline::writeP2FeatureDiagnosticArtifacts(
                                            right_crop, scale,
                                            panel_w + kGap, kTopMargin);
             drawCross(canvas, p, cyan);
+        }
+        if (row.mode == "circle_match" && debug_count >= 3) {
+            auto draw_axis_circle =
+                [&](bool right_panel_side,
+                    float cx,
+                    float cy,
+                    float top_y,
+                    float bottom_y) {
+                    if (!finitePoint(cx, cy) ||
+                        !std::isfinite(top_y) ||
+                        !std::isfinite(bottom_y)) {
+                        return;
+                    }
+                    const float radius_px =
+                        0.5f * std::abs(bottom_y - top_y);
+                    if (radius_px <= 1.0f) {
+                        return;
+                    }
+                    const cv::Rect& crop =
+                        right_panel_side ? right_crop : left_crop;
+                    const int x_offset =
+                        right_panel_side ? panel_w + kGap : 0;
+                    const cv::Point center =
+                        panelPoint(cx, cy, crop, scale, x_offset, kTopMargin);
+                    const int radius =
+                        std::max(1, static_cast<int>(
+                            std::lround(radius_px * scale)));
+                    cv::circle(canvas, center, radius,
+                               fitted_blue, 2, cv::LINE_AA);
+                };
+            const auto& center = row.debug_matches[0];
+            const auto& top = row.debug_matches[1];
+            const auto& bottom = row.debug_matches[2];
+            draw_axis_circle(false,
+                             center.left_x,
+                             center.left_y,
+                             top.left_y,
+                             bottom.left_y);
+            draw_axis_circle(true,
+                             center.right_x,
+                             center.right_y,
+                             top.right_y,
+                             bottom.right_y);
         }
 
         const int draw_count = std::min(debug_count, kMaxDrawMatches);
@@ -3051,6 +3118,16 @@ void Pipeline::asyncRoiWorkerLoop() {
             }
             std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
             output = runRoiStage2Core(task.input);
+            for (auto& row : output.p2_artifact_rows) {
+                if (row.frame_id < 0) {
+                    row.frame_id = task.frame_id;
+                }
+                row.metadata = task.metadata;
+                row.depth_mode_mask =
+                    task.p2_feature_decision.depth_mode_mask;
+                row.triggers = task.p2_feature_decision.realtime_triggers;
+                row.deadline_ms = config_.async_roi_deadline_ms;
+            }
             if (artifact_buffer && !output.p2_artifact_rows.empty()) {
                 P2FeatureDiagnosticBuffer artifact_view;
                 artifact_view.left_gray_gpu = artifact_buffer->left_gray_gpu;
@@ -3062,6 +3139,7 @@ void Pipeline::asyncRoiWorkerLoop() {
                                                   task.input.width,
                                                   task.input.height);
             }
+            writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
             writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
         } else {
             output.detections = task.input.left_detections;

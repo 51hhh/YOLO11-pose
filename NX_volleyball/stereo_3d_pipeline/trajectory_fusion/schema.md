@@ -86,8 +86,8 @@
 | z_bbox_left_edge | float | 左右 YOLO bbox 左边缘视差三角测距 |
 | z_bbox_right_edge | float | 左右 YOLO bbox 右边缘视差三角测距 |
 | z_circle_center | float | ROI 圆拟合圆心视差三角测距 |
-| z_circle_left_edge | float | ROI 圆左边缘视差三角测距 |
-| z_circle_right_edge | float | ROI 圆右边缘视差三角测距 |
+| z_circle_left_edge | float | 旧兼容字段，当前不计算，默认 -1 |
+| z_circle_right_edge | float | 旧兼容字段，当前不计算，默认 -1 |
 | z_roi_edge_centroid | float | ROI 边缘梯度质心视差三角测距 |
 | z_roi_radial_center | float | ROI 径向梯度中心视差三角测距 |
 | z_roi_edge_pair_center | float | ROI 左右边缘成对中心视差三角测距 |
@@ -122,8 +122,8 @@
 | disparity_bbox_left_edge | float | bbox 左边缘视差 |
 | disparity_bbox_right_edge | float | bbox 右边缘视差 |
 | disparity_circle_center | float | 圆心视差 |
-| disparity_circle_left_edge | float | 圆左边缘视差 |
-| disparity_circle_right_edge | float | 圆右边缘视差 |
+| disparity_circle_left_edge | float | 旧兼容字段，当前不计算，默认 -1 |
+| disparity_circle_right_edge | float | 旧兼容字段，当前不计算，默认 -1 |
 | disparity_roi_edge_centroid | float | ROI 边缘梯度质心视差 |
 | disparity_roi_radial_center | float | ROI 径向梯度中心视差 |
 | disparity_roi_edge_pair_center | float | ROI 左右边缘成对中心视差 |
@@ -283,6 +283,7 @@
 | right_cx,right_cy,right_w,right_h,right_conf | float | 右检测框 |
 | anchor_cx,anchor_cy,right_anchor_cx,right_anchor_cy | float | 算法聚合 anchor |
 | debug_match_count | int | artifact 可视化点对数量 |
+| debug0/1/2_* | float | 前三组可视化点对；`circle_match` 中依次为圆心、上轮廓、下轮廓 |
 | artifact_path | str | diagnostic artifact PNG 路径；正式采集通常为空 |
 | algo_ms,queue_wait_ms,worker_elapsed_ms | float | 算法耗时、排队等待和 worker 总耗时 |
 | over_deadline | int | 是否超过 diagnostic deadline |

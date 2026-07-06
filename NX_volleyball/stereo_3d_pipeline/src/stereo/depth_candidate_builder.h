@@ -31,6 +31,7 @@ struct DepthCandidateBuilderInput {
     float circle_disparity = -1.0f;
     float z_circle_raw = -1.0f;
     float circle_confidence = 0.0f;
+    // Deprecated: sphere left/right silhouettes are not shared physical points.
     float disparity_circle_left_edge = -1.0f;
     float z_circle_left_edge = -1.0f;
     float disparity_circle_right_edge = -1.0f;

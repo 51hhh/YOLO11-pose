@@ -42,7 +42,7 @@
 | `4` | template search | 在另一目极线窗口做模板搜索 |
 | `5` | feature proxy | 极线/模板都找不到时，用预测位置构造代理 circle，再尝试 fallback feature |
 
-`stereo_depth_source=1` 不能单独区分正常圆心和极线 fallback。`circle_center`、`fallback_epipolar`、circle edge 都映射到 source `1`；必须结合 `stereo_match_source` 和 circle source 判断语义。
+`stereo_depth_source=1` 不能单独区分正常圆心和极线 fallback。`circle_center` 和 `fallback_epipolar` 都映射到 source `1`；必须结合 `stereo_match_source` 和 circle source 判断语义。旧 `circle edge` 字段不再作为深度候选。
 
 ## 主管线路径矩阵
 

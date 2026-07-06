@@ -35,8 +35,6 @@ CANDIDATE_DEPTH_KEYS = [
     "z_bbox_left_edge",
     "z_bbox_right_edge",
     "z_circle_center",
-    "z_circle_left_edge",
-    "z_circle_right_edge",
     "z_roi_edge_centroid",
     "z_roi_radial_center",
     "z_roi_edge_pair_center",

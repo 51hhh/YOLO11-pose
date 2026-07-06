@@ -88,7 +88,7 @@ struct PipelineConfig {
         bool depth_bbox_pair = true;       ///< 计算左右 YOLO bbox 中心视差候选
         bool depth_bbox_edges = false;     ///< 计算左右 YOLO bbox 左/右边缘视差候选
         bool depth_circle_center = true;   ///< 计算 ROI 圆拟合圆心三角测距候选, 需 center_refine
-        bool depth_circle_edges = false;   ///< 计算 ROI 圆左右边缘视差候选
+        bool depth_circle_edges = false;   ///< 已废弃: 球左右轮廓不是同一物理点, 不作为深度候选
         bool depth_roi_edge_centroid = false; ///< 计算 ROI 边缘梯度质心视差候选
         bool depth_roi_radial_center = false; ///< 计算 ROI 径向梯度中心视差候选
         bool depth_roi_edge_pair_center = false; ///< 计算 ROI 左右边缘成对中心视差候选

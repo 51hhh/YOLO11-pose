@@ -386,7 +386,7 @@ bool Pipeline::init(const PipelineConfig& config) {
     // Split neural matchers: XFeat and SuperPoint can run in the same frame,
     // each writing its own z_roi_neural_{xfeat,superpoint} candidate fields.
     // Each matcher owns an independent TensorRT execution context and GPU
-    // workspace, so running them sequentially on the same stream is safe.
+    // workspace; the inline P2 path dispatches them on independent streams.
     {
         const auto& P1 = calibration_->getProjectionLeft();
         const float focal = static_cast<float>(P1.at<double>(0, 0));
@@ -491,8 +491,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.dual_yolo.depth_bbox_edges ||
             (config_.dual_yolo.depth_circle_center &&
              config_.dual_yolo.center_refine) ||
-            (config_.dual_yolo.depth_circle_edges &&
-             config_.dual_yolo.center_refine) ||
+            dualYoloCircleEdgesDepthEnabled(config_.dual_yolo) ||
             (config_.dual_yolo.depth_roi_edge_centroid &&
              config_.dual_yolo.center_refine) ||
             config_.dual_yolo.depth_roi_radial_center ||
@@ -532,8 +531,7 @@ bool Pipeline::init(const PipelineConfig& config) {
         const bool dual_yolo_gpu_batch_modes_enabled =
             (config_.dual_yolo.depth_circle_center &&
              config_.dual_yolo.center_refine) ||
-            (config_.dual_yolo.depth_circle_edges &&
-             config_.dual_yolo.center_refine) ||
+            dualYoloCircleEdgesDepthEnabled(config_.dual_yolo) ||
             (config_.dual_yolo.depth_roi_edge_centroid &&
              config_.dual_yolo.center_refine) ||
             config_.dual_yolo.depth_roi_radial_center ||
@@ -600,7 +598,6 @@ bool Pipeline::init(const PipelineConfig& config) {
             gpu_cfg.compute_geometry =
                 (config_.dual_yolo.center_refine &&
                  (config_.dual_yolo.depth_circle_center ||
-                  config_.dual_yolo.depth_circle_edges ||
                   config_.dual_yolo.depth_roi_edge_centroid ||
                   gpu_cfg.compute_center_patch ||
                   gpu_cfg.compute_multi_point)) ||
@@ -721,7 +718,6 @@ bool Pipeline::init(const PipelineConfig& config) {
          config_.dual_yolo.depth_bbox_edges ||
          (config_.dual_yolo.center_refine &&
           (config_.dual_yolo.depth_circle_center ||
-           config_.dual_yolo.depth_circle_edges ||
            config_.dual_yolo.depth_roi_edge_centroid ||
            config_.dual_yolo.depth_roi_center_patch)) ||
          config_.dual_yolo.depth_roi_radial_center ||

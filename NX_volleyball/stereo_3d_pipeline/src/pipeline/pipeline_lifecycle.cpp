@@ -3,6 +3,7 @@
 #include "../utils/logger.h"
 
 #include <cstdint>
+#include <exception>
 #include <mutex>
 #include <thread>
 
@@ -14,6 +15,7 @@ Pipeline::~Pipeline() {
     stop();
     shutdownP2FeatureDiagnosticLane();
     destroyAsyncRoiStage2();
+    shutdownP2InlineFeatureWorkers();
     for (auto& slot : slots_) {
         slot.destroy();
     }
@@ -35,6 +37,13 @@ void Pipeline::start() {
     }
     if (!startP2FeatureDiagnosticLane()) {
         running_ = false;
+        shutdownP2InlineFeatureWorkers();
+        shutdownAsyncRoiStage2();
+        return;
+    }
+    if (!startP2InlineFeatureWorkers()) {
+        running_ = false;
+        shutdownP2FeatureDiagnosticLane();
         shutdownAsyncRoiStage2();
         return;
     }
@@ -43,6 +52,7 @@ void Pipeline::start() {
     if (camera_ && !camera_->startGrabbing()) {
         LOG_ERROR("Failed to start camera grabbing");
         running_ = false;
+        shutdownP2InlineFeatureWorkers();
         shutdownP2FeatureDiagnosticLane();
         shutdownAsyncRoiStage2();
         return;
@@ -81,6 +91,7 @@ void Pipeline::stop() {
 
     shutdownAsyncRoiStage2();
     shutdownP2FeatureDiagnosticLane();
+    shutdownP2InlineFeatureWorkers();
 
 #ifdef HIK_CAMERA_ENABLED
     if (grab_thread_.joinable()) {
@@ -96,6 +107,126 @@ void Pipeline::stop() {
 #endif
 
     globalPerf().printReport();
+}
+
+void Pipeline::p2InlineFeatureWorkerLoop(P2InlineFeatureWorker* worker,
+                                         const char* label) {
+    while (true) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lk(worker->mutex);
+            worker->cv.wait(lk, [worker] {
+                return worker->stop || worker->has_task;
+            });
+            if (worker->stop && !worker->has_task) {
+                break;
+            }
+            task = std::move(worker->task);
+            worker->has_task = false;
+        }
+
+        try {
+            if (task) {
+                task();
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("P2 inline %s worker task failed: %s",
+                      label, e.what());
+        } catch (...) {
+            LOG_ERROR("P2 inline %s worker task failed with unknown error",
+                      label);
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(worker->mutex);
+            worker->done = true;
+        }
+        worker->cv.notify_all();
+    }
+}
+
+bool Pipeline::startP2InlineFeatureWorkers() {
+    auto start_one = [&](P2InlineFeatureWorker& worker,
+                         const char* label) -> bool {
+        if (worker.thread.joinable()) {
+            return true;
+        }
+        {
+            std::lock_guard<std::mutex> lk(worker.mutex);
+            worker.stop = false;
+            worker.has_task = false;
+            worker.done = true;
+            worker.task = nullptr;
+        }
+        try {
+            worker.thread = std::thread(
+                &Pipeline::p2InlineFeatureWorkerLoop, this, &worker, label);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to start P2 inline %s worker: %s",
+                      label, e.what());
+            return false;
+        }
+        return true;
+    };
+
+    if (!start_one(p2_inline_ncc_worker_, "NCC") ||
+        !start_one(p2_inline_xfeat_worker_, "XFeat") ||
+        !start_one(p2_inline_superpoint_worker_, "SuperPoint")) {
+        shutdownP2InlineFeatureWorkers();
+        return false;
+    }
+    p2_inline_feature_workers_ready_.store(true, std::memory_order_release);
+    return true;
+}
+
+void Pipeline::shutdownP2InlineFeatureWorkers() {
+    p2_inline_feature_workers_ready_.store(false, std::memory_order_release);
+    auto stop_one = [](P2InlineFeatureWorker& worker) {
+        {
+            std::lock_guard<std::mutex> lk(worker.mutex);
+            worker.stop = true;
+        }
+        worker.cv.notify_all();
+        if (worker.thread.joinable()) {
+            worker.thread.join();
+        }
+        {
+            std::lock_guard<std::mutex> lk(worker.mutex);
+            worker.stop = false;
+            worker.has_task = false;
+            worker.done = true;
+            worker.task = nullptr;
+        }
+    };
+    stop_one(p2_inline_ncc_worker_);
+    stop_one(p2_inline_xfeat_worker_);
+    stop_one(p2_inline_superpoint_worker_);
+}
+
+bool Pipeline::submitP2InlineFeatureTask(P2InlineFeatureWorker& worker,
+                                         std::function<void()> task) {
+    if (!p2_inline_feature_workers_ready_.load(std::memory_order_acquire) ||
+        !task) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(worker.mutex);
+        if (worker.stop || worker.has_task || !worker.done) {
+            return false;
+        }
+        worker.task = std::move(task);
+        worker.done = false;
+        worker.has_task = true;
+    }
+    worker.cv.notify_one();
+    return true;
+}
+
+void Pipeline::waitP2InlineFeatureTask(P2InlineFeatureWorker& worker) {
+    std::unique_lock<std::mutex> lk(worker.mutex);
+    worker.cv.wait(lk, [&worker] {
+        return worker.done && !worker.has_task;
+    });
 }
 
 #ifdef HIK_CAMERA_ENABLED

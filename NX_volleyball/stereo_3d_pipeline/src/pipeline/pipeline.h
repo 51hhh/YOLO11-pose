@@ -176,6 +176,7 @@ private:
         int size_reject = 0;
         int low_iou = 0;
         int circle_fit_fail = 0;
+        int circle_axis_reject = 0;
         int subpixel_attempted = 0;
         int subpixel_refined = 0;
         int subpixel_rejected = 0;
@@ -397,6 +398,22 @@ private:
         const P2FeatureDiagnosticBuffer& buffer,
         int width,
         int height);
+    struct P2InlineFeatureWorker {
+        std::thread thread;
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::function<void()> task;
+        bool stop = false;
+        bool has_task = false;
+        bool done = true;
+    };
+    bool startP2InlineFeatureWorkers();
+    void shutdownP2InlineFeatureWorkers();
+    void p2InlineFeatureWorkerLoop(P2InlineFeatureWorker* worker,
+                                   const char* label);
+    bool submitP2InlineFeatureTask(P2InlineFeatureWorker& worker,
+                                   std::function<void()> task);
+    void waitP2InlineFeatureTask(P2InlineFeatureWorker& worker);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -472,6 +489,12 @@ private:
     size_t p2_feature_diag_results_rows_since_flush_ = 0;
     size_t p2_feature_diag_points_rows_since_flush_ = 0;
     int p2_feature_diag_artifacts_saved_ = 0;
+
+    // ===== P2 inline feature workers =====
+    std::atomic<bool> p2_inline_feature_workers_ready_{false};
+    P2InlineFeatureWorker p2_inline_ncc_worker_;
+    P2InlineFeatureWorker p2_inline_xfeat_worker_;
+    P2InlineFeatureWorker p2_inline_superpoint_worker_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器
