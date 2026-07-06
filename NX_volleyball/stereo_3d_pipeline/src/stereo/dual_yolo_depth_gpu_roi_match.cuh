@@ -196,6 +196,10 @@ __device__ void matchPatchAtPoint(
     float baseline,
     float min_depth,
     float max_depth,
+    const stereo3d::DualYoloGpuDetection& left_det,
+    float feature_y_tolerance_px,
+    float feature_y_slope,
+    float feature_y_offset_px,
     stereo3d::DualYoloGpuDisparity* out) {
     if (threadIdx.x == 0) {
         clearDisparity(out);
@@ -216,10 +220,12 @@ __device__ void matchPatchAtPoint(
 
     __shared__ float best_score_parts[kThreadsPerPoint];
     __shared__ int best_disp_parts[kThreadsPerPoint];
+    __shared__ int best_dy_parts[kThreadsPerPoint];
     __shared__ float second_score_parts[kThreadsPerPoint];
     if (threadIdx.x < kThreadsPerPoint) {
         best_score_parts[threadIdx.x] = -2.0f;
         best_disp_parts[threadIdx.x] = -1;
+        best_dy_parts[threadIdx.x] = 0;
         second_score_parts[threadIdx.x] = -2.0f;
     }
     __syncthreads();
@@ -232,21 +238,36 @@ __device__ void matchPatchAtPoint(
         float best_score = -2.0f;
         float second_score = -2.0f;
         int best_disp = -1;
+        int best_dy = 0;
+        const float expected_y = expectedFeatureYDelta(
+            static_cast<float>(x_left), left_det,
+            feature_y_slope, feature_y_offset_px);
+        const int y_radius = clampInt(
+            static_cast<int>(ceilf(
+                clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
+            1, 8);
+        const int dy_center = static_cast<int>(rintf(-expected_y));
         for (int d = begin; d <= end; ++d) {
             const int xr = x_left - d;
-            if (!patchInside(img_w, img_h, xr, y_left, patch_radius)) continue;
-            const float score = znccScore(left_img, left_pitch, right_img, right_pitch,
-                                          x_left, y_left, xr, y_left, patch_radius);
-            if (score > best_score) {
-                second_score = best_score;
-                best_score = score;
-                best_disp = d;
-            } else if (score > second_score) {
-                second_score = score;
+            for (int dy = dy_center - y_radius; dy <= dy_center + y_radius; ++dy) {
+                const int yr = y_left + dy;
+                if (!patchInside(img_w, img_h, xr, yr, patch_radius)) continue;
+                const float score = znccScore(
+                    left_img, left_pitch, right_img, right_pitch,
+                    x_left, y_left, xr, yr, patch_radius);
+                if (score > best_score) {
+                    second_score = best_score;
+                    best_score = score;
+                    best_disp = d;
+                    best_dy = dy;
+                } else if (score > second_score) {
+                    second_score = score;
+                }
             }
         }
         best_score_parts[threadIdx.x] = best_score;
         best_disp_parts[threadIdx.x] = best_disp;
+        best_dy_parts[threadIdx.x] = best_dy;
         second_score_parts[threadIdx.x] = second_score;
     }
     __syncthreads();
@@ -255,11 +276,13 @@ __device__ void matchPatchAtPoint(
         float best_score = best_score_parts[0];
         float second_score = second_score_parts[0];
         int best_disp = best_disp_parts[0];
+        int best_dy = best_dy_parts[0];
         for (int i = 1; i < kThreadsPerPoint; ++i) {
             if (best_score_parts[i] > best_score) {
                 second_score = fmaxf(second_score, fmaxf(best_score, second_score_parts[i]));
                 best_score = best_score_parts[i];
                 best_disp = best_disp_parts[i];
+                best_dy = best_dy_parts[i];
             } else {
                 second_score = fmaxf(second_score, best_score_parts[i]);
             }
@@ -275,12 +298,13 @@ __device__ void matchPatchAtPoint(
         if (accept && best_disp > d_start && best_disp < d_end) {
             const int xr_m = x_left - (best_disp - 1);
             const int xr_p = x_left - (best_disp + 1);
-            if (patchInside(img_w, img_h, xr_m, y_left, patch_radius) &&
-                patchInside(img_w, img_h, xr_p, y_left, patch_radius)) {
+            const int y_right = y_left + best_dy;
+            if (patchInside(img_w, img_h, xr_m, y_right, patch_radius) &&
+                patchInside(img_w, img_h, xr_p, y_right, patch_radius)) {
                 const float s_m = znccScore(left_img, left_pitch, right_img, right_pitch,
-                                            x_left, y_left, xr_m, y_left, patch_radius);
+                                            x_left, y_left, xr_m, y_right, patch_radius);
                 const float s_p = znccScore(left_img, left_pitch, right_img, right_pitch,
-                                            x_left, y_left, xr_p, y_left, patch_radius);
+                                            x_left, y_left, xr_p, y_right, patch_radius);
                 const float denom = s_m - 2.0f * best_score + s_p;
                 if (s_m > -1.5f && s_p > -1.5f && denom < -1e-5f) {
                     sub_disp += clampFloat(0.5f * (s_m - s_p) / denom, -1.0f, 1.0f);
@@ -308,6 +332,13 @@ __device__ void matchPatchAtPoint(
             out->support = 1;
             out->valid = out->confidence >= min_confidence ? 1 : 0;
             out->low_confidence = out->valid ? 0 : 1;
+            out->debug_match_count = 1;
+            out->debug_left_x[0] = x_left_f;
+            out->debug_left_y[0] = y_left_f;
+            out->debug_right_x[0] = x_left_f - sub_disp;
+            out->debug_right_y[0] = static_cast<float>(y_left + best_dy);
+            out->debug_disparity[0] = sub_disp;
+            out->debug_score[0] = best_score;
         }
     }
     __syncthreads();

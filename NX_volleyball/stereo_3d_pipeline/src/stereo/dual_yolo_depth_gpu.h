@@ -63,6 +63,7 @@ struct DualYoloGpuDetectionPair {
     DualYoloGpuDetection right;
     int left_index = -1;
     int right_index = -1;
+    float epipolar_y_delta_px = 0.0f;
 };
 
 struct DualYoloGpuCircle {

@@ -135,7 +135,12 @@ __global__ void dualYoloDepthCandidatesKernel(
         ? out->left_circle.radius
         : fmaxf(3.0f, 0.25f * (pair.left.width + pair.left.height));
     const float right_cx = out->right_circle.valid ? out->right_circle.cx : pair.right.cx;
+    const float right_cy = out->right_circle.valid ? out->right_circle.cy : pair.right.cy;
     const float initial_disp = left_cx - right_cx;
+    const float pair_y_delta = (out->left_circle.valid && out->right_circle.valid)
+        ? left_cy - right_cy
+        : pair.epipolar_y_delta_px;
+    const float pair_feature_y_offset_px = feature_y_offset_px + pair_y_delta;
     const float max_delta = disparityDeltaGate(initial_disp, focal, baseline,
                                                max_disp_delta_px,
                                                max_disp_delta_ratio,
@@ -165,6 +170,10 @@ __global__ void dualYoloDepthCandidatesKernel(
                           baseline,
                           min_depth,
                           max_depth,
+                          pair.left,
+                          feature_y_tolerance_px,
+                          feature_y_slope,
+                          pair_feature_y_offset_px,
                           &out->center_patch);
     }
     if (compute_multi_point) {
@@ -187,7 +196,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                              max_depth,
                              feature_y_tolerance_px,
                              feature_y_slope,
-                             feature_y_offset_px,
+                             pair_feature_y_offset_px,
                              feature_reverse_check_px,
                              feature_overlap_scale,
                              feature_mad_scale,
@@ -224,7 +233,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -261,7 +270,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -298,7 +307,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -335,7 +344,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -372,7 +381,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -409,7 +418,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -446,7 +455,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -483,7 +492,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,
@@ -520,7 +529,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_depth,
                           feature_y_tolerance_px,
                           feature_y_slope,
-                          feature_y_offset_px,
+                          pair_feature_y_offset_px,
                           feature_reverse_check_px,
                           feature_overlap_scale,
                           feature_mad_scale,

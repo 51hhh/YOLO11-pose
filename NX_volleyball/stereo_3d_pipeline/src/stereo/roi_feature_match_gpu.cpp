@@ -879,9 +879,11 @@ SparseFeatureDisparityResult matchOpenCVCudaTemplateDisparityGPUImpl(
     }
 
     const float predicted_right_x = anchor_x - initial_disp;
+    const float expected_y_delta = expectedFeatureYDelta(anchor_x, left_det, cfg);
+    const float predicted_right_y = anchor_y - expected_y_delta;
     const int search_x = static_cast<int>(std::round(predicted_right_x)) -
                          patch_radius - search_radius;
-    const int search_y = static_cast<int>(std::round(anchor_y)) -
+    const int search_y = static_cast<int>(std::round(predicted_right_y)) -
                          patch_radius - y_radius;
     const int search_w = patch_size + search_radius * 2;
     const int search_h = patch_size + y_radius * 2;
@@ -1018,9 +1020,11 @@ SparseFeatureDisparityResult matchCustomCudaTemplateDisparityGPUImpl(
     }
 
     const float predicted_right_x = anchor_x - initial_disp;
+    const float expected_y_delta = expectedFeatureYDelta(anchor_x, left_det, cfg);
+    const float predicted_right_y = anchor_y - expected_y_delta;
     const int search_x = static_cast<int>(std::round(predicted_right_x)) -
                          patch_radius - search_radius;
-    const int search_y = static_cast<int>(std::round(anchor_y)) -
+    const int search_y = static_cast<int>(std::round(predicted_right_y)) -
                          patch_radius - y_radius;
     const int search_w = patch_size + search_radius * 2;
     const int search_h = patch_size + y_radius * 2;

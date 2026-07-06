@@ -220,6 +220,7 @@ std::vector<DualYoloGpuDetectionPair> buildGpuDetectionPairsForRefine(
         pair.right = makeGpuDetection(roi_pair.right);
         pair.left_index = roi_pair.left_index;
         pair.right_index = roi_pair.right_index;
+        pair.epipolar_y_delta_px = roi_pair.epipolar_y_delta;
         gpu_pairs.push_back(pair);
     }
     return gpu_pairs;
@@ -377,7 +378,15 @@ SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
 
     const int x_left = static_cast<int>(std::lround(left_circle.cx));
     const int y_left = static_cast<int>(std::lround(left_circle.cy));
-    const int y_right = y_left;
+    const float expected_y_delta =
+        dual_cfg.feature_y_offset_px + (left_circle.cy - right_circle.cy);
+    const int y_center = static_cast<int>(std::lround(
+        static_cast<float>(y_left) - expected_y_delta));
+    const int y_radius = std::clamp(
+        static_cast<int>(std::ceil(std::clamp(
+            dual_cfg.feature_y_tolerance_px, 0.5f, 8.0f))),
+        1,
+        8);
     if (!patchInsideCPU(img_w, img_h, x_left, y_left,
                         patch_radius, dual_cfg.roi_denoise)) {
         return result;
@@ -388,7 +397,7 @@ SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
                                static_cast<int>(std::ceil(initial_disp)) + search_radius);
     if (d_start >= d_end) return result;
 
-    auto score_at = [&](int disparity) -> float {
+    auto score_at = [&](int disparity, int y_right) -> float {
         const int x_right = static_cast<int>(std::lround(
             static_cast<float>(x_left) - static_cast<float>(disparity)));
         if (!patchInsideCPU(img_w, img_h, x_right, y_right,
@@ -403,15 +412,20 @@ SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
     float best_score = -2.0f;
     float second_score = -2.0f;
     int best_disp = -1;
+    int best_y_right = y_center;
     for (int disp = d_start; disp <= d_end; ++disp) {
-        ++result.attempted;
-        const float score = score_at(disp);
-        if (score > best_score) {
-            second_score = best_score;
-            best_score = score;
-            best_disp = disp;
-        } else if (score > second_score) {
-            second_score = score;
+        for (int y_right = y_center - y_radius;
+             y_right <= y_center + y_radius; ++y_right) {
+            ++result.attempted;
+            const float score = score_at(disp, y_right);
+            if (score > best_score) {
+                second_score = best_score;
+                best_score = score;
+                best_disp = disp;
+                best_y_right = y_right;
+            } else if (score > second_score) {
+                second_score = score;
+            }
         }
     }
     const float min_score = std::max(0.10f, dual_cfg.subpixel_min_confidence * 0.60f);
@@ -422,8 +436,8 @@ SubpixelDisparityResult refineDisparityByROICenterPatchCPU(
 
     float sub_disp = static_cast<float>(best_disp);
     if (best_disp > d_start && best_disp < d_end) {
-        const float s_minus = score_at(best_disp - 1);
-        const float s_plus = score_at(best_disp + 1);
+        const float s_minus = score_at(best_disp - 1, best_y_right);
+        const float s_plus = score_at(best_disp + 1, best_y_right);
         const float denom = s_minus - 2.0f * best_score + s_plus;
         if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
             const float delta = std::clamp(
@@ -494,6 +508,11 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     const auto offsets = makeSubpixelSampleOffsetsCPU(sample_radius,
                                                       max_points,
                                                       patch_radius);
+    const int y_radius = std::clamp(
+        static_cast<int>(std::ceil(std::clamp(
+            dual_cfg.feature_y_tolerance_px, 0.5f, 8.0f))),
+        1,
+        8);
 
     std::vector<float> disparities;
     std::vector<float> scores;
@@ -522,28 +541,39 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
     for (const auto& offset : offsets) {
         const int x_left = static_cast<int>(std::lround(left_circle.cx + offset.dx));
         const int y_left = static_cast<int>(std::lround(left_circle.cy + offset.dy));
-        const int y_right = y_left;
+        const float expected_y_delta =
+            dual_cfg.feature_y_offset_px +
+            (left_circle.cy - right_circle.cy) +
+            dual_cfg.feature_y_slope *
+                (static_cast<float>(x_left) - left_circle.cx);
+        const int y_center = static_cast<int>(std::lround(
+            static_cast<float>(y_left) - expected_y_delta));
 
         if (!patchInsideCPU(img_w, img_h, x_left, y_left,
                             patch_radius, dual_cfg.roi_denoise) ||
             !patchInsideCPU(img_w, img_h,
                             static_cast<int>(std::lround(right_circle.cx + offset.dx)),
-                            y_right, patch_radius, dual_cfg.roi_denoise)) {
+                            y_center, patch_radius, dual_cfg.roi_denoise)) {
             continue;
         }
 
-        ++result.attempted;
         float best_score = -2.0f;
         float second_score = -2.0f;
         int best_disp = -1;
+        int best_y_right = y_center;
         for (int disp = d_start; disp <= d_end; ++disp) {
-            const float score = score_at(x_left, y_left, y_right, disp);
-            if (score > best_score) {
-                second_score = best_score;
-                best_score = score;
-                best_disp = disp;
-            } else if (score > second_score) {
-                second_score = score;
+            for (int y_right = y_center - y_radius;
+                 y_right <= y_center + y_radius; ++y_right) {
+                ++result.attempted;
+                const float score = score_at(x_left, y_left, y_right, disp);
+                if (score > best_score) {
+                    second_score = best_score;
+                    best_score = score;
+                    best_disp = disp;
+                    best_y_right = y_right;
+                } else if (score > second_score) {
+                    second_score = score;
+                }
             }
         }
 
@@ -551,8 +581,10 @@ SubpixelDisparityResult refineDisparityByROIMultiPointCPU(
 
         float sub_disp = static_cast<float>(best_disp);
         if (best_disp > d_start && best_disp < d_end) {
-            const float s_minus = score_at(x_left, y_left, y_right, best_disp - 1);
-            const float s_plus = score_at(x_left, y_left, y_right, best_disp + 1);
+            const float s_minus =
+                score_at(x_left, y_left, best_y_right, best_disp - 1);
+            const float s_plus =
+                score_at(x_left, y_left, best_y_right, best_disp + 1);
             const float denom = s_minus - 2.0f * best_score + s_plus;
             if (s_minus > -1.5f && s_plus > -1.5f && denom < -1e-5f) {
                 const float delta = std::clamp(

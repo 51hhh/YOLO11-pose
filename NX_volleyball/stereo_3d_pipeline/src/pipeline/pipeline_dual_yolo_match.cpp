@@ -646,6 +646,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         [&](const Detection& left_det,
             const Detection& right_det,
             float initial_disparity,
+            float epipolar_y_delta_px,
             cudaStream_t algo_stream,
             cudaEvent_t ready_event,
             const char* label) {
@@ -654,13 +655,15 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         if (!wait_p2_ready_event(algo_stream, ready_event, label)) {
             outcome.result.low_confidence = true;
         } else {
+            ROIFeatureMatchConfig pair_feature_cfg = feature_cfg;
+            pair_feature_cfg.feature_y_offset_px += epipolar_y_delta_px;
             outcome.result = matchCudaTemplateDisparityGPU(
                 left_gpu, left_gpu_pitch,
                 right_gpu, right_gpu_pitch,
                 img_width, img_height,
                 left_det, right_det,
                 initial_disparity,
-                feature_cfg,
+                pair_feature_cfg,
                 config_.max_disparity,
                 focal,
                 baseline,
@@ -954,6 +957,13 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         const bool direct_yolo_match = match_source == 1;
         const bool is_fallback_match = (match_source == 2 || match_source == 3);
+        const float feature_pair_y_delta =
+            (direct_yolo_match && right_det)
+                ? (pair_info ? pair_info->epipolar_y_delta
+                             : left_det.cy - right_det->cy)
+                : 0.0f;
+        ROIFeatureMatchConfig pair_feature_cfg = feature_cfg;
+        pair_feature_cfg.feature_y_offset_px += feature_pair_y_delta;
         const float z_yolo =
             (bbox_depth_enabled && direct_yolo_match)
                 ? depth_from_disparity(yolo_disparity)
@@ -1072,6 +1082,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         }
 
         const float circle_y_delta = left_circle.cy - right_circle.cy;
+        ROIFeatureMatchConfig circle_feature_cfg = feature_cfg;
+        circle_feature_cfg.feature_y_offset_px +=
+            (left_circle.valid && right_circle.valid)
+                ? circle_y_delta
+                : feature_pair_y_delta;
         const float refined_dy = std::abs(circle_y_delta);
         bool circle_geometry_valid = true;
         bool epipolar_bad = false;
@@ -1212,7 +1227,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                         left_feature_det, right_feature_det,
                         source_left,
                         feature_initial_disparity,
-                        feature_cfg,
+                        pair_feature_cfg,
                         config_.max_disparity,
                         focal,
                         baseline,
@@ -1235,7 +1250,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                         left_feature_det, right_feature_det,
                         source_left,
                         feature_initial_disparity,
-                        feature_cfg,
+                        pair_feature_cfg,
                         config_.max_disparity,
                         focal,
                         baseline,
@@ -1253,7 +1268,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     sparseFromGpuCandidate(gpu_candidate->corner_points);
                 if (!validateSparseFeatureGeometry(
                         corner_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
+                        feature_initial_disparity, circle_feature_cfg,
                         focal, baseline)) {
                     corner_points_result = SparseFeatureDisparityResult{};
                 }
@@ -1281,7 +1296,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     sparseFromGpuCandidate(gpu_candidate->texture_points);
                 if (!validateSparseFeatureGeometry(
                         texture_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
+                        feature_initial_disparity, circle_feature_cfg,
                         focal, baseline)) {
                     texture_points_result = SparseFeatureDisparityResult{};
                 }
@@ -1309,7 +1324,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     sparseFromGpuCandidate(gpu_candidate->binary_points);
                 if (!validateSparseFeatureGeometry(
                         binary_points_result, left_det, *right_det,
-                        feature_initial_disparity, feature_cfg,
+                        feature_initial_disparity, circle_feature_cfg,
                         focal, baseline)) {
                     binary_points_result = SparseFeatureDisparityResult{};
                 }
@@ -1340,7 +1355,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     img_width, img_height,
                     left_det, *right_det,
                     feature_initial_disparity,
-                    feature_cfg,
+                    pair_feature_cfg,
                     config_.max_disparity,
                     focal,
                     baseline,
@@ -1426,7 +1441,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 sparseFromGpuCandidate(gpu_candidate->iou_region_color_patch);
             if (!validateSparseFeatureGeometry(
                     iou_region_color_patch_result, left_det, *right_det,
-                    feature_initial_disparity, feature_cfg,
+                    feature_initial_disparity, circle_feature_cfg,
                     focal, baseline)) {
                 iou_region_color_patch_result = SparseFeatureDisparityResult{};
             }
@@ -1449,7 +1464,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 sparseFromGpuCandidate(gpu_candidate->patch_iou_color_edge);
             if (!validateSparseFeatureGeometry(
                     patch_iou_color_edge_result, left_det, *right_det,
-                    feature_initial_disparity, feature_cfg,
+                    feature_initial_disparity, circle_feature_cfg,
                     focal, baseline)) {
                 patch_iou_color_edge_result = SparseFeatureDisparityResult{};
             }
@@ -1479,7 +1494,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 img_width, img_height,
                 left_det, *right_det,
                 feature_initial_disparity,
-                feature_cfg,
+                pair_feature_cfg,
                 config_.max_disparity,
                 focal,
                 baseline,
@@ -1511,7 +1526,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 img_width, img_height,
                 left_det, *right_det,
                 feature_initial_disparity,
-                feature_cfg,
+                pair_feature_cfg,
                 config_.max_disparity,
                 focal,
                 baseline,
@@ -1543,7 +1558,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 img_width, img_height,
                 left_det, *right_det,
                 feature_initial_disparity,
-                feature_cfg,
+                pair_feature_cfg,
                 config_.max_disparity,
                 focal,
                 baseline,
@@ -1689,7 +1704,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             };
             auto make_neural_final_cfg =
                 [&](const NeuralFeatureConfig& cfg) {
-                ROIFeatureMatchConfig final_cfg = feature_cfg;
+                ROIFeatureMatchConfig final_cfg = pair_feature_cfg;
                 final_cfg.subpixel_min_points =
                     cfg.final_min_support > 0
                         ? cfg.final_min_support
@@ -1921,6 +1936,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                             run_cuda_template_candidate(
                                 left_det, *right_det,
                                 feature_initial_disparity,
+                                feature_pair_y_delta,
                                 algo_stream,
                                 ready_event,
                                 "NCC");
@@ -1937,6 +1953,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                     run_cuda_template_candidate(
                         left_det, *right_det,
                         feature_initial_disparity,
+                        feature_pair_y_delta,
                         fallback_stream,
                         ready_event,
                         "NCC");
@@ -3267,6 +3284,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                 run_cuda_template_candidate(
                                     early_left, early_right,
                                     early_initial_disp,
+                                    early_pair.epipolar_y_delta,
                                     streams_.cudaStreamP2Ncc,
                                     p2_input_ready_event,
                                     "NCC");

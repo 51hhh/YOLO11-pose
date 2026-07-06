@@ -88,7 +88,8 @@ bool evaluateStereoRoiPair(
     const float adaptive_y_tol =
         std::max(base_y_tol,
                  config.adaptive_y_ratio * std::max(left.height, right.height));
-    const float dy = std::abs(left.cy - right.cy);
+    const float signed_dy = left.cy - right.cy;
+    const float dy = std::abs(signed_dy);
     if (dy > adaptive_y_tol) {
         return reject(StereoRoiPairRejectReason::EPIPOLAR_REJECT);
     }
@@ -114,6 +115,7 @@ bool evaluateStereoRoiPair(
         pair->left = left;
         pair->right = right;
         pair->initial_disparity = disparity;
+        pair->epipolar_y_delta = signed_dy;
         pair->epipolar_dy = dy;
         pair->y_tolerance = adaptive_y_tol;
         pair->width_ratio = w_ratio;

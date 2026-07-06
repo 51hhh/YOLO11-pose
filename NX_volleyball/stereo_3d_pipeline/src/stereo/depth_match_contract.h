@@ -94,6 +94,7 @@ struct StereoRoiPair {
     Detection left;
     Detection right;
     float initial_disparity = -1.0f;
+    float epipolar_y_delta = 0.0f;
     float epipolar_dy = -1.0f;
     float y_tolerance = -1.0f;
     float width_ratio = -1.0f;
