@@ -30,6 +30,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
+from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 
@@ -584,6 +585,42 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual({row["variant"] for row in rows}, {"raw", "robust_smooth"})
             smooth_row = next(row for row in rows if row["variant"] == "robust_smooth")
             self.assertIn("known_z_bias", smooth_row)
+
+    def test_reliability_sweep_config_and_command_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "sweep.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "configs": [
+                            {
+                                "name": "quick test",
+                                "epochs": 2,
+                                "hidden": 16,
+                                "bias_reg_weight": 0.5,
+                                "leave_one_weight": 0.02,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            configs = load_sweep_configs(config_path)
+            self.assertEqual(configs[0]["name"], "quick_test")
+            command = build_train_command(
+                ["clip.csv"],
+                root / "model.pt",
+                configs[0],
+                metadata="clip.metadata.yaml",
+                train_split="train",
+                device="cpu",
+            )
+            self.assertIn("--leave-one-weight", command)
+            self.assertIn("0.02", command)
+            self.assertIn("--bias-reg-weight", command)
+            self.assertIn("--metadata", command)
 
 
 if __name__ == "__main__":
