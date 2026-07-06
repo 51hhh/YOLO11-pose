@@ -196,6 +196,10 @@ def run_sweep(
     gravity_y: float = 9.81,
     use_static_known_z: bool = False,
     rank_split: str = "auto",
+    include_depth_polyfit: bool = True,
+    include_rts_smoother: bool = True,
+    include_candidate_consistency: bool = True,
+    candidate_reference: str = "auto",
 ) -> Dict[str, Any]:
     root = Path(output_dir)
     checkpoints_dir = root / "checkpoints"
@@ -213,6 +217,10 @@ def run_sweep(
         "gravity_y": gravity_y,
         "use_static_known_z": use_static_known_z,
         "rank_split": rank_split,
+        "include_depth_polyfit": include_depth_polyfit,
+        "include_rts_smoother": include_rts_smoother,
+        "include_candidate_consistency": include_candidate_consistency,
+        "candidate_reference": candidate_reference,
         "sweep_ranking": str(root / "sweep_ranking.csv"),
         "sweep_variant_ranking": str(root / "sweep_variant_ranking.csv"),
         "sweep_reliability_methods": str(root / "sweep_reliability_methods.csv"),
@@ -247,6 +255,10 @@ def run_sweep(
             device=device,
             gravity_y=gravity_y,
             use_static_known_z=use_static_known_z,
+            include_depth_polyfit=include_depth_polyfit,
+            include_rts_smoother=include_rts_smoother,
+            include_candidate_consistency=include_candidate_consistency,
+            candidate_reference=candidate_reference,
         )
         metrics_path = suite_dir / "suite_metrics.csv"
         rows = summarize_suite(suite_dir, metrics_path)
@@ -313,6 +325,10 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--rank-split", default="auto", help="Ranking split. 'auto' prefers val when present.")
+    parser.add_argument("--skip-depth-polyfit", action="store_true")
+    parser.add_argument("--skip-rts-smoother", action="store_true")
+    parser.add_argument("--skip-candidate-consistency", action="store_true")
+    parser.add_argument("--candidate-reference", default="auto")
     parser.add_argument(
         "--use-static-known-z",
         action="store_true",
@@ -331,6 +347,10 @@ def main() -> int:
         gravity_y=args.gravity_y,
         use_static_known_z=args.use_static_known_z,
         rank_split=args.rank_split,
+        include_depth_polyfit=not args.skip_depth_polyfit,
+        include_rts_smoother=not args.skip_rts_smoother,
+        include_candidate_consistency=not args.skip_candidate_consistency,
+        candidate_reference=args.candidate_reference,
     )
     print(f"wrote sweep for {len(summary['runs'])} config(s) to {summary['output_dir']}")
     return 0

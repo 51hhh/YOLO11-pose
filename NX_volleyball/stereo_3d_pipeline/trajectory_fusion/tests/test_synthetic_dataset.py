@@ -18,6 +18,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 from trajectory_fusion import evaluate_fusion  # noqa: E402
+from trajectory_fusion import run_dataset_workflow as workflow_module  # noqa: E402
 from trajectory_fusion import run_reliability_sweep as sweep_module  # noqa: E402
 from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
 from trajectory_fusion.audit_reliability_methods import audit_reliability_methods  # noqa: E402
@@ -51,6 +52,7 @@ from trajectory_fusion.models import ReliabilityOutput  # noqa: E402
 from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
+from trajectory_fusion.run_dataset_workflow import run_workflow  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
 from trajectory_fusion.select_reliability_model import select_reliability_models  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
@@ -1205,6 +1207,115 @@ class SyntheticDatasetTest(unittest.TestCase):
             )
             self.assertTrue((root / "sweep_out" / "sweep_model_selection.csv").exists())
             self.assertEqual(select_mock.call_args.kwargs["split"], "val")
+
+    def test_dataset_workflow_builds_manifest_calibration_and_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = _write_synthetic_clip(root)
+            second = root / "traj_p0p1_002.csv"
+            second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+            (root / "traj_p0p1_002.metadata.yaml").write_text(
+                "known_z: 3.1\nstatic: true\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "workflow"
+
+            summary = run_workflow(
+                [root],
+                output_dir,
+                val_ratio=0.5,
+                seed=3,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+                calibration_min_count=1,
+                skip_sweep=True,
+                include_depth_polyfit=False,
+                include_rts_smoother=False,
+            )
+
+            self.assertTrue((output_dir / "dataset_manifest.yaml").exists())
+            self.assertTrue((output_dir / "manifest_validation.json").exists())
+            self.assertTrue((output_dir / "workflow_summary.json").exists())
+            self.assertEqual(summary["manifest"]["clip_count"], 2)
+            self.assertEqual(summary["validation"]["split_counts"], {"train": 1, "val": 1})
+            self.assertFalse(summary["config"]["use_static_known_z"])
+            self.assertGreater(summary["calibration"]["method_count"], 0)
+            self.assertTrue(summary["calibration"]["used_for_suite"])
+            self.assertEqual(summary["sweep"]["reason"], "skip_sweep")
+            self.assertTrue(Path(summary["baseline_suite"]["metrics_csv"]).exists())
+            self.assertIn("raw", summary["baseline_suite"]["variants"])
+            self.assertIn("robust_smooth", summary["baseline_suite"]["variants"])
+            self.assertIn("calibrated_smoother", summary["baseline_suite"]["variants"])
+            self.assertNotIn("robust_rts_smooth", summary["baseline_suite"]["variants"])
+
+    def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_synthetic_clip(root)
+            output_dir = root / "workflow"
+            sweep_stub = {
+                "sweep_ranking": str(output_dir / "reliability_sweep" / "sweep_ranking.csv"),
+                "sweep_variant_ranking": str(output_dir / "reliability_sweep" / "sweep_variant_ranking.csv"),
+                "sweep_reliability_methods": str(output_dir / "reliability_sweep" / "sweep_reliability_methods.csv"),
+                "sweep_reliability_method_audit": str(
+                    output_dir / "reliability_sweep" / "sweep_reliability_method_audit.csv"
+                ),
+                "sweep_model_selection": str(output_dir / "reliability_sweep" / "sweep_model_selection.csv"),
+                "runs": [{"name": "quick"}],
+            }
+
+            with mock.patch.object(workflow_module, "run_sweep", return_value=sweep_stub) as sweep_mock:
+                summary = run_workflow(
+                    [root],
+                    output_dir,
+                    min_rows=1,
+                    min_fps=0.0,
+                    min_p0_hit=0.0,
+                    calibration_min_count=1,
+                    skip_sweep=False,
+                    include_depth_polyfit=False,
+                    include_rts_smoother=False,
+                    include_candidate_consistency=False,
+                    rank_split="val",
+                )
+
+            sweep_mock.assert_called_once()
+            kwargs = sweep_mock.call_args.kwargs
+            self.assertFalse(kwargs["use_static_known_z"])
+            self.assertFalse(kwargs["include_depth_polyfit"])
+            self.assertFalse(kwargs["include_rts_smoother"])
+            self.assertFalse(kwargs["include_candidate_consistency"])
+            self.assertEqual(kwargs["rank_split"], "val")
+            self.assertIsNotNone(kwargs["calibration"])
+            self.assertFalse(summary["sweep"]["skipped"])
+            self.assertEqual(summary["sweep"]["run_count"], 1)
+
+    def test_dataset_workflow_rejects_manifest_input_with_manifest_option(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_synthetic_clip(root)
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                run_workflow(
+                    [manifest_path],
+                    root / "workflow",
+                    manifest=root / "other_manifest.yaml",
+                    skip_sweep=True,
+                )
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
