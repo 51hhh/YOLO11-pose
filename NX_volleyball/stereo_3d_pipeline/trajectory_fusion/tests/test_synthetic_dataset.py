@@ -248,6 +248,137 @@ def _write_synthetic_clip(root: Path) -> Path:
     return csv_path
 
 
+def _write_known_distance_clip(root: Path, stem: str, known_z: float, *, rows: int = 24) -> Path:
+    csv_path = root / f"{stem}.csv"
+    jitter = (-0.002, -0.001, 0.0, 0.001, 0.002, 0.001, 0.0, -0.001)
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=HEADER)
+        writer.writeheader()
+        for index in range(rows):
+            noise = jitter[index % len(jitter)]
+            z = known_z + noise
+            writer.writerow(
+                {
+                    "frame_id": str(index + 1),
+                    "timestamp": f"{100.0 + index * 0.01:.2f}",
+                    "track_id": "0",
+                    "x": "0.0",
+                    "y": "0.0",
+                    "z": f"{known_z + 0.20 + noise:.4f}",
+                    "vx": "0.0",
+                    "vy": "0.0",
+                    "vz": "0.0",
+                    "ax": "0.0",
+                    "ay": "0.0",
+                    "az": "0.0",
+                    "z_mono": f"{known_z + 0.12 + noise:.4f}",
+                    "z_stereo": f"{known_z + 0.03 + noise:.4f}",
+                    "depth_method": "1",
+                    "confidence": "0.9",
+                    "class_id": "0",
+                    "z_bbox_center": f"{known_z + 0.020 + noise:.4f}",
+                    "z_bbox_left_edge": f"{known_z + 0.030 + noise:.4f}",
+                    "z_bbox_right_edge": f"{known_z + 0.025 + noise:.4f}",
+                    "z_circle_center": f"{known_z + 0.005 + noise:.4f}",
+                    "z_circle_left_edge": "-1",
+                    "z_circle_right_edge": "-1",
+                    "z_roi_edge_centroid": f"{known_z - 0.010 + noise:.4f}",
+                    "z_roi_radial_center": f"{known_z + 0.004 + noise:.4f}",
+                    "z_roi_edge_pair_center": f"{known_z + 0.006 + noise:.4f}",
+                    "z_roi_center_patch": f"{known_z + 0.060 + noise:.4f}",
+                    "z_roi_multi_point": f"{known_z - 0.055 + noise:.4f}",
+                    "z_roi_neural_feature": f"{known_z - 0.020 + noise:.4f}",
+                    "z_roi_cuda_stereo_bm": f"{known_z - 0.015 + noise:.4f}",
+                    "z_roi_ring_edge_profile": f"{known_z + 0.010 + noise:.4f}",
+                    "disparity_roi_cuda_stereo_bm": "450.0",
+                    "disparity_roi_ring_edge_profile": "445.0",
+                    "roi_cuda_stereo_bm_support": "7",
+                    "roi_cuda_stereo_bm_std_px": "0.4",
+                    "roi_cuda_stereo_bm_confidence": "0.7",
+                    "roi_ring_edge_profile_support": "9",
+                    "roi_ring_edge_profile_std_px": "0.6",
+                    "roi_ring_edge_profile_confidence": "0.8",
+                    "z_fallback": "-1",
+                    "z_fallback_epipolar": "-1",
+                    "z_fallback_template": "-1",
+                    "z_fallback_feature_points": "-1",
+                    "raw_observation_valid": "1",
+                    "left_circle_source": "2",
+                    "right_circle_source": "2",
+                    "frame_counter_delta": "0",
+                    "frame_number_delta": "0",
+                    "stereo_match_source": "1",
+                    "stereo_depth_source": "1",
+                    "pair_positive_disparity": "1",
+                }
+            )
+
+    frames_path = root / f"{stem}.frames.csv"
+    with frames_path.open("w", newline="", encoding="utf-8") as handle:
+        fieldnames = [
+            "frame_id",
+            "timestamp",
+            "result_count",
+            "tracked_count",
+            "raw_observation_count",
+            "stereo_observation_count",
+            "direct_pair_count",
+            "fallback_l2r_count",
+            "fallback_r2l_count",
+            "pair_positive_count",
+            "pair_shifted_iou_min",
+            "pair_shifted_iou_mean",
+            "pair_score_mean",
+            "pair_bbox_prior_penalty_mean",
+            "pair_epipolar_dy_max",
+            "roi_iou_region_color_patch_support_max",
+            "roi_patch_iou_color_edge_support_max",
+            "roi_neural_feature_support_max",
+            "p2_candidate_observed_count",
+            "p2_candidate_valid_count",
+            "p2_feature_valid_count",
+            "p2_cuda_valid_count",
+            "p2_neural_valid_count",
+            "best_confidence",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for index in range(rows):
+            writer.writerow(
+                {
+                    "frame_id": index + 1,
+                    "timestamp": f"{100.0 + index * 0.01:.2f}",
+                    "result_count": 1,
+                    "tracked_count": 1,
+                    "raw_observation_count": 1,
+                    "stereo_observation_count": 1,
+                    "direct_pair_count": 1,
+                    "fallback_l2r_count": 0,
+                    "fallback_r2l_count": 0,
+                    "pair_positive_count": 1,
+                    "pair_shifted_iou_min": "0.5",
+                    "pair_shifted_iou_mean": "0.5",
+                    "pair_score_mean": "0.1",
+                    "pair_bbox_prior_penalty_mean": "0.0",
+                    "pair_epipolar_dy_max": "0.5",
+                    "roi_iou_region_color_patch_support_max": 0,
+                    "roi_patch_iou_color_edge_support_max": 0,
+                    "roi_neural_feature_support_max": 0,
+                    "p2_candidate_observed_count": 4,
+                    "p2_candidate_valid_count": 4,
+                    "p2_feature_valid_count": 1,
+                    "p2_cuda_valid_count": 1,
+                    "p2_neural_valid_count": 1,
+                    "best_confidence": "0.9",
+                }
+            )
+    (root / f"{stem}.metadata.yaml").write_text(
+        f"known_z: {known_z:.4f}\nknown_z_tolerance_m: 0.05\nstatic: true\nscene: synthetic_known_z\n",
+        encoding="utf-8",
+    )
+    return csv_path
+
+
 class SyntheticDatasetTest(unittest.TestCase):
     def test_metadata_autodiscovery_and_frame_summary_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1339,6 +1470,58 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("sweep:skipped", report["warnings"])
             self.assertIn("calibrated_smoother", report["baseline_suite"]["variants"])
             self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
+
+    def test_dataset_workflow_known_distance_report_is_ready_for_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_train_3m", 3.0)
+            _write_known_distance_clip(root, "static_val_4m", 4.0)
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: static_train_3m.csv",
+                        "    metadata: static_train_3m.metadata.yaml",
+                        "    split: train",
+                        "    name: static_train_3m",
+                        "  - csv: static_val_4m.csv",
+                        "    metadata: static_val_4m.metadata.yaml",
+                        "    split: val",
+                        "    name: static_val_4m",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "workflow_known_z"
+
+            summary = run_workflow(
+                [manifest_path],
+                output_dir,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+                calibration_min_count=4,
+                skip_sweep=True,
+                include_depth_polyfit=False,
+                include_rts_smoother=False,
+            )
+            report = build_workflow_report(output_dir)
+
+            self.assertEqual(summary["validation"]["known_z_counts"], {"train": 1, "val": 1})
+            self.assertNotIn("missing_known_z_clips", summary["validation"]["warning_counts"])
+            self.assertNotIn("missing_val_split", summary["validation"]["warning_counts"])
+            self.assertTrue(summary["calibration"]["used_for_suite"])
+            self.assertGreater(summary["calibration"]["method_count"], 4)
+            self.assertIn("calibrated_smoother", summary["baseline_suite"]["variants"])
+            self.assertNotIn("validation:missing_known_z_clips", report["warnings"])
+            self.assertNotIn("validation:missing_val_split", report["warnings"])
+            self.assertNotIn("calibration:not_used", report["warnings"])
+            self.assertIn("sweep:skipped", report["warnings"])
+            markdown = (output_dir / "workflow_report.md").read_text(encoding="utf-8")
+            self.assertIn("static_val_4m", markdown)
+            self.assertIn("calibrated_smoother", markdown)
 
     def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
