@@ -20,9 +20,11 @@ from trajectory_fusion import evaluate_fusion  # noqa: E402
 from trajectory_fusion.check_dataset import analyze_dataset  # noqa: E402
 from trajectory_fusion.dataset import (  # noqa: E402
     METHOD_COLUMNS,
+    build_legacy_arrays,
     derive_frame_summary_path,
     find_metadata_for_csv,
     legacy_feature_names,
+    load_legacy_sequences,
     read_metadata,
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
@@ -59,6 +61,16 @@ HEADER = [
     "z_roi_center_patch",
     "z_roi_multi_point",
     "z_roi_neural_feature",
+    "z_roi_cuda_stereo_bm",
+    "z_roi_ring_edge_profile",
+    "disparity_roi_cuda_stereo_bm",
+    "disparity_roi_ring_edge_profile",
+    "roi_cuda_stereo_bm_support",
+    "roi_cuda_stereo_bm_std_px",
+    "roi_cuda_stereo_bm_confidence",
+    "roi_ring_edge_profile_support",
+    "roi_ring_edge_profile_std_px",
+    "roi_ring_edge_profile_confidence",
     "z_fallback",
     "z_fallback_epipolar",
     "z_fallback_template",
@@ -112,6 +124,16 @@ def _write_synthetic_clip(root: Path) -> Path:
                 "z_roi_center_patch": f"{z + 0.05:.3f}",
                 "z_roi_multi_point": f"{z - 0.05:.3f}",
                 "z_roi_neural_feature": "-1",
+                "z_roi_cuda_stereo_bm": "3.200" if index == 0 else "-1",
+                "z_roi_ring_edge_profile": "3.300" if index == 0 else "-1",
+                "disparity_roi_cuda_stereo_bm": "456.0" if index == 0 else "-1",
+                "disparity_roi_ring_edge_profile": "444.0" if index == 0 else "-1",
+                "roi_cuda_stereo_bm_support": "7" if index == 0 else "0",
+                "roi_cuda_stereo_bm_std_px": "0.4" if index == 0 else "-1",
+                "roi_cuda_stereo_bm_confidence": "0.7" if index == 0 else "0",
+                "roi_ring_edge_profile_support": "9" if index == 0 else "0",
+                "roi_ring_edge_profile_std_px": "0.6" if index == 0 else "-1",
+                "roi_ring_edge_profile_confidence": "0.8" if index == 0 else "0",
                 "z_fallback": f"{z + 0.20:.3f}" if is_fallback or is_r2l_fallback else "-1",
                 "z_fallback_epipolar": f"{z + 0.20:.3f}" if is_fallback or is_r2l_fallback else "-1",
                 "z_fallback_template": "-1",
@@ -219,6 +241,133 @@ class SyntheticDatasetTest(unittest.TestCase):
         self.assertNotIn("z", method_keys)
         self.assertNotIn("z_stereo", feature_names)
         self.assertNotIn("z", feature_names)
+        for online_state_name in (
+            "x",
+            "y",
+            "vx",
+            "vy",
+            "vz",
+            "ax",
+            "ay",
+            "az",
+            "depth_method",
+            "stereo_depth_source",
+        ):
+            self.assertNotIn(online_state_name, feature_names)
+
+    def test_build_legacy_arrays_covers_training_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _write_synthetic_clip(Path(tmp))
+            sequence = load_legacy_sequences(csv_path)[0]
+            arrays = build_legacy_arrays(sequence)
+
+            self.assertEqual(len(arrays["features"]), sequence.length)
+            self.assertEqual(len(arrays["dt"]), sequence.length)
+            self.assertEqual(len(arrays["features"][0]), len(legacy_feature_names()))
+            self.assertEqual(len(arrays["measurements"][0]), len(METHOD_COLUMNS))
+            self.assertEqual(len(arrays["valid"][0]), len(METHOD_COLUMNS))
+            self.assertAlmostEqual(arrays["dt"][1][0], 0.01, places=6)
+
+            method_keys = {key for _, key in METHOD_COLUMNS}
+            self.assertNotIn("z_fallback", method_keys)
+            fallback_feature_idx = legacy_feature_names().index("z_fallback")
+            self.assertGreater(arrays["features"][2][fallback_feature_idx], 0.1)
+
+            feature_index = {name: idx for idx, name in enumerate(legacy_feature_names())}
+            self.assertEqual(
+                arrays["features"][0][feature_index["roi_cuda_stereo_bm_support"]],
+                7.0,
+            )
+            self.assertEqual(
+                arrays["features"][0][feature_index["roi_ring_edge_profile_support"]],
+                9.0,
+            )
+
+    def test_p2_sidecar_merges_ncc_xfeat_and_superpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root)
+            sidecar_path = root / "traj_p0p1_001.p2_diagnostic.csv"
+            fieldnames = [
+                "frame_id",
+                "mode",
+                "valid",
+                "z_m",
+                "disparity",
+                "support",
+                "stddev",
+                "confidence",
+            ]
+            rows = [
+                {
+                    "frame_id": "1",
+                    "mode": "cuda_template",
+                    "valid": "1",
+                    "z_m": "3.50",
+                    "disparity": "420.0",
+                    "support": "1",
+                    "stddev": "0.2",
+                    "confidence": "0.8",
+                },
+                {
+                    "frame_id": "1",
+                    "mode": "neural_xfeat",
+                    "valid": "1",
+                    "z_m": "3.46",
+                    "disparity": "425.0",
+                    "support": "5",
+                    "stddev": "0.9",
+                    "confidence": "0.6",
+                },
+                {
+                    "frame_id": "1",
+                    "mode": "neural_superpoint",
+                    "valid": "1",
+                    "z_m": "3.41",
+                    "disparity": "431.0",
+                    "support": "21",
+                    "stddev": "0.5",
+                    "confidence": "0.9",
+                },
+                {
+                    "frame_id": "2",
+                    "mode": "cuda_stereo_bm",
+                    "valid": "1",
+                    "z_m": "3.25",
+                    "disparity": "452.0",
+                    "support": "8",
+                    "stddev": "0.7",
+                    "confidence": "0.5",
+                },
+                {
+                    "frame_id": "2",
+                    "mode": "cuda_ring_edge_profile",
+                    "valid": "1",
+                    "z_m": "3.35",
+                    "disparity": "439.0",
+                    "support": "11",
+                    "stddev": "0.6",
+                    "confidence": "0.7",
+                },
+            ]
+            with sidecar_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            sequence = load_legacy_sequences(csv_path)[0]
+            first = sequence.rows[0]
+            self.assertEqual(first["z_roi_cuda_template_match"], 3.50)
+            self.assertEqual(first["roi_cuda_template_match_support"], 1.0)
+            self.assertEqual(first["z_roi_neural_xfeat"], 3.46)
+            self.assertEqual(first["roi_neural_xfeat_support"], 5.0)
+            self.assertEqual(first["z_roi_neural_superpoint"], 3.41)
+            self.assertEqual(first["roi_neural_superpoint_support"], 21.0)
+            second = sequence.rows[1]
+            self.assertEqual(second["z_roi_cuda_stereo_bm"], 3.25)
+            self.assertEqual(second["roi_cuda_stereo_bm_support"], 8.0)
+            self.assertEqual(second["z_roi_ring_edge_profile"], 3.35)
+            self.assertEqual(second["roi_ring_edge_profile_support"], 11.0)
 
     def test_check_dataset_and_evaluate_run_on_known_z_clip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -285,6 +434,19 @@ class SyntheticDatasetTest(unittest.TestCase):
         valid = torch.tensor([[1.0, 1.0]])
         loss = known_z_loss(depth, known_z, valid)
         self.assertTrue(torch.isfinite(loss).item())
+
+    def test_physics_depth_loss_uses_sequence_dt_if_torch_available(self) -> None:
+        try:
+            import torch
+            from trajectory_fusion.losses import physics_depth_loss
+        except ImportError:
+            self.skipTest("PyTorch is not installed")
+
+        timestamps = torch.tensor([[0.00, 0.01, 0.03, 0.06, 0.10]], dtype=torch.float32)
+        dt = torch.tensor([[0.01, 0.01, 0.02, 0.03, 0.04]], dtype=torch.float32).unsqueeze(-1)
+        depth = (3.0 + 2.0 * timestamps).unsqueeze(-1)
+        loss = physics_depth_loss(depth, dt)
+        self.assertLess(float(loss), 1e-8)
 
     def test_dataset_manifest_paths_are_relative_to_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

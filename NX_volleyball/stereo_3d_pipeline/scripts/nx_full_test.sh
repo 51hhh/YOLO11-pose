@@ -235,7 +235,7 @@ try:
     print(f"  [INFO] VPI version: {vpi.__version__ if hasattr(vpi, '__version__') else 'unknown'}")
 
     # Test Stereo Disparity
-    W, H = 1280, 720
+    W, H = 1440, 1080
     left = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint16), format=vpi.Format.U16)
     right = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint16), format=vpi.Format.U16)
 
@@ -249,11 +249,11 @@ try:
         disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=256, backends=vpi.Backend.CUDA)
     t1 = time.monotonic()
     avg_ms = (t1 - t0) / N * 1000
-    print(f"  [INFO] VPI Stereo Disparity (CUDA, 1280x720, maxdisp=128): {avg_ms:.2f} ms/frame")
+    print(f"  [INFO] VPI Stereo Disparity (CUDA, 1440x1080, maxdisp=128): {avg_ms:.2f} ms/frame")
 
     # Half-res test
-    left_half = vpi.asimage(np.random.randint(0, 255, (360, 640), dtype=np.uint16), format=vpi.Format.U16)
-    right_half = vpi.asimage(np.random.randint(0, 255, (360, 640), dtype=np.uint16), format=vpi.Format.U16)
+    left_half = vpi.asimage(np.random.randint(0, 255, (540, 720), dtype=np.uint16), format=vpi.Format.U16)
+    right_half = vpi.asimage(np.random.randint(0, 255, (540, 720), dtype=np.uint16), format=vpi.Format.U16)
 
     disparity_half = vpi.stereo_disparity(left_half, right_half, window=5, maxdisp=64, backends=vpi.Backend.CUDA)
     t0 = time.monotonic()
@@ -261,7 +261,7 @@ try:
         disparity_half = vpi.stereo_disparity(left_half, right_half, window=5, maxdisp=64, backends=vpi.Backend.CUDA)
     t1 = time.monotonic()
     avg_half = (t1 - t0) / N * 1000
-    print(f"  [INFO] VPI Stereo Disparity (CUDA, 640x360, maxdisp=64):   {avg_half:.2f} ms/frame")
+    print(f"  [INFO] VPI Stereo Disparity (CUDA, 720x540, maxdisp=64):   {avg_half:.2f} ms/frame")
     print(f"  [INFO] Half-res speedup: {avg_ms/avg_half:.1f}x")
 
     # PVA Remap test (if available)
@@ -277,7 +277,7 @@ try:
             out = vpi.remap(src, warp, backends=vpi.Backend.CUDA)
         t1 = time.monotonic()
         avg_remap = (t1 - t0) / N * 1000
-        print(f"  [INFO] VPI Remap (CUDA, 1280x720): {avg_remap:.2f} ms/frame")
+        print(f"  [INFO] VPI Remap (CUDA, 1440x1080): {avg_remap:.2f} ms/frame")
     except Exception as e:
         print(f"  [WARN] VPI Remap test failed: {e}")
 
@@ -343,8 +343,8 @@ calibration:
   file: "calibration/stereo_calib.yaml"
 
 rectify:
-  output_width: 1280
-  output_height: 720
+  output_width: 1440
+  output_height: 1080
 
 detector:
   engine_path: "$ENGINE_FILE"

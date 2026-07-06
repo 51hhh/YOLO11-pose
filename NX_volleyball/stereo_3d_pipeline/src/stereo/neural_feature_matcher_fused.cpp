@@ -80,6 +80,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
 
     const auto start = std::chrono::steady_clock::now();
     const float context = 1.20f;
+    const auto roi_side = [](const Detection& det) {
+        return std::max(1.0f, std::max(det.width, det.height));
+    };
     auto crop_into = [&](const Detection& det,
                          const uint8_t* gray_gpu, int gray_pitch,
                          const uint8_t* bgr_gpu, int bgr_pitch,
@@ -87,10 +90,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
                          float* dst) -> bool {
         const int c = tensorChannels(tensor->dims);
         const int size = config_.roi_size;
+        const float side = roi_side(det);
         if (c == 1) {
             cropResizeGPU(gray_gpu, gray_pitch, img_width, img_height,
                           dst, size,
-                          det.cx, det.cy, det.width, det.height,
+                          det.cx, det.cy, side, side,
                           context, stream);
             return true;
         }
@@ -100,7 +104,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
             }
             cropResizeBgrGPU_3ch(bgr_gpu, bgr_pitch, img_width, img_height,
                                   dst, size,
-                                  det.cx, det.cy, det.width, det.height,
+                                  det.cx, det.cy, side, side,
                                   context, stream);
             return true;
         }
@@ -134,13 +138,15 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
         const int spatial = config_.roi_size * config_.roi_size;
         float* base = static_cast<float*>(input->device);
         if (c == 2) {
+            const float left_side = roi_side(left_det);
+            const float right_side = roi_side(right_det);
             cropResizeGPU(left_gray_gpu, left_gray_pitch, img_width, img_height,
                           base, config_.roi_size,
-                          left_det.cx, left_det.cy, left_det.width, left_det.height,
+                          left_det.cx, left_det.cy, left_side, left_side,
                           context, stream);
             cropResizeGPU(right_gray_gpu, right_gray_pitch, img_width, img_height,
                           base + spatial, config_.roi_size,
-                          right_det.cx, right_det.cy, right_det.width, right_det.height,
+                          right_det.cx, right_det.cy, right_side, right_side,
                           context, stream);
         } else if (c == 6) {
             if (!left_bgr_gpu || !right_bgr_gpu ||
@@ -148,13 +154,15 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
                 out.status = "unsupported_input_schema";
                 return out;
             }
+            const float left_side = roi_side(left_det);
+            const float right_side = roi_side(right_det);
             cropResizeBgrGPU_3ch(left_bgr_gpu, left_bgr_pitch, img_width, img_height,
                                   base, config_.roi_size,
-                                  left_det.cx, left_det.cy, left_det.width, left_det.height,
+                                  left_det.cx, left_det.cy, left_side, left_side,
                                   context, stream);
             cropResizeBgrGPU_3ch(right_bgr_gpu, right_bgr_pitch, img_width, img_height,
                                   base + 3 * spatial, config_.roi_size,
-                                  right_det.cx, right_det.cy, right_det.width, right_det.height,
+                                  right_det.cx, right_det.cy, right_side, right_side,
                                   context, stream);
         } else {
             out.status = "unsupported_input_schema";
@@ -215,10 +223,8 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
         return out;
     }
     const int rows = static_cast<int>(match_output->elements / stride);
-    const float left_s = std::sqrt(std::max(1.0f, left_det.width * context *
-                                                  left_det.height * context));
-    const float right_s = std::sqrt(std::max(1.0f, right_det.width * context *
-                                                   right_det.height * context));
+    const float left_s = roi_side(left_det) * context;
+    const float right_s = roi_side(right_det) * context;
     const float left_x0 = left_det.cx - 0.5f * left_s;
     const float left_y0 = left_det.cy - 0.5f * left_s;
     const float right_x0 = right_det.cx - 0.5f * right_s;

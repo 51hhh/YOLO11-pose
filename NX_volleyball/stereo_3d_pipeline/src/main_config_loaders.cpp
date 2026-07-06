@@ -115,51 +115,73 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         }
     }
 
-    // Learned ROI feature matching (TensorRT runtime, disabled by default)
-    if (auto nf = root["neural_feature_matching"]) {
-        if (nf["enabled"]) cfg.neural_features.enabled = nf["enabled"].as<bool>();
+    // Learned ROI feature matching (TensorRT runtime, disabled by default).
+    // Parses one YAML block into a NeuralFeatureConfig. Reused for the legacy
+    // single-backend block plus the split xfeat/superpoint blocks so that
+    // XFeat and SuperPoint can run in the same frame with their own engines.
+    auto parse_neural = [](const YAML::Node& nf,
+                           stereo3d::NeuralFeatureConfig& nc) {
+        if (nf["enabled"]) nc.enabled = nf["enabled"].as<bool>();
         if (nf["backend"]) {
-            cfg.neural_features.backend_name = nf["backend"].as<std::string>();
-            cfg.neural_features.backend =
-                stereo3d::parseNeuralFeatureBackend(cfg.neural_features.backend_name);
+            nc.backend_name = nf["backend"].as<std::string>();
+            nc.backend =
+                stereo3d::parseNeuralFeatureBackend(nc.backend_name);
         }
         if (nf["extractor_engine_path"])
-            cfg.neural_features.extractor_engine_path =
+            nc.extractor_engine_path =
                 nf["extractor_engine_path"].as<std::string>();
         if (nf["matcher_engine_path"])
-            cfg.neural_features.matcher_engine_path =
+            nc.matcher_engine_path =
                 nf["matcher_engine_path"].as<std::string>();
         if (nf["fused_engine_path"])
-            cfg.neural_features.fused_engine_path =
+            nc.fused_engine_path =
                 nf["fused_engine_path"].as<std::string>();
         if (nf["roi_size"])
-            cfg.neural_features.roi_size = nf["roi_size"].as<int>();
+            nc.roi_size = nf["roi_size"].as<int>();
         if (nf["top_k"])
-            cfg.neural_features.top_k = nf["top_k"].as<int>();
+            nc.top_k = nf["top_k"].as<int>();
         if (nf["descriptor_dim"])
-            cfg.neural_features.descriptor_dim = nf["descriptor_dim"].as<int>();
+            nc.descriptor_dim = nf["descriptor_dim"].as<int>();
         if (nf["min_matches"])
-            cfg.neural_features.min_matches = nf["min_matches"].as<int>();
+            nc.min_matches = nf["min_matches"].as<int>();
         if (nf["max_y_error_px"])
-            cfg.neural_features.max_y_error_px = nf["max_y_error_px"].as<float>();
+            nc.max_y_error_px = nf["max_y_error_px"].as<float>();
         if (nf["max_disp_delta_px"])
-            cfg.neural_features.max_disp_delta_px = nf["max_disp_delta_px"].as<float>();
+            nc.max_disp_delta_px = nf["max_disp_delta_px"].as<float>();
         if (nf["final_disp_gate_px"])
-            cfg.neural_features.final_disp_gate_px = nf["final_disp_gate_px"].as<float>();
+            nc.final_disp_gate_px = nf["final_disp_gate_px"].as<float>();
         if (nf["min_score"])
-            cfg.neural_features.min_score = nf["min_score"].as<float>();
+            nc.min_score = nf["min_score"].as<float>();
         if (nf["use_lightglue"])
-            cfg.neural_features.use_lightglue = nf["use_lightglue"].as<bool>();
+            nc.use_lightglue = nf["use_lightglue"].as<bool>();
         if (nf["gpu_postprocess"])
-            cfg.neural_features.gpu_postprocess = nf["gpu_postprocess"].as<bool>();
+            nc.gpu_postprocess = nf["gpu_postprocess"].as<bool>();
         if (nf["match_margin"])
-            cfg.neural_features.match_margin = nf["match_margin"].as<float>();
+            nc.match_margin = nf["match_margin"].as<float>();
         if (nf["min_spatial_quadrants"])
-            cfg.neural_features.min_spatial_quadrants =
+            nc.min_spatial_quadrants =
                 nf["min_spatial_quadrants"].as<int>();
         if (nf["min_spatial_spread_ratio"])
-            cfg.neural_features.min_spatial_spread_ratio =
+            nc.min_spatial_spread_ratio =
                 nf["min_spatial_spread_ratio"].as<float>();
+    };
+
+    // Legacy single-backend block (kept for backward compatibility).
+    if (auto nf = root["neural_feature_matching"]) {
+        parse_neural(nf, cfg.neural_features);
+    }
+    // Split per-backend blocks: each drives its own matcher instance so
+    // z_roi_neural_xfeat and z_roi_neural_superpoint fill independently.
+    if (auto nf = root["neural_feature_matching_xfeat"]) {
+        cfg.neural_xfeat.backend_name = "xfeat";
+        cfg.neural_xfeat.backend = stereo3d::NeuralFeatureBackend::XFEAT;
+        parse_neural(nf, cfg.neural_xfeat);
+    }
+    if (auto nf = root["neural_feature_matching_superpoint"]) {
+        cfg.neural_superpoint.backend_name = "superpoint_lightglue";
+        cfg.neural_superpoint.backend =
+            stereo3d::NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE;
+        parse_neural(nf, cfg.neural_superpoint);
     }
 
     // Fusion
@@ -234,6 +256,15 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
                 perf["p2_pair_quality_min_confidence"].as<float>();
         if (perf["p2_diagnostic_stride"])
             cfg.p2_diagnostic_stride = perf["p2_diagnostic_stride"].as<int>();
+        if (perf["p2_diagnostic_stride_cuda_template"])
+            cfg.p2_diagnostic_stride_cuda_template =
+                perf["p2_diagnostic_stride_cuda_template"].as<int>();
+        if (perf["p2_diagnostic_stride_neural_xfeat"])
+            cfg.p2_diagnostic_stride_neural_xfeat =
+                perf["p2_diagnostic_stride_neural_xfeat"].as<int>();
+        if (perf["p2_diagnostic_stride_neural_superpoint"])
+            cfg.p2_diagnostic_stride_neural_superpoint =
+                perf["p2_diagnostic_stride_neural_superpoint"].as<int>();
         if (perf["p2_diagnostic_max_in_flight"])
             cfg.p2_diagnostic_max_in_flight =
                 perf["p2_diagnostic_max_in_flight"].as<int>();
@@ -242,6 +273,9 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["p2_diagnostic_deadline_ms"])
             cfg.p2_diagnostic_deadline_ms =
                 perf["p2_diagnostic_deadline_ms"].as<float>();
+        if (perf["p2_diagnostic_use_source_snapshot"])
+            cfg.p2_diagnostic_use_source_snapshot =
+                perf["p2_diagnostic_use_source_snapshot"].as<bool>();
         if (perf["p2_diagnostic_results_enabled"])
             cfg.p2_diagnostic_results_enabled =
                 perf["p2_diagnostic_results_enabled"].as<bool>();

@@ -38,6 +38,8 @@ METHOD_COLUMNS = (
     ("roi_opencv_cuda_gftt_lk", "z_roi_opencv_cuda_gftt_lk"),
     ("roi_ring_edge_profile", "z_roi_ring_edge_profile"),
     ("roi_neural_feature", "z_roi_neural_feature"),
+    ("roi_neural_xfeat", "z_roi_neural_xfeat"),
+    ("roi_neural_superpoint", "z_roi_neural_superpoint"),
     ("roi_center_patch", "z_roi_center_patch"),
     ("roi_multi_point", "z_roi_multi_point"),
     ("epipolar_fallback", "z_fallback_epipolar"),
@@ -47,6 +49,27 @@ METHOD_COLUMNS = (
 METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
 
 P2_DIAGNOSTIC_MODE_COLUMNS = {
+    "cuda_template": {
+        "z": "z_roi_cuda_template_match",
+        "disparity": "disparity_roi_cuda_template_match",
+        "support": "roi_cuda_template_match_support",
+        "std": "roi_cuda_template_match_std_px",
+        "confidence": "roi_cuda_template_match_confidence",
+    },
+    "cuda_stereo_bm": {
+        "z": "z_roi_cuda_stereo_bm",
+        "disparity": "disparity_roi_cuda_stereo_bm",
+        "support": "roi_cuda_stereo_bm_support",
+        "std": "roi_cuda_stereo_bm_std_px",
+        "confidence": "roi_cuda_stereo_bm_confidence",
+    },
+    "cuda_stereo_sgm": {
+        "z": "z_roi_cuda_stereo_sgm",
+        "disparity": "disparity_roi_cuda_stereo_sgm",
+        "support": "roi_cuda_stereo_sgm_support",
+        "std": "roi_cuda_stereo_sgm_std_px",
+        "confidence": "roi_cuda_stereo_sgm_confidence",
+    },
     "vpi_template_match": {
         "z": "z_roi_vpi_template_match",
         "disparity": "disparity_roi_vpi_template_match",
@@ -68,12 +91,33 @@ P2_DIAGNOSTIC_MODE_COLUMNS = {
         "std": "roi_opencv_cuda_gftt_lk_std_px",
         "confidence": "roi_opencv_cuda_gftt_lk_confidence",
     },
+    "cuda_ring_edge_profile": {
+        "z": "z_roi_ring_edge_profile",
+        "disparity": "disparity_roi_ring_edge_profile",
+        "support": "roi_ring_edge_profile_support",
+        "std": "roi_ring_edge_profile_std_px",
+        "confidence": "roi_ring_edge_profile_confidence",
+    },
     "neural_feature": {
         "z": "z_roi_neural_feature",
         "disparity": "disparity_roi_neural_feature",
         "support": "roi_neural_feature_support",
         "std": "roi_neural_feature_std_px",
         "confidence": "roi_neural_feature_confidence",
+    },
+    "neural_xfeat": {
+        "z": "z_roi_neural_xfeat",
+        "disparity": "disparity_roi_neural_xfeat",
+        "support": "roi_neural_xfeat_support",
+        "std": "roi_neural_xfeat_std_px",
+        "confidence": "roi_neural_xfeat_confidence",
+    },
+    "neural_superpoint": {
+        "z": "z_roi_neural_superpoint",
+        "disparity": "disparity_roi_neural_superpoint",
+        "support": "roi_neural_superpoint_support",
+        "std": "roi_neural_superpoint_std_px",
+        "confidence": "roi_neural_superpoint_confidence",
     },
 }
 
@@ -322,6 +366,8 @@ def load_legacy_sequences(
             "z_roi_opencv_cuda_gftt_lk": _safe_float(row.get("z_roi_opencv_cuda_gftt_lk"), -1.0),
             "z_roi_ring_edge_profile": _safe_float(row.get("z_roi_ring_edge_profile"), -1.0),
             "z_roi_neural_feature": _safe_float(row.get("z_roi_neural_feature"), -1.0),
+            "z_roi_neural_xfeat": _safe_float(row.get("z_roi_neural_xfeat"), -1.0),
+            "z_roi_neural_superpoint": _safe_float(row.get("z_roi_neural_superpoint"), -1.0),
             "z_roi_center_patch": _safe_float(row.get("z_roi_center_patch"), -1.0),
             "z_roi_multi_point": _safe_float(row.get("z_roi_multi_point", row.get("z_subpixel")), -1.0),
             "z_yolo_bbox_pair": _safe_float(row.get("z_yolo_bbox_pair"), -1.0),
@@ -362,6 +408,8 @@ def load_legacy_sequences(
             "disparity_roi_opencv_cuda_gftt_lk": _safe_float(row.get("disparity_roi_opencv_cuda_gftt_lk"), -1.0),
             "disparity_roi_ring_edge_profile": _safe_float(row.get("disparity_roi_ring_edge_profile"), -1.0),
             "disparity_roi_neural_feature": _safe_float(row.get("disparity_roi_neural_feature"), -1.0),
+            "disparity_roi_neural_xfeat": _safe_float(row.get("disparity_roi_neural_xfeat"), -1.0),
+            "disparity_roi_neural_superpoint": _safe_float(row.get("disparity_roi_neural_superpoint"), -1.0),
             "disparity_roi_center_patch": _safe_float(row.get("disparity_roi_center_patch"), -1.0),
             "disparity_roi_multi_point": _safe_float(row.get("disparity_roi_multi_point", row.get("disparity_subpixel")), -1.0),
             "disparity_fallback_epipolar": _safe_float(row.get("disparity_fallback_epipolar"), -1.0),
@@ -415,6 +463,12 @@ def load_legacy_sequences(
             "roi_patch_iou_color_edge_support": _safe_float(row.get("roi_patch_iou_color_edge_support"), 0.0),
             "roi_patch_iou_color_edge_std_px": _safe_float(row.get("roi_patch_iou_color_edge_std_px"), -1.0),
             "roi_patch_iou_color_edge_confidence": _safe_float(row.get("roi_patch_iou_color_edge_confidence"), 0.0),
+            "roi_cuda_template_match_support": _safe_float(row.get("roi_cuda_template_match_support"), 0.0),
+            "roi_cuda_template_match_std_px": _safe_float(row.get("roi_cuda_template_match_std_px"), -1.0),
+            "roi_cuda_template_match_confidence": _safe_float(row.get("roi_cuda_template_match_confidence"), 0.0),
+            "roi_cuda_stereo_bm_support": _safe_float(row.get("roi_cuda_stereo_bm_support"), 0.0),
+            "roi_cuda_stereo_bm_std_px": _safe_float(row.get("roi_cuda_stereo_bm_std_px"), -1.0),
+            "roi_cuda_stereo_bm_confidence": _safe_float(row.get("roi_cuda_stereo_bm_confidence"), 0.0),
             "roi_cuda_stereo_sgm_support": _safe_float(row.get("roi_cuda_stereo_sgm_support"), 0.0),
             "roi_cuda_stereo_sgm_std_px": _safe_float(row.get("roi_cuda_stereo_sgm_std_px"), -1.0),
             "roi_cuda_stereo_sgm_confidence": _safe_float(row.get("roi_cuda_stereo_sgm_confidence"), 0.0),
@@ -427,9 +481,18 @@ def load_legacy_sequences(
             "roi_opencv_cuda_gftt_lk_support": _safe_float(row.get("roi_opencv_cuda_gftt_lk_support"), 0.0),
             "roi_opencv_cuda_gftt_lk_std_px": _safe_float(row.get("roi_opencv_cuda_gftt_lk_std_px"), -1.0),
             "roi_opencv_cuda_gftt_lk_confidence": _safe_float(row.get("roi_opencv_cuda_gftt_lk_confidence"), 0.0),
+            "roi_ring_edge_profile_support": _safe_float(row.get("roi_ring_edge_profile_support"), 0.0),
+            "roi_ring_edge_profile_std_px": _safe_float(row.get("roi_ring_edge_profile_std_px"), -1.0),
+            "roi_ring_edge_profile_confidence": _safe_float(row.get("roi_ring_edge_profile_confidence"), 0.0),
             "roi_neural_feature_support": _safe_float(row.get("roi_neural_feature_support"), 0.0),
             "roi_neural_feature_std_px": _safe_float(row.get("roi_neural_feature_std_px"), -1.0),
             "roi_neural_feature_confidence": _safe_float(row.get("roi_neural_feature_confidence"), 0.0),
+            "roi_neural_xfeat_support": _safe_float(row.get("roi_neural_xfeat_support"), 0.0),
+            "roi_neural_xfeat_std_px": _safe_float(row.get("roi_neural_xfeat_std_px"), -1.0),
+            "roi_neural_xfeat_confidence": _safe_float(row.get("roi_neural_xfeat_confidence"), 0.0),
+            "roi_neural_superpoint_support": _safe_float(row.get("roi_neural_superpoint_support"), 0.0),
+            "roi_neural_superpoint_std_px": _safe_float(row.get("roi_neural_superpoint_std_px"), -1.0),
+            "roi_neural_superpoint_confidence": _safe_float(row.get("roi_neural_superpoint_confidence"), 0.0),
             "fallback_feature_points_support": _safe_float(row.get("fallback_feature_points_support"), 0.0),
             "fallback_feature_points_std_px": _safe_float(row.get("fallback_feature_points_std_px"), -1.0),
             "fallback_feature_points_confidence": _safe_float(row.get("fallback_feature_points_confidence"), 0.0),
@@ -510,6 +573,8 @@ def legacy_feature_names() -> List[str]:
         "z_roi_opencv_cuda_gftt_lk",
         "z_roi_ring_edge_profile",
         "z_roi_neural_feature",
+        "z_roi_neural_xfeat",
+        "z_roi_neural_superpoint",
         "z_roi_center_patch",
         "z_roi_multi_point",
         "z_fallback",
@@ -544,6 +609,8 @@ def legacy_feature_names() -> List[str]:
         "disparity_roi_opencv_cuda_gftt_lk",
         "disparity_roi_ring_edge_profile",
         "disparity_roi_neural_feature",
+        "disparity_roi_neural_xfeat",
+        "disparity_roi_neural_superpoint",
         "disparity_roi_center_patch",
         "disparity_roi_multi_point",
         "disparity_fallback_epipolar",
@@ -594,6 +661,12 @@ def legacy_feature_names() -> List[str]:
         "roi_patch_iou_color_edge_support",
         "roi_patch_iou_color_edge_std_px",
         "roi_patch_iou_color_edge_confidence",
+        "roi_cuda_template_match_support",
+        "roi_cuda_template_match_std_px",
+        "roi_cuda_template_match_confidence",
+        "roi_cuda_stereo_bm_support",
+        "roi_cuda_stereo_bm_std_px",
+        "roi_cuda_stereo_bm_confidence",
         "roi_cuda_stereo_sgm_support",
         "roi_cuda_stereo_sgm_std_px",
         "roi_cuda_stereo_sgm_confidence",
@@ -606,9 +679,18 @@ def legacy_feature_names() -> List[str]:
         "roi_opencv_cuda_gftt_lk_support",
         "roi_opencv_cuda_gftt_lk_std_px",
         "roi_opencv_cuda_gftt_lk_confidence",
+        "roi_ring_edge_profile_support",
+        "roi_ring_edge_profile_std_px",
+        "roi_ring_edge_profile_confidence",
         "roi_neural_feature_support",
         "roi_neural_feature_std_px",
         "roi_neural_feature_confidence",
+        "roi_neural_xfeat_support",
+        "roi_neural_xfeat_std_px",
+        "roi_neural_xfeat_confidence",
+        "roi_neural_superpoint_support",
+        "roi_neural_superpoint_std_px",
+        "roi_neural_superpoint_confidence",
         "fallback_feature_points_support",
         "fallback_feature_points_std_px",
         "fallback_feature_points_confidence",
@@ -695,6 +777,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
     measurements order: METHOD_NAMES.
     """
 
+    dt_values: List[List[float]] = []
     features: List[List[float]] = []
     measurements: List[List[float]] = []
     valid: List[List[float]] = []
@@ -725,6 +808,7 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
         else:
             dt = max(1e-4, min(0.2, ts - prev_ts))
         prev_ts = ts
+        dt_values.append([dt])
 
         measurements_row = []
         valid_row = []
@@ -795,9 +879,11 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["z_roi_opencv_cuda_gftt_lk"] if valid_by_key["z_roi_opencv_cuda_gftt_lk"] else 0.0,
                 row["z_roi_ring_edge_profile"] if valid_by_key["z_roi_ring_edge_profile"] else 0.0,
                 row["z_roi_neural_feature"] if valid_by_key["z_roi_neural_feature"] else 0.0,
+                row["z_roi_neural_xfeat"] if valid_by_key["z_roi_neural_xfeat"] else 0.0,
+                row["z_roi_neural_superpoint"] if valid_by_key["z_roi_neural_superpoint"] else 0.0,
                 row["z_roi_center_patch"] if valid_by_key["z_roi_center_patch"] else 0.0,
                 row["z_roi_multi_point"] if valid_by_key["z_roi_multi_point"] else 0.0,
-                row["z_fallback"] if valid_by_key["z_fallback"] else 0.0,
+                row["z_fallback"] if row["z_fallback"] > 0.1 else 0.0,
                 row["z_fallback_epipolar"] if valid_by_key["z_fallback_epipolar"] else 0.0,
                 row["z_fallback_template"] if valid_by_key["z_fallback_template"] else 0.0,
                 row["z_fallback_feature_points"] if valid_by_key["z_fallback_feature_points"] else 0.0,
@@ -829,6 +915,8 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["disparity_roi_opencv_cuda_gftt_lk"],
                 row["disparity_roi_ring_edge_profile"],
                 row["disparity_roi_neural_feature"],
+                row["disparity_roi_neural_xfeat"],
+                row["disparity_roi_neural_superpoint"],
                 row["disparity_roi_center_patch"],
                 row["disparity_roi_multi_point"],
                 row["disparity_fallback_epipolar"],
@@ -879,6 +967,12 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["roi_patch_iou_color_edge_support"],
                 row["roi_patch_iou_color_edge_std_px"],
                 row["roi_patch_iou_color_edge_confidence"],
+                row["roi_cuda_template_match_support"],
+                row["roi_cuda_template_match_std_px"],
+                row["roi_cuda_template_match_confidence"],
+                row["roi_cuda_stereo_bm_support"],
+                row["roi_cuda_stereo_bm_std_px"],
+                row["roi_cuda_stereo_bm_confidence"],
                 row["roi_cuda_stereo_sgm_support"],
                 row["roi_cuda_stereo_sgm_std_px"],
                 row["roi_cuda_stereo_sgm_confidence"],
@@ -891,9 +985,18 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
                 row["roi_opencv_cuda_gftt_lk_support"],
                 row["roi_opencv_cuda_gftt_lk_std_px"],
                 row["roi_opencv_cuda_gftt_lk_confidence"],
+                row["roi_ring_edge_profile_support"],
+                row["roi_ring_edge_profile_std_px"],
+                row["roi_ring_edge_profile_confidence"],
                 row["roi_neural_feature_support"],
                 row["roi_neural_feature_std_px"],
                 row["roi_neural_feature_confidence"],
+                row["roi_neural_xfeat_support"],
+                row["roi_neural_xfeat_std_px"],
+                row["roi_neural_xfeat_confidence"],
+                row["roi_neural_superpoint_support"],
+                row["roi_neural_superpoint_std_px"],
+                row["roi_neural_superpoint_confidence"],
                 row["fallback_feature_points_support"],
                 row["fallback_feature_points_std_px"],
                 row["fallback_feature_points_confidence"],
@@ -938,7 +1041,13 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
             ]
         )
 
-    return {"features": features, "measurements": measurements, "valid": valid, "labels": labels}
+    return {
+        "features": features,
+        "measurements": measurements,
+        "valid": valid,
+        "labels": labels,
+        "dt": dt_values,
+    }
 
 
 def iter_extended_rows(path: str | Path) -> Iterable[Dict[str, str]]:

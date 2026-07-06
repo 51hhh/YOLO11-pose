@@ -383,6 +383,57 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
+    // Split neural matchers: XFeat and SuperPoint can run in the same frame,
+    // each writing its own z_roi_neural_{xfeat,superpoint} candidate fields.
+    // Each matcher owns an independent TensorRT execution context and GPU
+    // workspace, so running them sequentially on the same stream is safe.
+    {
+        const auto& P1 = calibration_->getProjectionLeft();
+        const float focal = static_cast<float>(P1.at<double>(0, 0));
+        const float baseline = calibration_->getBaseline();
+        auto init_split_neural =
+            [&](NeuralFeatureConfig& ncfg,
+                std::unique_ptr<NeuralFeatureMatcher>& matcher,
+                const char* label) -> bool {
+            if (!ncfg.enabled) {
+                return true;
+            }
+            const bool has_engine =
+                !ncfg.extractor_engine_path.empty() ||
+                !ncfg.fused_engine_path.empty();
+            if (!has_engine) {
+                LOG_WARN("%s.enabled=true but no extractor_engine_path or "
+                         "fused_engine_path configured; disabling", label);
+                ncfg.enabled = false;
+                return true;
+            }
+            matcher = std::make_unique<NeuralFeatureMatcher>();
+            if (!matcher->init(ncfg, focal, baseline, config_.max_disparity)) {
+                LOG_ERROR("%s init failed", label);
+                matcher.reset();
+                return false;
+            }
+            if (matcher->requiresBgrInput() && !colorPipelineEnabled()) {
+                LOG_WARN("%s engine requires BGR input but pipeline is gray-only; "
+                         "candidate will report unsupported until BGR is enabled",
+                         label);
+            }
+            LOG_INFO("%s ready: roi=%d top_k=%d", label,
+                     ncfg.roi_size, ncfg.top_k);
+            return true;
+        };
+        if (!init_split_neural(config_.neural_xfeat,
+                               neural_xfeat_matcher_,
+                               "neural_feature_matching_xfeat")) {
+            return false;
+        }
+        if (!init_split_neural(config_.neural_superpoint,
+                               neural_superpoint_matcher_,
+                               "neural_feature_matching_superpoint")) {
+            return false;
+        }
+    }
+
     // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
     if (config_.tracker.enabled) {
         const auto& tcfg = config_.tracker;
@@ -460,6 +511,8 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.dual_yolo.depth_roi_cuda_stereo_sgm ||
             config_.dual_yolo.depth_roi_ring_edge_profile ||
             config_.neural_features.enabled ||
+            config_.neural_xfeat.enabled ||
+            config_.neural_superpoint.enabled ||
             (config_.dual_yolo.depth_roi_center_patch &&
              config_.dual_yolo.center_refine) ||
             (config_.dual_yolo.depth_roi_subpixel &&
@@ -687,6 +740,8 @@ bool Pipeline::init(const PipelineConfig& config) {
          config_.dual_yolo.depth_roi_cuda_stereo_sgm ||
          config_.dual_yolo.depth_roi_ring_edge_profile ||
          config_.neural_features.enabled ||
+         config_.neural_xfeat.enabled ||
+         config_.neural_superpoint.enabled ||
          (config_.dual_yolo.depth_roi_subpixel &&
           config_.dual_yolo.subpixel_enabled) ||
          (config_.dual_yolo.depth_epipolar_fallback &&

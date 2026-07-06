@@ -32,8 +32,8 @@ calibration:
 
 rectify:
   backend: "CUDA"             # 实测本机 CUDA Remap 更快
-  output_width: 1280
-  output_height: 720
+  output_width: 1440
+  output_height: 1080
 
 tnr:
   enabled: false              # ROI 模式下禁用 TNR: 省 ~8ms/帧 (6次VPI操作串行)

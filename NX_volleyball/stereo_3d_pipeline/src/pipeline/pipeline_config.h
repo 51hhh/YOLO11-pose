@@ -20,8 +20,8 @@ namespace stereo3d {
  * @brief 视差策略
  */
 enum class DisparityStrategy {
-    FULL_FRAME,        ///< 全帧视差 (默认, 1280x720)
-    HALF_RESOLUTION,   ///< 半分辨率 (640x360)
+    FULL_FRAME,        ///< 全帧视差 (默认, 1440x1080)
+    HALF_RESOLUTION,   ///< 半分辨率 (由 rect_width/rect_height 计算)
     ROI_ONLY           ///< 仅计算 ROI 区域
 };
 
@@ -54,9 +54,9 @@ struct PipelineConfig {
     // 相机配置 (内嵌, 避免重复定义)
     CameraConfig camera;
 
-    // 校正后分辨率
-    int rect_width  = 1280;
-    int rect_height = 720;
+    // 校正后分辨率。默认使用标定/相机全分辨率，避免非等比校正破坏圆形几何。
+    int rect_width  = 1440;
+    int rect_height = 1080;
     std::string rect_backend = "VIC"; ///< 校正后端: "VIC" (推荐,不占GPU) 或 "CUDA"
 
     // PWM 触发器 (Pipeline 级, 非相机级)
@@ -162,6 +162,10 @@ struct PipelineConfig {
     } dual_yolo;
 
     NeuralFeatureConfig neural_features;
+    // Independent per-backend neural matchers so XFeat and SuperPoint can run
+    // in the same frame and each write its own z_roi_neural_* candidate field.
+    NeuralFeatureConfig neural_xfeat;
+    NeuralFeatureConfig neural_superpoint;
 
     // SOT Tracker 补帧 (YOLO 检测间隙帧)
     struct TrackerConfig {
@@ -206,9 +210,13 @@ struct PipelineConfig {
     float p2_pair_quality_max_epipolar_dy = 0.0f; ///< >0 时超过该 y 偏差触发 P2
     float p2_pair_quality_min_confidence = 0.0f; ///< >0 时低于该 direct pair 语义置信度触发 P2
     int p2_diagnostic_stride = 10; ///< diagnostic lane 每 N 帧尝试一次
+    int p2_diagnostic_stride_cuda_template = 0; ///< 0=沿用 p2_diagnostic_stride
+    int p2_diagnostic_stride_neural_xfeat = 0; ///< 0=沿用 p2_diagnostic_stride
+    int p2_diagnostic_stride_neural_superpoint = 0; ///< 0=沿用 p2_diagnostic_stride
     int p2_diagnostic_max_in_flight = 1; ///< diagnostic lane 最大在途 job 数
     float p2_realtime_deadline_ms = 10.0f; ///< P2 realtime lane deadline
     float p2_diagnostic_deadline_ms = 50.0f; ///< P2 diagnostic lane 软 deadline
+    bool p2_diagnostic_use_source_snapshot = false; ///< 直接借用 async ROI snapshot, 避免二次整帧 D2D
     bool p2_diagnostic_results_enabled = false; ///< diagnostic lane 迟到结果独立落盘开关
     std::string p2_diagnostic_results_path; ///< diagnostic 结果 CSV; 空则不写
     bool p2_diagnostic_point_debug_enabled = false; ///< diagnostic/inline 特征点级 debug CSV

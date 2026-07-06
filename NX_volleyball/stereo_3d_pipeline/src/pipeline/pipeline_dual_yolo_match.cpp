@@ -141,6 +141,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         config_.neural_features.enabled &&
         neural_feature_matcher_ &&
         neural_feature_matcher_->isReady();
+    const bool neural_xfeat_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
+        config_.neural_xfeat.enabled &&
+        neural_xfeat_matcher_ &&
+        neural_xfeat_matcher_->isReady();
+    const bool neural_superpoint_depth_enabled =
+        p2_inline_feature_jobs_enabled &&
+        config_.neural_superpoint.enabled &&
+        neural_superpoint_matcher_ &&
+        neural_superpoint_matcher_->isReady();
     const bool roi_center_patch_depth_enabled =
         dualYoloROICenterPatchDepthEnabled(config_.dual_yolo);
     const bool subpixel_depth_enabled =
@@ -202,6 +212,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         roi_cuda_stereo_sgm_depth_enabled ||
         roi_ring_edge_profile_depth_enabled ||
         neural_feature_depth_enabled ||
+        neural_xfeat_depth_enabled ||
+        neural_superpoint_depth_enabled ||
         roi_center_patch_depth_enabled ||
         use_subpixel_depth;
     const bool fallback_cpu_modes_enabled =
@@ -972,14 +984,35 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                feature_initial_disparity);
         }
 
+        // Split neural matchers: XFeat and SuperPoint each run on their own
+        // TensorRT context and write their own z_roi_neural_{xfeat,superpoint}
+        // candidate. They are invoked sequentially on the same stream (safe:
+        // independent contexts/workspaces) so both can populate fields in one
+        // frame instead of being an A/B choice.
+        SparseFeatureDisparityResult neural_xfeat_result;
+        SparseFeatureDisparityResult neural_superpoint_result;
         SparseFeatureDisparityResult neural_feature_result;
         float z_roi_neural_feature = -1.0f;
-        if (neural_feature_depth_enabled && direct_yolo_match &&
-            right_det && feature_initial_disparity > 0.0f &&
-            gpu_image_available && stream != nullptr) {
+        float z_roi_neural_xfeat = -1.0f;
+        float z_roi_neural_superpoint = -1.0f;
+        const bool neural_common_gate =
+            direct_yolo_match && right_det &&
+            feature_initial_disparity > 0.0f &&
+            gpu_image_available && stream != nullptr;
+        auto run_one_neural =
+            [&](NeuralFeatureMatcher* matcher,
+                const char* perf_name,
+                const char* perf_valid,
+                const char* perf_invalid,
+                const char* artifact_name,
+                SparseFeatureDisparityResult& neural_feature_result) -> float {
+            float z_out = -1.0f;
+            if (!matcher || !matcher->isReady()) {
+                return z_out;
+            }
             const auto neural_start = Clock::now();
             const NeuralFeatureMatchResult neural =
-                neural_feature_matcher_->matchGpuRoi(
+                matcher->matchGpuRoi(
                     left_gpu, left_gpu_pitch,
                     right_gpu, right_gpu_pitch,
                     left_bgr_gpu, left_bgr_pitch,
@@ -991,14 +1024,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             const double neural_elapsed_ms =
                 std::chrono::duration<double, std::milli>(
                     Clock::now() - neural_start).count();
-            globalPerf().record("Stage2_NeuralFeatureMatch",
+            globalPerf().record(perf_name,
                                 neural.inference_ms > 0.0f
                                     ? static_cast<double>(neural.inference_ms)
                                     : neural_elapsed_ms);
-            globalPerf().record(neural.valid
-                                    ? "Stage2_NeuralFeatureMatchValid"
-                                    : "Stage2_NeuralFeatureMatchInvalid",
-                                0.0);
+            globalPerf().record(neural.valid ? perf_valid : perf_invalid, 0.0);
             neural_feature_result.low_confidence = !neural.valid;
             neural_feature_result.attempted =
                 static_cast<int>(neural.debug_points.size());
@@ -1080,13 +1110,52 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 }
             }
             if (neural_feature_result.valid) {
-                z_roi_neural_feature =
-                    depth_from_disparity(neural_feature_result.disparity);
-                neural_feature_result.valid = z_roi_neural_feature > 0.0f;
+                z_out = depth_from_disparity(neural_feature_result.disparity);
+                neural_feature_result.valid = z_out > 0.0f;
             }
-            append_p2_artifact("neural_feature",
+            append_p2_artifact(artifact_name,
                                neural_feature_result,
                                feature_initial_disparity);
+            return z_out;
+        };
+        if (neural_feature_depth_enabled && neural_common_gate) {
+            z_roi_neural_feature = run_one_neural(
+                neural_feature_matcher_.get(),
+                "Stage2_NeuralFeatureMatch",
+                "Stage2_NeuralFeatureMatchValid",
+                "Stage2_NeuralFeatureMatchInvalid",
+                "neural_feature",
+                neural_feature_result);
+        }
+        if (neural_xfeat_depth_enabled && neural_common_gate) {
+            z_roi_neural_xfeat = run_one_neural(
+                neural_xfeat_matcher_.get(),
+                "Stage2_NeuralXFeatMatch",
+                "Stage2_NeuralXFeatMatchValid",
+                "Stage2_NeuralXFeatMatchInvalid",
+                "neural_xfeat",
+                neural_xfeat_result);
+        }
+        if (neural_superpoint_depth_enabled && neural_common_gate) {
+            z_roi_neural_superpoint = run_one_neural(
+                neural_superpoint_matcher_.get(),
+                "Stage2_NeuralSuperPointMatch",
+                "Stage2_NeuralSuperPointMatchValid",
+                "Stage2_NeuralSuperPointMatchInvalid",
+                "neural_superpoint",
+                neural_superpoint_result);
+        }
+        // Legacy compatibility: keep z_roi_neural_feature populated. If the
+        // legacy matcher is disabled, use XFeat first and SuperPoint second.
+        if (!neural_feature_result.valid) {
+            neural_feature_result = neural_xfeat_result.valid
+                ? neural_xfeat_result
+                : neural_superpoint_result;
+        }
+        if (z_roi_neural_feature <= 0.0f) {
+            z_roi_neural_feature =
+                z_roi_neural_xfeat > 0.0f ? z_roi_neural_xfeat
+                                          : z_roi_neural_superpoint;
         }
 
         SparseFeatureDisparityResult fallback_feature_result;
@@ -1543,11 +1612,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             obj.raw_observation_valid = 0;
             obj.z_stereo = -1.0f;
         }
-        const bool neural_backend_xfeat =
-            config_.neural_features.backend == NeuralFeatureBackend::XFEAT;
-        const bool neural_backend_superpoint =
-            config_.neural_features.backend ==
-            NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE;
         obj.z_bbox_center = z_yolo;
         obj.z_bbox_left_edge = z_bbox_left_edge;
         obj.z_bbox_right_edge = z_bbox_right_edge;
@@ -1571,10 +1635,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.z_roi_cuda_stereo_sgm = z_roi_cuda_stereo_sgm;
         obj.z_roi_ring_edge_profile = z_roi_ring_edge_profile;
         obj.z_roi_neural_feature = z_roi_neural_feature;
-        obj.z_roi_neural_xfeat =
-            neural_backend_xfeat ? z_roi_neural_feature : -1.0f;
-        obj.z_roi_neural_superpoint =
-            neural_backend_superpoint ? z_roi_neural_feature : -1.0f;
+        obj.z_roi_neural_xfeat = z_roi_neural_xfeat;
+        obj.z_roi_neural_superpoint = z_roi_neural_superpoint;
         obj.z_roi_center_patch = z_roi_center_patch;
         obj.z_roi_multi_point = z_subpixel;
         obj.z_yolo_bbox_pair = z_yolo;
@@ -1647,9 +1709,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 ? neural_feature_result.disparity
                 : -1.0f;
         obj.disparity_roi_neural_xfeat =
-            neural_backend_xfeat ? obj.disparity_roi_neural_feature : -1.0f;
+            neural_xfeat_result.valid ? neural_xfeat_result.disparity : -1.0f;
         obj.disparity_roi_neural_superpoint =
-            neural_backend_superpoint ? obj.disparity_roi_neural_feature : -1.0f;
+            neural_superpoint_result.valid
+                ? neural_superpoint_result.disparity
+                : -1.0f;
         obj.disparity_roi_center_patch =
             center_patch_valid_for_obj ? center_patch_result.disparity : -1.0f;
         obj.disparity_roi_multi_point =
@@ -1776,18 +1840,16 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.roi_neural_feature_std_px =
             neural_feature_result.valid ? neural_feature_result.stddev : -1.0f;
         obj.roi_neural_feature_confidence = neural_feature_result.confidence;
-        obj.roi_neural_xfeat_support =
-            neural_backend_xfeat ? obj.roi_neural_feature_support : 0;
+        obj.roi_neural_xfeat_support = neural_xfeat_result.support;
         obj.roi_neural_xfeat_std_px =
-            neural_backend_xfeat ? obj.roi_neural_feature_std_px : -1.0f;
-        obj.roi_neural_xfeat_confidence =
-            neural_backend_xfeat ? obj.roi_neural_feature_confidence : 0.0f;
-        obj.roi_neural_superpoint_support =
-            neural_backend_superpoint ? obj.roi_neural_feature_support : 0;
+            neural_xfeat_result.valid ? neural_xfeat_result.stddev : -1.0f;
+        obj.roi_neural_xfeat_confidence = neural_xfeat_result.confidence;
+        obj.roi_neural_superpoint_support = neural_superpoint_result.support;
         obj.roi_neural_superpoint_std_px =
-            neural_backend_superpoint ? obj.roi_neural_feature_std_px : -1.0f;
+            neural_superpoint_result.valid ? neural_superpoint_result.stddev
+                                           : -1.0f;
         obj.roi_neural_superpoint_confidence =
-            neural_backend_superpoint ? obj.roi_neural_feature_confidence : 0.0f;
+            neural_superpoint_result.confidence;
         obj.fallback_feature_points_support = fallback_feature_result.support;
         obj.fallback_feature_points_std_px =
             fallback_feature_result.valid ? fallback_feature_result.stddev : -1.0f;

@@ -14,9 +14,19 @@ from collections import Counter
 from typing import Any, Dict, List
 
 try:
-    from .dataset import find_metadata_for_csv, read_metadata
+    from .dataset import (
+        find_metadata_for_csv,
+        merge_p2_diagnostic_candidates,
+        read_metadata,
+        read_p2_diagnostic_candidates,
+    )
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import find_metadata_for_csv, read_metadata
+    from dataset import (
+        find_metadata_for_csv,
+        merge_p2_diagnostic_candidates,
+        read_metadata,
+        read_p2_diagnostic_candidates,
+    )
 
 
 CANDIDATE_DEPTH_KEYS = [
@@ -39,7 +49,10 @@ CANDIDATE_DEPTH_KEYS = [
     "z_roi_sift_points",
     "z_roi_iou_region_color_patch",
     "z_roi_patch_iou_color_edge",
+    "z_roi_cuda_template_match",
     "z_roi_neural_feature",
+    "z_roi_neural_xfeat",
+    "z_roi_neural_superpoint",
     "z_roi_center_patch",
     "z_roi_multi_point",
     "z_fallback_epipolar",
@@ -61,7 +74,17 @@ P0_DEPTH_KEYS = [
 
 def _read(path: str) -> List[Dict[str, str]]:
     raw = Path(path).read_bytes().replace(b"\x00", b"")
-    return list(csv.DictReader(io.StringIO(raw.decode("utf-8", "replace"))))
+    rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8", "replace"))))
+    p2_diagnostic_by_frame = read_p2_diagnostic_candidates(path)
+    if not p2_diagnostic_by_frame:
+        return rows
+    for row in rows:
+        try:
+            frame_id = int(float(row.get("frame_id", "-1")))
+        except (TypeError, ValueError):
+            continue
+        merge_p2_diagnostic_candidates(row, p2_diagnostic_by_frame.get(frame_id))
+    return rows
 
 
 def _f(row: Dict[str, str], key: str, default: float = 0.0) -> float:

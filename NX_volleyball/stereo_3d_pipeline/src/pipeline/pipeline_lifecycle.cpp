@@ -12,8 +12,8 @@ Pipeline::Pipeline() = default;
 
 Pipeline::~Pipeline() {
     stop();
-    destroyAsyncRoiStage2();
     shutdownP2FeatureDiagnosticLane();
+    destroyAsyncRoiStage2();
     for (auto& slot : slots_) {
         slot.destroy();
     }

@@ -56,6 +56,8 @@ void applyBaselineClipOverrides(
     pipeline_cfg.disparity_strategy = stereo3d::DisparityStrategy::ROI_ONLY;
     pipeline_cfg.tracker.enabled = false;
     pipeline_cfg.neural_features.enabled = false;
+    pipeline_cfg.neural_xfeat.enabled = false;
+    pipeline_cfg.neural_superpoint.enabled = false;
     pipeline_cfg.dual_yolo.use_for_depth = false;
     pipeline_cfg.dual_yolo.fallback_to_roi_match = false;
     pipeline_cfg.dual_yolo.log_matches = false;

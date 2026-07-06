@@ -8,16 +8,16 @@ TRTEXEC = "/usr/src/tensorrt/bin/trtexec"
 results = {}
 
 # ============================================================
-# 1. VPI Backend Comparison (CUDA vs VIC for Remap 1280x720)
+# 1. VPI Backend Comparison (CUDA vs VIC for Remap 1440x1080)
 # ============================================================
 print("=" * 60)
-print("[1/4] VPI Backend Comparison (Remap 1280x720)")
+print("[1/4] VPI Backend Comparison (Remap 1440x1080)")
 print("=" * 60)
 
 import vpi
 import numpy as np
 
-W, H = 1280, 720
+W, H = 1440, 1080
 src_np = np.random.randint(0, 255, (H, W), dtype=np.uint8)
 
 warp = vpi.WarpMap(vpi.WarpGrid((W, H)))

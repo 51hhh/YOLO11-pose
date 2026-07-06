@@ -1,6 +1,6 @@
 import vpi, numpy as np, time
 
-W, H = 1280, 720
+W, H = 1440, 1080
 src_np = np.random.randint(0, 255, (H, W), dtype=np.uint8)
 
 # Check available remap-like functions

@@ -168,8 +168,7 @@ int main(int argc, char** argv) {
     // ---- 创建窗口 (非 headless 模式) ----
     const char* winName = "Stereo Depth Viewer";
     if (!headless) {
-        cv::namedWindow(winName, cv::WINDOW_NORMAL);
-        cv::resizeWindow(winName, 1280, 720);
+        cv::namedWindow(winName, cv::WINDOW_AUTOSIZE);
         cv::setMouseCallback(winName, onDepthViewerMouse, &viewState);
     }
 

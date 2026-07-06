@@ -305,6 +305,8 @@ private:
         bool copy_event_recorded = false;
         cudaEvent_t p2_diag_copy_done = nullptr;
         bool p2_diag_copy_event_recorded = false;
+        int p2_diag_refs = 0;
+        bool release_after_p2_diag = false;
     };
     struct AsyncRoiTask {
         int frame_id = -1;
@@ -330,6 +332,8 @@ private:
         P2FeatureJobDescriptor job;
         FrameMetadata metadata;
         int buffer_index = -1;
+        int source_async_buffer_index = -1;
+        bool use_source_snapshot = false;
         std::vector<Detection> left_detections;
         std::vector<Detection> right_detections;
         int width = 0;
@@ -369,6 +373,7 @@ private:
     bool initP2FeatureDiagnosticBuffers();
     void destroyP2FeatureDiagnosticBuffers();
     void releaseP2FeatureDiagnosticBuffer(int buffer_index);
+    void releaseP2FeatureDiagnosticSourceRef(int buffer_index);
     void p2FeatureDiagnosticWorkerLoop();
     void enqueueP2FeatureDiagnosticJobs(
         const FrameMetadata& metadata,
@@ -379,6 +384,7 @@ private:
         const RoiStage2Input& input,
         cudaEvent_t source_copy_done,
         bool source_copy_event_recorded,
+        int source_buffer_index,
         AsyncRoiBuffer& source_buffer);
     bool openP2FeatureDiagnosticResults();
     void closeP2FeatureDiagnosticResults();
@@ -424,7 +430,9 @@ private:
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
     std::unique_ptr<DualYoloDepthGpuMatcher> dual_yolo_depth_gpu_; ///< 双 YOLO 多候选 GPU 批处理
-    std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching
+    std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching (legacy single-backend)
+    std::unique_ptr<NeuralFeatureMatcher> neural_xfeat_matcher_; ///< XFeat 独立实例, 写 z_roi_neural_xfeat
+    std::unique_ptr<NeuralFeatureMatcher> neural_superpoint_matcher_; ///< SuperPoint 独立实例, 写 z_roi_neural_superpoint
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
 

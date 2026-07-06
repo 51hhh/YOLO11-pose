@@ -27,8 +27,8 @@ pipeline:
 
 rectify:
   backend: "CUDA"
-  output_width: 1280
-  output_height: 720
+  output_width: 1440
+  output_height: 1080
 
 detector:
   engine_path: "/home/nvidia/NX_volleyball/model/yolo26_dla_fp16.engine"

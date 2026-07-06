@@ -30,8 +30,8 @@ calibration:
 
 rectify:
   backend: "CUDA"
-  output_width: 1280
-  output_height: 720
+  output_width: 1440
+  output_height: 1080
 
 tnr:
   enabled: false

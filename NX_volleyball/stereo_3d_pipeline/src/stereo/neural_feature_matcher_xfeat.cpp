@@ -82,6 +82,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
     };
 
     const float context = 1.20f;
+    const auto roi_side = [](const Detection& det) {
+        return std::max(1.0f, std::max(det.width, det.height));
+    };
     const int input_channels = tensorChannels(input->dims);
     const auto tensor_batch = [](const nvinfer1::Dims& dims) {
         return dims.nbDims == 4 ? static_cast<int>(dims.d[0]) : 1;
@@ -103,10 +106,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
         }
         float* dst = static_cast<float*>(input->device) +
                      static_cast<size_t>(batch_index) * input_batch_stride;
+        const float side = roi_side(det);
         if (input_channels == 1) {
             cropResizeGPU(gray, pitch, img_width, img_height,
                           dst, config_.roi_size,
-                          det.cx, det.cy, det.width, det.height,
+                          det.cx, det.cy, side, side,
                           context, stream);
         } else if (input_channels == 3) {
             if (!bgr || bgr_pitch <= 0) {
@@ -114,7 +118,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
             }
             cropResizeBgrGPU_3ch(bgr, bgr_pitch, img_width, img_height,
                                   dst, config_.roi_size,
-                                  det.cx, det.cy, det.width, det.height,
+                                  det.cx, det.cy, side, side,
                                   context, stream);
         } else {
             return false;
@@ -595,8 +599,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchXFeatExtractorGpuRoi(
 
     const auto map_to_frame = [&](const Detection& det, const XFeatFeature& f,
                                   float* x, float* y) {
-        const float s = std::sqrt(std::max(1.0f, det.width * context *
-                                                  det.height * context));
+        const float s = roi_side(det) * context;
         const float roi_x = det.cx - 0.5f * s;
         const float roi_y = det.cy - 0.5f * s;
         *x = roi_x + (f.x + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;

@@ -28,7 +28,9 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
         dualYoloEnabled() &&
         config_.dual_yolo.use_for_depth &&
         (dualYoloAnyDepthModeEnabled(config_.dual_yolo) ||
-         config_.neural_features.enabled);
+         config_.neural_features.enabled ||
+         config_.neural_xfeat.enabled ||
+         config_.neural_superpoint.enabled);
     const bool can_try_right_only =
         use_dual_yolo_depth &&
         !input.right_detections.empty() &&
@@ -367,7 +369,12 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     const bool requested_host_images =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
-        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+        (neural_feature_matcher_ &&
+         neural_feature_matcher_->requiresBgrInput()) ||
+        (neural_xfeat_matcher_ &&
+         neural_xfeat_matcher_->requiresBgrInput()) ||
+        (neural_superpoint_matcher_ &&
+         neural_superpoint_matcher_->requiresBgrInput());
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
     const bool requested_bgr =

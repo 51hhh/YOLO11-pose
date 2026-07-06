@@ -7,6 +7,7 @@
 #include <opencv2/opencv.hpp>
 #include <vpi/Image.h>
 
+#include <cstdint>
 #include <exception>
 #include <utility>
 
@@ -33,6 +34,13 @@ inline void buildVisualizationColorRemap(
         fs["image_height"] >> cal_h;
         if (cal_w > 0 && cal_h > 0 &&
             (cfg.rect_width != cal_w || cfg.rect_height != cal_h)) {
+            if (static_cast<int64_t>(cfg.rect_width) * cal_h !=
+                static_cast<int64_t>(cfg.rect_height) * cal_w) {
+                LOG_WARN("Skip color remap: calibration=%dx%d, requested=%dx%d "
+                         "would require non-uniform scaling",
+                         cal_w, cal_h, cfg.rect_width, cfg.rect_height);
+                return;
+            }
             const double sx = static_cast<double>(cfg.rect_width) / cal_w;
             const double sy = static_cast<double>(cfg.rect_height) / cal_h;
             P1 = P1.clone();

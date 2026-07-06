@@ -516,6 +516,56 @@ bool findTemplatePeakOnGpu(const cv::cuda::GpuMat& score_gpu,
     return true;
 }
 
+bool findTemplatePeakDirectOnGpu(
+    const uint8_t* left_gpu,
+    size_t left_pitch,
+    const uint8_t* right_gpu,
+    size_t right_pitch,
+    int templ_x,
+    int templ_y,
+    int search_x,
+    int search_y,
+    int patch_size,
+    int score_w,
+    int score_h,
+    cudaStream_t stream,
+    double* max_value,
+    cv::Point* max_loc) {
+    if (!left_gpu || !right_gpu || !stream || !max_value || !max_loc ||
+        left_pitch == 0 || right_pitch == 0 ||
+        patch_size <= 0 || score_w <= 0 || score_h <= 0) {
+        return false;
+    }
+    thread_local CudaTemplatePeakScratch scratch;
+    if (!scratch.ensure()) {
+        return false;
+    }
+    cudaError_t err = findCudaTemplateCcoeffNormedPeak(
+        left_gpu,
+        left_pitch,
+        right_gpu,
+        right_pitch,
+        templ_x,
+        templ_y,
+        search_x,
+        search_y,
+        patch_size,
+        score_w,
+        score_h,
+        scratch.device,
+        scratch.host,
+        stream);
+    if (err == cudaSuccess) {
+        err = cudaStreamSynchronize(stream);
+    }
+    if (err != cudaSuccess || !scratch.host->valid) {
+        return false;
+    }
+    *max_value = static_cast<double>(scratch.host->value);
+    *max_loc = cv::Point(scratch.host->x, scratch.host->y);
+    return true;
+}
+
 bool findTemplatePeakOnCpu(const cv::cuda::GpuMat& score_gpu,
                            cv::cuda::Stream& cv_stream,
                            double* max_value,
@@ -990,42 +1040,58 @@ SparseFeatureDisparityResult matchCustomCudaTemplateDisparityGPUImpl(
             return result;
         }
 
-        thread_local cv::cuda::GpuMat score_gpu;
-        score_gpu.create(score_h, score_w, CV_32FC1);
-        const cudaError_t score_err = computeCudaTemplateCcoeffNormedScoreMap(
-            left_gpu,
-            static_cast<size_t>(left_pitch),
-            right_gpu,
-            static_cast<size_t>(right_pitch),
-            templ_rect.x,
-            templ_rect.y,
-            search_rect.x,
-            search_rect.y,
-            patch_size,
-            score_gpu.ptr<float>(),
-            score_gpu.step,
-            score_w,
-            score_h,
-            stream);
-        if (score_err != cudaSuccess) {
-            LOG_WARN("Custom CUDA Template/NCC score kernel failed: %s",
-                     cudaGetErrorString(score_err));
-            result.low_confidence = true;
-            return result;
-        }
-
         double max_val = 0.0;
         cv::Point max_loc;
-        if (!findTemplatePeakOnGpu(score_gpu, stream, &max_val, &max_loc)) {
-            result.low_confidence = true;
-            return result;
-        }
         if (cfg.debug_patch_enabled) {
+            thread_local cv::cuda::GpuMat score_gpu;
+            score_gpu.create(score_h, score_w, CV_32FC1);
+            const cudaError_t score_err = computeCudaTemplateCcoeffNormedScoreMap(
+                left_gpu,
+                static_cast<size_t>(left_pitch),
+                right_gpu,
+                static_cast<size_t>(right_pitch),
+                templ_rect.x,
+                templ_rect.y,
+                search_rect.x,
+                search_rect.y,
+                patch_size,
+                score_gpu.ptr<float>(),
+                score_gpu.step,
+                score_w,
+                score_h,
+                stream);
+            if (score_err != cudaSuccess) {
+                LOG_WARN("Custom CUDA Template/NCC score kernel failed: %s",
+                         cudaGetErrorString(score_err));
+                result.low_confidence = true;
+                return result;
+            }
+            if (!findTemplatePeakOnGpu(score_gpu, stream, &max_val, &max_loc)) {
+                result.low_confidence = true;
+                return result;
+            }
             cv::cuda::Stream cv_stream = cv::cuda::StreamAccessor::wrapStream(stream);
             cv::Mat score_cpu;
             score_gpu.download(score_cpu, cv_stream);
             cv_stream.waitForCompletion();
             setScoreDebugPatch(result, score_cpu, search_rect, patch_radius);
+        } else if (!findTemplatePeakDirectOnGpu(
+                       left_gpu,
+                       static_cast<size_t>(left_pitch),
+                       right_gpu,
+                       static_cast<size_t>(right_pitch),
+                       templ_rect.x,
+                       templ_rect.y,
+                       search_rect.x,
+                       search_rect.y,
+                       patch_size,
+                       score_w,
+                       score_h,
+                       stream,
+                       &max_val,
+                       &max_loc)) {
+            result.low_confidence = true;
+            return result;
         }
 
         const float right_anchor_x =

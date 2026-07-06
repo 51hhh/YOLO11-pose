@@ -63,11 +63,36 @@ def physics_depth_loss(depth: torch.Tensor, dt: torch.Tensor | float, weight_jer
     if depth.shape[1] < 4:
         return depth.new_tensor(0.0)
     z = depth.squeeze(-1)
-    second = z[:, 2:] - 2.0 * z[:, 1:-1] + z[:, :-2]
+    dt_tensor = _sequence_dt(dt, z).clamp(1e-4, 0.5)
+    prev_dt = dt_tensor[:, 1:-1]
+    next_dt = dt_tensor[:, 2:]
+    prev_vel = (z[:, 1:-1] - z[:, :-2]) / prev_dt
+    next_vel = (z[:, 2:] - z[:, 1:-1]) / next_dt
+    local_dt = 0.5 * (prev_dt + next_dt)
+    second = 2.0 * (next_vel - prev_vel) / (prev_dt + next_dt) * local_dt * local_dt
     accel_loss = F.huber_loss(second, torch.zeros_like(second), delta=0.05, reduction="mean")
     jerk = second[:, 1:] - second[:, :-1]
     jerk_loss = F.huber_loss(jerk, torch.zeros_like(jerk), delta=0.05, reduction="mean")
     return accel_loss + weight_jerk * jerk_loss
+
+
+def _sequence_dt(dt: torch.Tensor | float, reference: torch.Tensor) -> torch.Tensor:
+    """Return [batch, time] time deltas on the same device/dtype as reference."""
+
+    if not torch.is_tensor(dt):
+        return reference.new_full(reference.shape, float(dt))
+    dt_tensor = dt.to(device=reference.device, dtype=reference.dtype)
+    if dt_tensor.ndim == 0:
+        return reference.new_full(reference.shape, float(dt_tensor.item()))
+    if dt_tensor.ndim == 3 and dt_tensor.shape[-1] == 1:
+        dt_tensor = dt_tensor.squeeze(-1)
+    if dt_tensor.ndim == 1:
+        dt_tensor = dt_tensor.unsqueeze(0)
+    if dt_tensor.shape[0] == 1 and reference.shape[0] > 1:
+        dt_tensor = dt_tensor.expand(reference.shape[0], -1)
+    if dt_tensor.shape != reference.shape:
+        raise ValueError(f"dt shape {tuple(dt_tensor.shape)} does not match depth sequence {tuple(reference.shape)}")
+    return dt_tensor
 
 
 def known_z_loss(

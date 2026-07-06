@@ -48,6 +48,45 @@ using DiagnosticGpuMatchFn = SparseFeatureDisparityResult (*)(
 
 constexpr size_t kP2DiagnosticFlushRows = 128;
 
+bool diagnosticStrideHitLocal(int frame_id, int stride) {
+    if (stride <= 0 || frame_id < 0) {
+        return false;
+    }
+    return frame_id % stride == 0;
+}
+
+int effectiveDiagnosticStride(int override_stride, int fallback_stride) {
+    return override_stride > 0 ? override_stride : std::max(1, fallback_stride);
+}
+
+bool diagnosticCudaModeDue(const PipelineConfig& config,
+                           uint32_t mode_bit,
+                           int frame_id) {
+    int stride = config.p2_diagnostic_stride;
+    if (mode_bit == P2_DEPTH_MODE_CUDA_TEMPLATE) {
+        stride = effectiveDiagnosticStride(
+            config.p2_diagnostic_stride_cuda_template,
+            config.p2_diagnostic_stride);
+    }
+    return diagnosticStrideHitLocal(frame_id, std::max(1, stride));
+}
+
+bool diagnosticNeuralXFeatDue(const PipelineConfig& config, int frame_id) {
+    return diagnosticStrideHitLocal(
+        frame_id,
+        effectiveDiagnosticStride(config.p2_diagnostic_stride_neural_xfeat,
+                                  config.p2_diagnostic_stride));
+}
+
+bool diagnosticNeuralSuperPointDue(const PipelineConfig& config,
+                                   int frame_id) {
+    return diagnosticStrideHitLocal(
+        frame_id,
+        effectiveDiagnosticStride(
+            config.p2_diagnostic_stride_neural_superpoint,
+            config.p2_diagnostic_stride));
+}
+
 bool asyncRoiSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     if (!cfg.depth_roi_subpixel || !cfg.subpixel_enabled) return false;
     std::string solver = cfg.depth_solver;
@@ -603,7 +642,12 @@ bool Pipeline::initAsyncRoiStage2() {
         static_cast<size_t>(config_.rect_width) * 3u;
     const size_t rows = static_cast<size_t>(config_.rect_height);
     const bool neural_needs_bgr =
-        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+        (neural_feature_matcher_ &&
+         neural_feature_matcher_->requiresBgrInput()) ||
+        (neural_xfeat_matcher_ &&
+         neural_xfeat_matcher_->requiresBgrInput()) ||
+        (neural_superpoint_matcher_ &&
+         neural_superpoint_matcher_->requiresBgrInput());
     const bool allocate_host_gray =
         asyncRoiNeedsHostImages(config_.dual_yolo);
     const bool allocate_bgr =
@@ -756,6 +800,7 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
         destroyP2FeatureDiagnosticBuffers();
         return;
     }
+    std::vector<int> dropped_source_refs;
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
         p2_feature_diag_thread_stop_ = true;
@@ -769,9 +814,18 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
                 if (buffer_index >= 0) {
                     p2_feature_diag_free_buffers_.push_back(buffer_index);
                 }
+                const int source_index =
+                    p2_feature_diag_pending_.front().source_async_buffer_index;
+                if (p2_feature_diag_pending_.front().use_source_snapshot &&
+                    source_index >= 0) {
+                    dropped_source_refs.push_back(source_index);
+                }
                 p2_feature_diag_pending_.pop_front();
             }
         }
+    }
+    for (int source_index : dropped_source_refs) {
+        releaseP2FeatureDiagnosticSourceRef(source_index);
     }
     p2_feature_diag_cv_.notify_all();
     p2_feature_diag_thread_.join();
@@ -796,8 +850,8 @@ bool Pipeline::initP2FeatureDiagnosticBuffers() {
         destroyP2FeatureDiagnosticBuffers();
         return false;
     }
-    err = cudaStreamCreateWithFlags(&p2_feature_diag_copy_stream_,
-                                    cudaStreamNonBlocking);
+    err = createLowPriorityNonBlockingStream(
+        &p2_feature_diag_copy_stream_, "P2 diagnostic copy");
     if (err != cudaSuccess) {
         LOG_ERROR("P2 diagnostic: create copy stream failed: %s",
                   cudaGetErrorString(err));
@@ -1528,6 +1582,7 @@ void Pipeline::enqueueP2FeatureDiagnosticJobs(
     const RoiStage2Input& input,
     cudaEvent_t source_copy_done,
     bool source_copy_event_recorded,
+    int source_buffer_index,
     AsyncRoiBuffer& source_buffer) {
     if (!p2FeatureDiagnosticLaneConfigured()) {
         return;
@@ -1546,23 +1601,68 @@ void Pipeline::enqueueP2FeatureDiagnosticJobs(
     int dropped = 0;
     const size_t gray_width_bytes = static_cast<size_t>(input.width);
     const size_t rows = static_cast<size_t>(input.height);
+    const bool can_use_source_snapshot =
+        config_.p2_diagnostic_use_source_snapshot &&
+        source_buffer_index >= 0 &&
+        source_buffer_index < static_cast<int>(async_roi_buffers_.size()) &&
+        source_buffer.left_gray_gpu && source_buffer.right_gray_gpu &&
+        source_buffer.left_gray_pitch > 0 && source_buffer.right_gray_pitch > 0;
     for (const auto& job : jobs) {
         if (job.lane != P2FeatureJobLane::DIAGNOSTIC) {
             continue;
         }
         int buffer_index = -1;
+        bool use_source_snapshot = false;
         {
             std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
             const int in_flight =
                 static_cast<int>(p2_feature_diag_pending_.size()) +
                 (p2_feature_diag_worker_busy_ ? 1 : 0);
             if (in_flight >= max_in_flight ||
-                p2_feature_diag_free_buffers_.empty()) {
+                (!can_use_source_snapshot &&
+                 p2_feature_diag_free_buffers_.empty())) {
                 ++dropped;
                 continue;
             }
-            buffer_index = p2_feature_diag_free_buffers_.front();
-            p2_feature_diag_free_buffers_.pop_front();
+            if (can_use_source_snapshot) {
+                use_source_snapshot = true;
+            } else {
+                buffer_index = p2_feature_diag_free_buffers_.front();
+                p2_feature_diag_free_buffers_.pop_front();
+            }
+        }
+
+        if (use_source_snapshot) {
+            {
+                std::lock_guard<std::mutex> lk(async_roi_mutex_);
+                auto& src =
+                    async_roi_buffers_[static_cast<size_t>(source_buffer_index)];
+                ++src.p2_diag_refs;
+            }
+            P2FeatureDiagnosticTask task;
+            task.job = job;
+            task.metadata = metadata;
+            task.buffer_index = -1;
+            task.source_async_buffer_index = source_buffer_index;
+            task.use_source_snapshot = true;
+            task.left_detections = input.left_detections;
+            task.right_detections = input.right_detections;
+            task.width = input.width;
+            task.height = input.height;
+            task.copy_event_recorded = source_copy_event_recorded &&
+                                       source_copy_done != nullptr;
+            task.enqueue_time = std::chrono::steady_clock::now();
+            {
+                std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
+                p2_feature_diag_pending_.push_back(std::move(task));
+                globalPerf().record("Stage2_P2FeatureJobDiagnosticQueueDepth",
+                                    static_cast<double>(
+                                        p2_feature_diag_pending_.size()));
+            }
+            ++enqueued;
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticSourceSnapshot",
+                                0.0);
+            continue;
         }
 
         auto& dst =
@@ -1676,6 +1776,8 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
 
         const auto start = Clock::now();
         int release_buffer_index = task.buffer_index;
+        int release_source_index =
+            task.use_source_snapshot ? task.source_async_buffer_index : -1;
         double queue_wait_ms = 0.0;
         if (task.enqueue_time.time_since_epoch().count() > 0) {
             queue_wait_ms =
@@ -1701,35 +1803,51 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
 
         bool copy_ready = true;
         P2FeatureDiagnosticBuffer* buffer = nullptr;
-        if (task.buffer_index >= 0 &&
+        P2FeatureDiagnosticBuffer source_view;
+        if (task.use_source_snapshot &&
+            task.source_async_buffer_index >= 0 &&
+            task.source_async_buffer_index <
+                static_cast<int>(async_roi_buffers_.size())) {
+            const auto& source = async_roi_buffers_[
+                static_cast<size_t>(task.source_async_buffer_index)];
+            source_view.left_gray_gpu = source.left_gray_gpu;
+            source_view.left_gray_pitch = source.left_gray_pitch;
+            source_view.right_gray_gpu = source.right_gray_gpu;
+            source_view.right_gray_pitch = source.right_gray_pitch;
+            source_view.copy_done = source.copy_done;
+            source_view.copy_event_recorded = task.copy_event_recorded;
+            buffer = &source_view;
+        } else if (task.buffer_index >= 0 &&
             task.buffer_index <
                 static_cast<int>(p2_feature_diag_buffers_.size())) {
             buffer =
                 &p2_feature_diag_buffers_[static_cast<size_t>(
                     task.buffer_index)];
-            if (task.copy_event_recorded && buffer->copy_done) {
-                if (!p2_feature_diag_stream_) {
+        }
+        if (buffer && task.copy_event_recorded && buffer->copy_done) {
+            if (!p2_feature_diag_stream_) {
+                copy_ready = false;
+                LOG_WARN("P2 diagnostic: image copy wait skipped frame=%d "
+                         "because diagnostic stream is unavailable",
+                         task.job.frame_id);
+            } else {
+                const auto copy_wait_submit_start = Clock::now();
+                const cudaError_t copy_err = cudaStreamWaitEvent(
+                    p2_feature_diag_stream_, buffer->copy_done, 0);
+                const double copy_wait_submit_ms =
+                    std::chrono::duration<double, std::milli>(
+                        Clock::now() - copy_wait_submit_start).count();
+                globalPerf().record(
+                    task.use_source_snapshot
+                        ? "Stage2_P2FeatureJobDiagnosticSourceWaitSubmit"
+                        : "Stage2_P2FeatureJobDiagnosticCopyWaitSubmit",
+                    copy_wait_submit_ms);
+                if (copy_err != cudaSuccess) {
                     copy_ready = false;
-                    LOG_WARN("P2 diagnostic: image copy wait skipped frame=%d "
-                             "because diagnostic stream is unavailable",
-                             task.job.frame_id);
-                } else {
-                    const auto copy_wait_submit_start = Clock::now();
-                    const cudaError_t copy_err = cudaStreamWaitEvent(
-                        p2_feature_diag_stream_, buffer->copy_done, 0);
-                    const double copy_wait_submit_ms =
-                        std::chrono::duration<double, std::milli>(
-                            Clock::now() - copy_wait_submit_start).count();
-                    globalPerf().record(
-                        "Stage2_P2FeatureJobDiagnosticCopyWaitSubmit",
-                        copy_wait_submit_ms);
-                    if (copy_err != cudaSuccess) {
-                        copy_ready = false;
-                        LOG_WARN("P2 diagnostic: image copy stream wait failed "
-                                 "frame=%d err=%s",
-                                 task.job.frame_id,
-                                 cudaGetErrorString(copy_err));
-                    }
+                    LOG_WARN("P2 diagnostic: image copy stream wait failed "
+                             "frame=%d err=%s",
+                             task.job.frame_id,
+                             cudaGetErrorString(copy_err));
                 }
             }
         }
@@ -1769,6 +1887,10 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                                                 const char* invalid_name,
                                                 DiagnosticGpuMatchFn fn) {
                     if ((task.job.depth_mode_mask & mode_bit) == 0u || !fn) {
+                        return false;
+                    }
+                    if (!diagnosticCudaModeDue(config_, mode_bit,
+                                               task.job.frame_id)) {
                         return false;
                     }
                     const auto algo_start = Clock::now();
@@ -1850,141 +1972,182 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                         return false;
                     }
 
-                    P2FeatureDiagnosticResultRow row;
-                    row.frame_id = task.job.frame_id;
-                    row.metadata = task.metadata;
-                    row.mode = p2DiagnosticModeName(
-                        P2_DEPTH_MODE_NEURAL_FEATURE);
-                    row.queue_wait_ms = queue_wait_ms;
-                    row.deadline_ms = task.job.deadline_ms;
-                    row.depth_mode_mask = task.job.depth_mode_mask;
-                    row.triggers = task.job.triggers;
-                    row.initial_disparity = initial_disp;
-                    row.fb = focal * baseline;
-                    row.left_det = left_det;
-                    row.right_det = right_det;
+                    bool ran = false;
+                    auto run_one_neural =
+                        [&](const NeuralFeatureConfig& ncfg,
+                            NeuralFeatureMatcher* matcher,
+                            const char* mode,
+                            const char* stage_name,
+                            const char* valid_name,
+                            const char* invalid_name) {
+                        if (!ncfg.enabled) {
+                            return false;
+                        }
+                        if (std::string(mode) == "neural_xfeat" &&
+                            !diagnosticNeuralXFeatDue(config_,
+                                                      task.job.frame_id)) {
+                            return false;
+                        }
+                        if (std::string(mode) == "neural_superpoint" &&
+                            !diagnosticNeuralSuperPointDue(
+                                config_, task.job.frame_id)) {
+                            return false;
+                        }
+                        ran = true;
 
-                    const auto algo_start = Clock::now();
-                    if (config_.p2_realtime_lane_decision_enabled) {
-                        row.status = "skipped_realtime_lane_enabled";
-                    } else if (!config_.neural_features.enabled ||
-                        !neural_feature_matcher_ ||
-                        !neural_feature_matcher_->isReady()) {
-                        row.status = "unavailable";
-                    } else if (neural_feature_matcher_->requiresBgrInput()) {
-                        row.status = "requires_bgr";
-                    } else {
-                        const NeuralFeatureMatchResult neural =
-                            neural_feature_matcher_->matchGpuRoi(
-                                buffer->left_gray_gpu,
-                                static_cast<int>(buffer->left_gray_pitch),
-                                buffer->right_gray_gpu,
-                                static_cast<int>(buffer->right_gray_pitch),
-                                nullptr, 0,
-                                nullptr, 0,
-                                task.width, task.height,
-                                left_det, right_det,
-                                initial_disp,
-                                p2_feature_diag_stream_);
-                        row.status = neural.status.empty()
-                            ? (neural.valid ? "valid" : "invalid")
-                            : neural.status;
-                        row.valid = neural.valid;
-                        row.disparity = neural.disparity;
-                        row.confidence = neural.confidence;
-                        row.stddev = neural.stddev_px;
-                        row.support =
-                            static_cast<int>(neural.matches.size());
-                        row.attempted =
-                            static_cast<int>(neural.matches.size());
-                        row.debug_point_count = std::min(
-                            static_cast<int>(neural.debug_points.size()),
-                            kMaxSparseFeatureDebugPoints);
-                        for (int i = 0; i < row.debug_point_count; ++i) {
-                            row.debug_points[static_cast<size_t>(i)] =
-                                neural.debug_points[static_cast<size_t>(i)];
-                        }
+                        P2FeatureDiagnosticResultRow row;
+                        row.frame_id = task.job.frame_id;
+                        row.metadata = task.metadata;
+                        row.mode = mode;
+                        row.queue_wait_ms = queue_wait_ms;
+                        row.deadline_ms = task.job.deadline_ms;
+                        row.depth_mode_mask = task.job.depth_mode_mask;
+                        row.triggers = task.job.triggers;
+                        row.initial_disparity = initial_disp;
+                        row.fb = focal * baseline;
+                        row.left_det = left_det;
+                        row.right_det = right_det;
 
-                        float sx = 0.0f;
-                        float sy = 0.0f;
-                        float rx = 0.0f;
-                        float ry = 0.0f;
-                        for (const auto& m : neural.matches) {
-                            sx += m.left_x;
-                            sy += m.left_y;
-                            rx += m.right_x;
-                            ry += m.right_y;
-                        }
-                        if (!neural.matches.empty()) {
-                            const float inv = 1.0f /
-                                static_cast<float>(neural.matches.size());
-                            row.anchor_cx = sx * inv;
-                            row.anchor_cy = sy * inv;
-                            row.right_anchor_cx = rx * inv;
-                            row.right_anchor_cy = ry * inv;
-                        }
-                        row.debug_match_count = std::min(
-                            static_cast<int>(neural.matches.size()),
-                            kMaxSparseFeatureDebugMatches);
-                        for (int i = 0; i < row.debug_match_count; ++i) {
-                            const auto& src =
-                                neural.matches[static_cast<size_t>(i)];
-                            auto& dst =
-                                row.debug_matches[static_cast<size_t>(i)];
-                            dst.left_x = src.left_x;
-                            dst.left_y = src.left_y;
-                            dst.right_x = src.right_x;
-                            dst.right_y = src.right_y;
-                            dst.disparity = src.disparity;
-                            dst.score = src.score;
-                        }
+                        const auto algo_start = Clock::now();
+                        if (config_.p2_realtime_lane_decision_enabled) {
+                            row.status = "skipped_realtime_lane_enabled";
+                        } else if (!matcher || !matcher->isReady()) {
+                            row.status = "unavailable";
+                        } else if (matcher->requiresBgrInput()) {
+                            row.status = "requires_bgr";
+                        } else {
+                            const NeuralFeatureMatchResult neural =
+                                matcher->matchGpuRoi(
+                                    buffer->left_gray_gpu,
+                                    static_cast<int>(buffer->left_gray_pitch),
+                                    buffer->right_gray_gpu,
+                                    static_cast<int>(buffer->right_gray_pitch),
+                                    nullptr, 0,
+                                    nullptr, 0,
+                                    task.width, task.height,
+                                    left_det, right_det,
+                                    initial_disp,
+                                    p2_feature_diag_stream_);
+                            row.status = neural.status.empty()
+                                ? (neural.valid ? "valid" : "invalid")
+                                : neural.status;
+                            row.valid = neural.valid;
+                            row.disparity = neural.disparity;
+                            row.confidence = neural.confidence;
+                            row.stddev = neural.stddev_px;
+                            row.support =
+                                static_cast<int>(neural.matches.size());
+                            row.attempted =
+                                static_cast<int>(neural.matches.size());
+                            row.debug_point_count = std::min(
+                                static_cast<int>(neural.debug_points.size()),
+                                kMaxSparseFeatureDebugPoints);
+                            for (int i = 0; i < row.debug_point_count; ++i) {
+                                row.debug_points[static_cast<size_t>(i)] =
+                                    neural.debug_points[static_cast<size_t>(i)];
+                            }
 
-                        if (row.valid) {
-                            SparseFeatureDisparityResult geom;
-                            geom.valid = true;
-                            geom.disparity = neural.disparity;
-                            geom.stddev = neural.stddev_px;
-                            geom.confidence = neural.confidence;
-                            geom.support = row.support;
-                            geom.attempted = row.attempted;
-                            geom.anchor_cx = row.anchor_cx;
-                            geom.anchor_cy = row.anchor_cy;
-                            geom.right_anchor_cx = row.right_anchor_cx;
-                            geom.right_anchor_cy = row.right_anchor_cy;
-                            geom.debug_match_count = row.debug_match_count;
+                            float sx = 0.0f;
+                            float sy = 0.0f;
+                            float rx = 0.0f;
+                            float ry = 0.0f;
+                            for (const auto& m : neural.matches) {
+                                sx += m.left_x;
+                                sy += m.left_y;
+                                rx += m.right_x;
+                                ry += m.right_y;
+                            }
+                            if (!neural.matches.empty()) {
+                                const float inv = 1.0f /
+                                    static_cast<float>(neural.matches.size());
+                                row.anchor_cx = sx * inv;
+                                row.anchor_cy = sy * inv;
+                                row.right_anchor_cx = rx * inv;
+                                row.right_anchor_cy = ry * inv;
+                            }
+                            row.debug_match_count = std::min(
+                                static_cast<int>(neural.matches.size()),
+                                kMaxSparseFeatureDebugMatches);
                             for (int i = 0; i < row.debug_match_count; ++i) {
-                                geom.debug_matches[static_cast<size_t>(i)] =
+                                const auto& src =
+                                    neural.matches[static_cast<size_t>(i)];
+                                auto& dst =
                                     row.debug_matches[static_cast<size_t>(i)];
+                                dst.left_x = src.left_x;
+                                dst.left_y = src.left_y;
+                                dst.right_x = src.right_x;
+                                dst.right_y = src.right_y;
+                                dst.disparity = src.disparity;
+                                dst.score = src.score;
                             }
-                            if (!validateSparseFeatureGeometry(
-                                    geom, left_det, right_det,
-                                    initial_disp, feature_cfg,
-                                    focal, baseline)) {
-                                row.valid = false;
-                                row.status = "geometry_reject";
-                            }
-                        }
-                        row.z_m = row.valid
-                            ? p2DepthFromDisparity(row.disparity,
-                                                   focal,
-                                                   baseline)
-                            : std::numeric_limits<float>::quiet_NaN();
-                    }
 
-                    const double algo_ms =
-                        std::chrono::duration<double, std::milli>(
-                            Clock::now() - algo_start).count();
-                    row.algo_ms = algo_ms;
-                    globalPerf().record(
+                            if (row.valid) {
+                                SparseFeatureDisparityResult geom;
+                                geom.valid = true;
+                                geom.disparity = row.disparity;
+                                geom.stddev = row.stddev;
+                                geom.confidence = row.confidence;
+                                geom.support = row.support;
+                                geom.attempted = row.attempted;
+                                geom.anchor_cx = row.anchor_cx;
+                                geom.anchor_cy = row.anchor_cy;
+                                geom.right_anchor_cx = row.right_anchor_cx;
+                                geom.right_anchor_cy = row.right_anchor_cy;
+                                geom.debug_match_count = row.debug_match_count;
+                                for (int i = 0; i < row.debug_match_count; ++i) {
+                                    geom.debug_matches[static_cast<size_t>(i)] =
+                                        row.debug_matches[static_cast<size_t>(i)];
+                                }
+                                if (!validateSparseFeatureGeometry(
+                                        geom, left_det, right_det,
+                                        initial_disp, feature_cfg,
+                                        focal, baseline)) {
+                                    row.valid = false;
+                                    row.low_confidence = true;
+                                    row.status = "geometry_reject";
+                                }
+                            }
+
+                            row.z_m = row.valid
+                                ? p2DepthFromDisparity(row.disparity,
+                                                       focal,
+                                                       baseline)
+                                : std::numeric_limits<float>::quiet_NaN();
+                        }
+
+                        const double algo_ms =
+                            std::chrono::duration<double, std::milli>(
+                                Clock::now() - algo_start).count();
+                        row.algo_ms = algo_ms;
+                        globalPerf().record(stage_name, algo_ms);
+                        globalPerf().record(row.valid ? valid_name : invalid_name,
+                                            0.0);
+                        result_rows.push_back(std::move(row));
+                        return true;
+                    };
+
+                    run_one_neural(
+                        config_.neural_features,
+                        neural_feature_matcher_.get(),
+                        p2DiagnosticModeName(P2_DEPTH_MODE_NEURAL_FEATURE),
                         "Stage2_P2FeatureJobDiagnosticNeuralFeature",
-                        algo_ms);
-                    globalPerf().record(
-                        row.valid
-                            ? "Stage2_P2FeatureJobDiagnosticNeuralFeatureValid"
-                            : "Stage2_P2FeatureJobDiagnosticNeuralFeatureInvalid",
-                        0.0);
-                    result_rows.push_back(std::move(row));
-                    return true;
+                        "Stage2_P2FeatureJobDiagnosticNeuralFeatureValid",
+                        "Stage2_P2FeatureJobDiagnosticNeuralFeatureInvalid");
+                    run_one_neural(
+                        config_.neural_xfeat,
+                        neural_xfeat_matcher_.get(),
+                        "neural_xfeat",
+                        "Stage2_P2FeatureJobDiagnosticNeuralXFeat",
+                        "Stage2_P2FeatureJobDiagnosticNeuralXFeatValid",
+                        "Stage2_P2FeatureJobDiagnosticNeuralXFeatInvalid");
+                    run_one_neural(
+                        config_.neural_superpoint,
+                        neural_superpoint_matcher_.get(),
+                        "neural_superpoint",
+                        "Stage2_P2FeatureJobDiagnosticNeuralSuperPoint",
+                        "Stage2_P2FeatureJobDiagnosticNeuralSuperPointValid",
+                        "Stage2_P2FeatureJobDiagnosticNeuralSuperPointInvalid");
+                    return ran;
                 };
 
                 bool ran_any = false;
@@ -2105,7 +2268,24 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 "Stage2_P2FeatureJobDiagnosticResultsWrite",
                 result_write_ms);
         }
-        if (buffer && buffer->copy_event_recorded && buffer->copy_done) {
+        if (task.use_source_snapshot && p2_feature_diag_stream_) {
+            const auto source_wait_start = Clock::now();
+            const cudaError_t source_err =
+                cudaStreamSynchronize(p2_feature_diag_stream_);
+            const double source_wait_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - source_wait_start).count();
+            globalPerf().record("Stage2_P2FeatureJobDiagnosticSourceUseWait",
+                                source_wait_ms);
+            if (source_err != cudaSuccess) {
+                LOG_WARN("P2 diagnostic: source snapshot stream sync failed "
+                         "frame=%d err=%s",
+                         task.job.frame_id,
+                         cudaGetErrorString(source_err));
+            }
+        }
+        if (!task.use_source_snapshot &&
+            buffer && buffer->copy_event_recorded && buffer->copy_done) {
             const auto copy_final_wait_start = Clock::now();
             cudaError_t copy_err = cudaEventQuery(buffer->copy_done);
             if (copy_err == cudaErrorNotReady) {
@@ -2124,7 +2304,12 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                          cudaGetErrorString(copy_err));
             }
         }
-        releaseP2FeatureDiagnosticBuffer(release_buffer_index);
+        if (release_buffer_index >= 0) {
+            releaseP2FeatureDiagnosticBuffer(release_buffer_index);
+        }
+        if (release_source_index >= 0) {
+            releaseP2FeatureDiagnosticSourceRef(release_source_index);
+        }
 
         {
             std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
@@ -2147,6 +2332,29 @@ void Pipeline::releaseAsyncRoiBuffer(int buffer_index, const char* reason) {
 void Pipeline::releaseAsyncRoiBufferLocked(int buffer_index) {
     if (buffer_index >= 0 &&
         buffer_index < static_cast<int>(async_roi_buffers_.size())) {
+        auto& buffer =
+            async_roi_buffers_[static_cast<size_t>(buffer_index)];
+        if (buffer.p2_diag_refs > 0) {
+            buffer.release_after_p2_diag = true;
+            return;
+        }
+        buffer.release_after_p2_diag = false;
+        async_roi_free_buffers_.push_back(buffer_index);
+    }
+}
+
+void Pipeline::releaseP2FeatureDiagnosticSourceRef(int buffer_index) {
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(async_roi_mutex_);
+    auto& buffer = async_roi_buffers_[static_cast<size_t>(buffer_index)];
+    if (buffer.p2_diag_refs > 0) {
+        --buffer.p2_diag_refs;
+    }
+    if (buffer.p2_diag_refs == 0 && buffer.release_after_p2_diag) {
+        buffer.release_after_p2_diag = false;
         async_roi_free_buffers_.push_back(buffer_index);
     }
 }
@@ -2327,6 +2535,8 @@ void Pipeline::destroyAsyncRoiStage2() {
         b.right_bgr_pitch = 0;
         b.left_gray_host_pitch = 0;
         b.right_gray_host_pitch = 0;
+        b.p2_diag_refs = 0;
+        b.release_after_p2_diag = false;
     }
     async_roi_buffers_.clear();
     async_roi_free_buffers_.clear();
@@ -2380,6 +2590,8 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
     const size_t rows = static_cast<size_t>(config_.rect_height);
     buffer.copy_event_recorded = false;
     buffer.p2_diag_copy_event_recorded = false;
+    buffer.p2_diag_refs = 0;
+    buffer.release_after_p2_diag = false;
 
     if (!left_src || !right_src ||
         left_src_pitch <= 0 || right_src_pitch <= 0 ||
@@ -2573,7 +2785,12 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     const bool requested_host_gray =
         roiStage2NeedsHostImages(slot.detections, slot.detections_right);
     const bool neural_needs_bgr =
-        neural_feature_matcher_ && neural_feature_matcher_->requiresBgrInput();
+        (neural_feature_matcher_ &&
+         neural_feature_matcher_->requiresBgrInput()) ||
+        (neural_xfeat_matcher_ &&
+         neural_xfeat_matcher_->requiresBgrInput()) ||
+        (neural_superpoint_matcher_ &&
+         neural_superpoint_matcher_->requiresBgrInput());
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
     const bool requested_bgr =
@@ -2732,6 +2949,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
                                    task.input,
                                    buffer.copy_done,
                                    buffer.copy_event_recorded,
+                                   buffer_index,
                                    buffer);
 
     int dropped_pending_buffer = -1;

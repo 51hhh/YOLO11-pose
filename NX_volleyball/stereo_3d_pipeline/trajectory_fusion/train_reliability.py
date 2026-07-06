@@ -141,6 +141,7 @@ def main() -> int:
                 "measurements": torch.tensor(arrays["measurements"], dtype=torch.float32, device=args.device).unsqueeze(0),
                 "valid": torch.tensor(arrays["valid"], dtype=torch.float32, device=args.device).unsqueeze(0),
                 "labels": torch.tensor(arrays["labels"], dtype=torch.float32, device=args.device).unsqueeze(0),
+                "dt": torch.tensor(arrays["dt"], dtype=torch.float32, device=args.device).unsqueeze(0),
             }
         )
     label_index = {name: idx for idx, name in enumerate(weak_label_names())}
@@ -160,7 +161,7 @@ def main() -> int:
                 output.bias,
                 output.outlier_logit,
             )
-            loss_phys = physics_depth_loss(learned_consensus, dt=0.01)
+            loss_phys = physics_depth_loss(learned_consensus, batch["dt"])
             loss_reg = uncertainty_regularizer(output.log_sigma, output.outlier_logit, batch["valid"])
             labels = batch["labels"]
             loss_known_z = known_z_loss(

@@ -71,6 +71,13 @@ static bool initVPI(VPIResources& vpi, const stereo3d::StereoCalibration& calib,
     vpi.maxDisp = maxDisp;
     vpi.winSize = winSize;
 
+    if (!calib.isOutputAspectCompatible(width, height)) {
+        LOG_ERROR("Viewer rectified output aspect mismatch: calibration=%dx%d, "
+                  "requested=%dx%d. Use the calibration aspect ratio.",
+                  calib.imageWidth(), calib.imageHeight(), width, height);
+        return false;
+    }
+
     VPIStatus err;
     // CPU flag 必须包含, 否则 vpiImageLockData HOST_PITCH_LINEAR 会失败
     uint64_t flags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU;
@@ -134,7 +141,9 @@ static bool initVPI(VPIResources& vpi, const stereo3d::StereoCalibration& calib,
 
     // ---- 校正 Remap ----
     cv::Mat map1L, map2L, map1R, map2R;
-    calib.buildRemapMaps(map1L, map2L, map1R, map2R, width, height);
+    if (!calib.buildRemapMaps(map1L, map2L, map1R, map2R, width, height)) {
+        return false;
+    }
 
     auto buildRemap = [&](const cv::Mat& mapX, const cv::Mat& mapY,
                           VPIPayload& payload, const char* name) -> bool {

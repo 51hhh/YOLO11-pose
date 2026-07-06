@@ -15,7 +15,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -39,6 +39,7 @@ class BallROI:
     radius: float
     mask: np.ndarray
     source: str = "auto"
+    validation_mask: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -111,6 +112,23 @@ def _roi_to_runtime_detection(roi: BallROI, confidence: float = 1.0) -> RuntimeD
         confidence=float(np.clip(confidence, 0.05, 1.0)),
         class_id=0,
     )
+
+
+def _circle_mask(
+    image_shape: Tuple[int, int],
+    center: Tuple[float, float],
+    radius: float,
+) -> np.ndarray:
+    h, w = image_shape
+    cx, cy = center
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask, (int(round(cx)), int(round(cy))),
+               int(round(max(1.0, radius))), 255, -1)
+    return mask
+
+
+def validation_mask_for_roi(roi: BallROI) -> np.ndarray:
+    return roi.validation_mask if roi.validation_mask is not None else roi.mask
 
 
 def _node_mat(fs: cv2.FileStorage, key: str) -> np.ndarray:
@@ -248,7 +266,8 @@ def segment_ball(image: np.ndarray, side: str) -> BallROI:
     roi_mask &= np.where(np.indices((h, w))[1] >= x1, 255, 0).astype(np.uint8)
     roi_mask &= np.where(np.indices((h, w))[1] <= x2, 255, 0).astype(np.uint8)
 
-    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1), (cx, cy), float(r), roi_mask)
+    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1),
+                   (cx, cy), float(r), roi_mask, "auto", roi_mask.copy())
 
 
 def _ball_candidates(image: np.ndarray, side: str) -> List[BallCandidate]:
@@ -348,7 +367,8 @@ def _roi_from_group(image_shape: Tuple[int, int], seed: BallCandidate, candidate
     roi_mask[y2 + 1 :, :] = 0
     roi_mask[:, :x1] = 0
     roi_mask[:, x2 + 1 :] = 0
-    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1), (cx, cy), radius, roi_mask)
+    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1),
+                   (cx, cy), radius, roi_mask, "auto", roi_mask.copy())
 
 
 def _rough_rois_from_candidates(
@@ -414,9 +434,11 @@ def _circle_roi(
     x2 = min(w - 1, int(math.ceil(cx + radius)))
     y2 = min(h - 1, int(math.ceil(cy + radius)))
 
-    mask = np.zeros((h, w), dtype=np.uint8)
-    cv2.circle(mask, (int(round(cx)), int(round(cy))), int(round(mask_radius)), 255, -1)
-    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1), (float(cx), float(cy)), radius, mask, source)
+    feature_mask = _circle_mask(image_shape, (cx, cy), mask_radius)
+    validation_mask = _circle_mask(image_shape, (cx, cy), radius)
+    return BallROI((x1, y1, x2 - x1 + 1, y2 - y1 + 1),
+                   (float(cx), float(cy)), radius,
+                   feature_mask, source, validation_mask)
 
 
 def _parse_circle(text: str) -> Tuple[float, float, float]:
@@ -1358,6 +1380,31 @@ def draw_matches_zoom(
     if rc.shape[0] < target_h:
         rc = cv2.copyMakeBorder(rc, 0, target_h - rc.shape[0], 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
 
+    def draw_mask_outline(panel: np.ndarray,
+                          mask: np.ndarray,
+                          x1: int,
+                          y1: int,
+                          w: int,
+                          h: int,
+                          color: Tuple[int, int, int]) -> None:
+        if mask.size == 0 or w <= 0 or h <= 0:
+            return
+        sub = mask[y1:y1 + h, x1:x1 + w]
+        if sub.size == 0:
+            return
+        contours, _ = cv2.findContours(sub, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            cv2.drawContours(panel, contours, -1, color, 1, cv2.LINE_AA)
+
+    draw_mask_outline(lc, validation_mask_for_roi(lroi), lx1, ly1,
+                      lx2 - lx1, ly2 - ly1, (0, 180, 255))
+    draw_mask_outline(lc, lroi.mask, lx1, ly1,
+                      lx2 - lx1, ly2 - ly1, (255, 255, 0))
+    draw_mask_outline(rc, validation_mask_for_roi(rroi), rx1, ry1,
+                      rx2 - rx1, ry2 - ry1, (0, 180, 255))
+    draw_mask_outline(rc, rroi.mask, rx1, ry1,
+                      rx2 - rx1, ry2 - ry1, (255, 255, 0))
+
     canvas = np.hstack([lc, rc])
     xoff = lc.shape[1]
 
@@ -1486,6 +1533,8 @@ def validate_triangulated_rows(
     disp_median = float(np.median(disparities))
     z_median = float(np.median(zs))
     cx, cy, cz = ball_center_3d
+    left_validation_mask = validation_mask_for_roi(lroi)
+    right_validation_mask = validation_mask_for_roi(rroi)
 
     validated: List[Dict[str, float | int | str]] = []
     for row in rows:
@@ -1507,8 +1556,8 @@ def validate_triangulated_rows(
         center_depth_delta = abs(z_m - cz)
 
         checks = {
-            "inside_left_mask": _mask_value(lroi.mask, lx, ly) > 0,
-            "inside_right_mask": _mask_value(rroi.mask, rx, ry) > 0,
+            "inside_left_mask": _mask_value(left_validation_mask, lx, ly) > 0,
+            "inside_right_mask": _mask_value(right_validation_mask, rx, ry) > 0,
             "inside_left_overlap": _mask_value(left_overlap, lx, ly) > 0,
             "inside_right_overlap": _mask_value(right_overlap, rx, ry) > 0,
             "y_error_ok": y_error <= thresholds.max_y_error_px,
@@ -1794,9 +1843,17 @@ def main() -> int:
     right_labels = _volleyball_label_map(right_rect, rroi.mask)
     left_edge_color = _color_edge_mask(left_rect, lroi.mask, args.edge_percentile)
     right_edge_color = _color_edge_mask(right_rect, rroi.mask, args.edge_percentile)
-    left_overlap, right_overlap = _overlap_masks_for_disparity(lroi.mask, rroi.mask, initial_disp)
+    left_overlap, right_overlap = _overlap_masks_for_disparity(
+        lroi.mask, rroi.mask, initial_disp)
+    left_validation_overlap, right_validation_overlap = _overlap_masks_for_disparity(
+        validation_mask_for_roi(lroi), validation_mask_for_roi(rroi),
+        initial_disp)
     cv2.imwrite(str(out_dir / "iou_overlap_debug.png"),
                 draw_overlap_debug(left_rect, right_rect, left_overlap, right_overlap))
+    cv2.imwrite(str(out_dir / "validation_overlap_debug.png"),
+                draw_overlap_debug(left_rect, right_rect,
+                                   left_validation_overlap,
+                                   right_validation_overlap))
 
     results: List[MatchResult] = []
     method_elapsed_ms: Dict[str, float] = {}
@@ -1858,8 +1915,8 @@ def main() -> int:
             tri_rows,
             lroi,
             rroi,
-            left_overlap,
-            right_overlap,
+            left_validation_overlap,
+            right_validation_overlap,
             ball_center_3d,
             ball_radius_m,
             thresholds,

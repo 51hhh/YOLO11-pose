@@ -97,6 +97,7 @@ def main() -> int:
     parser.add_argument("--right-circle", type=_parse_circle, help="rectified right ball circle: x,y,r")
     parser.add_argument("--mask-margin", type=float, default=10.0)
     parser.add_argument("--ratio", type=float, default=1.0)
+    parser.add_argument("--min-valid-matches", type=int, default=4)
     parser.add_argument("--max-y-error-px", type=float, default=2.0)
     parser.add_argument("--max-disp-delta-px", type=float, default=32.0)
     parser.add_argument("--final-disp-gate-px", type=float, default=0.0)
@@ -138,18 +139,26 @@ def main() -> int:
     initial_disp = float(lroi.center[0] - rroi.center[0])
     initial_depth = probe.depth_from_disparity(initial_disp, focal_px, baseline_m)
     cv2.imwrite(str(out_dir / "rectified_roi_debug.png"), probe.draw_roi_debug(left_rect, right_rect, lroi, rroi))
+    left_validation_mask = probe.validation_mask_for_roi(lroi)
+    right_validation_mask = probe.validation_mask_for_roi(rroi)
 
     left_crop, left_crop_mask, lt = crop_square(
-        left_rect, lroi.mask, lroi.bbox, pad=args.crop_pad, output_size=args.roi_size
+        left_rect, left_validation_mask, lroi.bbox,
+        pad=args.crop_pad, output_size=args.roi_size
     )
     right_crop, right_crop_mask, rt = crop_square(
-        right_rect, rroi.mask, rroi.bbox, pad=args.crop_pad, output_size=args.roi_size
+        right_rect, right_validation_mask, rroi.bbox,
+        pad=args.crop_pad, output_size=args.roi_size
     )
     draw_crop_debug(left_crop, right_crop, out_dir / "neural_roi_crops.png")
 
-    left_overlap, right_overlap = probe._overlap_masks_for_disparity(lroi.mask, rroi.mask, initial_disp)
+    left_overlap, right_overlap = probe._overlap_masks_for_disparity(
+        left_validation_mask, right_validation_mask, initial_disp)
+    cv2.imwrite(str(out_dir / "validation_overlap_debug.png"),
+                probe.draw_overlap_debug(left_rect, right_rect,
+                                         left_overlap, right_overlap))
     thresholds = probe.ValidationThresholds(
-        min_valid_matches=8,
+        min_valid_matches=max(1, args.min_valid_matches),
         max_y_error_px=args.max_y_error_px,
     )
     ball_center_3d = probe.estimate_ball_center_3d(calib, lroi, initial_disp, baseline_m)
@@ -216,7 +225,8 @@ def main() -> int:
                 min_score=args.min_score,
             ),
         )
-        filtered = filter_matches_by_roi_masks(filtered, lroi.mask, rroi.mask)
+        filtered = filter_matches_by_roi_masks(
+            filtered, left_validation_mask, right_validation_mask)
 
         disparity = float(np.median([m.disparity for m in filtered])) if filtered else -1.0
         depth_m = probe.depth_from_disparity(disparity, focal_px, baseline_m)

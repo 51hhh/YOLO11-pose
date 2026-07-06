@@ -378,6 +378,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
     };
 
     const float context = 1.20f;
+    const auto roi_side = [](const Detection& det) {
+        return std::max(1.0f, std::max(det.width, det.height));
+    };
     const int input_batch = std::max(1, tensor_batch(input->dims));
     const size_t input_batch_stride = input->elements /
                                       static_cast<size_t>(input_batch);
@@ -388,15 +391,16 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         if (batch_index < 0 || batch_index >= input_batch) return false;
         float* dst = static_cast<float*>(input->device) +
                      static_cast<size_t>(batch_index) * input_batch_stride;
+        const float side = roi_side(det);
         if (input_channels == 1) {
             cropResizeGPU(gray, pitch, img_width, img_height,
                           dst, config_.roi_size,
-                          det.cx, det.cy, det.width, det.height,
+                          det.cx, det.cy, side, side,
                           context, stream);
         } else {
             cropResizeBgrGPU_3ch(bgr, bgr_pitch, img_width, img_height,
                                   dst, config_.roi_size,
-                                  det.cx, det.cy, det.width, det.height,
+                                  det.cx, det.cy, side, side,
                                   context, stream);
         }
         return cudaPeekAtLastError() == cudaSuccess;
@@ -466,12 +470,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                                second_score,
                                stage,
                                reason);
-        };
+    };
 
     const auto map_to_frame = [&](const Detection& det, const DirectFeature& f,
                                   float* x, float* y) {
-        const float s = std::sqrt(std::max(1.0f, det.width * context *
-                                                  det.height * context));
+        const float s = roi_side(det) * context;
         const float roi_x = det.cx - 0.5f * s;
         const float roi_y = det.cy - 0.5f * s;
         *x = roi_x + (f.x + 0.5f) * s / static_cast<float>(config_.roi_size) - 0.5f;
@@ -754,9 +757,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             }
             NeuralFeatureMatchResult gpu_result =
                 build_result_from_candidates(candidates, "ok_gpu_b2");
-            if (gpu_result.valid) {
-                return gpu_result;
-            }
+            return gpu_result;
         }
     }
 
