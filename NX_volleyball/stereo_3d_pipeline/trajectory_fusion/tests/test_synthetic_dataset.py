@@ -1008,6 +1008,47 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn(("bbox_center", "circle_center"), pairs)
             self.assertEqual(pairs[("bbox_center", "circle_center")]["count"], 2)
 
+    def test_candidate_consistency_groups_known_z_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_3m", 3.0, rows=8)
+            _write_known_distance_clip(root, "static_4m", 4.0, rows=8)
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: static_3m.csv",
+                        "    metadata: static_3m.metadata.yaml",
+                        "    split: train",
+                        "  - csv: static_4m.csv",
+                        "    metadata: static_4m.metadata.yaml",
+                        "    split: val",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = analyze_candidate_consistency([str(manifest_path)], reference="auto")
+            buckets = {
+                (item["split"], item["known_z_bucket"]): item
+                for item in report["known_z_buckets"]
+            }
+            self.assertEqual(set(buckets), {("train", "3.000"), ("val", "4.000")})
+            self.assertEqual(buckets[("train", "3.000")]["frames"], 8)
+            self.assertIn("bbox_center", buckets[("val", "4.000")]["methods"])
+
+            csv_path = root / "candidate_consistency.csv"
+            from trajectory_fusion.analyze_candidate_consistency import write_method_csv  # noqa: E402
+
+            write_method_csv(csv_path, report)
+            with csv_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            bucket_rows = [row for row in rows if row["scope"] == "known_z_bucket"]
+            self.assertTrue(any(row["known_z_bucket"] == "3.000" for row in bucket_rows))
+            self.assertTrue(any(row["known_z_bucket"] == "4.000" for row in bucket_rows))
+
     def test_method_calibration_fits_and_applies_smoother(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1564,6 +1605,9 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(summary["validation"]["split_counts"], {"train": 1, "val": 1})
             self.assertTrue(Path(summary["training_input_audit"]["json"]).exists())
             self.assertTrue(Path(summary["training_input_audit"]["method_csv"]).exists())
+            self.assertTrue(Path(summary["candidate_consistency"]["json"]).exists())
+            self.assertTrue(Path(summary["candidate_consistency"]["method_csv"]).exists())
+            self.assertGreater(summary["candidate_consistency"]["frames"], 0)
             self.assertGreater(summary["training_input_audit"]["frame_count"], 0)
             self.assertFalse(summary["config"]["use_static_known_z"])
             self.assertGreater(summary["calibration"]["method_count"], 0)

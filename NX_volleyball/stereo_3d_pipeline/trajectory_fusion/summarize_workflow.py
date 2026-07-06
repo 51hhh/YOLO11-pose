@@ -162,6 +162,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
         "output_dir": summary.get("output_dir", ""),
         "validation": summary.get("validation", {}),
         "training_input_audit": summary.get("training_input_audit", {}),
+        "candidate_consistency": summary.get("candidate_consistency", {}),
         "calibration": summary.get("calibration", {}),
         "baseline_suite": {
             "metrics_csv": summary.get("baseline_suite", {}).get("metrics_csv"),
@@ -208,6 +209,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
 
     validation = report.get("validation", {})
     training_audit = report.get("training_input_audit", {})
+    candidate_consistency = report.get("candidate_consistency", {})
     calibration = report.get("calibration", {})
     selection = report.get("sweep", {}).get("selection_status", {})
     top = selection.get("top") or {}
@@ -221,6 +223,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
         f"- known_z buckets: `{validation.get('known_z_bucket_counts', {})}`",
         f"- training inputs: frames `{training_audit.get('frame_count', 0)}`, methods `{training_audit.get('method_count', 0)}`, features `{training_audit.get('feature_count', 0)}`",
         f"- training input warnings: `{training_audit.get('warnings', [])}`",
+        f"- candidate consistency: frames `{candidate_consistency.get('frames', 0)}`, methods `{candidate_consistency.get('method_count', 0)}`, known_z buckets `{candidate_consistency.get('known_z_bucket_count', 0)}`",
         f"- calibration methods: `{calibration.get('method_count', 0)}`",
         f"- calibration used: `{calibration.get('used_for_suite', False)}`",
         f"- top selection: `{top.get('config', '')}` / `{top.get('decision', selection.get('decision', ''))}`",

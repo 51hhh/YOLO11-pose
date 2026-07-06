@@ -109,6 +109,10 @@ def _known_z(metadata: Dict[str, Any]) -> float:
     return _metadata_float(metadata, ("known_z_m", "known_z", "known_distance_m"), 0.0)
 
 
+def _known_z_bucket(known_z: float) -> str:
+    return f"{known_z:.3f}"
+
+
 def _method_reference_name(value: str) -> str:
     raw = value.removeprefix("method:").strip()
     if raw in METHOD_KEY_BY_NAME:
@@ -304,10 +308,15 @@ def analyze_candidate_clips(
 ) -> Dict[str, Any]:
     clip_reports: List[Dict[str, Any]] = []
     aggregate_sequences: List[LegacySequence] = []
+    known_z_bucket_sequences: Dict[Tuple[str, str], List[LegacySequence]] = defaultdict(list)
 
     for clip in clips:
         sequences = load_legacy_sequences(clip.csv, metadata_path=clip.metadata)
         aggregate_sequences.extend(sequences)
+        for sequence in sequences:
+            known_z = _known_z(sequence.metadata)
+            if known_z > 0.0:
+                known_z_bucket_sequences[(clip.split, _known_z_bucket(known_z))].append(sequence)
         clip_report = _analyze_sequences(
             sequences,
             reference=reference,
@@ -328,12 +337,28 @@ def analyze_candidate_clips(
         reference=reference,
         min_pair_count=min_pair_count,
     )
+    known_z_buckets: List[Dict[str, Any]] = []
+    for (split, bucket), sequences in sorted(known_z_bucket_sequences.items()):
+        bucket_report = _analyze_sequences(
+            sequences,
+            reference=reference,
+            min_pair_count=min_pair_count,
+        )
+        bucket_report.update(
+            {
+                "split": split,
+                "known_z_bucket": bucket,
+                "known_z": float(bucket),
+            }
+        )
+        known_z_buckets.append(bucket_report)
     return {
         "inputs": list(inputs) if inputs is not None else [str(clip.csv) for clip in clips],
         "reference": reference,
         "min_pair_count": min_pair_count,
         "clip_count": len(clips),
         "aggregate": aggregate,
+        "known_z_buckets": known_z_buckets,
         "clips": clip_reports,
     }
 
@@ -351,6 +376,7 @@ def write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
         "scope",
         "clip",
         "split",
+        "known_z_bucket",
         "track_id",
         "method",
         "key",
@@ -365,13 +391,21 @@ def write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
     ]
     rows: List[Dict[str, Any]] = []
 
-    def add_methods(scope: str, clip: str, split: str, track_id: str, methods: Dict[str, Any]) -> None:
+    def add_methods(
+        scope: str,
+        clip: str,
+        split: str,
+        known_z_bucket: str,
+        track_id: str,
+        methods: Dict[str, Any],
+    ) -> None:
         for method, item in sorted(methods.items()):
             rows.append(
                 {
                     "scope": scope,
                     "clip": clip,
                     "split": split,
+                    "known_z_bucket": known_z_bucket,
                     "track_id": track_id,
                     "method": method,
                     "key": item["key"],
@@ -386,11 +420,20 @@ def write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
                 }
             )
 
-    add_methods("aggregate", "", "", "", report["aggregate"]["methods"])
+    add_methods("aggregate", "", "", "", "", report["aggregate"]["methods"])
+    for bucket in report.get("known_z_buckets", []):
+        add_methods(
+            "known_z_bucket",
+            "",
+            bucket.get("split", ""),
+            bucket.get("known_z_bucket", ""),
+            "",
+            bucket["methods"],
+        )
     for clip in report["clips"]:
-        add_methods("clip", clip["name"], clip["split"], "", clip["methods"])
+        add_methods("clip", clip["name"], clip["split"], "", "", clip["methods"])
         for track_id, track in clip["tracks"].items():
-            add_methods("track", clip["name"], clip["split"], track_id, track["methods"])
+            add_methods("track", clip["name"], clip["split"], "", track_id, track["methods"])
 
     with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)

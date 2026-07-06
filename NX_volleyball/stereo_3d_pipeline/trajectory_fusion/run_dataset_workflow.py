@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
 try:
+    from .analyze_candidate_consistency import (
+        analyze_candidate_consistency,
+        write_method_csv as write_candidate_method_csv,
+        write_pairwise_csv as write_candidate_pairwise_csv,
+    )
     from .audit_training_inputs import (
         audit_training_inputs,
         write_feature_csv as write_training_feature_csv,
@@ -24,6 +29,11 @@ try:
     from .summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from .validate_dataset_manifest import analyze_manifest
 except ImportError:  # pragma: no cover - direct script execution
+    from analyze_candidate_consistency import (
+        analyze_candidate_consistency,
+        write_method_csv as write_candidate_method_csv,
+        write_pairwise_csv as write_candidate_pairwise_csv,
+    )
     from audit_training_inputs import (
         audit_training_inputs,
         write_feature_csv as write_training_feature_csv,
@@ -175,6 +185,34 @@ def _run_training_input_audit(manifest_path: Path, output_dir: Path) -> Dict[str
     }
 
 
+def _run_candidate_consistency(
+    manifest_path: Path,
+    output_dir: Path,
+    *,
+    candidate_reference: str,
+) -> Dict[str, Any]:
+    report = analyze_candidate_consistency(
+        [str(manifest_path)],
+        reference=candidate_reference,
+    )
+    json_path = output_dir / "candidate_consistency.json"
+    method_csv = output_dir / "candidate_consistency.csv"
+    pairwise_csv = output_dir / "candidate_pairwise.csv"
+    _write_json(json_path, report)
+    write_candidate_method_csv(method_csv, report)
+    write_candidate_pairwise_csv(pairwise_csv, report)
+    return {
+        "json": str(json_path),
+        "method_csv": str(method_csv),
+        "pairwise_csv": str(pairwise_csv),
+        "reference": candidate_reference,
+        "clip_count": report.get("clip_count", 0),
+        "frames": (report.get("aggregate") or {}).get("frames", 0),
+        "method_count": len((report.get("aggregate") or {}).get("methods", {})),
+        "known_z_bucket_count": len(report.get("known_z_buckets", [])),
+    }
+
+
 def _run_suite_and_summarize(
     manifest_path: Path,
     output_dir: Path,
@@ -291,6 +329,17 @@ def run_workflow(
     validation_json = root / "manifest_validation.json"
     _write_json(validation_json, validation)
     training_input_audit = _run_training_input_audit(manifest_path, root)
+    if include_candidate_consistency:
+        candidate_consistency = _run_candidate_consistency(
+            manifest_path,
+            root,
+            candidate_reference=candidate_reference,
+        )
+    else:
+        candidate_consistency = {
+            "skipped": True,
+            "reason": "skip_candidate_consistency",
+        }
 
     calibration_path: Path | None = None
     if skip_calibration:
@@ -374,6 +423,7 @@ def run_workflow(
             "warnings": validation.get("warnings", []),
         },
         "training_input_audit": training_input_audit,
+        "candidate_consistency": candidate_consistency,
         "calibration": calibration_summary,
         "baseline_suite": baseline_suite,
         "sweep": sweep_summary,
