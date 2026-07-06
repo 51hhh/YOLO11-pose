@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 try:
     from .dataset import (
+        METHOD_COLUMNS,
         find_metadata_for_csv,
         merge_p2_diagnostic_candidates,
         read_metadata,
@@ -22,6 +23,7 @@ try:
     )
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import (
+        METHOD_COLUMNS,
         find_metadata_for_csv,
         merge_p2_diagnostic_candidates,
         read_metadata,
@@ -29,34 +31,7 @@ except ImportError:  # pragma: no cover - direct script execution
     )
 
 
-CANDIDATE_DEPTH_KEYS = [
-    "z_mono",
-    "z_bbox_center",
-    "z_bbox_left_edge",
-    "z_bbox_right_edge",
-    "z_circle_center",
-    "z_roi_edge_centroid",
-    "z_roi_radial_center",
-    "z_roi_edge_pair_center",
-    "z_roi_corner_points",
-    "z_roi_texture_points",
-    "z_roi_binary_points",
-    "z_roi_orb_points",
-    "z_roi_brisk_points",
-    "z_roi_akaze_points",
-    "z_roi_sift_points",
-    "z_roi_iou_region_color_patch",
-    "z_roi_patch_iou_color_edge",
-    "z_roi_cuda_template_match",
-    "z_roi_neural_feature",
-    "z_roi_neural_xfeat",
-    "z_roi_neural_superpoint",
-    "z_roi_center_patch",
-    "z_roi_multi_point",
-    "z_fallback_epipolar",
-    "z_fallback_template",
-    "z_fallback_feature_points",
-]
+CANDIDATE_DEPTH_KEYS = [key for _, key in METHOD_COLUMNS]
 LEGACY_DEPTH_KEYS = [
     "z_stereo",
     "z",
@@ -118,6 +93,21 @@ def _rms(values: List[float]) -> float:
     return math.sqrt(sum(v * v for v in values) / len(values))
 
 
+def _percentile(values: List[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    pos = max(0.0, min(1.0, q)) * (len(ordered) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return ordered[lo]
+    frac = pos - lo
+    return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
+
+
 def _median(values: List[float]) -> float:
     if not values:
         return 0.0
@@ -173,6 +163,88 @@ def _metrics(rows: List[Dict[str, str]], prefix: str = "") -> Dict[str, float]:
     }
 
 
+def _motion_metrics(rows: List[Dict[str, str]], metadata: Dict[str, Any], prefix: str = "") -> Dict[str, float | None]:
+    x_key = f"{prefix}x" if prefix else "x"
+    y_key = f"{prefix}y" if prefix else "y"
+    z_key = f"{prefix}z" if prefix else "z"
+    samples = [
+        (
+            _f(row, "timestamp"),
+            _f(row, x_key),
+            _f(row, y_key),
+            _f(row, z_key),
+        )
+        for row in rows
+        if x_key in row and y_key in row and z_key in row
+    ]
+    if len(samples) < 2:
+        return {
+            "duration_s": 0.0,
+            "fps_estimate": 0.0,
+            "speed_rms_mps": 0.0,
+            "speed_p95_mps": 0.0,
+            "accel_x_rms_mps2": None,
+            "accel_y_rms_mps2": None,
+            "accel_z_rms_mps2": None,
+            "accel_y_residual_rms_mps2": None,
+            "ballistic_residual_rms_mps2": None,
+            "jerk_rms_mps3": None,
+            "gravity_y_used_mps2": _metadata_float(metadata, "gravity_y_mps2", "gravity_y", default=0.0),
+        }
+
+    duration = max(0.0, samples[-1][0] - samples[0][0])
+    dts: List[float] = []
+    velocities: List[tuple[float, float, float]] = []
+    speeds: List[float] = []
+    for prev, cur in zip(samples, samples[1:]):
+        dt = max(1e-4, min(0.5, cur[0] - prev[0]))
+        dts.append(dt)
+        vx = (cur[1] - prev[1]) / dt
+        vy = (cur[2] - prev[2]) / dt
+        vz = (cur[3] - prev[3]) / dt
+        velocities.append((vx, vy, vz))
+        speeds.append(math.sqrt(vx * vx + vy * vy + vz * vz))
+
+    gravity_y = _metadata_float(metadata, "gravity_y_mps2", "gravity_y", default=0.0)
+    accel_x: List[float] = []
+    accel_y: List[float] = []
+    accel_z: List[float] = []
+    residual_norms: List[float] = []
+    for index, (prev_v, cur_v) in enumerate(zip(velocities, velocities[1:]), start=1):
+        dt = max(1e-4, 0.5 * (dts[index - 1] + dts[index]))
+        ax = (cur_v[0] - prev_v[0]) / dt
+        ay = (cur_v[1] - prev_v[1]) / dt
+        az = (cur_v[2] - prev_v[2]) / dt
+        accel_x.append(ax)
+        accel_y.append(ay)
+        accel_z.append(az)
+        residual_norms.append(math.sqrt(ax * ax + (ay - gravity_y) ** 2 + az * az))
+
+    jerks: List[float] = []
+    accelerations = list(zip(accel_x, accel_y, accel_z))
+    for index, (prev_a, cur_a) in enumerate(zip(accelerations, accelerations[1:]), start=2):
+        dt = max(1e-4, 0.5 * (dts[index - 1] + dts[index - 2]))
+        jx = (cur_a[0] - prev_a[0]) / dt
+        jy = (cur_a[1] - prev_a[1]) / dt
+        jz = (cur_a[2] - prev_a[2]) / dt
+        jerks.append(math.sqrt(jx * jx + jy * jy + jz * jz))
+
+    accel_y_residual = [value - gravity_y for value in accel_y]
+    return {
+        "duration_s": duration,
+        "fps_estimate": (len(samples) - 1) / duration if duration > 1e-9 else 0.0,
+        "speed_rms_mps": _rms(speeds),
+        "speed_p95_mps": _percentile(speeds, 0.95),
+        "accel_x_rms_mps2": _rms(accel_x) if accel_x else None,
+        "accel_y_rms_mps2": _rms(accel_y) if accel_y else None,
+        "accel_z_rms_mps2": _rms(accel_z) if accel_z else None,
+        "accel_y_residual_rms_mps2": _rms(accel_y_residual) if accel_y_residual else None,
+        "ballistic_residual_rms_mps2": _rms(residual_norms) if residual_norms else None,
+        "jerk_rms_mps3": _rms(jerks) if jerks else None,
+        "gravity_y_used_mps2": gravity_y,
+    }
+
+
 def _group_by_track(rows: List[Dict[str, str]]) -> Dict[str, List[Dict[str, str]]]:
     grouped: Dict[str, List[Dict[str, str]]] = {}
     for row in rows:
@@ -188,6 +260,22 @@ def _print_metrics(name: str, metrics: Dict[str, float]) -> None:
         f"z_std={metrics['z_std']:.4f} p2p={metrics['z_peak_to_peak']:.4f} "
         f"dz_rms={metrics['dz_rms']:.4f} ddz_rms={metrics['ddz_rms']:.4f} "
         f"jerk_rms={metrics['dddz_rms']:.4f}"
+    )
+
+
+def _print_motion_metrics(name: str, metrics: Dict[str, Any]) -> None:
+    ballistic = metrics.get("ballistic_residual_rms_mps2")
+    accel_z = metrics.get("accel_z_rms_mps2")
+    jerk = metrics.get("jerk_rms_mps3")
+    if ballistic is None and accel_z is None and jerk is None:
+        return
+    print(
+        f"{name} motion: duration={float(metrics.get('duration_s') or 0.0):.3f}s "
+        f"fps={float(metrics.get('fps_estimate') or 0.0):.1f} "
+        f"speed_rms={float(metrics.get('speed_rms_mps') or 0.0):.3f}m/s "
+        f"accel_z_rms={float(accel_z or 0.0):.3f}m/s^2 "
+        f"ballistic_rms={float(ballistic or 0.0):.3f}m/s^2 "
+        f"jerk_rms={float(jerk or 0.0):.3f}m/s^3"
     )
 
 
@@ -409,6 +497,7 @@ def build_report(rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> Dict[s
     tracks: Dict[str, Any] = {}
     for track_id, track_rows in grouped.items():
         raw_metrics = _metrics(track_rows)
+        raw_metrics.update(_motion_metrics(track_rows, metadata))
         raw_metrics.update(_known_z_error_report(_series(track_rows, "z"), known_z))
         track_report: Dict[str, Any] = {
             "raw": raw_metrics,
@@ -428,6 +517,7 @@ def build_report(rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> Dict[s
         }
         if has_smooth:
             smooth = _metrics(track_rows, prefix="smooth_")
+            smooth.update(_motion_metrics(track_rows, metadata, prefix="smooth_"))
             raw = track_report["raw"]
             smooth["raw_z_std_ratio"] = smooth["z_std"] / raw["z_std"] if raw["z_std"] > 1e-9 else 0.0
             smooth.update(_known_z_error_report(_series(track_rows, "smooth_z"), known_z))
@@ -486,15 +576,19 @@ def main() -> int:
     has_smooth = bool(rows and "smooth_z" in rows[0])
     for track_id, track_rows in grouped.items():
         raw = _metrics(track_rows)
+        raw.update(_motion_metrics(track_rows, metadata))
         _print_metrics(f"track={track_id} raw", raw)
+        _print_motion_metrics(f"track={track_id} raw", raw)
         _print_depth_candidate_metrics(track_id, track_rows)
         _print_p0_median_metrics(track_id, track_rows, metadata)
         _print_known_distance_metrics(track_id, track_rows, metadata)
         _print_sync_and_source_metrics(track_id, track_rows)
         if has_smooth:
             smooth = _metrics(track_rows, prefix="smooth_")
+            smooth.update(_motion_metrics(track_rows, metadata, prefix="smooth_"))
             ratio = smooth["z_std"] / raw["z_std"] if raw["z_std"] > 1e-9 else 0.0
             _print_metrics(f"track={track_id} smooth", smooth)
+            _print_motion_metrics(f"track={track_id} smooth", smooth)
             print(f"track={track_id} smooth/raw z_std ratio={ratio:.3f}")
     if args.json_out:
         _write_json_report(args.json_out, report)

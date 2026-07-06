@@ -233,6 +233,19 @@
 | rejected_reason | str | 候选级被拒原因；当前 recorder 尚未写入，需先把 pipeline 内 gate 失败原因结构化 |
 | landing_x,landing_y,landing_t | float | 当前落点预测 |
 
+## Metadata 弱标签
+
+同名前缀 `*.metadata.yaml` 可记录训练和评估弱标签，不写入每帧 CSV:
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| known_z | float | 静态已知距离，只用于校准/评估，默认不作为 smoother update |
+| known_z_min,known_z_max | float | 深度范围弱标签 |
+| static | bool | 静止片段标记 |
+| gravity_y | float | 相机 y 轴方向重力先验，单位 m/s^2；未确认相机 y 轴对齐重力前建议写 0 |
+| landing_frame | int | 轨迹落地/触地帧弱标签，当前用于训练字段预留 |
+| scene,notes | str | 场景描述和采集备注 |
+
 ## Frame Summary Sidecar
 
 实时 recorder 会从 `output_path` 派生 `*.frames.csv`，对每个进入 `TrajectoryRecorder::record()` 的结果回调帧写一行。这个文件不替代目标级 trajectory CSV；它提供的是已发布结果帧内的无输出和误匹配退化统计，不是 USB/触发采集帧总数。被 `drop_stale_roi_frames`、async ROI stale result 或 recorder 队列满丢弃的帧不会出现在这个 sidecar 中。

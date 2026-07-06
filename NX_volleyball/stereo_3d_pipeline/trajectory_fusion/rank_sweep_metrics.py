@@ -53,9 +53,14 @@ def _score(row: Dict[str, Any]) -> float:
         stability += row["mean_z_std"]
     if row["mean_z_peak_to_peak"] is not None:
         stability += 0.25 * row["mean_z_peak_to_peak"]
+    motion = 0.0
+    if row["mean_ballistic_residual_rms_mps2"] is not None:
+        motion += 0.01 * row["mean_ballistic_residual_rms_mps2"]
+    if row["mean_accel_z_rms_mps2"] is not None:
+        motion += 0.001 * row["mean_accel_z_rms_mps2"]
     if known_terms:
-        return sum(known_terms) + 0.25 * stability
-    return stability
+        return sum(known_terms) + 0.25 * stability + 0.05 * motion
+    return stability + motion
 
 
 def rank_metrics(
@@ -104,10 +109,14 @@ def rank_metrics(
         config = "baseline" if row_variant in BASELINE_VARIANTS and include_all_variants else items[0].get("config", "")
         z_std = [_safe_float(row.get("z_std")) for row in items]
         z_p2p = [_safe_float(row.get("z_peak_to_peak")) for row in items]
+        ballistic = [_safe_float(row.get("ballistic_residual_rms_mps2")) for row in items]
+        accel_z = [_safe_float(row.get("accel_z_rms_mps2")) for row in items]
         bias = [_safe_float(row.get("known_z_bias")) for row in items]
         mad = [_safe_float(row.get("known_z_mad")) for row in items]
         z_std_values = [value for value in z_std if value is not None]
         z_p2p_values = [value for value in z_p2p if value is not None]
+        ballistic_values = [value for value in ballistic if value is not None]
+        accel_z_values = [value for value in accel_z if value is not None]
         bias_values = [abs(value) for value in bias if value is not None]
         mad_values = [value for value in mad if value is not None]
         ranked_row: Dict[str, Any] = {
@@ -122,6 +131,8 @@ def rank_metrics(
             "mean_z_peak_to_peak": _mean(z_p2p_values),
             "mean_abs_known_z_bias": _mean(bias_values),
             "mean_known_z_mad": _mean(mad_values),
+            "mean_ballistic_residual_rms_mps2": _mean(ballistic_values),
+            "mean_accel_z_rms_mps2": _mean(accel_z_values),
         }
         ranked_row["score"] = _score(ranked_row)
         ranked.append(ranked_row)
@@ -151,6 +162,8 @@ def write_ranking(path: str | Path, rows: List[Dict[str, Any]]) -> None:
         "mean_known_z_mad",
         "mean_z_std",
         "mean_z_peak_to_peak",
+        "mean_ballistic_residual_rms_mps2",
+        "mean_accel_z_rms_mps2",
     ]
     with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -169,10 +182,10 @@ def _fmt(value: Any) -> str:
 
 
 def print_ranking(rows: List[Dict[str, Any]], limit: int = 10) -> None:
-    print("rank,config,variant,split,score,known_bias,known_mad,z_std,p2p")
+    print("rank,config,variant,split,score,known_bias,known_mad,z_std,p2p,ballistic,accel_z")
     for row in rows[:limit]:
         print(
-            "{rank},{config},{variant},{split},{score},{bias},{mad},{std},{p2p}".format(
+            "{rank},{config},{variant},{split},{score},{bias},{mad},{std},{p2p},{ballistic},{accel_z}".format(
                 rank=row["rank"],
                 config=row["config"],
                 variant=row["variant"],
@@ -182,6 +195,8 @@ def print_ranking(rows: List[Dict[str, Any]], limit: int = 10) -> None:
                 mad=_fmt(row["mean_known_z_mad"]),
                 std=_fmt(row["mean_z_std"]),
                 p2p=_fmt(row["mean_z_peak_to_peak"]),
+                ballistic=_fmt(row["mean_ballistic_residual_rms_mps2"]),
+                accel_z=_fmt(row["mean_accel_z_rms_mps2"]),
             )
         )
 

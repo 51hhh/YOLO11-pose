@@ -458,8 +458,11 @@ class SyntheticDatasetTest(unittest.TestCase):
             report = json.loads(json_out.read_text(encoding="utf-8"))
             self.assertIn("0", report["tracks"])
             self.assertIn("z_circle_center", report["tracks"]["0"]["candidate_depths"])
+            self.assertAlmostEqual(report["tracks"]["0"]["raw"]["speed_rms_mps"], 1.0, places=6)
+            self.assertAlmostEqual(report["tracks"]["0"]["raw"]["ballistic_residual_rms_mps2"], 0.0, places=6)
             csv_text = csv_out.read_text(encoding="utf-8")
             self.assertIn("candidate_depths.z_circle_center.known_z_bias", csv_text)
+            self.assertIn("raw.ballistic_residual_rms_mps2", csv_text)
 
     def test_known_z_loss_if_torch_available(self) -> None:
         try:
@@ -745,6 +748,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             rts_row = next(row for row in rows if row["variant"] == "robust_rts_smooth")
             self.assertIn("known_z_bias", smooth_row)
             self.assertIn("known_z_bias", rts_row)
+            self.assertIn("ballistic_residual_rms_mps2", smooth_row)
 
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -967,6 +971,60 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn(("net_a", "reliability_smoother"), variants)
             self.assertEqual(variants[("baseline", "calibrated_smoother")]["clip_count"], 1)
             self.assertEqual(variants[("baseline", "calibrated_rts_smoother")]["clip_count"], 1)
+
+    def test_rank_sweep_metrics_uses_motion_when_known_z_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sweep_metrics.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "split",
+                    "variant",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "ballistic_residual_rms_mps2",
+                    "accel_z_rms_mps2",
+                    "known_z_bias",
+                    "known_z_mad",
+                    "checkpoint",
+                    "suite_dir",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "smooth_bad_motion",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.002",
+                        "ballistic_residual_rms_mps2": "200.0",
+                        "accel_z_rms_mps2": "150.0",
+                        "known_z_bias": "",
+                        "known_z_mad": "",
+                        "checkpoint": "bad.pt",
+                        "suite_dir": "bad_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "slightly_noisier_good_motion",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.003",
+                        "z_peak_to_peak": "0.006",
+                        "ballistic_residual_rms_mps2": "2.0",
+                        "accel_z_rms_mps2": "1.0",
+                        "known_z_bias": "",
+                        "known_z_mad": "",
+                        "checkpoint": "good.pt",
+                        "suite_dir": "good_suite",
+                    }
+                )
+
+            ranked = rank_metrics(path, split="val")
+            self.assertEqual(ranked[0]["config"], "slightly_noisier_good_motion")
+            self.assertEqual(ranked[0]["known_clip_count"], 0)
 
 
 if __name__ == "__main__":
