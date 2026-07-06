@@ -156,7 +156,7 @@ neural_feature_matching_xfeat:
   min_spatial_spread_ratio: 0.10
 
 neural_feature_matching_superpoint:
-  enabled: true # SuperPoint 160/top64 batch=2 runs inline on synchronized 90Hz frames
+  enabled: false # keep the independent SuperPoint slot, but exclude it from the NCC+XFeat+ALIKED realtime test
   backend: "superpoint_lightglue"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/superpoint_extractor_160_top64_b2.engine"
   matcher_engine_path: ""
@@ -164,6 +164,28 @@ neural_feature_matching_superpoint:
   roi_size: 160
   top_k: 64
   descriptor_dim: 256
+  realtime_stride: 2
+  min_matches: 4
+  max_y_error_px: 2.0
+  max_disp_delta_px: 32.0
+  final_disp_gate_px: 6.0
+  min_score: 0.0
+  use_lightglue: false
+  gpu_postprocess: true
+  match_margin: 0.0
+  min_spatial_quadrants: 2
+  min_spatial_spread_ratio: 0.10
+
+neural_feature_matching_aliked:
+  enabled: true # ALIKED runs as an independent neural field, not through the SuperPoint slot
+  backend: "aliked"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/aliked_t16_nodcn_extractor_128_top64_b2.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  roi_size: 128
+  top_k: 64
+  descriptor_dim: 64
+  realtime_stride: 1
   min_matches: 4
   max_y_error_px: 2.0
   max_disp_delta_px: 32.0
@@ -216,6 +238,7 @@ performance:
   p2_diagnostic_stride_cuda_template: 1
   p2_diagnostic_stride_neural_xfeat: 1
   p2_diagnostic_stride_neural_superpoint: 1
+  p2_diagnostic_stride_neural_aliked: 1
   p2_diagnostic_max_in_flight: 1
   p2_realtime_deadline_ms: 11.1
   p2_diagnostic_deadline_ms: 50.0
