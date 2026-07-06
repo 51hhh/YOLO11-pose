@@ -34,6 +34,7 @@ from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
+from trajectory_fusion.validate_dataset_manifest import analyze_manifest  # noqa: E402
 
 
 HEADER = [
@@ -559,6 +560,62 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(len(heldout_items), 1)
             self.assertEqual(train_items[0][0].split, "train")
             self.assertEqual(heldout_items[0][0].split, "val")
+
+    def test_validate_dataset_manifest_summarizes_splits_and_known_z(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = _write_synthetic_clip(root)
+            second = root / "traj_p0p1_002.csv"
+            second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+            (root / "traj_p0p1_002.metadata.yaml").write_text(
+                "known_z: 3.1\nstatic: true\n",
+                encoding="utf-8",
+            )
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                        "  - csv: traj_p0p1_002.csv",
+                        "    metadata: traj_p0p1_002.metadata.yaml",
+                        "    split: val",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = analyze_manifest(
+                manifest_path,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+            )
+            self.assertEqual(report["clip_count"], 2)
+            self.assertEqual(report["split_counts"], {"train": 1, "val": 1})
+            self.assertEqual(report["known_z_counts"], {"train": 1, "val": 1})
+            self.assertNotIn("missing_val_split", report["warnings"])
+            self.assertNotIn("missing_known_z_val_split", report["warnings"])
+
+            train_only_manifest = root / "train_only_manifest.yaml"
+            train_only_manifest.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: traj_p0p1_001.csv",
+                        "    metadata: traj_p0p1_001.metadata.yaml",
+                        "    split: train",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            train_only = analyze_manifest(train_only_manifest, min_rows=1, min_fps=0.0, min_p0_hit=0.0)
+            self.assertIn("missing_val_split", train_only["warnings"])
+            self.assertIn("missing_known_z_val_split", train_only["warnings"])
 
     def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
