@@ -287,6 +287,21 @@ def analyze_candidate_consistency(
     min_pair_count: int = 5,
 ) -> Dict[str, Any]:
     clips = resolve_clips(inputs, metadata)
+    return analyze_candidate_clips(
+        clips,
+        inputs=list(inputs),
+        reference=reference,
+        min_pair_count=min_pair_count,
+    )
+
+
+def analyze_candidate_clips(
+    clips: Sequence[DatasetClip],
+    *,
+    inputs: Sequence[str] | None = None,
+    reference: str = "auto",
+    min_pair_count: int = 5,
+) -> Dict[str, Any]:
     clip_reports: List[Dict[str, Any]] = []
     aggregate_sequences: List[LegacySequence] = []
 
@@ -314,7 +329,7 @@ def analyze_candidate_consistency(
         min_pair_count=min_pair_count,
     )
     return {
-        "inputs": list(inputs),
+        "inputs": list(inputs) if inputs is not None else [str(clip.csv) for clip in clips],
         "reference": reference,
         "min_pair_count": min_pair_count,
         "clip_count": len(clips),
@@ -329,7 +344,7 @@ def _write_json(path: str | Path, report: Dict[str, Any]) -> None:
     output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
+def write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -383,7 +398,7 @@ def _write_method_csv(path: str | Path, report: Dict[str, Any]) -> None:
         writer.writerows(rows)
 
 
-def _write_pairwise_csv(path: str | Path, report: Dict[str, Any]) -> None:
+def write_pairwise_csv(path: str | Path, report: Dict[str, Any]) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -477,9 +492,9 @@ def main() -> int:
     if args.json_out:
         _write_json(args.json_out, report)
     if args.csv_out:
-        _write_method_csv(args.csv_out, report)
+        write_method_csv(args.csv_out, report)
     if args.pairwise_csv_out:
-        _write_pairwise_csv(args.pairwise_csv_out, report)
+        write_pairwise_csv(args.pairwise_csv_out, report)
     return 0
 
 

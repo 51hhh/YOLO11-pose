@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 try:
+    from .analyze_candidate_consistency import (
+        analyze_candidate_clips,
+        write_method_csv as write_candidate_method_csv,
+        write_pairwise_csv as write_candidate_pairwise_csv,
+    )
     from .check_dataset import analyze_dataset
     from .dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
     from .evaluate_fusion import _read as read_eval_rows
@@ -17,6 +22,11 @@ try:
     from .manifest import DatasetClip, is_manifest_path, load_manifest
     from .robust_smoother import SmootherConfig, smooth_sequence, write_output
 except ImportError:  # pragma: no cover - direct script execution
+    from analyze_candidate_consistency import (
+        analyze_candidate_clips,
+        write_method_csv as write_candidate_method_csv,
+        write_pairwise_csv as write_candidate_pairwise_csv,
+    )
     from check_dataset import analyze_dataset
     from dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
     from evaluate_fusion import _read as read_eval_rows
@@ -99,6 +109,8 @@ def run_suite(
     gravity_y: float = 9.81,
     use_online_position: bool = False,
     use_static_known_z: bool = False,
+    include_candidate_consistency: bool = True,
+    candidate_reference: str = "auto",
 ) -> Dict[str, Any]:
     clips = resolve_clips(inputs, metadata)
     root = Path(output_dir)
@@ -111,6 +123,8 @@ def run_suite(
             "gravity_y": gravity_y,
             "use_online_position": use_online_position,
             "use_static_known_z": use_static_known_z,
+            "include_candidate_consistency": include_candidate_consistency,
+            "candidate_reference": candidate_reference,
         },
         "clips": [],
     }
@@ -130,6 +144,28 @@ def run_suite(
 
         raw_eval_json = clip_dir / "raw_eval.json"
         raw_report = _evaluate_csv(clip.csv, metadata_path, raw_eval_json)
+
+        candidate_consistency_json = None
+        candidate_consistency_csv = None
+        candidate_pairwise_csv = None
+        if include_candidate_consistency:
+            candidate_report = analyze_candidate_clips(
+                [
+                    DatasetClip(
+                        csv=clip.csv,
+                        metadata=metadata_path,
+                        split=clip.split,
+                        name=name,
+                    )
+                ],
+                reference=candidate_reference,
+            )
+            candidate_consistency_json = clip_dir / "candidate_consistency.json"
+            candidate_consistency_csv = clip_dir / "candidate_consistency.csv"
+            candidate_pairwise_csv = clip_dir / "candidate_pairwise.csv"
+            _write_json(candidate_consistency_json, candidate_report)
+            write_candidate_method_csv(candidate_consistency_csv, candidate_report)
+            write_candidate_pairwise_csv(candidate_pairwise_csv, candidate_report)
 
         robust_csv = clip_dir / "robust_smooth.csv"
         robust_summary = _run_robust_smoother(
@@ -157,6 +193,14 @@ def run_suite(
             "robust_rows": robust_summary["rows"],
             "robust_track_count": robust_report.get("track_count", 0),
         }
+        if include_candidate_consistency:
+            clip_report.update(
+                {
+                    "candidate_consistency_json": str(candidate_consistency_json),
+                    "candidate_consistency_csv": str(candidate_consistency_csv),
+                    "candidate_pairwise_csv": str(candidate_pairwise_csv),
+                }
+            )
 
         if checkpoint:
             try:
@@ -235,6 +279,8 @@ def main() -> int:
         action="store_false",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument("--candidate-reference", default="auto")
+    parser.add_argument("--skip-candidate-consistency", action="store_true")
     parser.set_defaults(use_static_known_z=False)
     args = parser.parse_args()
 
@@ -247,6 +293,8 @@ def main() -> int:
         gravity_y=args.gravity_y,
         use_online_position=args.use_online_position,
         use_static_known_z=args.use_static_known_z,
+        include_candidate_consistency=not args.skip_candidate_consistency,
+        candidate_reference=args.candidate_reference,
     )
     print(f"wrote suite for {len(report['clips'])} clip(s) to {report['output_dir']}")
     for clip in report["clips"]:

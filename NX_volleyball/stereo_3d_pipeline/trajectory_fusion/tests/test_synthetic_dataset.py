@@ -657,8 +657,15 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue((output_dir / "suite_summary.json").exists())
             self.assertTrue(Path(clip["check_dataset_json"]).exists())
             self.assertTrue(Path(clip["raw_eval_json"]).exists())
+            self.assertTrue(Path(clip["candidate_consistency_json"]).exists())
+            self.assertTrue(Path(clip["candidate_consistency_csv"]).exists())
+            self.assertTrue(Path(clip["candidate_pairwise_csv"]).exists())
             self.assertTrue(Path(clip["robust_smooth_csv"]).exists())
             self.assertTrue(Path(clip["robust_smooth_eval_json"]).exists())
+            candidate_report = json.loads(
+                Path(clip["candidate_consistency_json"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(candidate_report["aggregate"]["reference_counts"], {"known_z": 4})
 
             summary_csv = output_dir / "suite_metrics.csv"
             rows = summarize_suite(output_dir, summary_csv)
