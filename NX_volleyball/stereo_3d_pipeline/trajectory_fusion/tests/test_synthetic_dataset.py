@@ -772,6 +772,32 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertNotIn(".frames.csv", text)
             self.assertNotIn(".p2_diagnostic.csv", text)
 
+    def test_build_dataset_manifest_can_stratify_known_z_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_3m_a", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_3m_b", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_a", 4.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_b", 4.0, rows=4)
+            _write_known_distance_clip(root, "static_5m_single", 5.0, rows=4)
+
+            entries = build_manifest(
+                [root],
+                output_path=root / "dataset_manifest.yaml",
+                val_ratio=0.5,
+                seed=11,
+                stratify_known_z=True,
+            )
+
+            split_by_z: dict[float, set[str]] = {}
+            for entry in entries:
+                self.assertIsNotNone(entry.known_z)
+                split_by_z.setdefault(round(float(entry.known_z), 1), set()).add(entry.split)
+
+            self.assertEqual(split_by_z[3.0], {"train", "val"})
+            self.assertEqual(split_by_z[4.0], {"train", "val"})
+            self.assertEqual(split_by_z[5.0], {"train"})
+
     def test_build_dataset_manifest_can_mark_unlabeled_eval_clips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1470,6 +1496,44 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("sweep:skipped", report["warnings"])
             self.assertIn("calibrated_smoother", report["baseline_suite"]["variants"])
             self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
+
+    def test_dataset_workflow_can_generate_stratified_known_z_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_3m_a", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_3m_b", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_a", 4.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_b", 4.0, rows=4)
+            output_dir = root / "workflow_stratified"
+
+            summary = run_workflow(
+                [root],
+                output_dir,
+                val_ratio=0.5,
+                seed=11,
+                stratify_known_z=True,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+                skip_calibration=True,
+                skip_sweep=True,
+                include_depth_polyfit=False,
+                include_rts_smoother=False,
+                include_candidate_consistency=False,
+            )
+
+            clips = load_manifest(output_dir / "dataset_manifest.yaml")
+            split_by_z: dict[float, set[str]] = {}
+            for clip in clips:
+                known_z = read_metadata(clip.metadata)["known_z"] if clip.metadata else None
+                self.assertIsNotNone(known_z)
+                split_by_z.setdefault(round(float(known_z), 1), set()).add(clip.split)
+
+            self.assertTrue(summary["manifest"]["stratify_known_z"])
+            self.assertTrue(summary["config"]["stratify_known_z"])
+            self.assertEqual(summary["validation"]["known_z_counts"], {"train": 2, "val": 2})
+            self.assertEqual(split_by_z[3.0], {"train", "val"})
+            self.assertEqual(split_by_z[4.0], {"train", "val"})
 
     def test_dataset_workflow_known_distance_report_is_ready_for_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

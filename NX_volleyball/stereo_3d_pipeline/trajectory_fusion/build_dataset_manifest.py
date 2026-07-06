@@ -171,6 +171,47 @@ def _assign_auto_splits(
     return splits
 
 
+def _known_z_bucket(known_z: float) -> str:
+    # Millimeter buckets avoid tiny YAML/float formatting differences splitting one measured distance.
+    return f"{known_z:.3f}"
+
+
+def _assign_stratified_known_z_splits(
+    entries: Sequence[ManifestClipEntry],
+    *,
+    val_ratio: float,
+    test_ratio: float,
+    seed: int,
+    unlabeled_split: str,
+) -> Dict[Path, str]:
+    splits = {entry.csv: unlabeled_split for entry in entries}
+    groups: Dict[str, List[ManifestClipEntry]] = {}
+    for entry in entries:
+        if entry.known_z is None:
+            continue
+        groups.setdefault(_known_z_bucket(entry.known_z), []).append(entry)
+
+    rng = random.Random(seed)
+    for bucket in sorted(groups):
+        shuffled = list(groups[bucket])
+        rng.shuffle(shuffled)
+        val_count, test_count = _assign_split_counts(
+            len(shuffled),
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
+        )
+        val_set = {entry.csv for entry in shuffled[:val_count]}
+        test_set = {entry.csv for entry in shuffled[val_count : val_count + test_count]}
+        for entry in shuffled:
+            if entry.csv in val_set:
+                splits[entry.csv] = "val"
+            elif entry.csv in test_set:
+                splits[entry.csv] = "test"
+            else:
+                splits[entry.csv] = "train"
+    return splits
+
+
 def build_manifest(
     inputs: Sequence[str | Path],
     *,
@@ -183,6 +224,7 @@ def build_manifest(
     seed: int = 0,
     require_metadata: bool = False,
     absolute_paths: bool = False,
+    stratify_known_z: bool = False,
 ) -> List[ManifestClipEntry]:
     """Build manifest entries from one or more dataset locations."""
 
@@ -207,7 +249,8 @@ def build_manifest(
     elif split_mode == "eval":
         split_by_csv = {entry.csv: "eval" for entry in entries}
     elif split_mode == "auto":
-        split_by_csv = _assign_auto_splits(
+        assign_splits = _assign_stratified_known_z_splits if stratify_known_z else _assign_auto_splits
+        split_by_csv = assign_splits(
             entries,
             val_ratio=val_ratio,
             test_ratio=test_ratio,
@@ -311,6 +354,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--require-metadata", action="store_true")
     parser.add_argument("--absolute-paths", action="store_true")
+    parser.add_argument(
+        "--stratify-known-z",
+        action="store_true",
+        help="In auto split mode, split each known_z distance bucket independently.",
+    )
     args = parser.parse_args(argv)
 
     entries = build_manifest(
@@ -324,6 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed=args.seed,
         require_metadata=args.require_metadata,
         absolute_paths=args.absolute_paths,
+        stratify_known_z=args.stratify_known_z,
     )
     write_manifest(args.output, entries)
     print_summary(entries)
