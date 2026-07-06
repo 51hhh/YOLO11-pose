@@ -30,6 +30,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
+from trajectory_fusion.summarize_evaluation_suite import summarize_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 
 
@@ -575,6 +576,14 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(Path(clip["raw_eval_json"]).exists())
             self.assertTrue(Path(clip["robust_smooth_csv"]).exists())
             self.assertTrue(Path(clip["robust_smooth_eval_json"]).exists())
+
+            summary_csv = output_dir / "suite_metrics.csv"
+            rows = summarize_suite(output_dir, summary_csv)
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(summary_csv.exists())
+            self.assertEqual({row["variant"] for row in rows}, {"raw", "robust_smooth"})
+            smooth_row = next(row for row in rows if row["variant"] == "robust_smooth")
+            self.assertIn("known_z_bias", smooth_row)
 
 
 if __name__ == "__main__":

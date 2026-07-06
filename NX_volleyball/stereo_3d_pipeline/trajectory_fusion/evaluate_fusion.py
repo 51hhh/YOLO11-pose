@@ -355,6 +355,14 @@ def _p0_median_report(rows: List[Dict[str, str]], known_z: float) -> Dict[str, f
     return stats
 
 
+def _known_z_error_report(values: List[float], known_z: float) -> Dict[str, float | None]:
+    errors = [value - known_z for value in values] if known_z > 0.0 else []
+    return {
+        "known_z_bias": mean(errors) if errors else None,
+        "known_z_mad": _mad(errors) if errors else None,
+    }
+
+
 def _sync_report(rows: List[Dict[str, str]]) -> Dict[str, Any]:
     report: Dict[str, Any] = {}
     if rows and "stereo_match_source" in rows[0]:
@@ -400,8 +408,10 @@ def build_report(rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> Dict[s
     has_smooth = bool(rows and "smooth_z" in rows[0])
     tracks: Dict[str, Any] = {}
     for track_id, track_rows in grouped.items():
+        raw_metrics = _metrics(track_rows)
+        raw_metrics.update(_known_z_error_report(_series(track_rows, "z"), known_z))
         track_report: Dict[str, Any] = {
-            "raw": _metrics(track_rows),
+            "raw": raw_metrics,
             "candidate_depths": {
                 key: _depth_report(track_rows, key, known_z)
                 for key in CANDIDATE_DEPTH_KEYS
@@ -420,6 +430,7 @@ def build_report(rows: List[Dict[str, str]], metadata: Dict[str, Any]) -> Dict[s
             smooth = _metrics(track_rows, prefix="smooth_")
             raw = track_report["raw"]
             smooth["raw_z_std_ratio"] = smooth["z_std"] / raw["z_std"] if raw["z_std"] > 1e-9 else 0.0
+            smooth.update(_known_z_error_report(_series(track_rows, "smooth_z"), known_z))
             track_report["smooth"] = smooth
         tracks[str(track_id)] = track_report
     return {
