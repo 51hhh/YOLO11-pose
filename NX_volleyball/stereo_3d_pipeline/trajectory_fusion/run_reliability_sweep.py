@@ -190,6 +190,7 @@ def run_sweep(
     device: str = "cpu",
     gravity_y: float = 9.81,
     use_static_known_z: bool = False,
+    rank_split: str = "auto",
 ) -> Dict[str, Any]:
     root = Path(output_dir)
     checkpoints_dir = root / "checkpoints"
@@ -205,6 +206,7 @@ def run_sweep(
         "device": device,
         "gravity_y": gravity_y,
         "use_static_known_z": use_static_known_z,
+        "rank_split": rank_split,
         "runs": [],
     }
     combined_rows: List[Dict[str, Any]] = []
@@ -259,7 +261,7 @@ def run_sweep(
         _write_sweep_summary(root / "sweep_summary.json", summary)
         metrics_path = root / "sweep_metrics.csv"
         _write_combined_metrics(metrics_path, combined_rows)
-        ranking = rank_metrics(metrics_path)
+        ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)
 
     return summary
@@ -274,6 +276,7 @@ def main() -> int:
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
+    parser.add_argument("--rank-split", default="auto", help="Ranking split. 'auto' prefers val when present.")
     parser.add_argument(
         "--use-static-known-z",
         action="store_true",
@@ -290,6 +293,7 @@ def main() -> int:
         device=args.device,
         gravity_y=args.gravity_y,
         use_static_known_z=args.use_static_known_z,
+        rank_split=args.rank_split,
     )
     print(f"wrote sweep for {len(summary['runs'])} config(s) to {summary['output_dir']}")
     return 0

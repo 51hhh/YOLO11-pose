@@ -53,8 +53,18 @@ def rank_metrics(
     metrics_csv: str | Path,
     *,
     variant: str = "reliability_smoother",
+    split: str | None = "auto",
 ) -> List[Dict[str, Any]]:
     rows = [row for row in _read_rows(metrics_csv) if row.get("variant") == variant]
+    selected_split = None
+    if split == "auto":
+        splits = {row.get("split", "") for row in rows}
+        selected_split = "val" if "val" in splits else None
+    elif split and split != "all":
+        selected_split = split
+    if selected_split is not None:
+        rows = [row for row in rows if row.get("split", "") == selected_split]
+
     grouped: Dict[str, List[Dict[str, str]]] = defaultdict(list)
     for row in rows:
         grouped[row.get("config", "")].append(row)
@@ -72,6 +82,7 @@ def rank_metrics(
         ranked_row: Dict[str, Any] = {
             "config": config,
             "variant": variant,
+            "split": selected_split or "all",
             "clip_count": len(items),
             "known_clip_count": len(bias_values),
             "mean_z_std": _mean(z_std_values),
@@ -97,6 +108,7 @@ def write_ranking(path: str | Path, rows: List[Dict[str, Any]]) -> None:
         "rank",
         "config",
         "variant",
+        "split",
         "score",
         "clip_count",
         "known_clip_count",
@@ -122,12 +134,13 @@ def _fmt(value: Any) -> str:
 
 
 def print_ranking(rows: List[Dict[str, Any]], limit: int = 10) -> None:
-    print("rank,config,score,known_bias,known_mad,z_std,p2p")
+    print("rank,config,split,score,known_bias,known_mad,z_std,p2p")
     for row in rows[:limit]:
         print(
-            "{rank},{config},{score},{bias},{mad},{std},{p2p}".format(
+            "{rank},{config},{split},{score},{bias},{mad},{std},{p2p}".format(
                 rank=row["rank"],
                 config=row["config"],
+                split=row["split"],
                 score=_fmt(row["score"]),
                 bias=_fmt(row["mean_abs_known_z_bias"]),
                 mad=_fmt(row["mean_known_z_mad"]),
@@ -142,10 +155,11 @@ def main() -> int:
     parser.add_argument("metrics_csv", help="sweep_metrics.csv")
     parser.add_argument("-o", "--output")
     parser.add_argument("--variant", default="reliability_smoother")
+    parser.add_argument("--split", default="auto", help="Use a split for ranking. 'auto' prefers val when present.")
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
 
-    rows = rank_metrics(args.metrics_csv, variant=args.variant)
+    rows = rank_metrics(args.metrics_csv, variant=args.variant, split=args.split)
     output = args.output or str(Path(args.metrics_csv).with_name("sweep_ranking.csv"))
     write_ranking(output, rows)
     print_ranking(rows, limit=args.limit)

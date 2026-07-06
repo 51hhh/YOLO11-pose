@@ -584,6 +584,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertTrue(summary_csv.exists())
             self.assertEqual({row["variant"] for row in rows}, {"raw", "robust_smooth"})
+            self.assertEqual({row["split"] for row in rows}, {"eval"})
             smooth_row = next(row for row in rows if row["variant"] == "robust_smooth")
             self.assertIn("known_z_bias", smooth_row)
 
@@ -629,6 +630,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             with path.open("w", newline="", encoding="utf-8") as handle:
                 fieldnames = [
                     "config",
+                    "split",
                     "variant",
                     "z_std",
                     "z_peak_to_peak",
@@ -640,6 +642,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                 writer.writerow(
                     {
                         "config": "smooth_but_wrong",
+                        "split": "val",
                         "variant": "reliability_smoother",
                         "z_std": "0.001",
                         "z_peak_to_peak": "0.004",
@@ -650,6 +653,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                 writer.writerow(
                     {
                         "config": "accurate",
+                        "split": "val",
                         "variant": "reliability_smoother",
                         "z_std": "0.004",
                         "z_peak_to_peak": "0.02",
@@ -658,8 +662,21 @@ class SyntheticDatasetTest(unittest.TestCase):
                     }
                 )
 
+                writer.writerow(
+                    {
+                        "config": "smooth_but_wrong",
+                        "split": "train",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.001",
+                        "known_z_mad": "0.001",
+                    }
+                )
+
             ranked = rank_metrics(path)
             self.assertEqual(ranked[0]["config"], "accurate")
+            self.assertEqual(ranked[0]["split"], "val")
             self.assertEqual(ranked[0]["rank"], 1)
 
 

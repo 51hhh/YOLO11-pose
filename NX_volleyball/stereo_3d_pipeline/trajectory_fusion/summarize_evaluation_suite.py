@@ -66,6 +66,7 @@ def iter_summary_rows(suite_summary: Dict[str, Any]) -> Iterable[Dict[str, Any]]
                 p0 = track.get("p0_median", {})
                 yield {
                     "clip": clip.get("name", ""),
+                    "split": clip.get("split", ""),
                     "variant": variant,
                     "track_id": track_id,
                     "known_z": "" if known_z is None else known_z,
@@ -112,11 +113,12 @@ def _fmt(value: Any, digits: int = 4) -> str:
 
 
 def print_table(rows: List[Dict[str, Any]]) -> None:
-    print("clip,variant,track,z_mean,z_std,p2p,ratio,known_z_bias")
+    print("clip,split,variant,track,z_mean,z_std,p2p,ratio,known_z_bias")
     for row in rows:
         print(
-            "{clip},{variant},{track},{mean},{std},{p2p},{ratio},{bias}".format(
+            "{clip},{split},{variant},{track},{mean},{std},{p2p},{ratio},{bias}".format(
                 clip=row["clip"],
+                split=row["split"],
                 variant=row["variant"],
                 track=row["track_id"],
                 mean=_fmt(row["z_mean"]),
