@@ -12,7 +12,13 @@ from statistics import mean
 from typing import Any, Dict, Iterable, List
 
 
-BASELINE_VARIANTS = {"raw", "robust_smooth", "robust_rts_smooth", "calibrated_smoother"}
+BASELINE_VARIANTS = {
+    "raw",
+    "robust_smooth",
+    "robust_rts_smooth",
+    "calibrated_smoother",
+    "calibrated_rts_smoother",
+}
 
 
 def _safe_float(value: object) -> float | None:

@@ -17,6 +17,7 @@ try:
         ZMeasurement,
         group_correlated_z_measurements,
         smooth_sequence,
+        smooth_sequence_rts,
         write_output,
     )
 except ImportError:  # pragma: no cover - direct script execution
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - direct script execution
         ZMeasurement,
         group_correlated_z_measurements,
         smooth_sequence,
+        smooth_sequence_rts,
         write_output,
     )
 
@@ -101,6 +103,7 @@ def apply_calibrated_smoother(
     smoother_cfg: SmootherConfig | None = None,
     min_sigma: float = 0.015,
     relative_floor: float = 0.01,
+    rts: bool = False,
 ) -> Dict[str, Any]:
     calibration = load_calibration(calibration_path)
     sequences = load_legacy_sequences(input_csv, metadata_path=metadata_path)
@@ -112,6 +115,7 @@ def apply_calibrated_smoother(
         "calibrated_methods": sorted(calibration.get("methods", {}).keys()),
         "sequences": [],
     }
+    smoother = smooth_sequence_rts if rts else smooth_sequence
 
     for sequence in sequences:
         diagnostics: List[Dict[str, float | str]] = []
@@ -129,7 +133,7 @@ def apply_calibrated_smoother(
                 method_counts[method] = method_counts.get(method, 0.0) + count
             return observations
 
-        rows, metrics = smooth_sequence(sequence, smoother_cfg, z_measurement_provider=provider)
+        rows, metrics = smoother(sequence, smoother_cfg, z_measurement_provider=provider)
         for index, row in enumerate(rows):
             if index < len(diagnostics):
                 row.update(diagnostics[index])
@@ -144,6 +148,7 @@ def apply_calibrated_smoother(
     write_output(output_csv, all_rows)
     report["rows"] = len(all_rows)
     report["output_csv"] = str(output_csv)
+    report["rts"] = rts
     return report
 
 
@@ -163,6 +168,7 @@ def main() -> int:
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--min-sigma", type=float, default=0.015)
     parser.add_argument("--relative-floor", type=float, default=0.01)
+    parser.add_argument("--rts", action="store_true", help="Run offline RTS backward smoothing after calibrated observations")
     parser.add_argument(
         "--use-static-known-z",
         dest="use_static_known_z",
@@ -183,6 +189,7 @@ def main() -> int:
         ),
         min_sigma=args.min_sigma,
         relative_floor=args.relative_floor,
+        rts=args.rts,
     )
     if args.json_out:
         _write_json(args.json_out, report)

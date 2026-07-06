@@ -35,6 +35,7 @@ try:
         ZMeasurement,
         group_correlated_z_measurements,
         smooth_sequence,
+        smooth_sequence_rts,
         write_output,
     )
 except ImportError:  # pragma: no cover - direct script execution
@@ -52,6 +53,7 @@ except ImportError:  # pragma: no cover - direct script execution
         ZMeasurement,
         group_correlated_z_measurements,
         smooth_sequence,
+        smooth_sequence_rts,
         write_output,
     )
 
@@ -213,6 +215,7 @@ def apply_reliability_smoother(
     device: str = "cpu",
     smoother_cfg: SmootherConfig | None = None,
     learned_cfg: LearnedObservationConfig | None = None,
+    rts: bool = False,
 ) -> Dict[str, Any]:
     model, checkpoint = _load_model(checkpoint_path, device)
     feature_names = checkpoint.get("feature_names") or legacy_feature_names()
@@ -229,6 +232,7 @@ def apply_reliability_smoother(
     learned_cfg = learned_cfg or LearnedObservationConfig()
     all_rows: List[Dict[str, float]] = []
     report: Dict[str, Any] = {"sequences": []}
+    smoother = smooth_sequence_rts if rts else smooth_sequence
 
     with torch.no_grad():  # type: ignore[union-attr]
         for sequence in sequences:
@@ -247,7 +251,7 @@ def apply_reliability_smoother(
             def provider(index: int, _row: Dict[str, float]) -> List[ZMeasurement]:
                 return observations[index]
 
-            rows, metrics = smooth_sequence(sequence, smoother_cfg, z_measurement_provider=provider)
+            rows, metrics = smoother(sequence, smoother_cfg, z_measurement_provider=provider)
             for index, row in enumerate(rows):
                 row.update(diagnostics[index])
             all_rows.extend(rows)
@@ -266,6 +270,7 @@ def apply_reliability_smoother(
     report["input_csv"] = str(input_csv)
     report["checkpoint"] = str(checkpoint_path)
     report["rows"] = len(all_rows)
+    report["rts"] = rts
     report["learned_observation_config"] = learned_cfg.__dict__
     report["smoother_config"] = smoother_cfg.__dict__
     return report
@@ -281,6 +286,7 @@ def main() -> int:
     parser.add_argument("--json-out")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--use-online-position", action="store_true")
+    parser.add_argument("--rts", action="store_true", help="Run offline RTS backward smoothing after learned observations")
     parser.add_argument(
         "--use-static-known-z",
         dest="use_static_known_z",
@@ -324,6 +330,7 @@ def main() -> int:
         device=args.device,
         smoother_cfg=smoother_cfg,
         learned_cfg=learned_cfg,
+        rts=args.rts,
     )
     if args.json_out:
         output = Path(args.json_out)

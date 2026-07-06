@@ -257,6 +257,31 @@ def run_suite(
                     "calibrated_smoother_eval_json": str(calibrated_eval_json),
                 }
             )
+            if include_rts_smoother:
+                calibrated_rts_csv = clip_dir / "calibrated_rts_smoother.csv"
+                calibrated_rts_json = clip_dir / "calibrated_rts_smoother_apply.json"
+                calibrated_rts_report = apply_calibrated_smoother(
+                    input_csv=clip.csv,
+                    calibration_path=calibration,
+                    output_csv=calibrated_rts_csv,
+                    metadata_path=metadata_path,
+                    smoother_cfg=SmootherConfig(
+                        gravity_y=gravity_y,
+                        use_online_position=use_online_position,
+                        use_static_known_z=use_static_known_z,
+                    ),
+                    rts=True,
+                )
+                _write_json(calibrated_rts_json, calibrated_rts_report)
+                calibrated_rts_eval_json = clip_dir / "calibrated_rts_smoother_eval.json"
+                _evaluate_csv(calibrated_rts_csv, metadata_path, calibrated_rts_eval_json)
+                clip_report.update(
+                    {
+                        "calibrated_rts_smoother_csv": str(calibrated_rts_csv),
+                        "calibrated_rts_smoother_apply_json": str(calibrated_rts_json),
+                        "calibrated_rts_smoother_eval_json": str(calibrated_rts_eval_json),
+                    }
+                )
 
         if checkpoint:
             try:
@@ -307,6 +332,33 @@ def run_suite(
                     "reliability_smoother_eval_json": str(smoother_eval_json),
                 }
             )
+            if include_rts_smoother:
+                smoother_rts_csv = clip_dir / "reliability_rts_smoother.csv"
+                smoother_rts_json = clip_dir / "reliability_rts_smoother_apply.json"
+                smoother_rts_report = apply_reliability_smoother(
+                    input_csv=clip.csv,
+                    checkpoint_path=checkpoint,
+                    output_csv=smoother_rts_csv,
+                    metadata_path=metadata_path,
+                    device=device,
+                    smoother_cfg=SmootherConfig(
+                        gravity_y=gravity_y,
+                        use_online_position=use_online_position,
+                        use_static_known_z=use_static_known_z,
+                    ),
+                    rts=True,
+                )
+                _write_json(smoother_rts_json, smoother_rts_report)
+                smoother_rts_eval_json = clip_dir / "reliability_rts_smoother_eval.json"
+                _evaluate_csv(smoother_rts_csv, metadata_path, smoother_rts_eval_json)
+
+                clip_report.update(
+                    {
+                        "reliability_rts_smoother_csv": str(smoother_rts_csv),
+                        "reliability_rts_smoother_apply_json": str(smoother_rts_json),
+                        "reliability_rts_smoother_eval_json": str(smoother_rts_eval_json),
+                    }
+                )
 
         suite_report["clips"].append(clip_report)
 

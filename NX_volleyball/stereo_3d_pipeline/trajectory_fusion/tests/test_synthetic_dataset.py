@@ -701,8 +701,10 @@ class SyntheticDatasetTest(unittest.TestCase):
                 gravity_y=0.0,
             )
             self.assertIn("calibrated_smoother_eval_json", suite_report["clips"][0])
+            self.assertIn("calibrated_rts_smoother_eval_json", suite_report["clips"][0])
             rows = summarize_suite(suite_dir, suite_dir / "suite_metrics.csv")
             self.assertIn("calibrated_smoother", {row["variant"] for row in rows})
+            self.assertIn("calibrated_rts_smoother", {row["variant"] for row in rows})
 
     def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -927,6 +929,21 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "suite_dir": f"{config}_suite",
                         }
                     )
+                    writer.writerow(
+                        {
+                            "config": config,
+                            "split": "val",
+                            "variant": "calibrated_rts_smoother",
+                            "clip": "static_3m",
+                            "track_id": "0",
+                            "z_std": "0.002",
+                            "z_peak_to_peak": "0.006",
+                            "known_z_bias": "0.004",
+                            "known_z_mad": "0.001",
+                            "checkpoint": f"{config}.pt",
+                            "suite_dir": f"{config}_suite",
+                        }
+                    )
                 writer.writerow(
                     {
                         "config": "net_a",
@@ -946,8 +963,10 @@ class SyntheticDatasetTest(unittest.TestCase):
             ranked = rank_metrics(path, variant="all", split="val")
             variants = {(row["config"], row["variant"]): row for row in ranked}
             self.assertIn(("baseline", "calibrated_smoother"), variants)
+            self.assertIn(("baseline", "calibrated_rts_smoother"), variants)
             self.assertIn(("net_a", "reliability_smoother"), variants)
             self.assertEqual(variants[("baseline", "calibrated_smoother")]["clip_count"], 1)
+            self.assertEqual(variants[("baseline", "calibrated_rts_smoother")]["clip_count"], 1)
 
 
 if __name__ == "__main__":
