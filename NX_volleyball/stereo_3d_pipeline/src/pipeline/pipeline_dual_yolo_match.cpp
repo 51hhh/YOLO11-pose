@@ -1931,7 +1931,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             if (p2_parallel_enabled) {
                 cuda_template_submitted = submitP2InlineFeatureTask(
                     p2_inline_ncc_worker_,
-                    [&, algo_stream] {
+                    [&, algo_stream, feature_pair_y_delta] {
                         cuda_template_outcome =
                             run_cuda_template_candidate(
                                 left_det, *right_det,
@@ -3275,16 +3275,19 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                 bool neural_superpoint_submitted = false;
                 bool neural_aliked_submitted = false;
                 const auto p2_early_start = Clock::now();
+                const float early_epipolar_y_delta =
+                    early_pair.epipolar_y_delta;
 
                 if (p2_early_feature.cuda_template_due) {
                     cuda_template_submitted = submitP2InlineFeatureTask(
                         p2_inline_ncc_worker_,
-                        [&, early_left, early_right, early_initial_disp] {
+                        [&, early_left, early_right, early_initial_disp,
+                         early_epipolar_y_delta] {
                             p2_early_feature.cuda_template =
                                 run_cuda_template_candidate(
                                     early_left, early_right,
                                     early_initial_disp,
-                                    early_pair.epipolar_y_delta,
+                                    early_epipolar_y_delta,
                                     streams_.cudaStreamP2Ncc,
                                     p2_input_ready_event,
                                     "NCC");
