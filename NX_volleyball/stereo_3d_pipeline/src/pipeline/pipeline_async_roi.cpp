@@ -87,6 +87,13 @@ bool diagnosticNeuralSuperPointDue(const PipelineConfig& config,
             config.p2_diagnostic_stride));
 }
 
+bool diagnosticNeuralAlikedDue(const PipelineConfig& config, int frame_id) {
+    return diagnosticStrideHitLocal(
+        frame_id,
+        effectiveDiagnosticStride(config.p2_diagnostic_stride_neural_aliked,
+                                  config.p2_diagnostic_stride));
+}
+
 bool asyncRoiSubpixelDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     if (!cfg.depth_roi_subpixel || !cfg.subpixel_enabled) return false;
     std::string solver = cfg.depth_solver;
@@ -650,7 +657,9 @@ bool Pipeline::initAsyncRoiStage2() {
         (neural_xfeat_matcher_ &&
          neural_xfeat_matcher_->requiresBgrInput()) ||
         (neural_superpoint_matcher_ &&
-         neural_superpoint_matcher_->requiresBgrInput());
+         neural_superpoint_matcher_->requiresBgrInput()) ||
+        (neural_aliked_matcher_ &&
+         neural_aliked_matcher_->requiresBgrInput());
     const bool allocate_host_gray =
         asyncRoiNeedsHostImages(config_.dual_yolo);
     const bool allocate_bgr =
@@ -2060,6 +2069,11 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                                 config_, task.job.frame_id)) {
                             return false;
                         }
+                        if (std::string(mode) == "neural_aliked" &&
+                            !diagnosticNeuralAlikedDue(
+                                config_, task.job.frame_id)) {
+                            return false;
+                        }
                         ran = true;
 
                         P2FeatureDiagnosticResultRow row;
@@ -2214,6 +2228,13 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                         "Stage2_P2FeatureJobDiagnosticNeuralSuperPoint",
                         "Stage2_P2FeatureJobDiagnosticNeuralSuperPointValid",
                         "Stage2_P2FeatureJobDiagnosticNeuralSuperPointInvalid");
+                    run_one_neural(
+                        config_.neural_aliked,
+                        neural_aliked_matcher_.get(),
+                        "neural_aliked",
+                        "Stage2_P2FeatureJobDiagnosticNeuralAliked",
+                        "Stage2_P2FeatureJobDiagnosticNeuralAlikedValid",
+                        "Stage2_P2FeatureJobDiagnosticNeuralAlikedInvalid");
                     return ran;
                 };
 
@@ -2857,7 +2878,9 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
         (neural_xfeat_matcher_ &&
          neural_xfeat_matcher_->requiresBgrInput()) ||
         (neural_superpoint_matcher_ &&
-         neural_superpoint_matcher_->requiresBgrInput());
+         neural_superpoint_matcher_->requiresBgrInput()) ||
+        (neural_aliked_matcher_ &&
+         neural_aliked_matcher_->requiresBgrInput());
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
     const bool requested_bgr =

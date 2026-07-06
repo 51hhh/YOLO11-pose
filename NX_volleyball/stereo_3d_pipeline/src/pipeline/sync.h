@@ -39,6 +39,7 @@ struct PipelineStreams {
     cudaStream_t cudaStreamP2Ncc = nullptr;  ///< P2 inline NCC/Template Stream
     cudaStream_t cudaStreamP2XFeat = nullptr; ///< P2 inline XFeat Stream
     cudaStream_t cudaStreamP2SuperPoint = nullptr; ///< P2 inline SuperPoint Stream
+    cudaStream_t cudaStreamP2Aliked = nullptr; ///< P2 inline ALIKED Stream
 
     /**
      * @brief 初始化所有 Streams
@@ -124,6 +125,16 @@ struct PipelineStreams {
             return false;
         }
 
+        err = cudaStreamCreateWithFlags(&cudaStreamP2Aliked,
+                                        cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr,
+                    "[Sync] Failed to create P2 ALIKED stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
         return true;
     }
 
@@ -143,6 +154,7 @@ struct PipelineStreams {
         if (cudaStreamP2SuperPoint) {
             cudaStreamSynchronize(cudaStreamP2SuperPoint);
         }
+        if (cudaStreamP2Aliked) cudaStreamSynchronize(cudaStreamP2Aliked);
     }
 
     /**
@@ -167,6 +179,10 @@ struct PipelineStreams {
         if (cudaStreamP2SuperPoint) {
             cudaStreamDestroy(cudaStreamP2SuperPoint);
             cudaStreamP2SuperPoint = nullptr;
+        }
+        if (cudaStreamP2Aliked) {
+            cudaStreamDestroy(cudaStreamP2Aliked);
+            cudaStreamP2Aliked = nullptr;
         }
     }
 };

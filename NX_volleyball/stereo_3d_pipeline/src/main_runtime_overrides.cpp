@@ -58,6 +58,7 @@ void applyBaselineClipOverrides(
     pipeline_cfg.neural_features.enabled = false;
     pipeline_cfg.neural_xfeat.enabled = false;
     pipeline_cfg.neural_superpoint.enabled = false;
+    pipeline_cfg.neural_aliked.enabled = false;
     pipeline_cfg.dual_yolo.use_for_depth = false;
     pipeline_cfg.dual_yolo.fallback_to_roi_match = false;
     pipeline_cfg.dual_yolo.log_matches = false;

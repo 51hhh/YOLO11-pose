@@ -151,8 +151,21 @@ public:
         const std::vector<DualYoloGpuDetectionPair>& pairs,
         cudaStream_t stream);
 
+    bool submitPairs(
+        const uint8_t* left_gpu, int left_pitch,
+        const uint8_t* right_gpu, int right_pitch,
+        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
+        int img_width, int img_height,
+        const std::vector<DualYoloGpuDetectionPair>& pairs,
+        cudaStream_t stream);
+
+    std::vector<DualYoloGpuCandidate> collectPairs();
+    bool hasPendingPairs() const { return pending_active_; }
+
 private:
     void freeBuffers();
+    bool ensureEvents();
 
     float focal_ = 0.0f;
     float baseline_ = 0.0f;
@@ -166,6 +179,14 @@ private:
     DualYoloGpuDetectionPair* pairs_device_ = nullptr;
     DualYoloGpuCandidate* results_host_ = nullptr;
     DualYoloGpuCandidate* results_device_ = nullptr;
+    cudaEvent_t evt_start_ = nullptr;
+    cudaEvent_t evt_h2d_ = nullptr;
+    cudaEvent_t evt_kernel_ = nullptr;
+    cudaEvent_t evt_d2h_ = nullptr;
+    cudaStream_t pending_stream_ = nullptr;
+    int pending_count_ = 0;
+    bool pending_active_ = false;
+    bool pending_events_recorded_ = false;
 };
 
 }  // namespace stereo3d

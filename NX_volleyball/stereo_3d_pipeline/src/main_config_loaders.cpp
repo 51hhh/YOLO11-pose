@@ -142,6 +142,8 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
             nc.top_k = nf["top_k"].as<int>();
         if (nf["descriptor_dim"])
             nc.descriptor_dim = nf["descriptor_dim"].as<int>();
+        if (nf["realtime_stride"])
+            nc.realtime_stride = std::max(1, nf["realtime_stride"].as<int>());
         if (nf["min_matches"])
             nc.min_matches = nf["min_matches"].as<int>();
         if (nf["max_y_error_px"])
@@ -164,6 +166,9 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (nf["min_spatial_spread_ratio"])
             nc.min_spatial_spread_ratio =
                 nf["min_spatial_spread_ratio"].as<float>();
+        if (nf["final_geometry_gate_enabled"])
+            nc.final_geometry_gate_enabled =
+                nf["final_geometry_gate_enabled"].as<bool>();
     };
 
     // Legacy single-backend block (kept for backward compatibility).
@@ -171,7 +176,8 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         parse_neural(nf, cfg.neural_features);
     }
     // Split per-backend blocks: each drives its own matcher instance so
-    // z_roi_neural_xfeat and z_roi_neural_superpoint fill independently.
+    // z_roi_neural_xfeat, z_roi_neural_superpoint and z_roi_neural_aliked
+    // fill independently.
     if (auto nf = root["neural_feature_matching_xfeat"]) {
         cfg.neural_xfeat.backend_name = "xfeat";
         cfg.neural_xfeat.backend = stereo3d::NeuralFeatureBackend::XFEAT;
@@ -182,6 +188,11 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         cfg.neural_superpoint.backend =
             stereo3d::NeuralFeatureBackend::SUPERPOINT_LIGHTGLUE;
         parse_neural(nf, cfg.neural_superpoint);
+    }
+    if (auto nf = root["neural_feature_matching_aliked"]) {
+        cfg.neural_aliked.backend_name = "aliked";
+        cfg.neural_aliked.backend = stereo3d::NeuralFeatureBackend::ALIKED;
+        parse_neural(nf, cfg.neural_aliked);
     }
 
     // Fusion
@@ -265,6 +276,9 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (perf["p2_diagnostic_stride_neural_superpoint"])
             cfg.p2_diagnostic_stride_neural_superpoint =
                 perf["p2_diagnostic_stride_neural_superpoint"].as<int>();
+        if (perf["p2_diagnostic_stride_neural_aliked"])
+            cfg.p2_diagnostic_stride_neural_aliked =
+                perf["p2_diagnostic_stride_neural_aliked"].as<int>();
         if (perf["p2_diagnostic_max_in_flight"])
             cfg.p2_diagnostic_max_in_flight =
                 perf["p2_diagnostic_max_in_flight"].as<int>();

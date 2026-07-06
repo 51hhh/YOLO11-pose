@@ -75,7 +75,8 @@ TrajectoryFrameSummaryStats summarizeTrajectoryFrame(
             stats.neural_support_max,
             std::max(r.roi_neural_feature_support,
                      std::max(r.roi_neural_xfeat_support,
-                              r.roi_neural_superpoint_support)));
+                              std::max(r.roi_neural_superpoint_support,
+                                       r.roi_neural_aliked_support))));
 
         auto count_candidate = [&](float z, int support, float confidence,
                                    int* group_valid) {
@@ -150,6 +151,10 @@ TrajectoryFrameSummaryStats summarizeTrajectoryFrame(
         count_candidate(r.z_roi_neural_superpoint,
                         r.roi_neural_superpoint_support,
                         r.roi_neural_superpoint_confidence,
+                        &stats.p2_neural_valid_count);
+        count_candidate(r.z_roi_neural_aliked,
+                        r.roi_neural_aliked_support,
+                        r.roi_neural_aliked_confidence,
                         &stats.p2_neural_valid_count);
         count_candidate(r.z_fallback_feature_points,
                         r.fallback_feature_points_support,

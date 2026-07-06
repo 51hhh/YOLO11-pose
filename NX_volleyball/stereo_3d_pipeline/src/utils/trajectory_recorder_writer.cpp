@@ -108,11 +108,15 @@ void TrajectoryRecorder::writeHeader() {
     file_ << "landing_x,landing_y,landing_t";
     if (cfg_.recordDepthCandidates()) {
         file_ << ",z_roi_neural_xfeat,z_roi_neural_superpoint,"
+              << "z_roi_neural_aliked,"
               << "disparity_roi_neural_xfeat,disparity_roi_neural_superpoint,"
+              << "disparity_roi_neural_aliked,"
               << "roi_neural_xfeat_support,roi_neural_xfeat_std_px,"
               << "roi_neural_xfeat_confidence,"
               << "roi_neural_superpoint_support,roi_neural_superpoint_std_px,"
-              << "roi_neural_superpoint_confidence";
+              << "roi_neural_superpoint_confidence,"
+              << "roi_neural_aliked_support,roi_neural_aliked_std_px,"
+              << "roi_neural_aliked_confidence";
     }
     file_ << "\n";
     header_written_ = true;
@@ -334,14 +338,19 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
         if (cfg_.recordDepthCandidates()) {
             file_ << "," << r.z_roi_neural_xfeat
                   << "," << r.z_roi_neural_superpoint
+                  << "," << r.z_roi_neural_aliked
                   << "," << r.disparity_roi_neural_xfeat
                   << "," << r.disparity_roi_neural_superpoint
+                  << "," << r.disparity_roi_neural_aliked
                   << "," << r.roi_neural_xfeat_support
                   << "," << r.roi_neural_xfeat_std_px
                   << "," << r.roi_neural_xfeat_confidence
                   << "," << r.roi_neural_superpoint_support
                   << "," << r.roi_neural_superpoint_std_px
-                  << "," << r.roi_neural_superpoint_confidence;
+                  << "," << r.roi_neural_superpoint_confidence
+                  << "," << r.roi_neural_aliked_support
+                  << "," << r.roi_neural_aliked_std_px
+                  << "," << r.roi_neural_aliked_confidence;
         }
         file_ << "\n";
     }

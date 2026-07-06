@@ -28,6 +28,7 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
     obj.z_roi_neural_feature = roi.z_roi_neural_feature;
     obj.z_roi_neural_xfeat = roi.z_roi_neural_xfeat;
     obj.z_roi_neural_superpoint = roi.z_roi_neural_superpoint;
+    obj.z_roi_neural_aliked = roi.z_roi_neural_aliked;
     obj.z_roi_center_patch = roi.z_roi_center_patch;
     obj.z_roi_multi_point = roi.z_roi_multi_point;
     obj.z_yolo_bbox_pair = roi.z_yolo_bbox_pair;
@@ -69,6 +70,8 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
         roi.disparity_roi_neural_xfeat;
     obj.disparity_roi_neural_superpoint =
         roi.disparity_roi_neural_superpoint;
+    obj.disparity_roi_neural_aliked =
+        roi.disparity_roi_neural_aliked;
     obj.disparity_roi_center_patch = roi.disparity_roi_center_patch;
     obj.disparity_roi_multi_point = roi.disparity_roi_multi_point;
     obj.disparity_fallback_epipolar = roi.disparity_fallback_epipolar;
@@ -180,6 +183,12 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
         roi.roi_neural_superpoint_std_px;
     obj.roi_neural_superpoint_confidence =
         roi.roi_neural_superpoint_confidence;
+    obj.roi_neural_aliked_support =
+        roi.roi_neural_aliked_support;
+    obj.roi_neural_aliked_std_px =
+        roi.roi_neural_aliked_std_px;
+    obj.roi_neural_aliked_confidence =
+        roi.roi_neural_aliked_confidence;
     obj.fallback_feature_points_support = roi.fallback_feature_points_support;
     obj.fallback_feature_points_std_px = roi.fallback_feature_points_std_px;
     obj.fallback_feature_points_confidence = roi.fallback_feature_points_confidence;

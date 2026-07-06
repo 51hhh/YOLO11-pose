@@ -450,6 +450,7 @@ private:
     std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching (legacy single-backend)
     std::unique_ptr<NeuralFeatureMatcher> neural_xfeat_matcher_; ///< XFeat 独立实例, 写 z_roi_neural_xfeat
     std::unique_ptr<NeuralFeatureMatcher> neural_superpoint_matcher_; ///< SuperPoint 独立实例, 写 z_roi_neural_superpoint
+    std::unique_ptr<NeuralFeatureMatcher> neural_aliked_matcher_; ///< ALIKED 独立实例, 写 z_roi_neural_aliked
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
 
@@ -495,6 +496,7 @@ private:
     P2InlineFeatureWorker p2_inline_ncc_worker_;
     P2InlineFeatureWorker p2_inline_xfeat_worker_;
     P2InlineFeatureWorker p2_inline_superpoint_worker_;
+    P2InlineFeatureWorker p2_inline_aliked_worker_;
 
     // ===== SOT Tracker =====
     std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器

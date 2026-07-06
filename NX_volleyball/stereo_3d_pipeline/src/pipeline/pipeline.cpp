@@ -383,8 +383,8 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
-    // Split neural matchers: XFeat and SuperPoint can run in the same frame,
-    // each writing its own z_roi_neural_{xfeat,superpoint} candidate fields.
+    // Split neural matchers: XFeat, SuperPoint and ALIKED can run in the same
+    // frame, each writing its own z_roi_neural_* candidate fields.
     // Each matcher owns an independent TensorRT execution context and GPU
     // workspace; the inline P2 path dispatches them on independent streams.
     {
@@ -430,6 +430,11 @@ bool Pipeline::init(const PipelineConfig& config) {
         if (!init_split_neural(config_.neural_superpoint,
                                neural_superpoint_matcher_,
                                "neural_feature_matching_superpoint")) {
+            return false;
+        }
+        if (!init_split_neural(config_.neural_aliked,
+                               neural_aliked_matcher_,
+                               "neural_feature_matching_aliked")) {
             return false;
         }
     }
@@ -512,6 +517,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.neural_features.enabled ||
             config_.neural_xfeat.enabled ||
             config_.neural_superpoint.enabled ||
+            config_.neural_aliked.enabled ||
             (config_.dual_yolo.depth_roi_center_patch &&
              config_.dual_yolo.center_refine) ||
             (config_.dual_yolo.depth_roi_subpixel &&
@@ -738,6 +744,7 @@ bool Pipeline::init(const PipelineConfig& config) {
          config_.neural_features.enabled ||
          config_.neural_xfeat.enabled ||
          config_.neural_superpoint.enabled ||
+         config_.neural_aliked.enabled ||
          (config_.dual_yolo.depth_roi_subpixel &&
           config_.dual_yolo.subpixel_enabled) ||
          (config_.dual_yolo.depth_epipolar_fallback &&

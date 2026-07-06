@@ -115,7 +115,8 @@ uint32_t p2FeatureDepthModeMask(const PipelineConfig& cfg) {
     uint32_t mask = dualYoloP2DepthModeMask(cfg.dual_yolo);
     if (cfg.neural_features.enabled ||
         cfg.neural_xfeat.enabled ||
-        cfg.neural_superpoint.enabled) {
+        cfg.neural_superpoint.enabled ||
+        cfg.neural_aliked.enabled) {
         mask |= P2_DEPTH_MODE_NEURAL_FEATURE;
     }
     return mask;

@@ -30,7 +30,8 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
         (dualYoloAnyDepthModeEnabled(config_.dual_yolo) ||
          config_.neural_features.enabled ||
          config_.neural_xfeat.enabled ||
-         config_.neural_superpoint.enabled);
+         config_.neural_superpoint.enabled ||
+         config_.neural_aliked.enabled);
     const bool can_try_right_only =
         use_dual_yolo_depth &&
         !input.right_detections.empty() &&
@@ -102,7 +103,16 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
                         obj.roi_ring_edge_profile_confidence) ||
                observed(obj.z_roi_neural_feature,
                         obj.roi_neural_feature_support,
-                        obj.roi_neural_feature_confidence);
+                        obj.roi_neural_feature_confidence) ||
+               observed(obj.z_roi_neural_xfeat,
+                        obj.roi_neural_xfeat_support,
+                        obj.roi_neural_xfeat_confidence) ||
+               observed(obj.z_roi_neural_superpoint,
+                        obj.roi_neural_superpoint_support,
+                        obj.roi_neural_superpoint_confidence) ||
+               observed(obj.z_roi_neural_aliked,
+                        obj.roi_neural_aliked_support,
+                        obj.roi_neural_aliked_confidence);
     };
 
     auto count_valid = [&](const std::vector<Object3D>& results) {
@@ -375,7 +385,9 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         (neural_xfeat_matcher_ &&
          neural_xfeat_matcher_->requiresBgrInput()) ||
         (neural_superpoint_matcher_ &&
-         neural_superpoint_matcher_->requiresBgrInput());
+         neural_superpoint_matcher_->requiresBgrInput()) ||
+        (neural_aliked_matcher_ &&
+         neural_aliked_matcher_->requiresBgrInput());
     const bool has_stereo_detections =
         !slot.detections.empty() && !slot.detections_right.empty();
     const bool requested_bgr =

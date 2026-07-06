@@ -162,10 +162,11 @@ struct PipelineConfig {
     } dual_yolo;
 
     NeuralFeatureConfig neural_features;
-    // Independent per-backend neural matchers so XFeat and SuperPoint can run
-    // in the same frame and each write its own z_roi_neural_* candidate field.
+    // Independent per-backend neural matchers so XFeat, SuperPoint and ALIKED
+    // can run in the same frame and each write its own z_roi_neural_* field.
     NeuralFeatureConfig neural_xfeat;
     NeuralFeatureConfig neural_superpoint;
+    NeuralFeatureConfig neural_aliked;
 
     // SOT Tracker 补帧 (YOLO 检测间隙帧)
     struct TrackerConfig {
@@ -213,6 +214,7 @@ struct PipelineConfig {
     int p2_diagnostic_stride_cuda_template = 0; ///< 0=沿用 p2_diagnostic_stride
     int p2_diagnostic_stride_neural_xfeat = 0; ///< 0=沿用 p2_diagnostic_stride
     int p2_diagnostic_stride_neural_superpoint = 0; ///< 0=沿用 p2_diagnostic_stride
+    int p2_diagnostic_stride_neural_aliked = 0; ///< 0=沿用 p2_diagnostic_stride
     int p2_diagnostic_max_in_flight = 1; ///< diagnostic lane 最大在途 job 数
     float p2_realtime_deadline_ms = 10.0f; ///< P2 realtime lane deadline
     float p2_diagnostic_deadline_ms = 50.0f; ///< P2 diagnostic lane 软 deadline

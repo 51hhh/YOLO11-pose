@@ -25,6 +25,7 @@ struct NeuralFeatureConfig {
     int roi_size = 224;
     int top_k = 128;
     int descriptor_dim = 64;
+    int realtime_stride = 1;
     int min_matches = 8;
     float max_y_error_px = 2.0f;
     float max_disp_delta_px = 32.0f;
@@ -35,6 +36,7 @@ struct NeuralFeatureConfig {
     float match_margin = 0.015f;
     int min_spatial_quadrants = 2;
     float min_spatial_spread_ratio = 0.10f;
+    bool final_geometry_gate_enabled = true;
 };
 
 NeuralFeatureBackend parseNeuralFeatureBackend(const std::string& name);

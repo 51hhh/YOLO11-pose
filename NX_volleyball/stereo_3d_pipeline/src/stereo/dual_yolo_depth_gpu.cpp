@@ -130,6 +130,17 @@ bool DualYoloDepthGpuMatcher::init(float focal, float baseline, float cx, float 
 
 void DualYoloDepthGpuMatcher::freeBuffers() {
     ready_ = false;
+    pending_active_ = false;
+    auto destroy_event = [](cudaEvent_t& evt) {
+        if (evt) {
+            cudaEventDestroy(evt);
+            evt = nullptr;
+        }
+    };
+    destroy_event(evt_start_);
+    destroy_event(evt_h2d_);
+    destroy_event(evt_kernel_);
+    destroy_event(evt_d2h_);
     if (pairs_host_) {
         cudaFreeHost(pairs_host_);
         pairs_host_ = nullptr;
@@ -147,9 +158,23 @@ void DualYoloDepthGpuMatcher::freeBuffers() {
         results_device_ = nullptr;
     }
     max_pairs_ = 0;
+    pending_stream_ = nullptr;
+    pending_count_ = 0;
+    pending_events_recorded_ = false;
 }
 
-std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
+bool DualYoloDepthGpuMatcher::ensureEvents() {
+    auto ensure_event = [](cudaEvent_t* evt) {
+        if (*evt) return true;
+        return cudaEventCreateWithFlags(evt, cudaEventDefault) == cudaSuccess;
+    };
+    return ensure_event(&evt_start_) &&
+           ensure_event(&evt_h2d_) &&
+           ensure_event(&evt_kernel_) &&
+           ensure_event(&evt_d2h_);
+}
+
+bool DualYoloDepthGpuMatcher::submitPairs(
     const uint8_t* left_gpu, int left_pitch,
     const uint8_t* right_gpu, int right_pitch,
     const uint8_t* left_bgr_gpu, int left_bgr_pitch,
@@ -157,10 +182,13 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     int img_width, int img_height,
     const std::vector<DualYoloGpuDetectionPair>& pairs,
     cudaStream_t stream) {
-    std::vector<DualYoloGpuCandidate> out;
+    if (pending_active_) {
+        LOG_WARN("DualYoloDepthGpuMatcher: submit while previous match is pending");
+        return false;
+    }
     if (!ready_ || !left_gpu || !right_gpu || left_pitch <= 0 || right_pitch <= 0 ||
         img_width <= 0 || img_height <= 0 || pairs.empty()) {
-        return out;
+        return false;
     }
 
     auto cpu_now = [] {
@@ -172,8 +200,21 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     };
 
     const int n = std::min(static_cast<int>(pairs.size()), max_pairs_);
+    bool submitted_to_stream = false;
+    auto cleanup_failed_submit = [&]() {
+        if (submitted_to_stream && stream) {
+            const cudaError_t sync_err = cudaStreamSynchronize(stream);
+            if (sync_err != cudaSuccess) {
+                LOG_WARN("DualYoloDepthGpuMatcher: failed submit cleanup sync: %s",
+                         cudaGetErrorString(sync_err));
+            }
+        }
+        pending_active_ = false;
+        pending_stream_ = nullptr;
+        pending_count_ = 0;
+        pending_events_recorded_ = false;
+    };
     const auto prepare_start = cpu_now();
-    out.resize(static_cast<size_t>(n));
     std::memcpy(pairs_host_, pairs.data(),
                 static_cast<size_t>(n) * sizeof(DualYoloGpuDetectionPair));
     std::memset(results_host_, 0,
@@ -181,21 +222,9 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     globalPerf().record("Stage2_DualYoloGpuCandidatesCpuPrepare",
                         cpu_elapsed_ms(prepare_start));
 
-    static thread_local cudaEvent_t evt_start = nullptr;
-    static thread_local cudaEvent_t evt_h2d = nullptr;
-    static thread_local cudaEvent_t evt_kernel = nullptr;
-    static thread_local cudaEvent_t evt_d2h = nullptr;
-    auto ensure_event = [](cudaEvent_t* evt) {
-        if (*evt) return true;
-        return cudaEventCreateWithFlags(evt, cudaEventDefault) == cudaSuccess;
-    };
-    const bool have_events =
-        ensure_event(&evt_start) &&
-        ensure_event(&evt_h2d) &&
-        ensure_event(&evt_kernel) &&
-        ensure_event(&evt_d2h);
+    const bool have_events = ensureEvents();
     bool events_recorded = false;
-    if (have_events && cudaEventRecord(evt_start, stream) == cudaSuccess) {
+    if (have_events && cudaEventRecord(evt_start_, stream) == cudaSuccess) {
         events_recorded = true;
     }
 
@@ -209,10 +238,12 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     if (err != cudaSuccess) {
         LOG_WARN("DualYoloDepthGpuMatcher: H2D pairs failed: %s",
                  cudaGetErrorString(err));
-        return {};
+        cleanup_failed_submit();
+        return false;
     }
+    submitted_to_stream = true;
     if (events_recorded &&
-        cudaEventRecord(evt_h2d, stream) != cudaSuccess) {
+        cudaEventRecord(evt_h2d_, stream) != cudaSuccess) {
         events_recorded = false;
     }
 
@@ -269,7 +300,7 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     globalPerf().record("Stage2_DualYoloGpuCandidatesCpuKernelSubmit",
                         cpu_elapsed_ms(kernel_submit_start));
     if (events_recorded &&
-        cudaEventRecord(evt_kernel, stream) != cudaSuccess) {
+        cudaEventRecord(evt_kernel_, stream) != cudaSuccess) {
         events_recorded = false;
     }
 
@@ -277,7 +308,8 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     if (err != cudaSuccess) {
         LOG_WARN("DualYoloDepthGpuMatcher: kernel launch failed: %s",
                  cudaGetErrorString(err));
-        return {};
+        cleanup_failed_submit();
+        return false;
     }
 
     const auto d2h_submit_start = cpu_now();
@@ -290,43 +322,98 @@ std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
     if (err != cudaSuccess) {
         LOG_WARN("DualYoloDepthGpuMatcher: D2H results failed: %s",
                  cudaGetErrorString(err));
-        return {};
+        cleanup_failed_submit();
+        return false;
     }
     if (events_recorded &&
-        cudaEventRecord(evt_d2h, stream) != cudaSuccess) {
+        cudaEventRecord(evt_d2h_, stream) != cudaSuccess) {
         events_recorded = false;
     }
 
+    pending_count_ = n;
+    pending_stream_ = stream;
+    pending_active_ = true;
+    pending_events_recorded_ = events_recorded;
+    return true;
+}
+
+std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::collectPairs() {
+    std::vector<DualYoloGpuCandidate> out;
+    if (!pending_active_) {
+        return out;
+    }
+    const int n = pending_count_;
+    out.resize(static_cast<size_t>(std::max(0, n)));
+    auto cpu_now = [] {
+        return std::chrono::high_resolution_clock::now();
+    };
+    auto cpu_elapsed_ms = [](const auto& start) {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::high_resolution_clock::now() - start).count();
+    };
+
     const auto sync_start = cpu_now();
-    err = cudaStreamSynchronize(stream);
-    globalPerf().record("Stage2_DualYoloGpuCandidatesCpuSyncWait",
-                        cpu_elapsed_ms(sync_start));
+    cudaError_t err = pending_events_recorded_ && evt_d2h_
+        ? cudaEventSynchronize(evt_d2h_)
+        : cudaStreamSynchronize(pending_stream_);
+    const double wait_ms = cpu_elapsed_ms(sync_start);
+    globalPerf().record("Stage2_DualYoloGpuCandidatesCpuCollectWait", wait_ms);
+    globalPerf().record("Stage2_DualYoloGpuCandidatesCollectWait", wait_ms);
     if (err != cudaSuccess) {
-        LOG_WARN("DualYoloDepthGpuMatcher: stream sync failed: %s",
+        LOG_WARN("DualYoloDepthGpuMatcher: collect wait failed: %s",
                  cudaGetErrorString(err));
+        pending_active_ = false;
+        pending_stream_ = nullptr;
+        pending_count_ = 0;
+        pending_events_recorded_ = false;
         return {};
     }
-    if (events_recorded) {
+    if (pending_events_recorded_) {
         float h2d_ms = 0.0f;
         float kernel_ms = 0.0f;
         float d2h_ms = 0.0f;
-        if (cudaEventElapsedTime(&h2d_ms, evt_start, evt_h2d) == cudaSuccess) {
+        if (cudaEventElapsedTime(&h2d_ms, evt_start_, evt_h2d_) == cudaSuccess) {
             globalPerf().record("Stage2_DualYoloGpuCandidatesDeviceH2D",
                                 h2d_ms);
         }
-        if (cudaEventElapsedTime(&kernel_ms, evt_h2d, evt_kernel) == cudaSuccess) {
+        if (cudaEventElapsedTime(&kernel_ms, evt_h2d_, evt_kernel_) == cudaSuccess) {
             globalPerf().record("Stage2_DualYoloGpuCandidatesDeviceKernel",
                                 kernel_ms);
         }
-        if (cudaEventElapsedTime(&d2h_ms, evt_kernel, evt_d2h) == cudaSuccess) {
+        if (cudaEventElapsedTime(&d2h_ms, evt_kernel_, evt_d2h_) == cudaSuccess) {
             globalPerf().record("Stage2_DualYoloGpuCandidatesDeviceD2H",
                                 d2h_ms);
         }
     }
 
-    std::memcpy(out.data(), results_host_,
-                static_cast<size_t>(n) * sizeof(DualYoloGpuCandidate));
+    if (n > 0) {
+        std::memcpy(out.data(), results_host_,
+                    static_cast<size_t>(n) * sizeof(DualYoloGpuCandidate));
+    }
+    pending_active_ = false;
+    pending_stream_ = nullptr;
+    pending_count_ = 0;
+    pending_events_recorded_ = false;
     return out;
+}
+
+std::vector<DualYoloGpuCandidate> DualYoloDepthGpuMatcher::matchPairs(
+    const uint8_t* left_gpu, int left_pitch,
+    const uint8_t* right_gpu, int right_pitch,
+    const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+    const uint8_t* right_bgr_gpu, int right_bgr_pitch,
+    int img_width, int img_height,
+    const std::vector<DualYoloGpuDetectionPair>& pairs,
+    cudaStream_t stream) {
+    if (!submitPairs(left_gpu, left_pitch,
+                     right_gpu, right_pitch,
+                     left_bgr_gpu, left_bgr_pitch,
+                     right_bgr_gpu, right_bgr_pitch,
+                     img_width, img_height,
+                     pairs, stream)) {
+        return {};
+    }
+    return collectPairs();
 }
 
 }  // namespace stereo3d

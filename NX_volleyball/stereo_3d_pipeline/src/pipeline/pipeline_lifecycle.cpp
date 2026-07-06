@@ -171,7 +171,8 @@ bool Pipeline::startP2InlineFeatureWorkers() {
 
     if (!start_one(p2_inline_ncc_worker_, "NCC") ||
         !start_one(p2_inline_xfeat_worker_, "XFeat") ||
-        !start_one(p2_inline_superpoint_worker_, "SuperPoint")) {
+        !start_one(p2_inline_superpoint_worker_, "SuperPoint") ||
+        !start_one(p2_inline_aliked_worker_, "ALIKED")) {
         shutdownP2InlineFeatureWorkers();
         return false;
     }
@@ -201,6 +202,7 @@ void Pipeline::shutdownP2InlineFeatureWorkers() {
     stop_one(p2_inline_ncc_worker_);
     stop_one(p2_inline_xfeat_worker_);
     stop_one(p2_inline_superpoint_worker_);
+    stop_one(p2_inline_aliked_worker_);
 }
 
 bool Pipeline::submitP2InlineFeatureTask(P2InlineFeatureWorker& worker,

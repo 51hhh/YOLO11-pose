@@ -2,6 +2,7 @@
 
 #include "neural_feature_matcher_helpers.h"
 #include "track/crop_resize.h"
+#include "../utils/profiler.h"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,46 @@
 #include <vector>
 
 namespace stereo3d {
+
+namespace {
+
+struct DirectGpuStageEvents {
+    cudaEvent_t crop_start = nullptr;
+    cudaEvent_t crop_end = nullptr;
+    cudaEvent_t trt_end = nullptr;
+    cudaEvent_t post_end = nullptr;
+
+    ~DirectGpuStageEvents() {
+        if (crop_start) cudaEventDestroy(crop_start);
+        if (crop_end) cudaEventDestroy(crop_end);
+        if (trt_end) cudaEventDestroy(trt_end);
+        if (post_end) cudaEventDestroy(post_end);
+    }
+
+    bool ensure() {
+        auto make = [](cudaEvent_t& event) {
+            return event ||
+                   cudaEventCreateWithFlags(&event, cudaEventDefault) ==
+                       cudaSuccess;
+        };
+        return make(crop_start) && make(crop_end) &&
+               make(trt_end) && make(post_end);
+    }
+};
+
+DirectGpuStageEvents& directGpuStageEvents() {
+    thread_local DirectGpuStageEvents events;
+    return events;
+}
+
+void recordGpuElapsed(const char* name, cudaEvent_t start, cudaEvent_t stop) {
+    float ms = 0.0f;
+    if (cudaEventElapsedTime(&ms, start, stop) == cudaSuccess) {
+        globalPerf().record(name, static_cast<double>(ms));
+    }
+}
+
+}  // namespace
 
 NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
     const uint8_t* left_gray_gpu, int left_gray_pitch,
@@ -363,7 +404,13 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         return static_cast<int>(features->size()) >= config_.min_matches;
     };
 
+    auto elapsed_ms_since = [](const std::chrono::steady_clock::time_point& t0) {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t0).count();
+    };
+
     auto copy_outputs = [&]() -> bool {
+        const auto copy_start = std::chrono::steady_clock::now();
         for (auto* tensor : outputs) {
             if (tensor->dtype != nvinfer1::DataType::kFLOAT ||
                 tensor->host_float.empty()) {
@@ -374,7 +421,10 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                 cudaMemcpyDeviceToHost, stream);
             if (err != cudaSuccess) return false;
         }
-        return cudaStreamSynchronize(stream) == cudaSuccess;
+        const bool ok = cudaStreamSynchronize(stream) == cudaSuccess;
+        globalPerf().record("Stage2_NeuralDirectD2HSync",
+                            elapsed_ms_since(copy_start));
+        return ok;
     };
 
     const float context = 1.20f;
@@ -389,6 +439,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                         const uint8_t* bgr, int bgr_pitch,
                         int batch_index) -> bool {
         if (batch_index < 0 || batch_index >= input_batch) return false;
+        const auto crop_start = std::chrono::steady_clock::now();
         float* dst = static_cast<float*>(input->device) +
                      static_cast<size_t>(batch_index) * input_batch_stride;
         const float side = roi_side(det);
@@ -403,7 +454,17 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                                   det.cx, det.cy, side, side,
                                   context, stream);
         }
-        return cudaPeekAtLastError() == cudaSuccess;
+        const bool ok = cudaPeekAtLastError() == cudaSuccess;
+        globalPerf().record("Stage2_NeuralDirectCrop",
+                            elapsed_ms_since(crop_start));
+        return ok;
+    };
+    auto enqueue_extract = [&]() -> bool {
+        const auto enqueue_start = std::chrono::steady_clock::now();
+        const bool ok = extractor_.context->enqueueV3(stream);
+        globalPerf().record("Stage2_NeuralDirectEnqueue",
+                            elapsed_ms_since(enqueue_start));
+        return ok;
     };
     auto run_one = [&](const Detection& det,
                        const uint8_t* gray, int pitch,
@@ -411,7 +472,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                        int batch_index,
                        std::vector<DirectFeature>* features) -> bool {
         if (!crop_one(det, gray, pitch, bgr, bgr_pitch, batch_index) ||
-            !extractor_.context->enqueueV3(stream) || !copy_outputs()) {
+            !enqueue_extract() || !copy_outputs()) {
             return false;
         }
         return parse_features(batch_index, features);
@@ -695,16 +756,31 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         descriptor_layout(direct_descriptors, &direct_desc_layout) &&
         ensureDirectFeatureGpuWorkspace(direct_gpu_workspace_,
                                         std::max(1, config_.top_k),
-                                        config_.descriptor_dim) &&
-        crop_one(left_det,
-                 left_gray_gpu, left_gray_pitch,
-                 left_bgr_gpu, left_bgr_pitch,
-                 0) &&
-        crop_one(right_det,
-                 right_gray_gpu, right_gray_pitch,
-                 right_bgr_gpu, right_bgr_pitch,
-                 1) &&
-        extractor_.context->enqueueV3(stream)) {
+                                        config_.descriptor_dim)) {
+        DirectGpuStageEvents& gpu_events = directGpuStageEvents();
+        const bool gpu_profile = stream && gpu_events.ensure();
+        if (gpu_profile) {
+            cudaEventRecord(gpu_events.crop_start, stream);
+        }
+        const bool crops_ok =
+            crop_one(left_det,
+                     left_gray_gpu, left_gray_pitch,
+                     left_bgr_gpu, left_bgr_pitch,
+                     0) &&
+            crop_one(right_det,
+                     right_gray_gpu, right_gray_pitch,
+                     right_bgr_gpu, right_bgr_pitch,
+                     1);
+        if (gpu_profile && crops_ok) {
+            cudaEventRecord(gpu_events.crop_end, stream);
+        }
+        const bool enqueue_ok = crops_ok && enqueue_extract();
+        if (gpu_profile && enqueue_ok) {
+            cudaEventRecord(gpu_events.trt_end, stream);
+        }
+        if (!enqueue_ok) {
+            goto direct_gpu_b2_fallback;
+        }
         const auto* kpt_base =
             static_cast<const float*>(direct_keypoints->device);
         const auto* desc_base =
@@ -716,6 +792,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         const size_t desc_stride = batch_stride(direct_descriptors);
         const size_t score_stride = direct_scores ? batch_stride(direct_scores) : 0;
         std::vector<DirectFeatureGpuMatch> gpu_matches;
+        const auto post_start = std::chrono::steady_clock::now();
         const bool gpu_path_ok = runDirectFeatureGpuPostprocess(
             direct_gpu_workspace_,
             kpt_base,
@@ -742,7 +819,23 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             right_det.cx, right_det.cy, right_det.width, right_det.height,
             stream,
             &gpu_matches);
+        if (gpu_profile) {
+            cudaEventRecord(gpu_events.post_end, stream);
+            if (cudaEventSynchronize(gpu_events.post_end) == cudaSuccess) {
+                recordGpuElapsed("Stage2_NeuralDirectCropGpu",
+                                 gpu_events.crop_start, gpu_events.crop_end);
+                recordGpuElapsed("Stage2_NeuralDirectTrtGpu",
+                                 gpu_events.crop_end, gpu_events.trt_end);
+                recordGpuElapsed("Stage2_NeuralDirectPostprocessD2HGpu",
+                                 gpu_events.trt_end, gpu_events.post_end);
+                recordGpuElapsed("Stage2_NeuralDirectGpuTotal",
+                                 gpu_events.crop_start, gpu_events.post_end);
+            }
+        }
+        globalPerf().record("Stage2_NeuralDirectGpuPostprocessSync",
+                            elapsed_ms_since(post_start));
         if (gpu_path_ok) {
+            const auto finalize_start = std::chrono::steady_clock::now();
             std::vector<NeuralFeaturePointMatch> candidates;
             candidates.reserve(gpu_matches.size());
             for (const auto& src : gpu_matches) {
@@ -757,10 +850,13 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             }
             NeuralFeatureMatchResult gpu_result =
                 build_result_from_candidates(candidates, "ok_gpu_b2");
+            globalPerf().record("Stage2_NeuralDirectFinalize",
+                                elapsed_ms_since(finalize_start));
             return gpu_result;
         }
     }
 
+direct_gpu_b2_fallback:
     bool features_ready = false;
     if (input_batch >= 2 && output_batch >= 2) {
         features_ready =
@@ -772,7 +868,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                      right_gray_gpu, right_gray_pitch,
                      right_bgr_gpu, right_bgr_pitch,
                      1) &&
-            extractor_.context->enqueueV3(stream) &&
+            enqueue_extract() &&
             copy_outputs() &&
             parse_features(0, &left_features) &&
             parse_features(1, &right_features);
