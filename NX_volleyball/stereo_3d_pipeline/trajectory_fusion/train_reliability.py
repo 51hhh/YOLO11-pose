@@ -91,6 +91,8 @@ def main() -> int:
     parser.add_argument("--known-z-range-weight", type=float, default=0.5)
     parser.add_argument("--static-jitter-weight", type=float, default=0.1)
     parser.add_argument("--bias-reg-weight", type=float, default=0.02)
+    parser.add_argument("--leave-one-weight", type=float, default=0.0)
+    parser.add_argument("--leave-one-max-methods", type=int, default=8)
     args = parser.parse_args()
 
     _require_torch()
@@ -99,6 +101,7 @@ def main() -> int:
             known_z_loss,
             known_z_range_loss,
             bias_regularizer,
+            leave_one_method_loss,
             measurement_consistency_loss,
             physics_depth_loss,
             static_depth_jitter_loss,
@@ -110,6 +113,7 @@ def main() -> int:
             known_z_loss,
             known_z_range_loss,
             bias_regularizer,
+            leave_one_method_loss,
             measurement_consistency_loss,
             physics_depth_loss,
             static_depth_jitter_loss,
@@ -167,6 +171,37 @@ def main() -> int:
             loss_phys = physics_depth_loss(learned_consensus, batch["dt"])
             loss_reg = uncertainty_regularizer(output.log_sigma, output.outlier_logit, batch["valid"])
             loss_bias = bias_regularizer(output.bias, batch["valid"])
+            loss_leave_one = batch["features"].new_tensor(0.0)
+            if args.leave_one_weight > 0.0:
+                valid_counts = batch["valid"].sum(dim=(0, 1))
+                method_order = torch.argsort(valid_counts, descending=True)
+                leave_losses = []
+                for method_index_tensor in method_order[: max(0, args.leave_one_max_methods)]:
+                    method_index = int(method_index_tensor.item())
+                    if valid_counts[method_index] <= 0.0:
+                        continue
+                    valid_without = batch["valid"].clone()
+                    valid_without[..., method_index] = 0.0
+                    if valid_without.sum() <= 0.0:
+                        continue
+                    predicted_without = weighted_depth_consensus(
+                        batch["measurements"],
+                        valid_without,
+                        output,
+                        detach=False,
+                    )
+                    leave_losses.append(
+                        leave_one_method_loss(
+                            batch["measurements"],
+                            batch["valid"],
+                            predicted_without,
+                            output.log_sigma,
+                            output.bias,
+                            method_index,
+                        )
+                    )
+                if leave_losses:
+                    loss_leave_one = torch.stack(leave_losses).mean()
             labels = batch["labels"]
             loss_known_z = known_z_loss(
                 learned_consensus,
@@ -185,6 +220,7 @@ def main() -> int:
             )
             loss = loss_obs + 0.25 * loss_phys + loss_reg
             loss = loss + args.bias_reg_weight * loss_bias
+            loss = loss + args.leave_one_weight * loss_leave_one
             loss = loss + args.known_z_weight * loss_known_z
             loss = loss + args.known_z_range_weight * loss_known_range
             loss = loss + args.static_jitter_weight * loss_static
@@ -214,6 +250,17 @@ def main() -> int:
             for clip in clips
         ],
         "heldout_sequence_count": len(heldout_items),
+        "training_config": {
+            "epochs": args.epochs,
+            "lr": args.lr,
+            "hidden": args.hidden,
+            "known_z_weight": args.known_z_weight,
+            "known_z_range_weight": args.known_z_range_weight,
+            "static_jitter_weight": args.static_jitter_weight,
+            "bias_reg_weight": args.bias_reg_weight,
+            "leave_one_weight": args.leave_one_weight,
+            "leave_one_max_methods": args.leave_one_max_methods,
+        },
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
