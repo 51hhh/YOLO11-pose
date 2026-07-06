@@ -15,11 +15,13 @@ try:
     from .audit_reliability_methods import audit_reliability_methods, write_csv as write_method_audit
     from .rank_sweep_metrics import rank_metrics, write_ranking
     from .run_evaluation_suite import run_suite
+    from .select_reliability_model import select_reliability_models, write_selection
     from .summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
 except ImportError:  # pragma: no cover - direct script execution
     from audit_reliability_methods import audit_reliability_methods, write_csv as write_method_audit
     from rank_sweep_metrics import rank_metrics, write_ranking
     from run_evaluation_suite import run_suite
+    from select_reliability_model import select_reliability_models, write_selection
     from summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
 
 
@@ -215,6 +217,7 @@ def run_sweep(
         "sweep_variant_ranking": str(root / "sweep_variant_ranking.csv"),
         "sweep_reliability_methods": str(root / "sweep_reliability_methods.csv"),
         "sweep_reliability_method_audit": str(root / "sweep_reliability_method_audit.csv"),
+        "sweep_model_selection": str(root / "sweep_model_selection.csv"),
         "runs": [],
     }
     combined_rows: List[Dict[str, Any]] = []
@@ -284,10 +287,13 @@ def run_sweep(
         _write_sweep_summary(root / "sweep_summary.json", summary)
         metrics_path = root / "sweep_metrics.csv"
         methods_path = root / "sweep_reliability_methods.csv"
+        method_audit_path = root / "sweep_reliability_method_audit.csv"
         _write_combined_metrics(metrics_path, combined_rows)
         _write_combined_metrics(methods_path, combined_method_rows)
         if combined_method_rows:
-            write_method_audit(root / "sweep_reliability_method_audit.csv", audit_reliability_methods(methods_path))
+            write_method_audit(method_audit_path, audit_reliability_methods(methods_path))
+            selection = select_reliability_models(metrics_path, audit_csv=method_audit_path)
+            write_selection(root / "sweep_model_selection.csv", selection)
         ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)
         variant_ranking = rank_metrics(metrics_path, variant="all", split=rank_split)

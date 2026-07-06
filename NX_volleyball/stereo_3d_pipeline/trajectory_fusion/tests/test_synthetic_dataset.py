@@ -52,6 +52,7 @@ from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
+from trajectory_fusion.select_reliability_model import select_reliability_models  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
 from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
 from trajectory_fusion.validate_dataset_manifest import analyze_manifest  # noqa: E402
@@ -999,6 +1000,93 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("large_method_bias", row["warnings"])
             self.assertIn("low_inlier_method_receives_top_weight", row["warnings"])
 
+    def test_select_reliability_model_combines_rank_and_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metrics_path = root / "sweep_metrics.csv"
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "split",
+                    "variant",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "known_z_bias",
+                    "known_z_mad",
+                    "checkpoint",
+                    "suite_dir",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "smooth_but_risky",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.01",
+                        "known_z_mad": "0.001",
+                        "checkpoint": "risky.pt",
+                        "suite_dir": "risky_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "stable",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.004",
+                        "z_peak_to_peak": "0.02",
+                        "known_z_bias": "0.02",
+                        "known_z_mad": "0.002",
+                        "checkpoint": "stable.pt",
+                        "suite_dir": "stable_suite",
+                    }
+                )
+            audit_path = root / "sweep_reliability_method_audit.csv"
+            with audit_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "warnings",
+                    "dominant_top_method",
+                    "dominant_top_share",
+                    "low_coverage_top_share",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "smooth_but_risky",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "warnings": "dominant_method_top_share",
+                        "dominant_top_method": "roi_neural_xfeat",
+                        "dominant_top_share": "0.99",
+                        "low_coverage_top_share": "0.00",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "stable",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "warnings": "",
+                        "dominant_top_method": "bbox_center",
+                        "dominant_top_share": "0.40",
+                        "low_coverage_top_share": "0.00",
+                    }
+                )
+
+            selected = select_reliability_models(metrics_path, audit_csv=audit_path)
+            self.assertEqual(selected[0]["config"], "stable")
+            self.assertEqual(selected[0]["decision"], "recommended")
+            risky = next(row for row in selected if row["config"] == "smooth_but_risky")
+            self.assertEqual(risky["decision"], "reject")
+            self.assertEqual(risky["decision_reason"], "dominant_method_top_share")
+
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1106,6 +1194,11 @@ class SyntheticDatasetTest(unittest.TestCase):
                 str(root / "sweep_out" / "sweep_reliability_method_audit.csv"),
             )
             self.assertTrue((root / "sweep_out" / "sweep_reliability_method_audit.csv").exists())
+            self.assertEqual(
+                summary["sweep_model_selection"],
+                str(root / "sweep_out" / "sweep_model_selection.csv"),
+            )
+            self.assertTrue((root / "sweep_out" / "sweep_model_selection.csv").exists())
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
