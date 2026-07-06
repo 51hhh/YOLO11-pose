@@ -209,6 +209,8 @@ def run_sweep(
         "gravity_y": gravity_y,
         "use_static_known_z": use_static_known_z,
         "rank_split": rank_split,
+        "sweep_ranking": str(root / "sweep_ranking.csv"),
+        "sweep_variant_ranking": str(root / "sweep_variant_ranking.csv"),
         "runs": [],
     }
     combined_rows: List[Dict[str, Any]] = []
@@ -267,6 +269,8 @@ def run_sweep(
         _write_combined_metrics(metrics_path, combined_rows)
         ranking = rank_metrics(metrics_path, split=rank_split)
         write_ranking(root / "sweep_ranking.csv", ranking)
+        variant_ranking = rank_metrics(metrics_path, variant="all", split=rank_split)
+        write_ranking(root / "sweep_variant_ranking.csv", variant_ranking)
 
     return summary
 

@@ -820,6 +820,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(summary["calibration"], str(calibration_path))
             self.assertEqual(suite_mock.call_args.kwargs["calibration"], calibration_path)
             self.assertEqual(summary["runs"][0]["calibration"], str(calibration_path))
+            self.assertEqual(summary["sweep_variant_ranking"], str(root / "sweep_out" / "sweep_variant_ranking.csv"))
+            self.assertTrue((root / "sweep_out" / "sweep_variant_ranking.csv").exists())
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -884,6 +886,63 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(ranked[0]["split"], "val")
             self.assertEqual(ranked[0]["checkpoint"], "accurate.pt")
             self.assertEqual(ranked[0]["rank"], 1)
+
+    def test_rank_sweep_metrics_can_compare_all_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sweep_metrics.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "split",
+                    "variant",
+                    "clip",
+                    "track_id",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "known_z_bias",
+                    "known_z_mad",
+                    "checkpoint",
+                    "suite_dir",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                for config in ("net_a", "net_b"):
+                    writer.writerow(
+                        {
+                            "config": config,
+                            "split": "val",
+                            "variant": "calibrated_smoother",
+                            "clip": "static_3m",
+                            "track_id": "0",
+                            "z_std": "0.003",
+                            "z_peak_to_peak": "0.01",
+                            "known_z_bias": "0.005",
+                            "known_z_mad": "0.002",
+                            "checkpoint": f"{config}.pt",
+                            "suite_dir": f"{config}_suite",
+                        }
+                    )
+                writer.writerow(
+                    {
+                        "config": "net_a",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.002",
+                        "z_peak_to_peak": "0.008",
+                        "known_z_bias": "0.02",
+                        "known_z_mad": "0.003",
+                        "checkpoint": "net_a.pt",
+                        "suite_dir": "net_a_suite",
+                    }
+                )
+
+            ranked = rank_metrics(path, variant="all", split="val")
+            variants = {(row["config"], row["variant"]): row for row in ranked}
+            self.assertIn(("baseline", "calibrated_smoother"), variants)
+            self.assertIn(("net_a", "reliability_smoother"), variants)
+            self.assertEqual(variants[("baseline", "calibrated_smoother")]["clip_count"], 1)
 
 
 if __name__ == "__main__":

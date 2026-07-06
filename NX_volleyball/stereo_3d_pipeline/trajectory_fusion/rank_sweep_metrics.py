@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rank ReliabilityNet sweep configurations from sweep_metrics.csv."""
+"""Rank sweep configurations or variant baselines from sweep_metrics.csv."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Iterable, List
+
+
+BASELINE_VARIANTS = {"raw", "robust_smooth", "calibrated_smoother"}
 
 
 def _safe_float(value: object) -> float | None:
@@ -55,7 +58,10 @@ def rank_metrics(
     variant: str = "reliability_smoother",
     split: str | None = "auto",
 ) -> List[Dict[str, Any]]:
-    rows = [row for row in _read_rows(metrics_csv) if row.get("variant") == variant]
+    include_all_variants = variant == "all"
+    rows = _read_rows(metrics_csv)
+    if not include_all_variants:
+        rows = [row for row in rows if row.get("variant") == variant]
     selected_split = None
     if split == "auto":
         splits = {row.get("split", "") for row in rows}
@@ -66,11 +72,30 @@ def rank_metrics(
         rows = [row for row in rows if row.get("split", "") == selected_split]
 
     grouped: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    seen_baselines: set[tuple[str, str, str, str]] = set()
     for row in rows:
-        grouped[row.get("config", "")].append(row)
+        row_variant = row.get("variant", "")
+        if include_all_variants and row_variant in BASELINE_VARIANTS:
+            dedupe_key = (
+                row_variant,
+                row.get("split", ""),
+                row.get("clip", ""),
+                row.get("track_id", ""),
+            )
+            if dedupe_key in seen_baselines:
+                continue
+            seen_baselines.add(dedupe_key)
+            group_key = f"baseline:{row_variant}"
+        elif include_all_variants:
+            group_key = f"{row.get('config', '')}:{row_variant}"
+        else:
+            group_key = row.get("config", "")
+        grouped[group_key].append(row)
 
     ranked: List[Dict[str, Any]] = []
-    for config, items in grouped.items():
+    for group_key, items in grouped.items():
+        row_variant = items[0].get("variant", variant)
+        config = "baseline" if row_variant in BASELINE_VARIANTS and include_all_variants else items[0].get("config", "")
         z_std = [_safe_float(row.get("z_std")) for row in items]
         z_p2p = [_safe_float(row.get("z_peak_to_peak")) for row in items]
         bias = [_safe_float(row.get("known_z_bias")) for row in items]
@@ -83,7 +108,7 @@ def rank_metrics(
             "config": config,
             "checkpoint": items[0].get("checkpoint", ""),
             "suite_dir": items[0].get("suite_dir", ""),
-            "variant": variant,
+            "variant": row_variant,
             "split": selected_split or "all",
             "clip_count": len(items),
             "known_clip_count": len(bias_values),
@@ -95,7 +120,7 @@ def rank_metrics(
         ranked_row["score"] = _score(ranked_row)
         ranked.append(ranked_row)
 
-    ranked.sort(key=lambda row: (row["score"], row["config"]))
+    ranked.sort(key=lambda row: (row["score"], row["variant"], row["config"]))
     for index, row in enumerate(ranked, start=1):
         row["rank"] = index
     return ranked
@@ -138,12 +163,13 @@ def _fmt(value: Any) -> str:
 
 
 def print_ranking(rows: List[Dict[str, Any]], limit: int = 10) -> None:
-    print("rank,config,split,score,known_bias,known_mad,z_std,p2p")
+    print("rank,config,variant,split,score,known_bias,known_mad,z_std,p2p")
     for row in rows[:limit]:
         print(
-            "{rank},{config},{split},{score},{bias},{mad},{std},{p2p}".format(
+            "{rank},{config},{variant},{split},{score},{bias},{mad},{std},{p2p}".format(
                 rank=row["rank"],
                 config=row["config"],
+                variant=row["variant"],
                 split=row["split"],
                 score=_fmt(row["score"]),
                 bias=_fmt(row["mean_abs_known_z_bias"]),
@@ -158,7 +184,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("metrics_csv", help="sweep_metrics.csv")
     parser.add_argument("-o", "--output")
-    parser.add_argument("--variant", default="reliability_smoother")
+    parser.add_argument("--variant", default="reliability_smoother", help="Variant to rank, or 'all' to compare variants.")
     parser.add_argument("--split", default="auto", help="Use a split for ranking. 'auto' prefers val when present.")
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
