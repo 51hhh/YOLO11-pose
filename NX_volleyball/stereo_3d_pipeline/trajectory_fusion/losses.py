@@ -179,6 +179,25 @@ def uncertainty_regularizer(
     return 0.02 * sigma_loss + 0.10 * outlier_loss
 
 
+def bias_regularizer(
+    bias: torch.Tensor,
+    valid: torch.Tensor,
+    delta: float = 0.15,
+) -> torch.Tensor:
+    """Weakly discourage unconstrained absolute-depth drift.
+
+    Method bias is useful once known-distance clips exist, but with only
+    self-consistency losses the model can shift all methods together and still
+    produce a smooth trajectory. This regularizer keeps early experiments close
+    to the measured depth scale while still allowing centimeter-level bias.
+    """
+
+    valid_e = valid.unsqueeze(-1)
+    loss = F.huber_loss(bias, torch.zeros_like(bias), delta=delta, reduction="none")
+    weighted = loss * valid_e
+    return weighted.sum() / valid_e.sum().clamp_min(1.0)
+
+
 def leave_one_method_loss(
     measurements: torch.Tensor,
     valid: torch.Tensor,

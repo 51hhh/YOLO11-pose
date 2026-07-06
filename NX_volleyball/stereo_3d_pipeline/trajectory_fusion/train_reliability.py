@@ -90,6 +90,7 @@ def main() -> int:
     parser.add_argument("--known-z-weight", type=float, default=1.0)
     parser.add_argument("--known-z-range-weight", type=float, default=0.5)
     parser.add_argument("--static-jitter-weight", type=float, default=0.1)
+    parser.add_argument("--bias-reg-weight", type=float, default=0.02)
     args = parser.parse_args()
 
     _require_torch()
@@ -97,6 +98,7 @@ def main() -> int:
         from .losses import (
             known_z_loss,
             known_z_range_loss,
+            bias_regularizer,
             measurement_consistency_loss,
             physics_depth_loss,
             static_depth_jitter_loss,
@@ -107,6 +109,7 @@ def main() -> int:
         from losses import (
             known_z_loss,
             known_z_range_loss,
+            bias_regularizer,
             measurement_consistency_loss,
             physics_depth_loss,
             static_depth_jitter_loss,
@@ -163,6 +166,7 @@ def main() -> int:
             )
             loss_phys = physics_depth_loss(learned_consensus, batch["dt"])
             loss_reg = uncertainty_regularizer(output.log_sigma, output.outlier_logit, batch["valid"])
+            loss_bias = bias_regularizer(output.bias, batch["valid"])
             labels = batch["labels"]
             loss_known_z = known_z_loss(
                 learned_consensus,
@@ -180,6 +184,7 @@ def main() -> int:
                 labels[..., label_index["static"]],
             )
             loss = loss_obs + 0.25 * loss_phys + loss_reg
+            loss = loss + args.bias_reg_weight * loss_bias
             loss = loss + args.known_z_weight * loss_known_z
             loss = loss + args.known_z_range_weight * loss_known_range
             loss = loss + args.static_jitter_weight * loss_static

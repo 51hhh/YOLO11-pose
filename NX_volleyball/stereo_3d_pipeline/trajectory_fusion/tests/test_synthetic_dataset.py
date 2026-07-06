@@ -431,7 +431,7 @@ class SyntheticDatasetTest(unittest.TestCase):
     def test_known_z_loss_if_torch_available(self) -> None:
         try:
             import torch
-            from trajectory_fusion.losses import known_z_loss
+            from trajectory_fusion.losses import bias_regularizer, known_z_loss
         except ImportError:
             self.skipTest("PyTorch is not installed")
 
@@ -440,6 +440,12 @@ class SyntheticDatasetTest(unittest.TestCase):
         valid = torch.tensor([[1.0, 1.0]])
         loss = known_z_loss(depth, known_z, valid)
         self.assertTrue(torch.isfinite(loss).item())
+
+        bias = torch.tensor([[[[0.00], [0.05]], [[0.10], [0.20]]]])
+        method_valid = torch.tensor([[[1.0, 1.0], [1.0, 0.0]]])
+        bias_loss = bias_regularizer(bias, method_valid)
+        self.assertTrue(torch.isfinite(bias_loss).item())
+        self.assertGreater(float(bias_loss), 0.0)
 
     def test_physics_depth_loss_uses_sequence_dt_if_torch_available(self) -> None:
         try:
