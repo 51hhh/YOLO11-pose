@@ -127,8 +127,20 @@ def _build_learned_observations(
     outlier_logit = output.outlier_logit.squeeze(0).detach().cpu()
     observations_by_frame: List[List[ZMeasurement]] = []
     diagnostics: List[Dict[str, float | str]] = []
-    method_weight_sum = {name: 0.0 for name in method_names}
-    method_valid_count = {name: 0 for name in method_names}
+    method_stats = {
+        str(name): {
+            "valid": 0.0,
+            "top_count": 0.0,
+            "weight_sum": 0.0,
+            "sigma_sum": 0.0,
+            "bias_sum": 0.0,
+            "abs_bias_sum": 0.0,
+            "inlier_prob_sum": 0.0,
+            "raw_z_sum": 0.0,
+            "corrected_z_sum": 0.0,
+        }
+        for name in method_names
+    }
 
     for frame_index, (measurement_row, valid_row) in enumerate(zip(measurements, valid)):
         candidates: List[ZMeasurement] = []
@@ -160,8 +172,15 @@ def _build_learned_observations(
 
             weight = 1.0 / variance
             candidates.append((corrected_z, variance, method_name))
-            method_valid_count[str(method_names[method_index])] += 1
-            method_weight_sum[str(method_names[method_index])] += weight
+            stats = method_stats[str(method_names[method_index])]
+            stats["valid"] += 1.0
+            stats["weight_sum"] += weight
+            stats["sigma_sum"] += sigma
+            stats["bias_sum"] += predicted_bias
+            stats["abs_bias_sum"] += abs(predicted_bias)
+            stats["inlier_prob_sum"] += inlier_prob
+            stats["raw_z_sum"] += float(raw_z)
+            stats["corrected_z_sum"] += corrected_z
             if weight > top_weight:
                 top_method_index = method_index
                 top_weight = weight
@@ -188,14 +207,27 @@ def _build_learned_observations(
                     "reliability_smoother_top_inlier_prob": top_inlier_prob,
                 }
             )
+            method_stats[str(method_names[top_method_index])]["top_count"] += 1.0
         diagnostics.append(diagnostic)
 
     method_summary: Dict[str, Dict[str, float]] = {}
     for name in method_names:
-        count = method_valid_count[str(name)]
+        stats = method_stats[str(name)]
+        count = stats["valid"]
         method_summary[str(name)] = {
-            "valid": float(count),
-            "mean_weight": method_weight_sum[str(name)] / count if count > 0 else 0.0,
+            "valid": count,
+            "top_count": stats["top_count"],
+            "top_rate": stats["top_count"] / max(1.0, float(len(measurements))),
+            "mean_weight": stats["weight_sum"] / count if count > 0 else 0.0,
+            "mean_sigma": stats["sigma_sum"] / count if count > 0 else 0.0,
+            "mean_bias": stats["bias_sum"] / count if count > 0 else 0.0,
+            "mean_abs_bias": stats["abs_bias_sum"] / count if count > 0 else 0.0,
+            "mean_inlier_prob": stats["inlier_prob_sum"] / count if count > 0 else 0.0,
+            "mean_raw_z": stats["raw_z_sum"] / count if count > 0 else 0.0,
+            "mean_corrected_z": stats["corrected_z_sum"] / count if count > 0 else 0.0,
+            "mean_corrected_minus_raw_z": (
+                (stats["corrected_z_sum"] - stats["raw_z_sum"]) / count if count > 0 else 0.0
+            ),
         }
     return observations_by_frame, diagnostics, method_summary
 

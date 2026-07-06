@@ -178,6 +178,8 @@ def apply_checkpoint(
                 row = dict(source_row)
                 method_weights = weights_cpu[idx, :, 0]
                 method_valid = valid_cpu[idx, :] > 0.0
+                valid_weight_sum = float(method_weights[method_valid].sum().item()) if bool(method_valid.any()) else 0.0
+                consensus_sigma = valid_weight_sum ** -0.5 if valid_weight_sum > 1e-12 else 0.0
                 if bool(method_valid.any()):
                     masked = method_weights.clone()
                     masked[~method_valid] = -1.0
@@ -198,7 +200,8 @@ def apply_checkpoint(
                         "smooth_vx": 0.0,
                         "smooth_vy": 0.0,
                         "smooth_vz": float(vz_values[idx]),
-                        "smooth_sigma_z": float(common_sigma[idx]),
+                        "smooth_sigma_z": float(consensus_sigma),
+                        "reliability_common_sigma": float(common_sigma[idx]),
                         "reliability_valid_count": float(method_valid.sum().item()),
                         "reliability_top_method": top_method,
                         "reliability_top_method_name": top_method_name,

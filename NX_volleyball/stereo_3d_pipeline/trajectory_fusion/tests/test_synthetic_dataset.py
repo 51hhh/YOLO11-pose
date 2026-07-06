@@ -36,12 +36,17 @@ from trajectory_fusion.dataset import (  # noqa: E402
     read_metadata,
 )
 from trajectory_fusion.evaluate_calibrated_smoother import apply_calibrated_smoother  # noqa: E402
+from trajectory_fusion.evaluate_reliability_smoother import (  # noqa: E402
+    LearnedObservationConfig,
+    _build_learned_observations,
+)
 from trajectory_fusion.fit_method_calibration import (  # noqa: E402
     CalibrationConfig,
     fit_method_calibration,
     write_calibration,
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
+from trajectory_fusion.models import ReliabilityOutput  # noqa: E402
 from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
@@ -502,6 +507,55 @@ class SyntheticDatasetTest(unittest.TestCase):
             method_index=1,
         )
         self.assertTrue(torch.isfinite(leave_loss).item())
+
+    def test_reliability_smoother_reports_method_quality_stats_if_torch_available(self) -> None:
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("PyTorch is not installed")
+
+        method_names = tuple(name for name, _ in METHOD_COLUMNS)
+        method_count = len(method_names)
+        bbox_index = method_names.index("bbox_center")
+        circle_index = method_names.index("circle_center")
+        measurements = [[0.0] * method_count for _ in range(2)]
+        valid = [[0.0] * method_count for _ in range(2)]
+        for frame_index, bbox_z in enumerate((3.20, 3.22)):
+            measurements[frame_index][bbox_index] = bbox_z
+            measurements[frame_index][circle_index] = bbox_z + 0.20
+            valid[frame_index][bbox_index] = 1.0
+            valid[frame_index][circle_index] = 1.0
+
+        log_sigma = torch.full((1, 2, method_count, 1), -1.0)
+        bias = torch.zeros((1, 2, method_count, 1))
+        outlier_logit = torch.full((1, 2, method_count, 1), -3.0)
+        log_sigma[:, :, bbox_index, :] = torch.log(torch.tensor(0.05))
+        log_sigma[:, :, circle_index, :] = torch.log(torch.tensor(0.20))
+        bias[:, :, bbox_index, :] = 0.10
+        output = ReliabilityOutput(
+            log_sigma=log_sigma,
+            bias=bias,
+            outlier_logit=outlier_logit,
+            common_log_sigma=torch.zeros((1, 2, 1)),
+        )
+
+        observations, diagnostics, summary = _build_learned_observations(
+            measurements,
+            valid,
+            output,
+            method_names,
+            LearnedObservationConfig(min_sigma=0.01, max_sigma=1.0),
+        )
+
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(len(diagnostics), 2)
+        self.assertEqual(summary["bbox_center"]["valid"], 2.0)
+        self.assertEqual(summary["bbox_center"]["top_count"], 2.0)
+        self.assertEqual(summary["bbox_center"]["top_rate"], 1.0)
+        self.assertAlmostEqual(summary["bbox_center"]["mean_sigma"], 0.05, places=6)
+        self.assertAlmostEqual(summary["bbox_center"]["mean_bias"], 0.10, places=6)
+        self.assertAlmostEqual(summary["bbox_center"]["mean_corrected_minus_raw_z"], -0.10, places=6)
+        self.assertGreater(summary["circle_center"]["mean_sigma"], summary["bbox_center"]["mean_sigma"])
 
     def test_physics_depth_loss_uses_sequence_dt_if_torch_available(self) -> None:
         try:
