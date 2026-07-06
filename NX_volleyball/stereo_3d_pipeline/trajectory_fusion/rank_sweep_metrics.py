@@ -16,6 +16,7 @@ BASELINE_VARIANTS = {
     "raw",
     "robust_smooth",
     "robust_rts_smooth",
+    "depth_polyfit_smooth",
     "calibrated_smoother",
     "calibrated_rts_smoother",
 }

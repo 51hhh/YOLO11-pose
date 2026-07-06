@@ -14,6 +14,7 @@ VARIANT_JSON_KEYS = (
     ("raw", "raw_eval_json"),
     ("robust_smooth", "robust_smooth_eval_json"),
     ("robust_rts_smooth", "robust_rts_smooth_eval_json"),
+    ("depth_polyfit_smooth", "depth_polyfit_smooth_eval_json"),
     ("calibrated_smoother", "calibrated_smoother_eval_json"),
     ("calibrated_rts_smoother", "calibrated_rts_smoother_eval_json"),
     ("reliability_direct", "reliability_direct_eval_json"),

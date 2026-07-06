@@ -17,6 +17,7 @@ try:
     )
     from .check_dataset import analyze_dataset
     from .dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from .depth_polyfit_smoother import DepthPolyfitConfig, apply_depth_polyfit_smoother
     from .evaluate_calibrated_smoother import apply_calibrated_smoother
     from .evaluate_fusion import _read as read_eval_rows
     from .evaluate_fusion import build_report
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - direct script execution
     )
     from check_dataset import analyze_dataset
     from dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from depth_polyfit_smoother import DepthPolyfitConfig, apply_depth_polyfit_smoother
     from evaluate_calibrated_smoother import apply_calibrated_smoother
     from evaluate_fusion import _read as read_eval_rows
     from evaluate_fusion import build_report
@@ -115,6 +117,7 @@ def run_suite(
     gravity_y: float = 9.81,
     use_online_position: bool = False,
     use_static_known_z: bool = False,
+    include_depth_polyfit: bool = True,
     include_rts_smoother: bool = True,
     include_candidate_consistency: bool = True,
     candidate_reference: str = "auto",
@@ -131,6 +134,7 @@ def run_suite(
             "gravity_y": gravity_y,
             "use_online_position": use_online_position,
             "use_static_known_z": use_static_known_z,
+            "include_depth_polyfit": include_depth_polyfit,
             "include_rts_smoother": include_rts_smoother,
             "include_candidate_consistency": include_candidate_consistency,
             "candidate_reference": candidate_reference,
@@ -222,6 +226,27 @@ def run_suite(
                     "robust_rts_smooth_eval_json": str(robust_rts_eval_json),
                     "robust_rts_rows": robust_rts_summary["rows"],
                     "robust_rts_track_count": robust_rts_report.get("track_count", 0),
+                }
+            )
+        if include_depth_polyfit:
+            polyfit_csv = clip_dir / "depth_polyfit_smooth.csv"
+            polyfit_json = clip_dir / "depth_polyfit_smooth_apply.json"
+            polyfit_summary = apply_depth_polyfit_smoother(
+                input_csv=clip.csv,
+                output_csv=polyfit_csv,
+                metadata_path=metadata_path,
+                cfg=DepthPolyfitConfig(gravity_y=gravity_y),
+            )
+            _write_json(polyfit_json, polyfit_summary)
+            polyfit_eval_json = clip_dir / "depth_polyfit_smooth_eval.json"
+            polyfit_report = _evaluate_csv(polyfit_csv, metadata_path, polyfit_eval_json)
+            clip_report.update(
+                {
+                    "depth_polyfit_smooth_csv": str(polyfit_csv),
+                    "depth_polyfit_smooth_apply_json": str(polyfit_json),
+                    "depth_polyfit_smooth_eval_json": str(polyfit_eval_json),
+                    "depth_polyfit_rows": polyfit_summary["rows"],
+                    "depth_polyfit_track_count": polyfit_report.get("track_count", 0),
                 }
             )
         if include_candidate_consistency:
@@ -389,6 +414,7 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--candidate-reference", default="auto")
+    parser.add_argument("--skip-depth-polyfit", action="store_true")
     parser.add_argument("--skip-rts-smoother", action="store_true")
     parser.add_argument("--skip-candidate-consistency", action="store_true")
     parser.set_defaults(use_static_known_z=False)
@@ -404,6 +430,7 @@ def main() -> int:
         gravity_y=args.gravity_y,
         use_online_position=args.use_online_position,
         use_static_known_z=args.use_static_known_z,
+        include_depth_polyfit=not args.skip_depth_polyfit,
         include_rts_smoother=not args.skip_rts_smoother,
         include_candidate_consistency=not args.skip_candidate_consistency,
         candidate_reference=args.candidate_reference,
@@ -411,11 +438,12 @@ def main() -> int:
     print(f"wrote suite for {len(report['clips'])} clip(s) to {report['output_dir']}")
     for clip in report["clips"]:
         print(
-            "clip={name} rows={rows} robust_rows={robust_rows} rts_rows={rts_rows} dir={directory}".format(
+            "clip={name} rows={rows} robust_rows={robust_rows} rts_rows={rts_rows} polyfit_rows={polyfit_rows} dir={directory}".format(
                 name=clip["name"],
                 rows=clip["check_rows"],
                 robust_rows=clip["robust_rows"],
                 rts_rows=clip.get("robust_rts_rows", 0),
+                polyfit_rows=clip.get("depth_polyfit_rows", 0),
                 directory=Path(clip["robust_smooth_csv"]).parent,
             )
         )

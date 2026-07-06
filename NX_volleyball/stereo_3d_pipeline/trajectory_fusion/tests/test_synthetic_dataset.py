@@ -723,6 +723,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(clip["check_rows"], 4)
             self.assertEqual(clip["robust_rows"], 4)
             self.assertEqual(clip["robust_rts_rows"], 4)
+            self.assertEqual(clip["depth_polyfit_rows"], 4)
             self.assertTrue((output_dir / "suite_summary.json").exists())
             self.assertTrue(Path(clip["check_dataset_json"]).exists())
             self.assertTrue(Path(clip["raw_eval_json"]).exists())
@@ -733,6 +734,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(Path(clip["robust_smooth_eval_json"]).exists())
             self.assertTrue(Path(clip["robust_rts_smooth_csv"]).exists())
             self.assertTrue(Path(clip["robust_rts_smooth_eval_json"]).exists())
+            self.assertTrue(Path(clip["depth_polyfit_smooth_csv"]).exists())
+            self.assertTrue(Path(clip["depth_polyfit_smooth_eval_json"]).exists())
             candidate_report = json.loads(
                 Path(clip["candidate_consistency_json"]).read_text(encoding="utf-8")
             )
@@ -740,14 +743,19 @@ class SyntheticDatasetTest(unittest.TestCase):
 
             summary_csv = output_dir / "suite_metrics.csv"
             rows = summarize_suite(output_dir, summary_csv)
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), 4)
             self.assertTrue(summary_csv.exists())
-            self.assertEqual({row["variant"] for row in rows}, {"raw", "robust_smooth", "robust_rts_smooth"})
+            self.assertEqual(
+                {row["variant"] for row in rows},
+                {"raw", "robust_smooth", "robust_rts_smooth", "depth_polyfit_smooth"},
+            )
             self.assertEqual({row["split"] for row in rows}, {"eval"})
             smooth_row = next(row for row in rows if row["variant"] == "robust_smooth")
             rts_row = next(row for row in rows if row["variant"] == "robust_rts_smooth")
+            polyfit_row = next(row for row in rows if row["variant"] == "depth_polyfit_smooth")
             self.assertIn("known_z_bias", smooth_row)
             self.assertIn("known_z_bias", rts_row)
+            self.assertIn("known_z_bias", polyfit_row)
             self.assertIn("ballistic_residual_rms_mps2", smooth_row)
 
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
