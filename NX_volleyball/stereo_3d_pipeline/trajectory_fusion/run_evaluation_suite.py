@@ -98,7 +98,7 @@ def run_suite(
     device: str = "cpu",
     gravity_y: float = 9.81,
     use_online_position: bool = False,
-    use_static_known_z: bool = True,
+    use_static_known_z: bool = False,
 ) -> Dict[str, Any]:
     clips = resolve_clips(inputs, metadata)
     root = Path(output_dir)
@@ -107,6 +107,11 @@ def run_suite(
     suite_report: Dict[str, Any] = {
         "output_dir": str(root),
         "checkpoint": str(checkpoint) if checkpoint else None,
+        "config": {
+            "gravity_y": gravity_y,
+            "use_online_position": use_online_position,
+            "use_static_known_z": use_static_known_z,
+        },
         "clips": [],
     }
 
@@ -218,7 +223,19 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--use-online-position", action="store_true")
-    parser.add_argument("--no-static-known-z", action="store_true")
+    parser.add_argument(
+        "--use-static-known-z",
+        dest="use_static_known_z",
+        action="store_true",
+        help="Use static known_z metadata as a smoother update. Off by default to avoid label leakage in evaluation.",
+    )
+    parser.add_argument(
+        "--no-static-known-z",
+        dest="use_static_known_z",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(use_static_known_z=False)
     args = parser.parse_args()
 
     report = run_suite(
@@ -229,7 +246,7 @@ def main() -> int:
         device=args.device,
         gravity_y=args.gravity_y,
         use_online_position=args.use_online_position,
-        use_static_known_z=not args.no_static_known_z,
+        use_static_known_z=args.use_static_known_z,
     )
     print(f"wrote suite for {len(report['clips'])} clip(s) to {report['output_dir']}")
     for clip in report["clips"]:

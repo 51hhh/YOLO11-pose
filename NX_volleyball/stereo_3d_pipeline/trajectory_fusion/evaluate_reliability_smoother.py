@@ -281,7 +281,19 @@ def main() -> int:
     parser.add_argument("--json-out")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--use-online-position", action="store_true")
-    parser.add_argument("--no-static-known-z", action="store_true")
+    parser.add_argument(
+        "--use-static-known-z",
+        dest="use_static_known_z",
+        action="store_true",
+        help="Use static known_z metadata as a smoother update. Off by default to avoid label leakage in evaluation.",
+    )
+    parser.add_argument(
+        "--no-static-known-z",
+        dest="use_static_known_z",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(use_static_known_z=False)
     parser.add_argument("--min-sigma", type=float, default=0.015)
     parser.add_argument("--max-sigma", type=float, default=1.5)
     parser.add_argument("--sigma-scale", type=float, default=1.0)
@@ -293,7 +305,7 @@ def main() -> int:
     smoother_cfg = SmootherConfig(
         use_method_depths=True,
         use_online_position=args.use_online_position,
-        use_static_known_z=not args.no_static_known_z,
+        use_static_known_z=args.use_static_known_z,
         gravity_y=args.gravity_y,
     )
     learned_cfg = LearnedObservationConfig(

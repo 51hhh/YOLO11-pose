@@ -32,7 +32,7 @@ class SmootherConfig:
     gravity_y: float = 9.81
     use_method_depths: bool = True
     use_online_position: bool = False
-    use_static_known_z: bool = True
+    use_static_known_z: bool = False
 
 
 ZMeasurement = Tuple[float, float, str]
@@ -394,14 +394,26 @@ def main() -> int:
     parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
     parser.add_argument("--no-method-depths", action="store_true", help="Do not use raw candidate z_* updates")
     parser.add_argument("--use-online-position", action="store_true", help="Also use legacy online x/y/z as a position update")
-    parser.add_argument("--no-static-known-z", action="store_true", help="Do not use static known_z metadata as an update")
+    parser.add_argument(
+        "--use-static-known-z",
+        dest="use_static_known_z",
+        action="store_true",
+        help="Use static known_z metadata as a smoother update. Off by default to avoid label leakage in evaluation.",
+    )
+    parser.add_argument(
+        "--no-static-known-z",
+        dest="use_static_known_z",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(use_static_known_z=False)
     parser.add_argument("--gravity-y", type=float, default=9.81, help="Camera-y gravity prior in m/s^2")
     args = parser.parse_args()
 
     cfg = SmootherConfig(
         use_method_depths=not args.no_method_depths,
         use_online_position=args.use_online_position,
-        use_static_known_z=not args.no_static_known_z,
+        use_static_known_z=args.use_static_known_z,
         gravity_y=args.gravity_y,
     )
     sequences = load_legacy_sequences(args.input, metadata_path=args.metadata)

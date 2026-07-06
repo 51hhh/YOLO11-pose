@@ -551,6 +551,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             report = run_suite([str(csv_path)], output_dir, gravity_y=0.0)
 
             self.assertEqual(len(report["clips"]), 1)
+            self.assertFalse(report["config"]["use_static_known_z"])
             clip = report["clips"][0]
             self.assertEqual(clip["check_rows"], 4)
             self.assertEqual(clip["robust_rows"], 4)
