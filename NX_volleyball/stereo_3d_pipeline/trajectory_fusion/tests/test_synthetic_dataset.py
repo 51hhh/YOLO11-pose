@@ -22,6 +22,12 @@ from trajectory_fusion import run_dataset_workflow as workflow_module  # noqa: E
 from trajectory_fusion import run_reliability_sweep as sweep_module  # noqa: E402
 from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
 from trajectory_fusion.audit_reliability_methods import audit_reliability_methods  # noqa: E402
+from trajectory_fusion.audit_training_inputs import (  # noqa: E402
+    audit_training_inputs,
+    write_feature_csv as write_training_feature_csv,
+    write_json as write_training_audit_json,
+    write_method_csv as write_training_method_csv,
+)
 from trajectory_fusion.build_dataset_manifest import (  # noqa: E402
     build_manifest,
     discover_csvs,
@@ -449,6 +455,39 @@ class SyntheticDatasetTest(unittest.TestCase):
                 arrays["features"][0][feature_index["roi_ring_edge_profile_support"]],
                 9.0,
             )
+
+    def test_audit_training_inputs_reports_exact_model_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root)
+            report = audit_training_inputs([csv_path])
+
+            methods = {
+                (row["split"], row["method"]): row
+                for row in report["method_coverage"]
+            }
+            feature_rows = {
+                (row["split"], row["feature"]): row
+                for row in report["feature_coverage"]
+            }
+
+            self.assertEqual(report["clip_count"], 1)
+            self.assertEqual(report["sequence_count"], 1)
+            self.assertEqual(report["frame_count"], 4)
+            self.assertEqual(methods[("eval", "bbox_center")]["valid"], 4)
+            self.assertEqual(methods[("eval", "circle_center")]["valid"], 2)
+            self.assertEqual(feature_rows[("eval", "candidate_valid_count")]["nonzero"], 4)
+            self.assertFalse(any(str(warning).startswith("legacy_") for warning in report["warnings"]))
+
+            json_path = root / "training_input_audit.json"
+            method_csv = root / "training_method_coverage.csv"
+            feature_csv = root / "training_feature_coverage.csv"
+            write_training_audit_json(json_path, report)
+            write_training_method_csv(method_csv, report)
+            write_training_feature_csv(feature_csv, report)
+            self.assertTrue(json_path.exists())
+            self.assertIn("bbox_center", method_csv.read_text(encoding="utf-8"))
+            self.assertIn("candidate_valid_count", feature_csv.read_text(encoding="utf-8"))
 
     def test_p2_sidecar_merges_ncc_xfeat_and_superpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1523,6 +1562,9 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue((output_dir / "workflow_report.md").exists())
             self.assertEqual(summary["manifest"]["clip_count"], 2)
             self.assertEqual(summary["validation"]["split_counts"], {"train": 1, "val": 1})
+            self.assertTrue(Path(summary["training_input_audit"]["json"]).exists())
+            self.assertTrue(Path(summary["training_input_audit"]["method_csv"]).exists())
+            self.assertGreater(summary["training_input_audit"]["frame_count"], 0)
             self.assertFalse(summary["config"]["use_static_known_z"])
             self.assertGreater(summary["calibration"]["method_count"], 0)
             self.assertTrue(summary["calibration"]["used_for_suite"])
@@ -1573,6 +1615,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(summary["config"]["stratify_known_z"])
             self.assertEqual(summary["validation"]["known_z_counts"], {"train": 2, "val": 2})
             self.assertEqual(summary["validation"]["known_z_bucket_warnings"], [])
+            self.assertEqual(summary["training_input_audit"]["clip_count"], 4)
             self.assertEqual(split_by_z[3.0], {"train", "val"})
             self.assertEqual(split_by_z[4.0], {"train", "val"})
 

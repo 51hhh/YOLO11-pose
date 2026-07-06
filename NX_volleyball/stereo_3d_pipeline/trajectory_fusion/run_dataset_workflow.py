@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Sequence
 
 try:
+    from .audit_training_inputs import (
+        audit_training_inputs,
+        write_feature_csv as write_training_feature_csv,
+        write_json as write_training_audit_json,
+        write_method_csv as write_training_method_csv,
+    )
     from .build_dataset_manifest import build_manifest, write_manifest
     from .fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from .manifest import is_manifest_path, load_manifest
@@ -18,6 +24,12 @@ try:
     from .summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from .validate_dataset_manifest import analyze_manifest
 except ImportError:  # pragma: no cover - direct script execution
+    from audit_training_inputs import (
+        audit_training_inputs,
+        write_feature_csv as write_training_feature_csv,
+        write_json as write_training_audit_json,
+        write_method_csv as write_training_method_csv,
+    )
     from build_dataset_manifest import build_manifest, write_manifest
     from fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from manifest import is_manifest_path, load_manifest
@@ -140,6 +152,29 @@ def _fit_calibration(
     )
 
 
+def _run_training_input_audit(manifest_path: Path, output_dir: Path) -> Dict[str, Any]:
+    report = audit_training_inputs([str(manifest_path)])
+    json_path = output_dir / "training_input_audit.json"
+    method_csv = output_dir / "training_method_coverage.csv"
+    feature_csv = output_dir / "training_feature_coverage.csv"
+    write_training_audit_json(json_path, report)
+    write_training_method_csv(method_csv, report)
+    write_training_feature_csv(feature_csv, report)
+    return {
+        "json": str(json_path),
+        "method_csv": str(method_csv),
+        "feature_csv": str(feature_csv),
+        "clip_count": report.get("clip_count", 0),
+        "sequence_count": report.get("sequence_count", 0),
+        "frame_count": report.get("frame_count", 0),
+        "feature_count": report.get("feature_count", 0),
+        "method_count": report.get("method_count", 0),
+        "warnings": report.get("warnings", []),
+        "low_method_coverage_count": len(report.get("low_method_coverage", [])),
+        "mostly_zero_feature_count": len(report.get("mostly_zero_features", [])),
+    }
+
+
 def _run_suite_and_summarize(
     manifest_path: Path,
     output_dir: Path,
@@ -255,6 +290,7 @@ def run_workflow(
     )
     validation_json = root / "manifest_validation.json"
     _write_json(validation_json, validation)
+    training_input_audit = _run_training_input_audit(manifest_path, root)
 
     calibration_path: Path | None = None
     if skip_calibration:
@@ -337,6 +373,7 @@ def run_workflow(
             "warning_counts": validation.get("warning_counts", {}),
             "warnings": validation.get("warnings", []),
         },
+        "training_input_audit": training_input_audit,
         "calibration": calibration_summary,
         "baseline_suite": baseline_suite,
         "sweep": sweep_summary,

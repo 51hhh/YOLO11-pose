@@ -78,6 +78,10 @@ def _derive_warnings(summary: Dict[str, Any], selection_rows: List[Dict[str, str
         if key:
             warnings.append(f"validation:{key}")
 
+    training_audit = summary.get("training_input_audit", {})
+    for warning in training_audit.get("warnings", []):
+        warnings.append(f"training_input:{warning}")
+
     calibration = summary.get("calibration", {})
     if not bool(calibration.get("used_for_suite", False)):
         warnings.append("calibration:not_used")
@@ -113,6 +117,16 @@ def _derive_actions(summary: Dict[str, Any], selection_rows: List[Dict[str, str]
         actions.append("For stratified known_z runs, ensure every evaluated distance also has train coverage or intentionally disable stratified validation.")
     if "frame_gaps>0" in validation_counts:
         actions.append("Inspect frame gaps and synchronization before trusting dynamic metrics.")
+    training_audit = summary.get("training_input_audit", {})
+    audit_warnings = set(training_audit.get("warnings", []))
+    if "no_training_sequences" in audit_warnings or "no_training_frames" in audit_warnings:
+        actions.append("Fix manifest/CSV parsing before training; the model input audit found no usable sequences.")
+    if any(str(item).startswith("legacy_") for item in audit_warnings):
+        actions.append("Remove legacy online state/depth leakage from training inputs before running a sweep.")
+    if any(str(item).startswith("low_method_coverage") for item in audit_warnings):
+        actions.append("Inspect training_method_coverage.csv and confirm expected P0/P1/NCC/XFeat fields are present.")
+    if any(str(item).startswith("mostly_zero_features") for item in audit_warnings):
+        actions.append("Inspect training_feature_coverage.csv; many model features are constant or absent in this dataset.")
     if not bool(summary.get("calibration", {}).get("used_for_suite", False)):
         actions.append("Fit per-method calibration after train split known_z clips are available.")
 
@@ -147,6 +161,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
         "workflow_summary": str(summary_path),
         "output_dir": summary.get("output_dir", ""),
         "validation": summary.get("validation", {}),
+        "training_input_audit": summary.get("training_input_audit", {}),
         "calibration": summary.get("calibration", {}),
         "baseline_suite": {
             "metrics_csv": summary.get("baseline_suite", {}).get("metrics_csv"),
@@ -192,6 +207,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     validation = report.get("validation", {})
+    training_audit = report.get("training_input_audit", {})
     calibration = report.get("calibration", {})
     selection = report.get("sweep", {}).get("selection_status", {})
     top = selection.get("top") or {}
@@ -203,6 +219,8 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
         f"- splits: `{validation.get('split_counts', {})}`",
         f"- known_z: `{validation.get('known_z_counts', {})}`",
         f"- known_z buckets: `{validation.get('known_z_bucket_counts', {})}`",
+        f"- training inputs: frames `{training_audit.get('frame_count', 0)}`, methods `{training_audit.get('method_count', 0)}`, features `{training_audit.get('feature_count', 0)}`",
+        f"- training input warnings: `{training_audit.get('warnings', [])}`",
         f"- calibration methods: `{calibration.get('method_count', 0)}`",
         f"- calibration used: `{calibration.get('used_for_suite', False)}`",
         f"- top selection: `{top.get('config', '')}` / `{top.get('decision', selection.get('decision', ''))}`",
