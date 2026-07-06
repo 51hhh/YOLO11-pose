@@ -28,6 +28,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     read_metadata,
 )
 from trajectory_fusion.manifest import is_manifest_path, load_manifest  # noqa: E402
+from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
@@ -621,6 +622,45 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("0.02", command)
             self.assertIn("--bias-reg-weight", command)
             self.assertIn("--metadata", command)
+
+    def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sweep_metrics.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "known_z_bias",
+                    "known_z_mad",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "smooth_but_wrong",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.25",
+                        "known_z_mad": "0.01",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "accurate",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.004",
+                        "z_peak_to_peak": "0.02",
+                        "known_z_bias": "0.01",
+                        "known_z_mad": "0.01",
+                    }
+                )
+
+            ranked = rank_metrics(path)
+            self.assertEqual(ranked[0]["config"], "accurate")
+            self.assertEqual(ranked[0]["rank"], 1)
 
 
 if __name__ == "__main__":

@@ -12,9 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 try:
+    from .rank_sweep_metrics import rank_metrics, write_ranking
     from .run_evaluation_suite import run_suite
     from .summarize_evaluation_suite import summarize_suite
 except ImportError:  # pragma: no cover - direct script execution
+    from rank_sweep_metrics import rank_metrics, write_ranking
     from run_evaluation_suite import run_suite
     from summarize_evaluation_suite import summarize_suite
 
@@ -255,7 +257,10 @@ def run_sweep(
             }
         )
         _write_sweep_summary(root / "sweep_summary.json", summary)
-        _write_combined_metrics(root / "sweep_metrics.csv", combined_rows)
+        metrics_path = root / "sweep_metrics.csv"
+        _write_combined_metrics(metrics_path, combined_rows)
+        ranking = rank_metrics(metrics_path)
+        write_ranking(root / "sweep_ranking.csv", ranking)
 
     return summary
 

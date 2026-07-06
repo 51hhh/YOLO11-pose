@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Rank ReliabilityNet sweep configurations from sweep_metrics.csv."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+from collections import defaultdict
+from pathlib import Path
+from statistics import mean
+from typing import Any, Dict, Iterable, List
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_rows(path: str | Path) -> List[Dict[str, str]]:
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _mean(values: Iterable[float]) -> float | None:
+    values = list(values)
+    return mean(values) if values else None
+
+
+def _score(row: Dict[str, Any]) -> float:
+    known_terms = []
+    if row["known_clip_count"] > 0:
+        if row["mean_abs_known_z_bias"] is not None:
+            known_terms.append(row["mean_abs_known_z_bias"])
+        if row["mean_known_z_mad"] is not None:
+            known_terms.append(row["mean_known_z_mad"])
+    stability = 0.0
+    if row["mean_z_std"] is not None:
+        stability += row["mean_z_std"]
+    if row["mean_z_peak_to_peak"] is not None:
+        stability += 0.25 * row["mean_z_peak_to_peak"]
+    if known_terms:
+        return sum(known_terms) + 0.25 * stability
+    return stability
+
+
+def rank_metrics(
+    metrics_csv: str | Path,
+    *,
+    variant: str = "reliability_smoother",
+) -> List[Dict[str, Any]]:
+    rows = [row for row in _read_rows(metrics_csv) if row.get("variant") == variant]
+    grouped: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped[row.get("config", "")].append(row)
+
+    ranked: List[Dict[str, Any]] = []
+    for config, items in grouped.items():
+        z_std = [_safe_float(row.get("z_std")) for row in items]
+        z_p2p = [_safe_float(row.get("z_peak_to_peak")) for row in items]
+        bias = [_safe_float(row.get("known_z_bias")) for row in items]
+        mad = [_safe_float(row.get("known_z_mad")) for row in items]
+        z_std_values = [value for value in z_std if value is not None]
+        z_p2p_values = [value for value in z_p2p if value is not None]
+        bias_values = [abs(value) for value in bias if value is not None]
+        mad_values = [value for value in mad if value is not None]
+        ranked_row: Dict[str, Any] = {
+            "config": config,
+            "variant": variant,
+            "clip_count": len(items),
+            "known_clip_count": len(bias_values),
+            "mean_z_std": _mean(z_std_values),
+            "mean_z_peak_to_peak": _mean(z_p2p_values),
+            "mean_abs_known_z_bias": _mean(bias_values),
+            "mean_known_z_mad": _mean(mad_values),
+        }
+        ranked_row["score"] = _score(ranked_row)
+        ranked.append(ranked_row)
+
+    ranked.sort(key=lambda row: (row["score"], row["config"]))
+    for index, row in enumerate(ranked, start=1):
+        row["rank"] = index
+    return ranked
+
+
+def write_ranking(path: str | Path, rows: List[Dict[str, Any]]) -> None:
+    if not rows:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "rank",
+        "config",
+        "variant",
+        "score",
+        "clip_count",
+        "known_clip_count",
+        "mean_abs_known_z_bias",
+        "mean_known_z_mad",
+        "mean_z_std",
+        "mean_z_peak_to_peak",
+    ]
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: "" if row.get(key) is None else row.get(key) for key in fieldnames})
+
+
+def _fmt(value: Any) -> str:
+    if value is None or value == "":
+        return "nan"
+    try:
+        return f"{float(value):.5f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def print_ranking(rows: List[Dict[str, Any]], limit: int = 10) -> None:
+    print("rank,config,score,known_bias,known_mad,z_std,p2p")
+    for row in rows[:limit]:
+        print(
+            "{rank},{config},{score},{bias},{mad},{std},{p2p}".format(
+                rank=row["rank"],
+                config=row["config"],
+                score=_fmt(row["score"]),
+                bias=_fmt(row["mean_abs_known_z_bias"]),
+                mad=_fmt(row["mean_known_z_mad"]),
+                std=_fmt(row["mean_z_std"]),
+                p2p=_fmt(row["mean_z_peak_to_peak"]),
+            )
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("metrics_csv", help="sweep_metrics.csv")
+    parser.add_argument("-o", "--output")
+    parser.add_argument("--variant", default="reliability_smoother")
+    parser.add_argument("--limit", type=int, default=10)
+    args = parser.parse_args()
+
+    rows = rank_metrics(args.metrics_csv, variant=args.variant)
+    output = args.output or str(Path(args.metrics_csv).with_name("sweep_ranking.csv"))
+    write_ranking(output, rows)
+    print_ranking(rows, limit=args.limit)
+    print(f"wrote {len(rows)} rows to {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
