@@ -1,0 +1,61 @@
+{
+  "configs": [
+    {
+      "name": "dyn_h32_e100_bias10",
+      "epochs": 100,
+      "hidden": 32,
+      "static_jitter_weight": 0.5,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 31
+    },
+    {
+      "name": "dyn_h64_e100_bias10",
+      "epochs": 100,
+      "hidden": 64,
+      "static_jitter_weight": 0.5,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 37
+    },
+    {
+      "name": "dyn_h32_e100_bias20",
+      "epochs": 100,
+      "hidden": 32,
+      "static_jitter_weight": 0.5,
+      "bias_reg_weight": 2.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 41
+    },
+    {
+      "name": "dyn_h32_e100_leave002",
+      "epochs": 100,
+      "hidden": 32,
+      "static_jitter_weight": 0.5,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.02,
+      "leave_one_max_methods": 8,
+      "seed": 43
+    },
+    {
+      "name": "dyn_h32_e100_leave005",
+      "epochs": 100,
+      "hidden": 32,
+      "static_jitter_weight": 0.5,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.05,
+      "leave_one_max_methods": 8,
+      "seed": 47
+    }
+  ]
+}

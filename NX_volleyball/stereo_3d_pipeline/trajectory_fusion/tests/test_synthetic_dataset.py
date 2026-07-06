@@ -1089,6 +1089,72 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(risky["decision"], "reject")
             self.assertEqual(risky["decision_reason"], "dominant_method_top_share")
 
+    def test_select_reliability_model_uses_split_audit_for_all_ranking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metrics_path = root / "sweep_metrics.csv"
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "split",
+                    "variant",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "ballistic_residual_rms_mps2",
+                    "accel_z_rms_mps2",
+                    "checkpoint",
+                    "suite_dir",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "train_only",
+                        "split": "train",
+                        "variant": "reliability_smoother",
+                        "z_std": "0.02",
+                        "z_peak_to_peak": "0.08",
+                        "ballistic_residual_rms_mps2": "5.0",
+                        "accel_z_rms_mps2": "2.0",
+                        "checkpoint": "train_only.pt",
+                        "suite_dir": "train_only_suite",
+                    }
+                )
+            audit_path = root / "sweep_reliability_method_audit.csv"
+            with audit_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "warnings",
+                    "dominant_top_method",
+                    "dominant_top_count",
+                    "top_total",
+                    "low_coverage_top_count",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "train_only",
+                        "variant": "reliability_smoother",
+                        "split": "train",
+                        "warnings": "large_method_bias",
+                        "dominant_top_method": "roi_multi_point",
+                        "dominant_top_count": "42",
+                        "top_total": "100",
+                        "low_coverage_top_count": "5",
+                    }
+                )
+
+            selected = select_reliability_models(metrics_path, audit_csv=audit_path)
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(selected[0]["split"], "all")
+            self.assertEqual(selected[0]["decision"], "caution")
+            self.assertEqual(selected[0]["decision_reason"], "large_method_bias")
+            self.assertEqual(selected[0]["audit_warnings"], "large_method_bias")
+            self.assertEqual(selected[0]["dominant_top_method"], "roi_multi_point")
+
     def test_reliability_sweep_config_and_command_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1103,6 +1169,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                                 "hidden": 16,
                                 "bias_reg_weight": 0.5,
                                 "leave_one_weight": 0.02,
+                                "seed": 123,
                             }
                         ]
                     }
@@ -1124,6 +1191,23 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("0.02", command)
             self.assertIn("--bias-reg-weight", command)
             self.assertIn("--metadata", command)
+            self.assertIn("--seed", command)
+            self.assertIn("123", command)
+
+    def test_repository_sweep_configs_load(self) -> None:
+        config_dir = PROJECT / "trajectory_fusion" / "configs"
+        expected = {
+            "sweep_smoke.json": 1,
+            "sweep_known_distance_selection.json": 5,
+            "sweep_dynamic_regularization.json": 5,
+        }
+        for filename, count in expected.items():
+            configs = load_sweep_configs(config_dir / filename)
+            self.assertEqual(len(configs), count, filename)
+            self.assertTrue(all(config["epochs"] > 0 for config in configs))
+            self.assertTrue(all(config["hidden"] > 0 for config in configs))
+            self.assertTrue(all(config["bias_reg_weight"] >= 1.0 for config in configs))
+            self.assertTrue(all(config["seed"] > 0 for config in configs))
 
     def test_reliability_sweep_passes_calibration_to_suite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

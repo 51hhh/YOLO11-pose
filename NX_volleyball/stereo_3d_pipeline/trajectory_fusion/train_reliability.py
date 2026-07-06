@@ -93,6 +93,7 @@ def main() -> int:
     parser.add_argument("--bias-reg-weight", type=float, default=0.02)
     parser.add_argument("--leave-one-weight", type=float, default=0.0)
     parser.add_argument("--leave-one-max-methods", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     _require_torch()
@@ -120,6 +121,10 @@ def main() -> int:
             uncertainty_regularizer,
         )
         from models import MeasurementReliabilityNet, weighted_depth_consensus
+
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     clips = resolve_input_clips(args.inputs, args.metadata)
     train_items, heldout_items = load_sequences_from_clips(clips, args.train_split)
@@ -260,6 +265,7 @@ def main() -> int:
             "bias_reg_weight": args.bias_reg_weight,
             "leave_one_weight": args.leave_one_weight,
             "leave_one_max_methods": args.leave_one_max_methods,
+            "seed": args.seed,
         },
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",
     }

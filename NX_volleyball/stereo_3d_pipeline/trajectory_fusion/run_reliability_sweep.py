@@ -79,6 +79,7 @@ TRAIN_OPTION_KEYS = (
     "bias_reg_weight",
     "leave_one_weight",
     "leave_one_max_methods",
+    "seed",
 )
 
 

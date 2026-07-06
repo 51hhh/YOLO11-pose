@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -84,6 +85,52 @@ def _default_audit_path(metrics_csv: str | Path) -> Path:
     return Path(metrics_csv).with_name("sweep_reliability_method_audit.csv")
 
 
+def _aggregate_audit_rows(rows: List[Dict[str, str]]) -> Dict[str, str] | None:
+    if not rows:
+        return None
+    warning_set: set[str] = set()
+    dominant_counts: Dict[str, float] = {}
+    top_total = 0.0
+    low_coverage_top_count = 0.0
+    for row in rows:
+        warning_set.update(_split_warnings(row.get("warnings")))
+        method = row.get("dominant_top_method") or ""
+        dominant_count = _safe_float(row.get("dominant_top_count"))
+        if method:
+            dominant_counts[method] = dominant_counts.get(method, 0.0) + dominant_count
+        top_total += _safe_float(row.get("top_total"))
+        low_coverage_top_count += _safe_float(row.get("low_coverage_top_count"))
+    dominant_method = ""
+    dominant_count = 0.0
+    if dominant_counts:
+        dominant_method, dominant_count = max(dominant_counts.items(), key=lambda item: item[1])
+    return {
+        "config": rows[0].get("config", ""),
+        "variant": rows[0].get("variant", ""),
+        "split": "all",
+        "warnings": ";".join(sorted(warning_set)),
+        "dominant_top_method": dominant_method,
+        "dominant_top_share": _fmt_ratio(dominant_count, top_total),
+        "low_coverage_top_share": _fmt_ratio(low_coverage_top_count, top_total),
+    }
+
+
+def _safe_float(value: object) -> float:
+    try:
+        if value is None or value == "":
+            return 0.0
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_ratio(numerator: float, denominator: float) -> str:
+    if denominator <= 0.0:
+        return "0.0"
+    return f"{numerator / denominator:.12g}"
+
+
 def _decision_for_audit(audit: Dict[str, str] | None) -> Tuple[str, str]:
     if audit is None:
         return "caution", "missing_method_audit"
@@ -108,11 +155,24 @@ def select_reliability_models(
 
     rankings = rank_metrics(metrics_csv, variant=variant, split=split)
     audit_path = Path(audit_csv) if audit_csv else _default_audit_path(metrics_csv)
-    audit_by_key = {_audit_key(row): row for row in _read_csv(audit_path)}
+    audit_rows = _read_csv(audit_path)
+    audit_by_key = {_audit_key(row): row for row in audit_rows}
+    audit_all_by_key: Dict[Tuple[str, str, str], Dict[str, str]] = {}
+    grouped_audits: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    for row in audit_rows:
+        key = (row.get("config") or "suite", row.get("variant") or "")
+        grouped_audits.setdefault(key, []).append(row)
+    for (config, audit_variant), rows in grouped_audits.items():
+        aggregate = _aggregate_audit_rows(rows)
+        if aggregate is not None:
+            audit_all_by_key[(config, audit_variant, "all")] = aggregate
 
     selected: List[Dict[str, Any]] = []
     for ranking in rankings:
-        audit = audit_by_key.get(_ranking_key(ranking))
+        ranking_key = _ranking_key(ranking)
+        audit = audit_by_key.get(ranking_key)
+        if audit is None and ranking_key[2] == "all":
+            audit = audit_all_by_key.get(ranking_key)
         decision, reason = _decision_for_audit(audit)
         selected.append(
             {
