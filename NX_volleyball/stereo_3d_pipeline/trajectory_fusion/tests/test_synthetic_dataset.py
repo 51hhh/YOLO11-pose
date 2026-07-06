@@ -636,6 +636,8 @@ class SyntheticDatasetTest(unittest.TestCase):
                     "z_peak_to_peak",
                     "known_z_bias",
                     "known_z_mad",
+                    "checkpoint",
+                    "suite_dir",
                 ]
                 writer = csv.DictWriter(handle, fieldnames=fieldnames)
                 writer.writeheader()
@@ -648,6 +650,8 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "z_peak_to_peak": "0.004",
                         "known_z_bias": "0.25",
                         "known_z_mad": "0.01",
+                        "checkpoint": "wrong.pt",
+                        "suite_dir": "wrong_suite",
                     }
                 )
                 writer.writerow(
@@ -659,6 +663,8 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "z_peak_to_peak": "0.02",
                         "known_z_bias": "0.01",
                         "known_z_mad": "0.01",
+                        "checkpoint": "accurate.pt",
+                        "suite_dir": "accurate_suite",
                     }
                 )
 
@@ -671,12 +677,15 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "z_peak_to_peak": "0.004",
                         "known_z_bias": "0.001",
                         "known_z_mad": "0.001",
+                        "checkpoint": "wrong.pt",
+                        "suite_dir": "wrong_suite",
                     }
                 )
 
             ranked = rank_metrics(path)
             self.assertEqual(ranked[0]["config"], "accurate")
             self.assertEqual(ranked[0]["split"], "val")
+            self.assertEqual(ranked[0]["checkpoint"], "accurate.pt")
             self.assertEqual(ranked[0]["rank"], 1)
 
 

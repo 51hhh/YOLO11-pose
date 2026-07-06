@@ -81,6 +81,8 @@ def rank_metrics(
         mad_values = [value for value in mad if value is not None]
         ranked_row: Dict[str, Any] = {
             "config": config,
+            "checkpoint": items[0].get("checkpoint", ""),
+            "suite_dir": items[0].get("suite_dir", ""),
             "variant": variant,
             "split": selected_split or "all",
             "clip_count": len(items),
@@ -107,6 +109,8 @@ def write_ranking(path: str | Path, rows: List[Dict[str, Any]]) -> None:
     fieldnames = [
         "rank",
         "config",
+        "checkpoint",
+        "suite_dir",
         "variant",
         "split",
         "score",
