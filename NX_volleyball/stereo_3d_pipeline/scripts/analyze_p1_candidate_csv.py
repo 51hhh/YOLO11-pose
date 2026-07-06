@@ -168,11 +168,26 @@ def print_circle_source_summary(rows: list[dict[str, str]]) -> None:
     if non_roi_rows:
         total = len(non_roi_rows)
         print("\nNon-ROI circle-source P1 signal:")
+        bbox_count = (
+            valid_depth_count(non_roi_rows, "z_bbox_center")
+            if "z_bbox_center" in rows[0] else 0
+        )
+        best_p1_count = 0
         for field in P1_FIELDS:
             if field not in rows[0]:
                 continue
             count = valid_depth_count(non_roi_rows, field)
+            best_p1_count = max(best_p1_count, count)
             print(f"{field}: {count}/{total} ({100.0 * count / total:.1f}%)")
+        if total > 0:
+            bbox_rate = 100.0 * bbox_count / total
+            best_p1_rate = 100.0 * best_p1_count / total
+            if bbox_rate > 80.0 and best_p1_rate < 20.0:
+                print(
+                    "Signal: non-ROI circle-source frames have high bbox coverage "
+                    f"({bbox_rate:.1f}%) but low P1 coverage "
+                    f"({best_p1_rate:.1f}%). Check P1 GPU bbox-fallback seed path."
+                )
 
 
 def companion(path: Path, suffix: str) -> Path:
