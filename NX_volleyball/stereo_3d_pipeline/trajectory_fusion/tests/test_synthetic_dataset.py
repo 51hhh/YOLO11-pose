@@ -10,6 +10,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -17,6 +18,7 @@ if str(PROJECT) not in sys.path:
     sys.path.insert(0, str(PROJECT))
 
 from trajectory_fusion import evaluate_fusion  # noqa: E402
+from trajectory_fusion import run_reliability_sweep as sweep_module  # noqa: E402
 from trajectory_fusion.analyze_candidate_consistency import analyze_candidate_consistency  # noqa: E402
 from trajectory_fusion.check_dataset import analyze_dataset  # noqa: E402
 from trajectory_fusion.dataset import (  # noqa: E402
@@ -772,6 +774,52 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("0.02", command)
             self.assertIn("--bias-reg-weight", command)
             self.assertIn("--metadata", command)
+
+    def test_reliability_sweep_passes_calibration_to_suite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "sweep.json"
+            calibration_path = root / "method_calibration.json"
+            calibration_path.write_text("{}", encoding="utf-8")
+            config_path.write_text(
+                json.dumps({"configs": [{"name": "quick", "epochs": 1, "hidden": 8}]}),
+                encoding="utf-8",
+            )
+            metric_row = {
+                "clip": "clip",
+                "split": "val",
+                "variant": "reliability_smoother",
+                "track_id": "0",
+                "known_z": "3.0",
+                "z_std": "0.01",
+                "z_peak_to_peak": "0.02",
+                "known_z_bias": "0.01",
+                "known_z_mad": "0.002",
+            }
+
+            with mock.patch.object(sweep_module.subprocess, "run") as run_mock, mock.patch.object(
+                sweep_module,
+                "run_suite",
+                return_value={"clips": [{"name": "clip"}]},
+            ) as suite_mock, mock.patch.object(
+                sweep_module,
+                "summarize_suite",
+                return_value=[metric_row],
+            ):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    summary = sweep_module.run_sweep(
+                        ["dataset_manifest.yaml"],
+                        root / "sweep_out",
+                        configs_path=config_path,
+                        calibration=calibration_path,
+                        gravity_y=0.0,
+                    )
+
+            run_mock.assert_called_once()
+            suite_mock.assert_called_once()
+            self.assertEqual(summary["calibration"], str(calibration_path))
+            self.assertEqual(suite_mock.call_args.kwargs["calibration"], calibration_path)
+            self.assertEqual(summary["runs"][0]["calibration"], str(calibration_path))
 
     def test_rank_sweep_metrics_prefers_known_z_accuracy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

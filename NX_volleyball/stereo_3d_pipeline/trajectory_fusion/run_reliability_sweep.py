@@ -186,6 +186,7 @@ def run_sweep(
     *,
     metadata: str | None = None,
     configs_path: str | Path | None = None,
+    calibration: str | Path | None = None,
     train_split: str = "train",
     device: str = "cpu",
     gravity_y: float = 9.81,
@@ -202,6 +203,7 @@ def run_sweep(
     summary: Dict[str, Any] = {
         "output_dir": str(root),
         "configs_path": str(configs_path) if configs_path else None,
+        "calibration": str(calibration) if calibration else None,
         "train_split": train_split,
         "device": device,
         "gravity_y": gravity_y,
@@ -231,6 +233,7 @@ def run_sweep(
             suite_dir,
             metadata=metadata,
             checkpoint=checkpoint,
+            calibration=calibration,
             device=device,
             gravity_y=gravity_y,
             use_static_known_z=use_static_known_z,
@@ -251,6 +254,7 @@ def run_sweep(
                 "name": name,
                 "config": config,
                 "checkpoint": str(checkpoint),
+                "calibration": str(calibration) if calibration else None,
                 "suite_dir": str(suite_dir),
                 "suite_summary": str(suite_dir / "suite_summary.json"),
                 "suite_metrics": str(metrics_path),
@@ -273,6 +277,7 @@ def main() -> int:
     parser.add_argument("-o", "--output-dir", required=True)
     parser.add_argument("--metadata", help="Optional metadata YAML for a single CSV")
     parser.add_argument("--configs", help="Optional YAML/JSON config list. Defaults to a conservative sweep.")
+    parser.add_argument("--calibration", help="Optional per-method calibration JSON passed into each suite.")
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
@@ -289,6 +294,7 @@ def main() -> int:
         args.output_dir,
         metadata=args.metadata,
         configs_path=args.configs,
+        calibration=args.calibration,
         train_split=args.train_split,
         device=args.device,
         gravity_y=args.gravity_y,
