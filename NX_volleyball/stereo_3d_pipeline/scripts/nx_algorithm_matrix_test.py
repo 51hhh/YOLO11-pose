@@ -73,6 +73,8 @@ class Case:
     neural_final_disp_gate_px: float = 2.0
     neural_min_score: float = 0.0
     neural_gpu_postprocess: bool = True
+    neural_final_geometry_gate_enabled: bool = True
+    neural_slot: str = "legacy"
     algo_stage_override: str | None = None
     note: str = ""
 
@@ -360,6 +362,19 @@ P2_SELECTIVE_NO_TRIGGER = {
     "p2_pair_quality_min_shifted_iou": "0.0",
     "p2_pair_quality_max_epipolar_dy": "0.0",
     "p2_pair_quality_min_confidence": "0.0",
+}
+
+NEURAL_GATE_OFF_SWEEP = {
+    "subpixel_min_points": "1",
+    "subpixel_max_disp_delta_px": "999.0",
+    "subpixel_max_stddev_px": "999.0",
+    "feature_y_tolerance_px": "999.0",
+    "feature_reverse_check_px": "-1.0",
+    "feature_overlap_scale": "0.90",
+    "feature_mad_scale": "999.0",
+    "feature_ransac_gate_px": "999.0",
+    "feature_sphere_radius_scale": "999.0",
+    "feature_sphere_margin_m": "999.0",
 }
 
 
@@ -693,6 +708,43 @@ RELAXED_CASES = (
         note="diagnostic only: TensorRT XFeat with relaxed gates",
     ),
     Case(
+        "neural_xfeat_160_b2_top64_current",
+        candidate_fields=("z_roi_neural_xfeat",),
+        support_field="roi_neural_xfeat_support",
+        neural_backend="xfeat",
+        neural_engine="xfeat_extractor_160_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=64,
+        neural_min_matches=4,
+        neural_max_disp_delta_px=6.0,
+        neural_final_disp_gate_px=3.0,
+        neural_min_score=0.05,
+        neural_slot="xfeat",
+        algo_stage_override="Stage2_NeuralXFeatMatch",
+        note="current split slot: XFeat 160/b2 top64 with production gates",
+    ),
+    Case(
+        "neural_xfeat_160_b2_top64_gate_off",
+        candidate_fields=("z_roi_neural_xfeat",),
+        support_field="roi_neural_xfeat_support",
+        yaml_scalars=NEURAL_GATE_OFF_SWEEP,
+        neural_backend="xfeat",
+        neural_engine="xfeat_extractor_160_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=64,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_score=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_slot="xfeat",
+        algo_stage_override="Stage2_NeuralXFeatMatch",
+        note="diagnostic only: current XFeat with neural and final geometry gates relaxed/off",
+    ),
+    Case(
         "neural_xfeat_96_top32",
         candidate_fields=("z_roi_neural_feature",),
         support_field="roi_neural_feature_support",
@@ -826,6 +878,41 @@ RELAXED_CASES = (
         note="diagnostic only: TensorRT SuperPoint extractor with relaxed gates",
     ),
     Case(
+        "neural_superpoint_160_top64_b2_current",
+        candidate_fields=("z_roi_neural_superpoint",),
+        support_field="roi_neural_superpoint_support",
+        neural_backend="superpoint_lightglue",
+        neural_engine="superpoint_extractor_160_top64_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=256,
+        neural_min_matches=4,
+        neural_final_disp_gate_px=6.0,
+        neural_slot="superpoint",
+        algo_stage_override="Stage2_NeuralSuperPointMatch",
+        note="current split slot: SuperPoint 160/top64/b2 with production gates",
+    ),
+    Case(
+        "neural_superpoint_160_top64_b2_gate_off",
+        candidate_fields=("z_roi_neural_superpoint",),
+        support_field="roi_neural_superpoint_support",
+        yaml_scalars=NEURAL_GATE_OFF_SWEEP,
+        neural_backend="superpoint_lightglue",
+        neural_engine="superpoint_extractor_160_top64_b2.engine",
+        roi_size=160,
+        top_k=64,
+        descriptor_dim=256,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_score=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_slot="superpoint",
+        algo_stage_override="Stage2_NeuralSuperPointMatch",
+        note="diagnostic only: current SuperPoint with neural and final geometry gates relaxed/off",
+    ),
+    Case(
         "neural_superpoint_128_top64",
         candidate_fields=("z_roi_neural_feature",),
         support_field="roi_neural_feature_support",
@@ -920,6 +1007,41 @@ RELAXED_CASES = (
         note="P2 sweep: ALIKED fixed extractor if a TensorRT engine is available",
     ),
     Case(
+        "neural_aliked_t16_128_top64_b2_current",
+        candidate_fields=("z_roi_neural_aliked",),
+        support_field="roi_neural_aliked_support",
+        neural_backend="aliked",
+        neural_engine="aliked_t16_nodcn_extractor_128_top64_b2.engine",
+        roi_size=128,
+        top_k=64,
+        descriptor_dim=64,
+        neural_min_matches=4,
+        neural_final_disp_gate_px=6.0,
+        neural_slot="aliked",
+        algo_stage_override="Stage2_NeuralAlikedMatch",
+        note="current split slot: ALIKED t16 no-DCN 128/top64/b2 with production gates",
+    ),
+    Case(
+        "neural_aliked_t16_128_top64_b2_gate_off",
+        candidate_fields=("z_roi_neural_aliked",),
+        support_field="roi_neural_aliked_support",
+        yaml_scalars=NEURAL_GATE_OFF_SWEEP,
+        neural_backend="aliked",
+        neural_engine="aliked_t16_nodcn_extractor_128_top64_b2.engine",
+        roi_size=128,
+        top_k=64,
+        descriptor_dim=64,
+        neural_min_matches=1,
+        neural_max_y_error_px=999.0,
+        neural_max_disp_delta_px=999.0,
+        neural_final_disp_gate_px=999.0,
+        neural_min_score=0.0,
+        neural_final_geometry_gate_enabled=False,
+        neural_slot="aliked",
+        algo_stage_override="Stage2_NeuralAlikedMatch",
+        note="diagnostic only: current ALIKED with neural and final geometry gates relaxed/off",
+    ),
+    Case(
         "neural_aliked_224_top64",
         candidate_fields=("z_roi_neural_feature",),
         support_field="roi_neural_feature_support",
@@ -973,9 +1095,9 @@ def disable_all_depth_modes(text: str) -> str:
     return text
 
 
-def set_neural_enabled(text: str, value: bool) -> str:
+def set_neural_block_enabled(text: str, block_name: str, value: bool) -> str:
     pattern = re.compile(
-        r"(^neural_feature_matching:\n(?:^[ \t].*\n)*?^[ \t]*enabled:\s*)(true|false)(.*)$",
+        rf"(^{re.escape(block_name)}:\n(?:^[ \t].*\n)*?^[ \t]*enabled:\s*)(true|false)(.*)$",
         re.M,
     )
     replacement = rf"\g<1>{'true' if value else 'false'}\3"
@@ -983,12 +1105,26 @@ def set_neural_enabled(text: str, value: bool) -> str:
     return text
 
 
+def set_neural_enabled(text: str, value: bool) -> str:
+    return set_neural_block_enabled(text, "neural_feature_matching", value)
+
+
+def neural_block_name(case: Case) -> str:
+    if case.neural_slot == "xfeat":
+        return "neural_feature_matching_xfeat"
+    if case.neural_slot == "superpoint":
+        return "neural_feature_matching_superpoint"
+    if case.neural_slot == "aliked":
+        return "neural_feature_matching_aliked"
+    return "neural_feature_matching"
+
+
 def render_neural_block(case: Case, neural_model_dir: Path) -> str:
     use_lightglue = str(case.neural_backend == "superpoint_lightglue").lower()
     extractor_engine_path = ""
     if case.neural_engine:
         extractor_engine_path = str(neural_model_dir / case.neural_engine)
-    return f"""neural_feature_matching:
+    return f"""{neural_block_name(case)}:
   enabled: true
   backend: "{case.neural_backend}"
   extractor_engine_path: "{extractor_engine_path}"
@@ -1004,11 +1140,12 @@ def render_neural_block(case: Case, neural_model_dir: Path) -> str:
   min_score: {case.neural_min_score}
   use_lightglue: {use_lightglue}
   gpu_postprocess: {str(case.neural_gpu_postprocess).lower()}
+  final_geometry_gate_enabled: {str(case.neural_final_geometry_gate_enabled).lower()}
 """
 
 
-def upsert_neural_block(text: str, block: str) -> str:
-    pattern = re.compile(r"^neural_feature_matching:\n(?:^[ \t].*\n?)*", re.M)
+def upsert_neural_block(text: str, block_name: str, block: str) -> str:
+    pattern = re.compile(rf"^{re.escape(block_name)}:\n(?:^[ \t].*\n?)*", re.M)
     new, count = pattern.subn(block.rstrip() + "\n", text, count=1)
     if count:
         return new
@@ -1027,7 +1164,13 @@ def prepare_config(
     text = disable_all_depth_modes(text)
     text = set_yaml_bool(text, "subpixel_enabled", False)
     text = set_yaml_bool(text, "fallback_epipolar_search", False)
-    text = set_neural_enabled(text, False)
+    for block_name in (
+        "neural_feature_matching",
+        "neural_feature_matching_xfeat",
+        "neural_feature_matching_superpoint",
+        "neural_feature_matching_aliked",
+    ):
+        text = set_neural_block_enabled(text, block_name, False)
     text = re.sub(
         r'output_path:\s*"dual_yolo_observation_data\.csv"',
         f'output_path: "{out_dir / (case.name + ".csv")}"',
@@ -1057,7 +1200,9 @@ def prepare_config(
         )
         text = set_yaml_scalar(text, "p2_diagnostic_artifacts_max", "20")
     if case.neural_backend:
-        text = upsert_neural_block(text, render_neural_block(case, neural_model_dir))
+        block_name = neural_block_name(case)
+        text = upsert_neural_block(
+            text, block_name, render_neural_block(case, neural_model_dir))
     cfg = config_dir / f"{case.name}.yaml"
     cfg.write_text(text)
     return cfg
