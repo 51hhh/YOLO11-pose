@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 try:
-    from .rank_sweep_metrics import rank_metrics
+    from .rank_sweep_metrics import BASELINE_VARIANTS, rank_metrics
 except ImportError:  # pragma: no cover - direct script execution
-    from rank_sweep_metrics import rank_metrics
+    from rank_sweep_metrics import BASELINE_VARIANTS, rank_metrics
 
 
 SEVERE_WARNINGS = {
@@ -47,6 +47,10 @@ SELECTION_FIELDNAMES = [
     "mean_z_peak_to_peak",
     "mean_ballistic_residual_rms_mps2",
     "mean_accel_z_rms_mps2",
+    "best_baseline_variant",
+    "best_baseline_score",
+    "best_baseline_known_z_bias",
+    "best_baseline_known_z_mad",
     "audit_warnings",
     "dominant_top_method",
     "dominant_top_share",
@@ -128,6 +132,21 @@ def _safe_float(value: object) -> float:
         return 0.0
 
 
+def _optional_float(value: object) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _method_allowlist_key(value: object) -> str:
+    methods = [item.strip() for item in str(value or "").split(",") if item.strip()]
+    return ",".join(sorted(set(methods)))
+
+
 def _fmt_ratio(numerator: float, denominator: float) -> str:
     if denominator <= 0.0:
         return "0.0"
@@ -145,6 +164,39 @@ def _decision_for_audit(audit: Dict[str, str] | None) -> Tuple[str, str]:
     if caution:
         return "caution", ";".join(caution)
     return "recommended", ""
+
+
+def _baseline_rows(metrics_csv: str | Path, split: str | None) -> List[Dict[str, Any]]:
+    rows = rank_metrics(metrics_csv, variant="all", split=split)
+    baselines = [row for row in rows if row.get("variant") in BASELINE_VARIANTS]
+    baselines.sort(
+        key=lambda row: (
+            _optional_float(row.get("score")) if _optional_float(row.get("score")) is not None else float("inf"),
+            str(row.get("variant", "")),
+        )
+    )
+    return baselines
+
+
+def _best_baseline_for(
+    baselines: List[Dict[str, Any]],
+    method_allowlist: object,
+) -> Dict[str, Any] | None:
+    method_key = _method_allowlist_key(method_allowlist)
+    matching = [row for row in baselines if _method_allowlist_key(row.get("method_allowlist")) == method_key]
+    if matching:
+        return matching[0]
+    return baselines[0] if not method_key and baselines else None
+
+
+def _baseline_beats_ranking(baseline: Dict[str, Any] | None, ranking: Dict[str, Any]) -> bool:
+    if baseline is None:
+        return False
+    baseline_score = _optional_float(baseline.get("score"))
+    ranking_score = _optional_float(ranking.get("score"))
+    if baseline_score is None or ranking_score is None:
+        return False
+    return baseline_score < ranking_score
 
 
 def _append_reason(reason: str, extra: str) -> str:
@@ -166,6 +218,7 @@ def select_reliability_models(
     """Return ranked candidates with audit-derived decisions."""
 
     rankings = rank_metrics(metrics_csv, variant=variant, split=split)
+    baselines = _baseline_rows(metrics_csv, split)
     audit_path = Path(audit_csv) if audit_csv else _default_audit_path(metrics_csv)
     audit_rows = _read_csv(audit_path)
     audit_by_key = {_audit_key(row): row for row in audit_rows}
@@ -195,6 +248,15 @@ def select_reliability_models(
         elif max_known_z_mad_m > 0.0 and _safe_float(ranking.get("mean_known_z_mad")) > max_known_z_mad_m:
             decision = "reject"
             reason = _append_reason(reason, "known_z_mad_exceeds_threshold")
+        best_baseline = _best_baseline_for(baselines, ranking.get("method_allowlist"))
+        if (
+            best_baseline is not None
+            and _safe_float(ranking.get("known_clip_count")) > 0.0
+            and _safe_float(best_baseline.get("known_clip_count")) > 0.0
+            and _baseline_beats_ranking(best_baseline, ranking)
+        ):
+            decision = "reject"
+            reason = _append_reason(reason, "baseline_variant_better")
         selected.append(
             {
                 "selection_rank": 0,
@@ -215,6 +277,10 @@ def select_reliability_models(
                 "mean_z_peak_to_peak": ranking.get("mean_z_peak_to_peak", ""),
                 "mean_ballistic_residual_rms_mps2": ranking.get("mean_ballistic_residual_rms_mps2", ""),
                 "mean_accel_z_rms_mps2": ranking.get("mean_accel_z_rms_mps2", ""),
+                "best_baseline_variant": "" if best_baseline is None else best_baseline.get("variant", ""),
+                "best_baseline_score": "" if best_baseline is None else best_baseline.get("score", ""),
+                "best_baseline_known_z_bias": "" if best_baseline is None else best_baseline.get("mean_abs_known_z_bias", ""),
+                "best_baseline_known_z_mad": "" if best_baseline is None else best_baseline.get("mean_known_z_mad", ""),
                 "audit_warnings": "" if audit is None else audit.get("warnings", ""),
                 "dominant_top_method": "" if audit is None else audit.get("dominant_top_method", ""),
                 "dominant_top_share": "" if audit is None else audit.get("dominant_top_share", ""),

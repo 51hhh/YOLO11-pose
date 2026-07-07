@@ -1546,6 +1546,190 @@ class SyntheticDatasetTest(unittest.TestCase):
                 "known_z_mad_exceeds_threshold",
             )
 
+    def test_select_reliability_model_rejects_when_baseline_variant_is_better(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metrics_path = root / "sweep_metrics.csv"
+            fieldnames = [
+                "config",
+                "split",
+                "variant",
+                "method_allowlist",
+                "clip",
+                "track_id",
+                "z_std",
+                "z_peak_to_peak",
+                "known_z_bias",
+                "known_z_mad",
+                "checkpoint",
+                "suite_dir",
+            ]
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "net_worse_than_baseline",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.004",
+                        "z_peak_to_peak": "0.020",
+                        "known_z_bias": "0.020",
+                        "known_z_mad": "0.006",
+                        "checkpoint": "net.pt",
+                        "suite_dir": "net_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "net_worse_than_baseline",
+                        "split": "val",
+                        "variant": "robust_smooth",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.004",
+                        "z_peak_to_peak": "0.020",
+                        "known_z_bias": "0.004",
+                        "known_z_mad": "0.001",
+                        "checkpoint": "",
+                        "suite_dir": "baseline_suite",
+                    }
+                )
+            audit_path = root / "sweep_reliability_method_audit.csv"
+            with audit_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "warnings",
+                    "dominant_top_method",
+                    "dominant_top_share",
+                    "low_coverage_top_share",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "net_worse_than_baseline",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "warnings": "",
+                        "dominant_top_method": "bbox_center",
+                        "dominant_top_share": "0.40",
+                        "low_coverage_top_share": "0.00",
+                    }
+                )
+
+            selected = select_reliability_models(metrics_path, audit_csv=audit_path)
+            self.assertEqual(selected[0]["decision"], "reject")
+            self.assertEqual(selected[0]["decision_reason"], "baseline_variant_better")
+            self.assertEqual(selected[0]["best_baseline_variant"], "robust_smooth")
+            self.assertNotEqual(selected[0]["best_baseline_score"], "")
+
+    def test_select_reliability_model_uses_same_method_baseline_for_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metrics_path = root / "sweep_metrics.csv"
+            fieldnames = [
+                "config",
+                "split",
+                "variant",
+                "method_allowlist",
+                "clip",
+                "track_id",
+                "z_std",
+                "z_peak_to_peak",
+                "known_z_bias",
+                "known_z_mad",
+                "checkpoint",
+                "suite_dir",
+            ]
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "net_beats_same_methods",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.002",
+                        "z_peak_to_peak": "0.006",
+                        "known_z_bias": "0.002",
+                        "known_z_mad": "0.001",
+                        "checkpoint": "net.pt",
+                        "suite_dir": "net_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "net_beats_same_methods",
+                        "split": "val",
+                        "variant": "robust_smooth",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.003",
+                        "z_peak_to_peak": "0.010",
+                        "known_z_bias": "0.020",
+                        "known_z_mad": "0.004",
+                        "checkpoint": "",
+                        "suite_dir": "baseline_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "unrelated_stronger_baseline",
+                        "split": "val",
+                        "variant": "calibrated_smoother",
+                        "method_allowlist": "bbox_center,roi_neural_xfeat",
+                        "clip": "static_3m",
+                        "track_id": "0",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.0005",
+                        "known_z_mad": "0.0005",
+                        "checkpoint": "",
+                        "suite_dir": "unrelated_suite",
+                    }
+                )
+            audit_path = root / "sweep_reliability_method_audit.csv"
+            with audit_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "warnings",
+                    "dominant_top_method",
+                    "dominant_top_share",
+                    "low_coverage_top_share",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "net_beats_same_methods",
+                        "variant": "reliability_smoother",
+                        "split": "val",
+                        "warnings": "",
+                        "dominant_top_method": "bbox_center",
+                        "dominant_top_share": "0.40",
+                        "low_coverage_top_share": "0.00",
+                    }
+                )
+
+            selected = select_reliability_models(metrics_path, audit_csv=audit_path)
+            self.assertEqual(selected[0]["decision"], "recommended")
+            self.assertEqual(selected[0]["config"], "net_beats_same_methods")
+            self.assertEqual(selected[0]["best_baseline_variant"], "robust_smooth")
+            self.assertNotIn("baseline_variant_better", selected[0]["decision_reason"])
+
     def test_select_reliability_model_uses_split_audit_for_all_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

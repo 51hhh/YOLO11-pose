@@ -29,6 +29,7 @@ Selection rule:
 
 - Treat `calibrated_smoother` as the non-neural baseline.
 - Treat `robust_smooth` as the uncalibrated physical baseline.
-- Prefer `reliability_smoother` only when heldout `known_z` bias/MAD improves without method-audit warnings.
+- Prefer `reliability_smoother` only when heldout `known_z` bias/MAD improves without method-audit warnings and it beats the best non-neural baseline with the same method allowlist.
 - `select_reliability_model.py` rejects candidates with heldout `mean_abs_known_z_bias > 0.08m` or `mean_known_z_mad > 0.03m` by default.
+- `select_reliability_model.py` also rejects a candidate as `baseline_variant_better` when a matching `robust_smooth`/`calibrated_smoother`/RTS/depth-polyfit baseline has a lower heldout score.
 - Do not select a model from no-`known_z` static clips; `select_reliability_model.py` hard-rejects `known_clip_count=0` as `no_known_z`.
