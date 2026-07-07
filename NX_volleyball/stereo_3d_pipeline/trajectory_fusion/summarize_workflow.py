@@ -459,6 +459,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
         [
             "rank",
             "decision",
+            "reason",
             "config",
             "split",
             "known",
@@ -470,6 +471,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
             [
                 str(row.get("selection_rank", "")),
                 str(row.get("decision", "")),
+                str(row.get("decision_reason", "")),
                 str(row.get("config", "")),
                 str(row.get("split", "")),
                 str(row.get("known_clip_count", "")),
