@@ -784,6 +784,29 @@ class SyntheticDatasetTest(unittest.TestCase):
         )
         self.assertTrue(torch.isfinite(leave_loss).item())
 
+        sparse_measurements = torch.tensor([[[3.0, 3.1], [0.0, 3.2]]])
+        sparse_valid = torch.tensor([[[1.0, 1.0], [0.0, 1.0]]])
+        sparse_predicted = torch.tensor([[[3.05], [0.0]]])
+        prediction_valid = torch.tensor([[1.0, 0.0]])
+        sparse_unmasked = leave_one_method_loss(
+            sparse_measurements,
+            sparse_valid,
+            sparse_predicted,
+            log_sigma,
+            method_bias,
+            method_index=1,
+        )
+        sparse_masked = leave_one_method_loss(
+            sparse_measurements,
+            sparse_valid,
+            sparse_predicted,
+            log_sigma,
+            method_bias,
+            method_index=1,
+            prediction_valid=prediction_valid,
+        )
+        self.assertLess(float(sparse_masked), float(sparse_unmasked))
+
     def test_reliability_smoother_reports_method_quality_stats_if_torch_available(self) -> None:
         try:
             import torch
@@ -845,6 +868,31 @@ class SyntheticDatasetTest(unittest.TestCase):
         depth = (3.0 + 2.0 * timestamps).unsqueeze(-1)
         loss = physics_depth_loss(depth, dt)
         self.assertLess(float(loss), 1e-8)
+
+    def test_losses_ignore_missing_observation_frames_if_torch_available(self) -> None:
+        try:
+            import torch
+            from trajectory_fusion.losses import physics_depth_loss, static_depth_jitter_loss
+        except ImportError:
+            self.skipTest("PyTorch is not installed")
+
+        dt = torch.full((1, 5, 1), 0.01, dtype=torch.float32)
+        depth = torch.tensor([[[3.00], [3.00], [0.00], [3.00], [3.00]]], dtype=torch.float32)
+        observation_valid = torch.tensor([[1.0, 1.0, 0.0, 1.0, 1.0]], dtype=torch.float32)
+        unmasked = physics_depth_loss(depth, dt)
+        masked = physics_depth_loss(depth, dt, valid=observation_valid)
+        self.assertGreater(float(unmasked), 0.01)
+        self.assertEqual(float(masked), 0.0)
+
+        static_valid = torch.ones((1, 5), dtype=torch.float32)
+        static_unmasked = static_depth_jitter_loss(depth, static_valid)
+        static_masked = static_depth_jitter_loss(
+            depth,
+            static_valid,
+            observation_valid=observation_valid,
+        )
+        self.assertGreater(float(static_unmasked), 0.01)
+        self.assertLess(float(static_masked), 1e-6)
 
     def test_dataset_manifest_paths_are_relative_to_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1864,6 +1912,7 @@ class SyntheticDatasetTest(unittest.TestCase):
         config_dir = PROJECT / "trajectory_fusion" / "configs"
         expected = {
             "sweep_smoke.json": 1,
+            "sweep_p0p1_ncc_xfeat_smoke.json": 1,
             "sweep_known_distance_selection.json": 5,
             "sweep_method_ablation.json": 5,
             "sweep_dynamic_regularization.json": 5,

@@ -15,6 +15,7 @@ Use them through `run_dataset_workflow.py`:
 Files:
 
 - `sweep_smoke.json`: one quick run to check PyTorch, manifest, suite, method audit, and model selection wiring.
+- `sweep_p0p1_ncc_xfeat_smoke.json`: one quick run using the current formal `p0p1_ncc_xfeat` candidate set; use this before the full known-distance sweep.
 - `sweep_known_distance_selection.json`: first real model-selection set for multi-distance static clips with train/val split and `known_z`; every config is pinned to the current formal `p0p1_ncc_xfeat` candidate set.
 - `sweep_method_ablation.json`: method-set ablation for P0-only, P0+P1, P0+P1+NCC, and P0+P1+NCC+XFeat. Use it after the basic known-distance workflow is clean to test whether NCC/XFeat actually improve heldout distance accuracy.
 - `sweep_dynamic_regularization.json`: second-pass exploratory set for dynamic clips after the fixed calibration baseline and known-distance set are already reviewed; every config is pinned to `p0p1_ncc_xfeat`.

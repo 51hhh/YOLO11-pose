@@ -209,6 +209,7 @@ def main() -> int:
             output = model(batch["features"])
             consensus = weighted_depth_consensus(batch["measurements"], batch["valid"], output, detach=True)
             learned_consensus = weighted_depth_consensus(batch["measurements"], batch["valid"], output, detach=False)
+            observation_valid = (batch["valid"].sum(dim=2) > 0.0).to(batch["features"].dtype)
             loss_obs = measurement_consistency_loss(
                 consensus,
                 batch["measurements"],
@@ -217,7 +218,7 @@ def main() -> int:
                 output.bias,
                 output.outlier_logit,
             )
-            loss_phys = physics_depth_loss(learned_consensus, batch["dt"])
+            loss_phys = physics_depth_loss(learned_consensus, batch["dt"], valid=observation_valid)
             loss_reg = uncertainty_regularizer(output.log_sigma, output.outlier_logit, batch["valid"])
             loss_bias = bias_regularizer(output.bias, batch["valid"])
             loss_leave_one = batch["features"].new_tensor(0.0)
@@ -233,6 +234,7 @@ def main() -> int:
                     valid_without[..., method_index] = 0.0
                     if valid_without.sum() <= 0.0:
                         continue
+                    prediction_valid = (valid_without.sum(dim=2) > 0.0).to(batch["features"].dtype)
                     predicted_without = weighted_depth_consensus(
                         batch["measurements"],
                         valid_without,
@@ -247,6 +249,7 @@ def main() -> int:
                             output.log_sigma,
                             output.bias,
                             method_index,
+                            prediction_valid=prediction_valid,
                         )
                     )
                 if leave_losses:
@@ -255,17 +258,18 @@ def main() -> int:
             loss_known_z = known_z_loss(
                 learned_consensus,
                 labels[..., label_index["known_z"]],
-                labels[..., label_index["known_z_valid"]],
+                labels[..., label_index["known_z_valid"]] * observation_valid,
             )
             loss_known_range = known_z_range_loss(
                 learned_consensus,
                 labels[..., label_index["known_z_min"]],
                 labels[..., label_index["known_z_max"]],
-                labels[..., label_index["known_z_range_valid"]],
+                labels[..., label_index["known_z_range_valid"]] * observation_valid,
             )
             loss_static = static_depth_jitter_loss(
                 learned_consensus,
                 labels[..., label_index["static"]],
+                observation_valid=observation_valid,
             )
             loss = loss_obs + 0.25 * loss_phys + loss_reg
             loss = loss + args.bias_reg_weight * loss_bias

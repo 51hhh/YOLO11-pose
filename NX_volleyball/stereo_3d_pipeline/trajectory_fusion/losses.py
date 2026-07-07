@@ -53,7 +53,17 @@ def measurement_consistency_loss(
     return student_t_nll(residual, log_sigma, effective_valid, df=df)
 
 
-def physics_depth_loss(depth: torch.Tensor, dt: torch.Tensor | float, weight_jerk: float = 0.1) -> torch.Tensor:
+def _masked_mean(loss: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    weighted = loss * valid
+    return weighted.sum() / valid.sum().clamp_min(1.0)
+
+
+def physics_depth_loss(
+    depth: torch.Tensor,
+    dt: torch.Tensor | float,
+    weight_jerk: float = 0.1,
+    valid: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Constant-velocity/low-jerk prior for depth axis.
 
     Depth is not the gravity axis in the current camera model, so z'' should
@@ -70,9 +80,23 @@ def physics_depth_loss(depth: torch.Tensor, dt: torch.Tensor | float, weight_jer
     next_vel = (z[:, 2:] - z[:, 1:-1]) / next_dt
     local_dt = 0.5 * (prev_dt + next_dt)
     second = 2.0 * (next_vel - prev_vel) / (prev_dt + next_dt) * local_dt * local_dt
-    accel_loss = F.huber_loss(second, torch.zeros_like(second), delta=0.05, reduction="mean")
+    accel_raw = F.huber_loss(second, torch.zeros_like(second), delta=0.05, reduction="none")
+    if valid is None:
+        accel_loss = accel_raw.mean()
+        second_valid = None
+    else:
+        valid_t = valid.to(device=depth.device, dtype=depth.dtype)
+        if valid_t.ndim == 3 and valid_t.shape[-1] == 1:
+            valid_t = valid_t.squeeze(-1)
+        second_valid = valid_t[:, 2:] * valid_t[:, 1:-1] * valid_t[:, :-2]
+        accel_loss = _masked_mean(accel_raw, second_valid)
     jerk = second[:, 1:] - second[:, :-1]
-    jerk_loss = F.huber_loss(jerk, torch.zeros_like(jerk), delta=0.05, reduction="mean")
+    jerk_raw = F.huber_loss(jerk, torch.zeros_like(jerk), delta=0.05, reduction="none")
+    if second_valid is None:
+        jerk_loss = jerk_raw.mean()
+    else:
+        jerk_valid = second_valid[:, 1:] * second_valid[:, :-1]
+        jerk_loss = _masked_mean(jerk_raw, jerk_valid)
     return accel_loss + weight_jerk * jerk_loss
 
 
@@ -124,13 +148,23 @@ def known_z_range_loss(
     return loss.sum() / valid.sum().clamp_min(1.0)
 
 
-def static_depth_jitter_loss(depth: torch.Tensor, static_valid: torch.Tensor, delta: float = 0.01) -> torch.Tensor:
+def static_depth_jitter_loss(
+    depth: torch.Tensor,
+    static_valid: torch.Tensor,
+    delta: float = 0.01,
+    observation_valid: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Short-window jitter prior for clips marked static in metadata."""
 
     if depth.shape[1] < 2:
         return depth.new_tensor(0.0)
     dz = depth[:, 1:, 0] - depth[:, :-1, 0]
     valid = static_valid[:, 1:] * static_valid[:, :-1]
+    if observation_valid is not None:
+        obs_valid = observation_valid.to(device=depth.device, dtype=depth.dtype)
+        if obs_valid.ndim == 3 and obs_valid.shape[-1] == 1:
+            obs_valid = obs_valid.squeeze(-1)
+        valid = valid * obs_valid[:, 1:] * obs_valid[:, :-1]
     loss = F.huber_loss(dz, torch.zeros_like(dz), delta=delta, reduction="none") * valid
     return loss.sum() / valid.sum().clamp_min(1.0)
 
@@ -205,10 +239,16 @@ def leave_one_method_loss(
     log_sigma: torch.Tensor,
     bias: torch.Tensor,
     method_index: int,
+    prediction_valid: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Evaluate whether a held-out method is statistically predictable."""
 
     held_valid = valid[..., method_index : method_index + 1].unsqueeze(-1)
+    if prediction_valid is not None:
+        pred_valid = prediction_valid.to(device=valid.device, dtype=valid.dtype)
+        if pred_valid.ndim == 3 and pred_valid.shape[-1] == 1:
+            pred_valid = pred_valid.squeeze(-1)
+        held_valid = held_valid * pred_valid.unsqueeze(-1).unsqueeze(-1)
     held_measurement = measurements[..., method_index : method_index + 1].unsqueeze(-1)
     held_sigma = log_sigma[..., method_index : method_index + 1, :]
     held_bias = bias[..., method_index : method_index + 1, :]
