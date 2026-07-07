@@ -77,6 +77,31 @@ def load_sequences_from_clips(
     return train_items, heldout_items
 
 
+def _training_label_summary(sequence_arrays: List[dict]) -> dict:
+    label_index = {name: idx for idx, name in enumerate(weak_label_names())}
+    frame_count = 0
+    known_z_frames = 0
+    known_z_range_frames = 0
+    static_frames = 0
+    for arrays in sequence_arrays:
+        labels = arrays.get("labels", [])
+        frame_count += len(labels)
+        for label_row in labels:
+            if label_row[label_index["known_z_valid"]] > 0.0:
+                known_z_frames += 1
+            if label_row[label_index["known_z_range_valid"]] > 0.0:
+                known_z_range_frames += 1
+            if label_row[label_index["static"]] > 0.0:
+                static_frames += 1
+    return {
+        "sequence_count": len(sequence_arrays),
+        "frame_count": frame_count,
+        "known_z_frames": known_z_frames,
+        "known_z_range_frames": known_z_range_frames,
+        "static_frames": static_frames,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help="TrajectoryRecorder CSV(s), or one dataset manifest YAML/JSON")
@@ -141,6 +166,15 @@ def main() -> int:
         arrays = build_legacy_arrays(seq)
         sequence_arrays.append({"clip": clip.name, "track_id": seq.track_id, **arrays})
         all_features.extend(arrays["features"])
+    label_summary = _training_label_summary(sequence_arrays)
+    print(
+        "training labels: sequences={sequence_count} frames={frame_count} "
+        "known_z={known_z_frames} known_z_range={known_z_range_frames} static={static_frames}".format(
+            **label_summary
+        )
+    )
+    if label_summary["known_z_frames"] <= 0:
+        print("warning: no known_z labels in train split; checkpoint is smoke/regularization only")
 
     feature_mean, feature_std = compute_feature_normalizer(all_features)
     batches: List[dict] = []
@@ -255,6 +289,7 @@ def main() -> int:
             for clip in clips
         ],
         "heldout_sequence_count": len(heldout_items),
+        "training_label_summary": label_summary,
         "training_config": {
             "epochs": args.epochs,
             "lr": args.lr,

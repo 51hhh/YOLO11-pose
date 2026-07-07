@@ -63,7 +63,11 @@ from trajectory_fusion.run_reliability_sweep import build_train_command, load_sw
 from trajectory_fusion.select_reliability_model import select_reliability_models  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
 from trajectory_fusion.summarize_workflow import build_workflow_report  # noqa: E402
-from trajectory_fusion.train_reliability import load_sequences_from_clips, resolve_input_clips  # noqa: E402
+from trajectory_fusion.train_reliability import (  # noqa: E402
+    _training_label_summary,
+    load_sequences_from_clips,
+    resolve_input_clips,
+)
 from trajectory_fusion.validate_dataset_manifest import analyze_manifest  # noqa: E402
 
 
@@ -888,6 +892,16 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(len(heldout_items), 1)
             self.assertEqual(train_items[0][0].split, "train")
             self.assertEqual(heldout_items[0][0].split, "val")
+
+            train_arrays = [
+                {"clip": clip.name, "track_id": sequence.track_id, **build_legacy_arrays(sequence)}
+                for clip, sequence in train_items
+            ]
+            summary = _training_label_summary(train_arrays)
+            self.assertEqual(summary["sequence_count"], 1)
+            self.assertGreater(summary["frame_count"], 0)
+            self.assertEqual(summary["known_z_frames"], summary["frame_count"])
+            self.assertEqual(summary["static_frames"], summary["frame_count"])
 
     def test_validate_dataset_manifest_summarizes_splits_and_known_z(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
