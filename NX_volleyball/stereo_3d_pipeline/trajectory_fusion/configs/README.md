@@ -20,6 +20,8 @@ Files:
 
 Each config pins `seed` so repeated runs on the same dataset are comparable. A good model still needs heldout `known_z` and dynamic validation; a stable seeded run on one no-label clip is not evidence of final accuracy.
 
+For ordinary multi-distance static selection, generate the manifest with `--stratify-known-z` so each measured distance has train/val coverage when enough clips exist. For leave-one-distance-out checks, use `--holdout-known-z <distance> --holdout-split val` to keep one distance bucket fully held out.
+
 Selection rule:
 
 - Treat `calibrated_smoother` as the non-neural baseline.

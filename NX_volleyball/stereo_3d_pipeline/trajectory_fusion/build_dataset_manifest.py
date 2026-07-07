@@ -176,6 +176,15 @@ def _known_z_bucket(known_z: float) -> str:
     return f"{known_z:.3f}"
 
 
+def _known_z_bucket_from_value(value: str | float | None) -> str | None:
+    if value is None:
+        return None
+    parsed = _safe_float(value)
+    if parsed is None:
+        raise ValueError(f"invalid known_z bucket: {value}")
+    return _known_z_bucket(parsed)
+
+
 def _assign_stratified_known_z_splits(
     entries: Sequence[ManifestClipEntry],
     *,
@@ -212,6 +221,23 @@ def _assign_stratified_known_z_splits(
     return splits
 
 
+def _assign_holdout_known_z_splits(
+    entries: Sequence[ManifestClipEntry],
+    *,
+    holdout_known_z: str | float,
+    holdout_split: str,
+    unlabeled_split: str,
+) -> Dict[Path, str]:
+    holdout_bucket = _known_z_bucket_from_value(holdout_known_z)
+    splits = {entry.csv: unlabeled_split for entry in entries}
+    for entry in entries:
+        if entry.known_z is None:
+            continue
+        bucket = _known_z_bucket(entry.known_z)
+        splits[entry.csv] = holdout_split if bucket == holdout_bucket else "train"
+    return splits
+
+
 def build_manifest(
     inputs: Sequence[str | Path],
     *,
@@ -225,6 +251,8 @@ def build_manifest(
     require_metadata: bool = False,
     absolute_paths: bool = False,
     stratify_known_z: bool = False,
+    holdout_known_z: str | float | None = None,
+    holdout_split: str = "val",
 ) -> List[ManifestClipEntry]:
     """Build manifest entries from one or more dataset locations."""
 
@@ -245,18 +273,30 @@ def build_manifest(
         )
 
     if split_mode == "train":
+        if holdout_known_z is not None:
+            raise ValueError("--holdout-known-z requires --split-mode auto")
         split_by_csv = {entry.csv: "train" for entry in entries}
     elif split_mode == "eval":
+        if holdout_known_z is not None:
+            raise ValueError("--holdout-known-z requires --split-mode auto")
         split_by_csv = {entry.csv: "eval" for entry in entries}
     elif split_mode == "auto":
-        assign_splits = _assign_stratified_known_z_splits if stratify_known_z else _assign_auto_splits
-        split_by_csv = assign_splits(
-            entries,
-            val_ratio=val_ratio,
-            test_ratio=test_ratio,
-            seed=seed,
-            unlabeled_split=unlabeled_split,
-        )
+        if holdout_known_z is not None:
+            split_by_csv = _assign_holdout_known_z_splits(
+                entries,
+                holdout_known_z=holdout_known_z,
+                holdout_split=holdout_split,
+                unlabeled_split=unlabeled_split,
+            )
+        else:
+            assign_splits = _assign_stratified_known_z_splits if stratify_known_z else _assign_auto_splits
+            split_by_csv = assign_splits(
+                entries,
+                val_ratio=val_ratio,
+                test_ratio=test_ratio,
+                seed=seed,
+                unlabeled_split=unlabeled_split,
+            )
     else:
         raise ValueError(f"unsupported split mode: {split_mode}")
 
@@ -359,6 +399,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="In auto split mode, split each known_z distance bucket independently.",
     )
+    parser.add_argument(
+        "--holdout-known-z",
+        help="In auto split mode, assign this known_z bucket to --holdout-split and other known_z clips to train.",
+    )
+    parser.add_argument("--holdout-split", choices=("val", "test"), default="val")
     args = parser.parse_args(argv)
 
     entries = build_manifest(
@@ -373,6 +418,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_metadata=args.require_metadata,
         absolute_paths=args.absolute_paths,
         stratify_known_z=args.stratify_known_z,
+        holdout_known_z=args.holdout_known_z,
+        holdout_split=args.holdout_split,
     )
     write_manifest(args.output, entries)
     print_summary(entries)

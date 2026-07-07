@@ -1667,6 +1667,47 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(split_by_z[3.0], {"train", "val"})
             self.assertEqual(split_by_z[4.0], {"train", "val"})
 
+    def test_build_manifest_can_hold_out_known_z_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_3m_a", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_3m_b", 3.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_a", 4.0, rows=4)
+            _write_known_distance_clip(root, "static_4m_b", 4.0, rows=4)
+
+            entries = build_manifest(
+                [root],
+                output_path=root / "dataset_manifest.yaml",
+                holdout_known_z="4.0",
+                holdout_split="val",
+            )
+            splits_by_z: dict[float, set[str]] = {}
+            for entry in entries:
+                self.assertIsNotNone(entry.known_z)
+                splits_by_z.setdefault(round(float(entry.known_z or 0.0), 1), set()).add(entry.split)
+
+            self.assertEqual(splits_by_z[3.0], {"train"})
+            self.assertEqual(splits_by_z[4.0], {"val"})
+
+            summary = run_workflow(
+                [root],
+                root / "workflow_holdout",
+                holdout_known_z="4.0",
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+                calibration_min_count=1,
+                skip_sweep=True,
+                include_depth_polyfit=False,
+                include_rts_smoother=False,
+                include_candidate_consistency=False,
+            )
+            self.assertEqual(summary["manifest"]["holdout_known_z"], "4.0")
+            self.assertEqual(summary["manifest"]["holdout_split"], "val")
+            self.assertEqual(summary["manifest"]["split_counts"], {"train": 2, "val": 2})
+            self.assertEqual(summary["validation"]["known_z_counts"], {"train": 2, "val": 2})
+            self.assertEqual(summary["config"]["holdout_known_z"], "4.0")
+
     def test_dataset_workflow_known_distance_report_is_ready_for_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

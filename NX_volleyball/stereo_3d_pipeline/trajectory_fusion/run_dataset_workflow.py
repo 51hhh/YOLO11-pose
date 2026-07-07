@@ -70,6 +70,8 @@ def _resolve_manifest(
     require_metadata: bool,
     absolute_paths: bool,
     stratify_known_z: bool,
+    holdout_known_z: str | float | None,
+    holdout_split: str,
 ) -> tuple[Path, Dict[str, Any]]:
     input_is_manifest = len(inputs) == 1 and is_manifest_path(inputs[0])
     if input_is_manifest and manifest is not None:
@@ -108,6 +110,8 @@ def _resolve_manifest(
         require_metadata=require_metadata,
         absolute_paths=absolute_paths,
         stratify_known_z=stratify_known_z,
+        holdout_known_z=holdout_known_z,
+        holdout_split=holdout_split,
     )
     write_manifest(manifest_path, entries)
     return manifest_path, {
@@ -118,6 +122,8 @@ def _resolve_manifest(
         "split_counts": _count_splits(entry.split for entry in entries),
         "known_z_counts": _count_splits(entry.split for entry in entries if entry.known_z is not None),
         "stratify_known_z": stratify_known_z,
+        "holdout_known_z": str(holdout_known_z) if holdout_known_z is not None else None,
+        "holdout_split": holdout_split,
     }
 
 
@@ -278,6 +284,8 @@ def run_workflow(
     require_metadata: bool = False,
     absolute_paths: bool = False,
     stratify_known_z: bool = False,
+    holdout_known_z: str | float | None = None,
+    holdout_split: str = "val",
     min_rows: int = 100,
     min_fps: float = 80.0,
     min_p0_hit: float = 0.85,
@@ -316,6 +324,8 @@ def run_workflow(
         require_metadata=require_metadata,
         absolute_paths=absolute_paths,
         stratify_known_z=stratify_known_z,
+        holdout_known_z=holdout_known_z,
+        holdout_split=holdout_split,
     )
 
     validation = analyze_manifest(
@@ -439,6 +449,8 @@ def run_workflow(
             "include_candidate_consistency": include_candidate_consistency,
             "candidate_reference": candidate_reference,
             "stratify_known_z": stratify_known_z,
+            "holdout_known_z": str(holdout_known_z) if holdout_known_z is not None else None,
+            "holdout_split": holdout_split,
         },
         "workflow_report_json": str(root / "workflow_report.json"),
         "workflow_report_md": str(root / "workflow_report.md"),
@@ -471,6 +483,11 @@ def main() -> int:
         action="store_true",
         help="When generating a manifest, split each known_z distance bucket independently.",
     )
+    parser.add_argument(
+        "--holdout-known-z",
+        help="When generating a manifest, assign this known_z bucket to --holdout-split and other known_z clips to train.",
+    )
+    parser.add_argument("--holdout-split", choices=("val", "test"), default="val")
     parser.add_argument("--min-rows", type=int, default=100)
     parser.add_argument("--min-fps", type=float, default=80.0)
     parser.add_argument("--min-p0-hit", type=float, default=0.85)
@@ -510,6 +527,8 @@ def main() -> int:
         require_metadata=args.require_metadata,
         absolute_paths=args.absolute_paths,
         stratify_known_z=args.stratify_known_z,
+        holdout_known_z=args.holdout_known_z,
+        holdout_split=args.holdout_split,
         min_rows=args.min_rows,
         min_fps=args.min_fps,
         min_p0_hit=args.min_p0_hit,
