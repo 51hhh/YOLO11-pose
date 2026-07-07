@@ -1329,6 +1329,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                     "config",
                     "split",
                     "variant",
+                    "method_allowlist",
                     "z_std",
                     "z_peak_to_peak",
                     "known_z_bias",
@@ -1343,6 +1344,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "config": "smooth_but_risky",
                         "split": "val",
                         "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,roi_neural_xfeat",
                         "z_std": "0.001",
                         "z_peak_to_peak": "0.004",
                         "known_z_bias": "0.01",
@@ -1356,6 +1358,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "config": "stable",
                         "split": "val",
                         "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,circle_center",
                         "z_std": "0.004",
                         "z_peak_to_peak": "0.02",
                         "known_z_bias": "0.02",
@@ -1403,6 +1406,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             selected = select_reliability_models(metrics_path, audit_csv=audit_path)
             self.assertEqual(selected[0]["config"], "stable")
             self.assertEqual(selected[0]["decision"], "recommended")
+            self.assertEqual(selected[0]["method_allowlist"], "bbox_center,circle_center")
             risky = next(row for row in selected if row["config"] == "smooth_but_risky")
             self.assertEqual(risky["decision"], "reject")
             self.assertEqual(risky["decision_reason"], "dominant_method_top_share")
@@ -1882,6 +1886,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "metric_rank",
                         "config",
                         "variant",
+                        "method_allowlist",
                         "split",
                         "score",
                         "known_clip_count",
@@ -1900,6 +1905,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "metric_rank": "1",
                             "config": config,
                             "variant": "reliability_smoother",
+                            "method_allowlist": "bbox_center,circle_center" if known else "bbox_center,roi_neural_xfeat",
                             "split": "val" if known else "all",
                             "score": "0.01" if known else "1.0",
                             "known_clip_count": "2" if known else "0",
@@ -1915,6 +1921,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "rank",
                         "config",
                         "variant",
+                        "method_allowlist",
                         "split",
                         "score",
                         "known_clip_count",
@@ -1928,6 +1935,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "rank": "1",
                             "config": "baseline",
                             "variant": "calibrated_smoother" if known else "robust_smooth",
+                            "method_allowlist": "bbox_center,circle_center" if known else "bbox_center,roi_neural_xfeat",
                             "split": "val" if known else "all",
                             "score": "0.02",
                             "known_clip_count": "2" if known else "0",
@@ -2029,6 +2037,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(rows[0]["workflow"], "ready_workflow")
             self.assertEqual(rows[0]["readiness"], "ready_for_model_selection")
             self.assertEqual(rows[0]["top_config"], "net_ok")
+            self.assertEqual(rows[0]["top_method_allowlist"], "bbox_center,circle_center")
+            self.assertEqual(rows[0]["best_variant_method_allowlist"], "bbox_center,circle_center")
             self.assertEqual(rows[1]["workflow"], "smoke_workflow")
             self.assertIn("selection:no_known_z", rows[1]["warnings"])
 
@@ -2037,6 +2047,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             with csv_path.open(newline="", encoding="utf-8") as handle:
                 written = list(csv.DictReader(handle))
             self.assertEqual(written[0]["workflow"], "ready_workflow")
+            self.assertEqual(written[0]["top_method_allowlist"], "bbox_center,circle_center")
 
     def test_workflow_matrix_runs_stratified_holdout_and_dynamic_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

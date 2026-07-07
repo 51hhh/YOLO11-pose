@@ -29,6 +29,7 @@ FIELDNAMES = [
     "top_decision",
     "top_decision_reason",
     "top_config",
+    "top_method_allowlist",
     "top_known_clip_count",
     "top_mean_abs_known_z_bias",
     "top_mean_known_z_mad",
@@ -36,6 +37,7 @@ FIELDNAMES = [
     "top_audit_warnings",
     "best_variant_config",
     "best_variant",
+    "best_variant_method_allowlist",
     "best_variant_score",
     "best_variant_z_std",
     "best_variant_known_bias",
@@ -139,6 +141,7 @@ def compare_workflows(inputs: Sequence[str | Path]) -> List[Dict[str, Any]]:
                 "top_decision": top.get("decision", ""),
                 "top_decision_reason": top.get("decision_reason", ""),
                 "top_config": top.get("config", ""),
+                "top_method_allowlist": top.get("method_allowlist", ""),
                 "top_known_clip_count": top.get("known_clip_count", ""),
                 "top_mean_abs_known_z_bias": top.get("mean_abs_known_z_bias", ""),
                 "top_mean_known_z_mad": top.get("mean_known_z_mad", ""),
@@ -146,6 +149,7 @@ def compare_workflows(inputs: Sequence[str | Path]) -> List[Dict[str, Any]]:
                 "top_audit_warnings": top.get("audit_warnings", ""),
                 "best_variant_config": variant.get("config", ""),
                 "best_variant": variant.get("variant", ""),
+                "best_variant_method_allowlist": variant.get("method_allowlist", ""),
                 "best_variant_score": variant.get("score", ""),
                 "best_variant_z_std": variant.get("mean_z_std", ""),
                 "best_variant_known_bias": variant.get("mean_abs_known_z_bias", ""),
@@ -181,15 +185,16 @@ def write_json(path: str | Path, rows: Sequence[Dict[str, Any]]) -> None:
 
 
 def print_report(rows: Sequence[Dict[str, Any]], *, limit: int = 20) -> None:
-    print("rank,workflow,readiness,decision,config,known,bias,z_std,best_variant,warnings")
+    print("rank,workflow,readiness,decision,config,methods,known,bias,z_std,best_variant,warnings")
     for row in rows[:limit]:
         print(
-            "{rank},{workflow},{readiness},{decision},{config},{known},{bias},{z_std},{variant},{warnings}".format(
+            "{rank},{workflow},{readiness},{decision},{config},{methods},{known},{bias},{z_std},{variant},{warnings}".format(
                 rank=row.get("rank", ""),
                 workflow=row.get("workflow", ""),
                 readiness=row.get("readiness", ""),
                 decision=row.get("top_decision", ""),
                 config=row.get("top_config", ""),
+                methods=row.get("top_method_allowlist", ""),
                 known=row.get("top_known_clip_count", ""),
                 bias=row.get("top_mean_abs_known_z_bias", ""),
                 z_std=row.get("top_mean_z_std", ""),

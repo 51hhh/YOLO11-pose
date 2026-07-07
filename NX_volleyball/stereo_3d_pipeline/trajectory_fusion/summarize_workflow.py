@@ -633,6 +633,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
             "decision",
             "reason",
             "config",
+            "methods",
             "split",
             "known",
             "z_std",
@@ -645,6 +646,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
                 str(row.get("decision", "")),
                 str(row.get("decision_reason", "")),
                 str(row.get("config", "")),
+                str(row.get("method_allowlist", "")),
                 str(row.get("split", "")),
                 str(row.get("known_clip_count", "")),
                 _fmt(row.get("mean_z_std")),
@@ -659,12 +661,13 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
 
     variant_rows = report.get("sweep", {}).get("top_variant_ranking", [])
     variant_table = _markdown_table(
-        ["rank", "config", "variant", "split", "known", "z_std", "known_bias", "score"],
+        ["rank", "config", "variant", "methods", "split", "known", "z_std", "known_bias", "score"],
         [
             [
                 str(row.get("rank", "")),
                 str(row.get("config", "")),
                 str(row.get("variant", "")),
+                str(row.get("method_allowlist", "")),
                 str(row.get("split", "")),
                 str(row.get("known_clip_count", "")),
                 _fmt(row.get("mean_z_std")),
