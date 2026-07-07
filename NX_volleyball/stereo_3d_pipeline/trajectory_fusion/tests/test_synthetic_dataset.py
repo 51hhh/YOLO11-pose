@@ -1624,6 +1624,7 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(report["readiness"]["status"], "ready_for_sweep")
             self.assertTrue(report["readiness"]["ready_for_sweep"])
             self.assertFalse(report["readiness"]["ready_for_model_selection"])
+            self.assertTrue(report["candidate_consistency"]["top_aggregate"])
             self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
 
     def test_dataset_workflow_can_generate_stratified_known_z_manifest(self) -> None:
@@ -1717,8 +1718,12 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(report["readiness"]["status"], "ready_for_sweep")
             self.assertTrue(report["readiness"]["ready_for_sweep"])
             self.assertFalse(report["readiness"]["ready_for_model_selection"])
+            self.assertTrue(report["candidate_consistency"]["top_aggregate"])
+            self.assertTrue(report["candidate_consistency"]["top_known_z_buckets"])
             markdown = (output_dir / "workflow_report.md").read_text(encoding="utf-8")
             self.assertIn("readiness: `ready_for_sweep`", markdown)
+            self.assertIn("## Candidate Consistency", markdown)
+            self.assertIn("## Known-Z Bucket Candidates", markdown)
             self.assertIn("static_val_4m", markdown)
             self.assertIn("calibrated_smoother", markdown)
 

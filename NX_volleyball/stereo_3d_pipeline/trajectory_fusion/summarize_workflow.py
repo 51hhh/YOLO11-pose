@@ -56,6 +56,58 @@ def _top_rows(rows: List[Dict[str, str]], *, limit: int = 8) -> List[Dict[str, s
     return rows[:limit]
 
 
+def _candidate_sort_key(row: Dict[str, str]) -> tuple[float, float, float, float, str]:
+    residual_median_value = _safe_float(row.get("residual_median"))
+    residual_median = abs(residual_median_value) if residual_median_value is not None else float("inf")
+    residual_mad = _safe_float(row.get("residual_mad"))
+    residual_p95 = _safe_float(row.get("residual_abs_p95"))
+    hit_rate = _safe_float(row.get("hit_rate")) or 0.0
+    return (
+        residual_median,
+        residual_mad if residual_mad is not None else float("inf"),
+        residual_p95 if residual_p95 is not None else float("inf"),
+        -hit_rate,
+        str(row.get("method", "")),
+    )
+
+
+def _top_candidate_rows(
+    rows: List[Dict[str, str]],
+    *,
+    scope: str,
+    limit: int = 8,
+) -> List[Dict[str, str]]:
+    scoped = [
+        row
+        for row in rows
+        if row.get("scope") == scope and int(_safe_float(row.get("valid")) or 0) > 0
+    ]
+    scoped.sort(key=_candidate_sort_key)
+    return scoped[:limit]
+
+
+def _top_candidate_bucket_rows(
+    rows: List[Dict[str, str]],
+    *,
+    per_bucket: int = 3,
+    limit: int = 18,
+) -> List[Dict[str, str]]:
+    grouped: Dict[tuple[str, str], List[Dict[str, str]]] = {}
+    for row in rows:
+        if row.get("scope") != "known_z_bucket":
+            continue
+        if int(_safe_float(row.get("valid")) or 0) <= 0:
+            continue
+        key = (row.get("split", ""), row.get("known_z_bucket", ""))
+        grouped.setdefault(key, []).append(row)
+    selected: List[Dict[str, str]] = []
+    for key in sorted(grouped):
+        group = grouped[key]
+        group.sort(key=_candidate_sort_key)
+        selected.extend(group[:per_bucket])
+    return selected[:limit]
+
+
 def _selection_status(selection_rows: List[Dict[str, str]]) -> Dict[str, Any]:
     if not selection_rows:
         return {
@@ -264,13 +316,17 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
     selection_rows = _read_csv(sweep.get("sweep_model_selection"))
     variant_rows = _read_csv(sweep.get("sweep_variant_ranking"))
     audit_rows = _read_csv(sweep.get("sweep_reliability_method_audit"))
+    candidate_consistency = dict(summary.get("candidate_consistency", {}))
+    candidate_rows = _read_csv(candidate_consistency.get("method_csv"))
+    candidate_consistency["top_aggregate"] = _top_candidate_rows(candidate_rows, scope="aggregate")
+    candidate_consistency["top_known_z_buckets"] = _top_candidate_bucket_rows(candidate_rows)
 
     report = {
         "workflow_summary": str(summary_path),
         "output_dir": summary.get("output_dir", ""),
         "validation": summary.get("validation", {}),
         "training_input_audit": summary.get("training_input_audit", {}),
-        "candidate_consistency": summary.get("candidate_consistency", {}),
+        "candidate_consistency": candidate_consistency,
         "calibration": summary.get("calibration", {}),
         "baseline_suite": {
             "metrics_csv": summary.get("baseline_suite", {}).get("metrics_csv"),
@@ -358,6 +414,45 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
 
     lines.extend(["", "## Recommended Actions", ""])
     lines.extend(f"- {action}" for action in report.get("recommended_actions", []))
+
+    aggregate_candidates = candidate_consistency.get("top_aggregate", [])
+    candidate_table = _markdown_table(
+        ["scope", "method", "hit", "z_med", "z_mad", "res_med", "res_mad", "res_p95"],
+        [
+            [
+                str(row.get("scope", "")),
+                str(row.get("method", "")),
+                _fmt(row.get("hit_rate"), digits=3),
+                _fmt(row.get("z_median")),
+                _fmt(row.get("z_mad")),
+                _fmt(row.get("residual_median")),
+                _fmt(row.get("residual_mad")),
+                _fmt(row.get("residual_abs_p95")),
+            ]
+            for row in aggregate_candidates
+        ],
+    )
+    lines.extend(["", "## Candidate Consistency", ""])
+    lines.append(candidate_table or "No candidate consistency rows.")
+
+    bucket_candidates = candidate_consistency.get("top_known_z_buckets", [])
+    bucket_table = _markdown_table(
+        ["split", "known_z", "method", "hit", "res_med", "res_mad", "res_p95"],
+        [
+            [
+                str(row.get("split", "")),
+                str(row.get("known_z_bucket", "")),
+                str(row.get("method", "")),
+                _fmt(row.get("hit_rate"), digits=3),
+                _fmt(row.get("residual_median")),
+                _fmt(row.get("residual_mad")),
+                _fmt(row.get("residual_abs_p95")),
+            ]
+            for row in bucket_candidates
+        ],
+    )
+    lines.extend(["", "## Known-Z Bucket Candidates", ""])
+    lines.append(bucket_table or "No known_z bucket candidate rows.")
 
     selection_rows = report.get("sweep", {}).get("top_selection", [])
     selection_table = _markdown_table(
