@@ -1641,6 +1641,14 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(report["readiness"]["ready_for_sweep"])
             self.assertFalse(report["readiness"]["ready_for_model_selection"])
             self.assertTrue(report["candidate_consistency"]["top_aggregate"])
+            key_methods = report["training_input_audit"]["key_methods"]
+            key_rows = {(row["split"], row["method"]): row for row in key_methods["rows"]}
+            self.assertEqual(key_rows[("train", "bbox_center")]["status"], "ok")
+            self.assertEqual(key_rows[("val", "bbox_center")]["status"], "ok")
+            self.assertEqual(key_rows[("train", "roi_neural_xfeat")]["status"], "zero_valid")
+            self.assertGreater(key_methods["problem_count"], 0)
+            self.assertIn("key_method:roi_neural_xfeat:train:zero_valid", report["warnings"])
+            self.assertTrue(any("key depth fields" in action for action in report["recommended_actions"]))
             self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
 
     def test_dataset_workflow_can_generate_stratified_known_z_manifest(self) -> None:
@@ -1805,6 +1813,9 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertTrue(report["candidate_consistency"]["top_known_z_buckets"])
             markdown = (output_dir / "workflow_report.md").read_text(encoding="utf-8")
             self.assertIn("readiness: `ready_for_sweep`", markdown)
+            self.assertIn("## Key Method Coverage", markdown)
+            self.assertIn("roi_cuda_template_match", markdown)
+            self.assertIn("roi_neural_xfeat", markdown)
             self.assertIn("## Candidate Consistency", markdown)
             self.assertIn("## Known-Z Bucket Candidates", markdown)
             self.assertIn("static_val_4m", markdown)

@@ -10,6 +10,67 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List
 
+try:
+    from .dataset import METHOD_COLUMNS
+except ImportError:  # pragma: no cover - direct script execution
+    from dataset import METHOD_COLUMNS
+
+
+KEY_METHOD_GROUPS = (
+    (
+        "p0_geometry",
+        "P0 geometry",
+        (
+            "bbox_center",
+            "circle_center",
+            "roi_edge_centroid",
+            "roi_radial_center",
+            "roi_edge_pair_center",
+        ),
+    ),
+    (
+        "p1_realtime",
+        "P1 realtime",
+        (
+            "roi_multi_point",
+            "roi_center_patch",
+            "roi_cuda_template_match",
+        ),
+    ),
+    (
+        "feature_neural",
+        "Feature / neural",
+        (
+            "roi_neural_xfeat",
+            "roi_neural_superpoint",
+            "roi_neural_aliked",
+            "roi_opencv_cuda_gftt_lk",
+        ),
+    ),
+    (
+        "fallback",
+        "Fallback / single-side",
+        (
+            "epipolar_fallback",
+            "fallback_template",
+            "fallback_feature_points",
+        ),
+    ),
+)
+KEY_METHOD_LOW_HIT_RATE = 0.01
+METHOD_COLUMN_BY_NAME = dict(METHOD_COLUMNS)
+KEY_METHOD_WARNING_METHODS = {
+    "bbox_center",
+    "circle_center",
+    "roi_edge_centroid",
+    "roi_radial_center",
+    "roi_edge_pair_center",
+    "roi_multi_point",
+    "roi_center_patch",
+    "roi_cuda_template_match",
+    "roi_neural_xfeat",
+}
+
 
 def _read_json(path: str | Path | None) -> Dict[str, Any]:
     if not path:
@@ -106,6 +167,91 @@ def _top_candidate_bucket_rows(
         group.sort(key=_candidate_sort_key)
         selected.extend(group[:per_bucket])
     return selected[:limit]
+
+
+def _method_coverage_status(row: Dict[str, str] | None) -> str:
+    if row is None:
+        return "missing_row"
+    total = int(_safe_float(row.get("total")) or 0)
+    valid = int(_safe_float(row.get("valid")) or 0)
+    hit_rate = _safe_float(row.get("hit_rate")) or 0.0
+    if total <= 0:
+        return "zero_total"
+    if valid <= 0:
+        return "zero_valid"
+    if hit_rate < KEY_METHOD_LOW_HIT_RATE:
+        return "low_hit_rate"
+    return "ok"
+
+
+def _key_method_coverage(rows: List[Dict[str, str]]) -> Dict[str, Any]:
+    by_split_method = {
+        (str(row.get("split", "")), str(row.get("method", ""))): row
+        for row in rows
+    }
+    splits = sorted({str(row.get("split", "")) for row in rows}) or [""]
+
+    report_rows: List[Dict[str, Any]] = []
+    problem_rows: List[Dict[str, Any]] = []
+    for group_id, group_label, methods in KEY_METHOD_GROUPS:
+        for method in methods:
+            for split in splits:
+                source = by_split_method.get((split, method))
+                status = _method_coverage_status(source)
+                row = {
+                    "group": group_id,
+                    "group_label": group_label,
+                    "method": method,
+                    "column": METHOD_COLUMN_BY_NAME.get(method, ""),
+                    "split": split,
+                    "status": status,
+                    "valid": int(_safe_float(source.get("valid")) or 0) if source else 0,
+                    "total": int(_safe_float(source.get("total")) or 0) if source else 0,
+                    "hit_rate": _safe_float(source.get("hit_rate")) if source else None,
+                    "median": _safe_float(source.get("median")) if source else None,
+                    "mad": _safe_float(source.get("mad")) if source else None,
+                }
+                report_rows.append(row)
+                if status != "ok":
+                    problem_rows.append(row)
+
+    return {
+        "low_hit_rate_threshold": KEY_METHOD_LOW_HIT_RATE,
+        "groups": [
+            {"id": group_id, "label": group_label, "methods": list(methods)}
+            for group_id, group_label, methods in KEY_METHOD_GROUPS
+        ],
+        "rows": report_rows,
+        "problem_rows": problem_rows,
+        "problem_count": len(problem_rows),
+    }
+
+
+def _key_method_warning_rows(key_methods: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        row
+        for row in key_methods.get("problem_rows", [])
+        if row.get("method") in KEY_METHOD_WARNING_METHODS
+    ]
+
+
+def _derive_key_method_warnings(key_methods: Dict[str, Any]) -> List[str]:
+    return [
+        "key_method:{method}:{split}:{status}".format(**row)
+        for row in _key_method_warning_rows(key_methods)
+    ]
+
+
+def _derive_key_method_actions(key_methods: Dict[str, Any]) -> List[str]:
+    rows = _key_method_warning_rows(key_methods)
+    if not rows:
+        return []
+    bad_methods = sorted({str(row.get("method", "")) for row in rows if row.get("method")})
+    return [
+        "Before dataset collection, confirm key depth fields have coverage in training_method_coverage.csv: "
+        + ", ".join(bad_methods)
+        + "."
+    ]
 
 
 def _selection_status(selection_rows: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -316,6 +462,9 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
     selection_rows = _read_csv(sweep.get("sweep_model_selection"))
     variant_rows = _read_csv(sweep.get("sweep_variant_ranking"))
     audit_rows = _read_csv(sweep.get("sweep_reliability_method_audit"))
+    training_input_audit = dict(summary.get("training_input_audit", {}))
+    method_coverage_rows = _read_csv(training_input_audit.get("method_csv"))
+    training_input_audit["key_methods"] = _key_method_coverage(method_coverage_rows)
     candidate_consistency = dict(summary.get("candidate_consistency", {}))
     candidate_rows = _read_csv(candidate_consistency.get("method_csv"))
     candidate_consistency["top_aggregate"] = _top_candidate_rows(candidate_rows, scope="aggregate")
@@ -325,7 +474,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
         "workflow_summary": str(summary_path),
         "output_dir": summary.get("output_dir", ""),
         "validation": summary.get("validation", {}),
-        "training_input_audit": summary.get("training_input_audit", {}),
+        "training_input_audit": training_input_audit,
         "candidate_consistency": candidate_consistency,
         "calibration": summary.get("calibration", {}),
         "baseline_suite": {
@@ -345,8 +494,9 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
         },
     }
     report["readiness"] = _derive_readiness(summary, selection_rows)
-    report["warnings"] = _derive_warnings(summary, selection_rows)
-    report["recommended_actions"] = _derive_actions(summary, selection_rows)
+    key_methods = training_input_audit.get("key_methods", {})
+    report["warnings"] = _derive_warnings(summary, selection_rows) + _derive_key_method_warnings(key_methods)
+    report["recommended_actions"] = _derive_actions(summary, selection_rows) + _derive_key_method_actions(key_methods)
     return report
 
 
@@ -414,6 +564,28 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
 
     lines.extend(["", "## Recommended Actions", ""])
     lines.extend(f"- {action}" for action in report.get("recommended_actions", []))
+
+    key_methods = training_audit.get("key_methods", {})
+    key_method_table = _markdown_table(
+        ["group", "method", "column", "split", "valid", "total", "hit", "median", "mad", "status"],
+        [
+            [
+                str(row.get("group_label", row.get("group", ""))),
+                str(row.get("method", "")),
+                str(row.get("column", "")),
+                str(row.get("split", "")),
+                str(row.get("valid", "")),
+                str(row.get("total", "")),
+                _fmt(row.get("hit_rate"), digits=3),
+                _fmt(row.get("median")),
+                _fmt(row.get("mad")),
+                str(row.get("status", "")),
+            ]
+            for row in key_methods.get("rows", [])
+        ],
+    )
+    lines.extend(["", "## Key Method Coverage", ""])
+    lines.append(key_method_table or "No training method coverage rows.")
 
     aggregate_candidates = candidate_consistency.get("top_aggregate", [])
     candidate_table = _markdown_table(
