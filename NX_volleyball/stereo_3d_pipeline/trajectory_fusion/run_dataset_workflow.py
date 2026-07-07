@@ -21,6 +21,7 @@ try:
         write_method_csv as write_training_method_csv,
     )
     from .build_dataset_manifest import build_manifest, write_manifest
+    from .dataset import resolve_method_allowlist
     from .fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from .manifest import is_manifest_path, load_manifest
     from .run_evaluation_suite import run_suite
@@ -41,6 +42,7 @@ except ImportError:  # pragma: no cover - direct script execution
         write_method_csv as write_training_method_csv,
     )
     from build_dataset_manifest import build_manifest, write_manifest
+    from dataset import resolve_method_allowlist
     from fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from manifest import is_manifest_path, load_manifest
     from run_evaluation_suite import run_suite
@@ -171,12 +173,21 @@ def _fit_calibration(
 def _audit_methods_from_configs(configs: str | Path | None) -> str | None:
     if configs is None:
         return None
-    method_values = {
-        str(config.get("methods") or "").strip()
-        for config in load_sweep_configs(configs)
-    }
-    method_values.discard("")
-    return method_values.pop() if len(method_values) == 1 else None
+    methods: List[str] = []
+    seen: set[str] = set()
+    for config in load_sweep_configs(configs):
+        raw_methods = str(config.get("methods") or "").strip()
+        if not raw_methods:
+            continue
+        resolved = resolve_method_allowlist(raw_methods)
+        if resolved is None:
+            return None
+        for method in resolved:
+            if method not in seen:
+                seen.add(method)
+                methods.append(method)
+    normalized = resolve_method_allowlist(methods)
+    return ",".join(normalized) if normalized else None
 
 
 def _run_training_input_audit(

@@ -621,6 +621,35 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertGreater(feature_rows[("eval", "z_roi_cuda_template_match")]["nonzero"], 0)
             self.assertEqual(feature_rows[("eval", "z_roi_neural_xfeat")]["nonzero"], 0)
 
+    def test_workflow_audit_methods_from_configs_uses_union(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            configs_path = root / "mixed_configs.json"
+            configs_path.write_text(
+                json.dumps(
+                    {
+                        "configs": [
+                            {"name": "p0_only", "methods": "p0"},
+                            {"name": "formal", "methods": "p0p1_ncc_xfeat"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            methods = workflow_module._audit_methods_from_configs(configs_path)
+
+            self.assertEqual(
+                methods,
+                "bbox_center,circle_center,roi_edge_centroid,roi_radial_center,"
+                "roi_edge_pair_center,roi_cuda_template_match,roi_neural_xfeat,"
+                "roi_center_patch,roi_multi_point",
+            )
+
+            all_path = root / "all_config.json"
+            all_path.write_text(json.dumps({"configs": [{"name": "all", "methods": "all"}]}), encoding="utf-8")
+            self.assertIsNone(workflow_module._audit_methods_from_configs(all_path))
+
     def test_p2_sidecar_merges_ncc_xfeat_and_superpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

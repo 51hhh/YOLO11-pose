@@ -22,7 +22,7 @@ Files:
 
 Each config pins `seed` so repeated runs on the same dataset are comparable. A good model still needs heldout `known_z` and dynamic validation; a stable seeded run on one no-label clip is not evidence of final accuracy.
 
-Configs may include `methods`, either as a preset string or comma-separated method names. Supported presets include `p0`, `p0p1`, `p0p1_ncc`, `p0p1_xfeat`, and `p0p1_ncc_xfeat`. The allowlist is applied consistently to ReliabilityNet training, direct consensus, robust smoother, calibrated smoother, ReliabilityNet smoother evaluation, and training-input audit when the workflow can infer a single method set. The formal known-distance/dynamic configs should stay pinned to `p0p1_ncc_xfeat`; use `sweep_method_ablation.json` when comparing method subsets.
+Configs may include `methods`, either as a preset string or comma-separated method names. Supported presets include `p0`, `p0p1`, `p0p1_ncc`, `p0p1_xfeat`, and `p0p1_ncc_xfeat`. The allowlist is applied consistently to ReliabilityNet training, direct consensus, robust smoother, calibrated smoother, and ReliabilityNet smoother evaluation. Workflow training-input audit uses the union of all configured method sets, so mixed ablation sweeps do not warn about unrelated historical fields. The formal known-distance/dynamic configs should stay pinned to `p0p1_ncc_xfeat`; use `sweep_method_ablation.json` when comparing method subsets.
 
 For ordinary multi-distance static selection, generate the manifest with `--stratify-known-z` so each measured distance has train/val coverage when enough clips exist. For leave-one-distance-out checks, use `--holdout-known-z <distance> --holdout-split val` to keep one distance bucket fully held out.
 
