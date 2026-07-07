@@ -34,6 +34,7 @@ from trajectory_fusion.build_dataset_manifest import (  # noqa: E402
     write_manifest,
 )
 from trajectory_fusion.check_dataset import analyze_dataset  # noqa: E402
+from trajectory_fusion.compare_workflows import compare_workflows, write_csv as write_workflow_compare_csv  # noqa: E402
 from trajectory_fusion.dataset import (  # noqa: E402
     METHOD_COLUMNS,
     build_legacy_arrays,
@@ -1807,6 +1808,185 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("## Known-Z Bucket Candidates", markdown)
             self.assertIn("static_val_4m", markdown)
             self.assertIn("calibrated_smoother", markdown)
+
+    def test_compare_workflows_sorts_ready_model_selection_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def write_workflow(
+                name: str,
+                *,
+                known: bool,
+                decision: str,
+                reason: str,
+                config: str,
+            ) -> Path:
+                workflow = root / name
+                workflow.mkdir()
+                selection_path = workflow / "sweep_model_selection.csv"
+                with selection_path.open("w", newline="", encoding="utf-8") as handle:
+                    fieldnames = [
+                        "selection_rank",
+                        "decision",
+                        "decision_reason",
+                        "metric_rank",
+                        "config",
+                        "variant",
+                        "split",
+                        "score",
+                        "known_clip_count",
+                        "mean_abs_known_z_bias",
+                        "mean_known_z_mad",
+                        "mean_z_std",
+                        "audit_warnings",
+                    ]
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerow(
+                        {
+                            "selection_rank": "1",
+                            "decision": decision,
+                            "decision_reason": reason,
+                            "metric_rank": "1",
+                            "config": config,
+                            "variant": "reliability_smoother",
+                            "split": "val" if known else "all",
+                            "score": "0.01" if known else "1.0",
+                            "known_clip_count": "2" if known else "0",
+                            "mean_abs_known_z_bias": "0.01" if known else "",
+                            "mean_known_z_mad": "0.002" if known else "",
+                            "mean_z_std": "0.003" if known else "0.04",
+                            "audit_warnings": "",
+                        }
+                    )
+                variant_path = workflow / "sweep_variant_ranking.csv"
+                with variant_path.open("w", newline="", encoding="utf-8") as handle:
+                    fieldnames = [
+                        "rank",
+                        "config",
+                        "variant",
+                        "split",
+                        "score",
+                        "known_clip_count",
+                        "mean_abs_known_z_bias",
+                        "mean_z_std",
+                    ]
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerow(
+                        {
+                            "rank": "1",
+                            "config": "baseline",
+                            "variant": "calibrated_smoother" if known else "robust_smooth",
+                            "split": "val" if known else "all",
+                            "score": "0.02",
+                            "known_clip_count": "2" if known else "0",
+                            "mean_abs_known_z_bias": "0.012" if known else "",
+                            "mean_z_std": "0.004",
+                        }
+                    )
+                candidate_path = workflow / "candidate_consistency.csv"
+                with candidate_path.open("w", newline="", encoding="utf-8") as handle:
+                    fieldnames = [
+                        "scope",
+                        "clip",
+                        "split",
+                        "known_z_bucket",
+                        "track_id",
+                        "method",
+                        "key",
+                        "valid",
+                        "total",
+                        "hit_rate",
+                        "z_median",
+                        "z_mad",
+                        "residual_median",
+                        "residual_mad",
+                        "residual_abs_p95",
+                    ]
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerow(
+                        {
+                            "scope": "aggregate",
+                            "method": "circle_center",
+                            "key": "z_circle_center",
+                            "valid": "10",
+                            "total": "10",
+                            "hit_rate": "1.0",
+                            "z_median": "3.0",
+                            "z_mad": "0.001",
+                            "residual_median": "0.002",
+                            "residual_mad": "0.001",
+                            "residual_abs_p95": "0.005",
+                        }
+                    )
+                summary = {
+                    "output_dir": str(workflow),
+                    "validation": {
+                        "split_counts": {"train": 1, "val": 1} if known else {"train": 1},
+                        "known_z_counts": {"train": 1, "val": 1} if known else {},
+                        "known_z_bucket_counts": {"3.000": {"train": 1, "val": 1}} if known else {},
+                        "warning_counts": {} if known else {"missing_known_z_clips": 1, "missing_val_split": 1},
+                    },
+                    "training_input_audit": {
+                        "frame_count": 10,
+                        "method_count": 3,
+                        "feature_count": 5,
+                        "warnings": [],
+                    },
+                    "candidate_consistency": {
+                        "frames": 10,
+                        "method_count": 1,
+                        "known_z_bucket_count": 1 if known else 0,
+                        "method_csv": str(candidate_path),
+                    },
+                    "calibration": {
+                        "used_for_suite": known,
+                        "method_count": 3 if known else 0,
+                    },
+                    "baseline_suite": {
+                        "variants": ["raw", "calibrated_smoother"] if known else ["raw", "robust_smooth"],
+                    },
+                    "sweep": {
+                        "skipped": False,
+                        "sweep_model_selection": str(selection_path),
+                        "sweep_variant_ranking": str(variant_path),
+                    },
+                }
+                (workflow / "workflow_summary.json").write_text(
+                    json.dumps(summary, indent=2),
+                    encoding="utf-8",
+                )
+                return workflow
+
+            ready = write_workflow(
+                "ready_workflow",
+                known=True,
+                decision="recommended",
+                reason="",
+                config="net_ok",
+            )
+            smoke = write_workflow(
+                "smoke_workflow",
+                known=False,
+                decision="reject",
+                reason="no_known_z",
+                config="net_smoke",
+            )
+
+            rows = compare_workflows([smoke, ready])
+            self.assertEqual(rows[0]["workflow"], "ready_workflow")
+            self.assertEqual(rows[0]["readiness"], "ready_for_model_selection")
+            self.assertEqual(rows[0]["top_config"], "net_ok")
+            self.assertEqual(rows[1]["workflow"], "smoke_workflow")
+            self.assertIn("selection:no_known_z", rows[1]["warnings"])
+
+            csv_path = root / "workflow_compare.csv"
+            write_workflow_compare_csv(csv_path, rows)
+            with csv_path.open(newline="", encoding="utf-8") as handle:
+                written = list(csv.DictReader(handle))
+            self.assertEqual(written[0]["workflow"], "ready_workflow")
 
     def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
