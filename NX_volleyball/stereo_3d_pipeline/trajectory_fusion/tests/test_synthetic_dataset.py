@@ -568,6 +568,28 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("bbox_center", method_csv.read_text(encoding="utf-8"))
             self.assertIn("candidate_valid_count", feature_csv.read_text(encoding="utf-8"))
 
+    def test_audit_training_inputs_honors_method_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root, include_feature_methods=True)
+            report = audit_training_inputs([csv_path], method_names="p0p1_ncc")
+
+            methods = {
+                (row["split"], row["method"]): row
+                for row in report["method_coverage"]
+            }
+            feature_rows = {
+                (row["split"], row["feature"]): row
+                for row in report["feature_coverage"]
+            }
+
+            self.assertIn("roi_cuda_template_match", report["method_allowlist"])
+            self.assertNotIn("roi_neural_xfeat", report["method_allowlist"])
+            self.assertEqual(methods[("eval", "roi_cuda_template_match")]["valid"], 4)
+            self.assertEqual(methods[("eval", "roi_neural_xfeat")]["valid"], 0)
+            self.assertGreater(feature_rows[("eval", "z_roi_cuda_template_match")]["nonzero"], 0)
+            self.assertEqual(feature_rows[("eval", "z_roi_neural_xfeat")]["nonzero"], 0)
+
     def test_p2_sidecar_merges_ncc_xfeat_and_superpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -15,20 +15,24 @@ try:
     from .dataset import (
         METHOD_COLUMNS,
         METHOD_NAMES,
+        _method_specific_feature_owners,
         build_legacy_arrays,
         find_metadata_for_csv,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from .manifest import DatasetClip, is_manifest_path, load_manifest
 except ImportError:  # pragma: no cover - direct script execution
     from dataset import (
         METHOD_COLUMNS,
         METHOD_NAMES,
+        _method_specific_feature_owners,
         build_legacy_arrays,
         find_metadata_for_csv,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from manifest import DatasetClip, is_manifest_path, load_manifest
 
@@ -198,12 +202,16 @@ def audit_training_inputs(
     inputs: Sequence[str | Path],
     *,
     metadata: str | Path | None = None,
+    method_names: Sequence[str] | str | None = None,
     low_method_hit_rate: float = 0.01,
     low_feature_nonzero_rate: float = 0.001,
 ) -> Dict[str, Any]:
     """Summarize the exact arrays consumed by train_reliability.py."""
 
     clips = resolve_clips(inputs, metadata=metadata)
+    method_allowlist = resolve_method_allowlist(method_names)
+    enabled_methods = set(method_allowlist) if method_allowlist is not None else None
+    feature_owners = _method_specific_feature_owners()
     method_accumulators: Dict[tuple[str, str], Dict[str, Any]] = {}
     feature_accumulators: Dict[tuple[str, str], Dict[str, Any]] = {}
     clip_reports: List[Dict[str, Any]] = []
@@ -216,7 +224,7 @@ def audit_training_inputs(
         clip_frame_count = 0
         sequences = load_legacy_sequences(clip.csv, metadata_path=clip.metadata)
         for sequence in sequences:
-            arrays = build_legacy_arrays(sequence)
+            arrays = build_legacy_arrays(sequence, method_names=method_allowlist)
             clip_sequence_count += 1
             sequence_count += 1
             rows = len(arrays["features"])
@@ -269,11 +277,17 @@ def audit_training_inputs(
         row
         for row in method_rows
         if int(row["total"]) > 0 and float(row["hit_rate"]) < low_method_hit_rate
+        and (enabled_methods is None or str(row["method"]) in enabled_methods)
     ]
     all_zero_features = [
         row
         for row in feature_rows
         if int(row["total"]) > 0 and float(row["nonzero_rate"]) <= low_feature_nonzero_rate
+        and (
+            enabled_methods is None
+            or feature_owners.get(str(row["feature"])) is None
+            or feature_owners.get(str(row["feature"])) in enabled_methods
+        )
     ]
     if low_method_rows:
         warnings.append(f"low_method_coverage:{len(low_method_rows)}")
@@ -286,6 +300,8 @@ def audit_training_inputs(
         "frame_count": frame_count,
         "feature_count": len(feature_names),
         "method_count": len(METHOD_NAMES),
+        "method_names_argument": method_names,
+        "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
         "feature_names": feature_names,
         "method_names": list(METHOD_NAMES),
         "warnings": warnings,
@@ -330,6 +346,7 @@ def print_summary(report: Dict[str, Any], *, limit: int = 12) -> None:
         "clips={clip_count} sequences={sequence_count} frames={frame_count} "
         "features={feature_count} methods={method_count}".format(**report)
     )
+    print(f"method_allowlist={report.get('method_allowlist') or 'all'}")
     print(f"warnings={report['warnings']}")
     ranked = sorted(
         report["method_coverage"],
@@ -346,6 +363,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help="CSV files or one dataset manifest")
     parser.add_argument("--metadata", help="Optional metadata YAML for a single CSV")
+    parser.add_argument("--methods", help="Optional method allowlist/preset such as p0p1_ncc_xfeat")
     parser.add_argument("--json-out")
     parser.add_argument("--method-csv-out")
     parser.add_argument("--feature-csv-out")
@@ -356,6 +374,7 @@ def main() -> int:
     report = audit_training_inputs(
         args.inputs,
         metadata=args.metadata,
+        method_names=args.methods,
         low_method_hit_rate=args.low_method_hit_rate,
         low_feature_nonzero_rate=args.low_feature_nonzero_rate,
     )

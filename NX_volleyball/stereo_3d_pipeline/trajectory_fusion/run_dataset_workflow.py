@@ -24,7 +24,7 @@ try:
     from .fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from .manifest import is_manifest_path, load_manifest
     from .run_evaluation_suite import run_suite
-    from .run_reliability_sweep import run_sweep
+    from .run_reliability_sweep import load_sweep_configs, run_sweep
     from .summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
     from .summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from .validate_dataset_manifest import analyze_manifest
@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - direct script execution
     from fit_method_calibration import CalibrationConfig, fit_method_calibration, write_calibration
     from manifest import is_manifest_path, load_manifest
     from run_evaluation_suite import run_suite
-    from run_reliability_sweep import run_sweep
+    from run_reliability_sweep import load_sweep_configs, run_sweep
     from summarize_evaluation_suite import summarize_reliability_methods, summarize_suite
     from summarize_workflow import build_workflow_report, write_json_report, write_markdown_report
     from validate_dataset_manifest import analyze_manifest
@@ -168,8 +168,24 @@ def _fit_calibration(
     )
 
 
-def _run_training_input_audit(manifest_path: Path, output_dir: Path) -> Dict[str, Any]:
-    report = audit_training_inputs([str(manifest_path)])
+def _audit_methods_from_configs(configs: str | Path | None) -> str | None:
+    if configs is None:
+        return None
+    method_values = {
+        str(config.get("methods") or "").strip()
+        for config in load_sweep_configs(configs)
+    }
+    method_values.discard("")
+    return method_values.pop() if len(method_values) == 1 else None
+
+
+def _run_training_input_audit(
+    manifest_path: Path,
+    output_dir: Path,
+    *,
+    method_names: str | None = None,
+) -> Dict[str, Any]:
+    report = audit_training_inputs([str(manifest_path)], method_names=method_names)
     json_path = output_dir / "training_input_audit.json"
     method_csv = output_dir / "training_method_coverage.csv"
     feature_csv = output_dir / "training_feature_coverage.csv"
@@ -185,6 +201,8 @@ def _run_training_input_audit(manifest_path: Path, output_dir: Path) -> Dict[str
         "frame_count": report.get("frame_count", 0),
         "feature_count": report.get("feature_count", 0),
         "method_count": report.get("method_count", 0),
+        "method_names_argument": report.get("method_names_argument"),
+        "method_allowlist": report.get("method_allowlist"),
         "warnings": report.get("warnings", []),
         "low_method_coverage_count": len(report.get("low_method_coverage", [])),
         "mostly_zero_feature_count": len(report.get("mostly_zero_features", [])),
@@ -299,6 +317,7 @@ def run_workflow(
     device: str = "cpu",
     gravity_y: float = 9.81,
     rank_split: str = "auto",
+    audit_methods: str | None = None,
     use_online_position: bool = False,
     use_static_known_z: bool = False,
     skip_sweep: bool = False,
@@ -338,7 +357,14 @@ def run_workflow(
     )
     validation_json = root / "manifest_validation.json"
     _write_json(validation_json, validation)
-    training_input_audit = _run_training_input_audit(manifest_path, root)
+    audit_method_names = audit_methods
+    if audit_method_names is None and not skip_sweep:
+        audit_method_names = _audit_methods_from_configs(configs)
+    training_input_audit = _run_training_input_audit(
+        manifest_path,
+        root,
+        method_names=audit_method_names,
+    )
     if include_candidate_consistency:
         candidate_consistency = _run_candidate_consistency(
             manifest_path,
@@ -442,6 +468,7 @@ def run_workflow(
             "gravity_y": gravity_y,
             "train_split": train_split,
             "rank_split": rank_split,
+            "audit_methods": audit_method_names,
             "use_online_position": use_online_position,
             "use_static_known_z": use_static_known_z,
             "include_depth_polyfit": include_depth_polyfit,
@@ -501,6 +528,10 @@ def main() -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--rank-split", default="auto")
+    parser.add_argument(
+        "--audit-methods",
+        help="Optional method allowlist/preset for training input audit; defaults to a single methods value from --configs when possible.",
+    )
     parser.add_argument("--use-online-position", action="store_true")
     parser.add_argument(
         "--use-static-known-z",
@@ -542,6 +573,7 @@ def main() -> int:
         device=args.device,
         gravity_y=args.gravity_y,
         rank_split=args.rank_split,
+        audit_methods=args.audit_methods,
         use_online_position=args.use_online_position,
         use_static_known_z=args.use_static_known_z,
         skip_sweep=args.skip_sweep,
