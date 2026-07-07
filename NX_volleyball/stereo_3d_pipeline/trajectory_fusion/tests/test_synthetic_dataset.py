@@ -1460,6 +1460,92 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(risky["decision"], "reject")
             self.assertEqual(risky["decision_reason"], "dominant_method_top_share")
 
+    def test_select_reliability_model_rejects_large_known_z_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metrics_path = root / "sweep_metrics.csv"
+            with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "split",
+                    "variant",
+                    "method_allowlist",
+                    "z_std",
+                    "z_peak_to_peak",
+                    "known_z_bias",
+                    "known_z_mad",
+                    "checkpoint",
+                    "suite_dir",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "config": "large_bias",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.12",
+                        "known_z_mad": "0.002",
+                        "checkpoint": "large_bias.pt",
+                        "suite_dir": "large_bias_suite",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "config": "large_mad",
+                        "split": "val",
+                        "variant": "reliability_smoother",
+                        "method_allowlist": "bbox_center,circle_center",
+                        "z_std": "0.001",
+                        "z_peak_to_peak": "0.004",
+                        "known_z_bias": "0.01",
+                        "known_z_mad": "0.04",
+                        "checkpoint": "large_mad.pt",
+                        "suite_dir": "large_mad_suite",
+                    }
+                )
+            audit_path = root / "sweep_reliability_method_audit.csv"
+            with audit_path.open("w", newline="", encoding="utf-8") as handle:
+                fieldnames = [
+                    "config",
+                    "variant",
+                    "split",
+                    "warnings",
+                    "dominant_top_method",
+                    "dominant_top_share",
+                    "low_coverage_top_share",
+                ]
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                for config in ("large_bias", "large_mad"):
+                    writer.writerow(
+                        {
+                            "config": config,
+                            "variant": "reliability_smoother",
+                            "split": "val",
+                            "warnings": "",
+                            "dominant_top_method": "bbox_center",
+                            "dominant_top_share": "0.40",
+                            "low_coverage_top_share": "0.00",
+                        }
+                    )
+
+            selected = select_reliability_models(metrics_path, audit_csv=audit_path)
+            decisions = {row["config"]: row for row in selected}
+            self.assertEqual(decisions["large_bias"]["decision"], "reject")
+            self.assertEqual(
+                decisions["large_bias"]["decision_reason"],
+                "known_z_bias_exceeds_threshold",
+            )
+            self.assertEqual(decisions["large_mad"]["decision"], "reject")
+            self.assertEqual(
+                decisions["large_mad"]["decision_reason"],
+                "known_z_mad_exceeds_threshold",
+            )
+
     def test_select_reliability_model_uses_split_audit_for_all_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

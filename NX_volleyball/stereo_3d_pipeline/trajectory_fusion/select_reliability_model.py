@@ -26,6 +26,8 @@ CAUTION_WARNINGS = {
     "large_method_bias",
     "missing_top_counts",
 }
+DEFAULT_MAX_KNOWN_Z_BIAS_M = 0.08
+DEFAULT_MAX_KNOWN_Z_MAD_M = 0.03
 SELECTION_FIELDNAMES = [
     "selection_rank",
     "decision",
@@ -158,6 +160,8 @@ def select_reliability_models(
     audit_csv: str | Path | None = None,
     variant: str = "reliability_smoother",
     split: str | None = "auto",
+    max_known_z_bias_m: float = DEFAULT_MAX_KNOWN_Z_BIAS_M,
+    max_known_z_mad_m: float = DEFAULT_MAX_KNOWN_Z_MAD_M,
 ) -> List[Dict[str, Any]]:
     """Return ranked candidates with audit-derived decisions."""
 
@@ -185,6 +189,12 @@ def select_reliability_models(
         if _safe_float(ranking.get("known_clip_count")) <= 0.0:
             decision = "reject"
             reason = _append_reason(reason, "no_known_z")
+        elif max_known_z_bias_m > 0.0 and _safe_float(ranking.get("mean_abs_known_z_bias")) > max_known_z_bias_m:
+            decision = "reject"
+            reason = _append_reason(reason, "known_z_bias_exceeds_threshold")
+        elif max_known_z_mad_m > 0.0 and _safe_float(ranking.get("mean_known_z_mad")) > max_known_z_mad_m:
+            decision = "reject"
+            reason = _append_reason(reason, "known_z_mad_exceeds_threshold")
         selected.append(
             {
                 "selection_rank": 0,
@@ -276,6 +286,8 @@ def main() -> int:
     parser.add_argument("--json-out", help="Selection JSON output")
     parser.add_argument("--variant", default="reliability_smoother")
     parser.add_argument("--split", default="auto")
+    parser.add_argument("--max-known-z-bias-m", type=float, default=DEFAULT_MAX_KNOWN_Z_BIAS_M)
+    parser.add_argument("--max-known-z-mad-m", type=float, default=DEFAULT_MAX_KNOWN_Z_MAD_M)
     parser.add_argument("--limit", type=int, default=10)
     args = parser.parse_args()
 
@@ -284,6 +296,8 @@ def main() -> int:
         audit_csv=args.audit,
         variant=args.variant,
         split=args.split,
+        max_known_z_bias_m=args.max_known_z_bias_m,
+        max_known_z_mad_m=args.max_known_z_mad_m,
     )
     output = args.output or str(Path(args.metrics_csv).with_name("sweep_model_selection.csv"))
     write_selection(output, rows)
