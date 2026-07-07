@@ -79,6 +79,7 @@ TRAIN_OPTION_KEYS = (
     "bias_reg_weight",
     "leave_one_weight",
     "leave_one_max_methods",
+    "methods",
     "seed",
 )
 
@@ -159,6 +160,8 @@ def build_train_command(
             if value:
                 cmd.append(_option_name(key))
             continue
+        if key == "methods" and isinstance(value, list):
+            value = ",".join(str(item) for item in value)
         cmd.extend([_option_name(key), str(value)])
     return cmd
 
@@ -234,6 +237,7 @@ def run_sweep(
 
     for config in configs:
         name = _safe_name(str(config["name"]))
+        method_names = config.get("methods")
         checkpoint = checkpoints_dir / f"{name}.pt"
         suite_dir = suites_dir / name
         train_cmd = build_train_command(
@@ -260,6 +264,7 @@ def run_sweep(
             include_rts_smoother=include_rts_smoother,
             include_candidate_consistency=include_candidate_consistency,
             candidate_reference=candidate_reference,
+            method_names=method_names,
         )
         metrics_path = suite_dir / "suite_metrics.csv"
         rows = summarize_suite(suite_dir, metrics_path)
@@ -268,25 +273,26 @@ def run_sweep(
         for row in rows:
             combined_rows.append(
                 {
+                    **row,
                     "config": name,
                     "checkpoint": str(checkpoint),
                     "suite_dir": str(suite_dir),
-                    **row,
                 }
             )
         for row in method_rows:
             combined_method_rows.append(
                 {
+                    **row,
                     "config": name,
                     "checkpoint": str(checkpoint),
                     "suite_dir": str(suite_dir),
-                    **row,
                 }
             )
         summary["runs"].append(
             {
                 "name": name,
                 "config": config,
+                "methods": method_names or "all",
                 "checkpoint": str(checkpoint),
                 "calibration": str(calibration) if calibration else None,
                 "suite_dir": str(suite_dir),

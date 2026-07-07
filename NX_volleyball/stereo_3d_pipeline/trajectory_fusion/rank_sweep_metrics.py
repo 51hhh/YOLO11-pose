@@ -88,16 +88,22 @@ def rank_metrics(
     for row in rows:
         row_variant = row.get("variant", "")
         if include_all_variants and row_variant in BASELINE_VARIANTS:
+            method_allowlist = row.get("method_allowlist", "")
             dedupe_key = (
                 row_variant,
                 row.get("split", ""),
                 row.get("clip", ""),
                 row.get("track_id", ""),
+                method_allowlist,
             )
             if dedupe_key in seen_baselines:
                 continue
             seen_baselines.add(dedupe_key)
-            group_key = f"baseline:{row_variant}"
+            group_key = (
+                f"{row.get('config', '')}:{row_variant}"
+                if method_allowlist
+                else f"baseline:{row_variant}"
+            )
         elif include_all_variants:
             group_key = f"{row.get('config', '')}:{row_variant}"
         else:
@@ -107,7 +113,12 @@ def rank_metrics(
     ranked: List[Dict[str, Any]] = []
     for group_key, items in grouped.items():
         row_variant = items[0].get("variant", variant)
-        config = "baseline" if row_variant in BASELINE_VARIANTS and include_all_variants else items[0].get("config", "")
+        has_method_allowlist = bool(items[0].get("method_allowlist", ""))
+        config = (
+            "baseline"
+            if row_variant in BASELINE_VARIANTS and include_all_variants and not has_method_allowlist
+            else items[0].get("config", "")
+        )
         z_std = [_safe_float(row.get("z_std")) for row in items]
         z_p2p = [_safe_float(row.get("z_peak_to_peak")) for row in items]
         ballistic = [_safe_float(row.get("ballistic_residual_rms_mps2")) for row in items]
@@ -125,6 +136,7 @@ def rank_metrics(
             "checkpoint": items[0].get("checkpoint", ""),
             "suite_dir": items[0].get("suite_dir", ""),
             "variant": row_variant,
+            "method_allowlist": items[0].get("method_allowlist", ""),
             "split": selected_split or "all",
             "clip_count": len(items),
             "known_clip_count": len(bias_values),
@@ -155,6 +167,7 @@ def write_ranking(path: str | Path, rows: List[Dict[str, Any]]) -> None:
         "checkpoint",
         "suite_dir",
         "variant",
+        "method_allowlist",
         "split",
         "score",
         "clip_count",

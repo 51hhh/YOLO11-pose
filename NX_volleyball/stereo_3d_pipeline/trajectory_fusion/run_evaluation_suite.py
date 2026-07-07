@@ -16,7 +16,7 @@ try:
         write_pairwise_csv as write_candidate_pairwise_csv,
     )
     from .check_dataset import analyze_dataset
-    from .dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from .dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata, resolve_method_allowlist
     from .depth_polyfit_smoother import DepthPolyfitConfig, apply_depth_polyfit_smoother
     from .evaluate_calibrated_smoother import apply_calibrated_smoother
     from .evaluate_fusion import _read as read_eval_rows
@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - direct script execution
         write_pairwise_csv as write_candidate_pairwise_csv,
     )
     from check_dataset import analyze_dataset
-    from dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata
+    from dataset import find_metadata_for_csv, load_legacy_sequences, read_metadata, resolve_method_allowlist
     from depth_polyfit_smoother import DepthPolyfitConfig, apply_depth_polyfit_smoother
     from evaluate_calibrated_smoother import apply_calibrated_smoother
     from evaluate_fusion import _read as read_eval_rows
@@ -87,12 +87,14 @@ def _run_robust_smoother(
     gravity_y: float,
     use_online_position: bool,
     use_static_known_z: bool,
+    method_allowlist: tuple[str, ...] | None,
     rts: bool = False,
 ) -> Dict[str, Any]:
     cfg = SmootherConfig(
         gravity_y=gravity_y,
         use_online_position=use_online_position,
         use_static_known_z=use_static_known_z,
+        method_allowlist=method_allowlist,
     )
     all_rows: List[Dict[str, float]] = []
     metrics: List[Dict[str, float]] = []
@@ -121,8 +123,10 @@ def run_suite(
     include_rts_smoother: bool = True,
     include_candidate_consistency: bool = True,
     candidate_reference: str = "auto",
+    method_names: Sequence[str] | str | None = None,
 ) -> Dict[str, Any]:
     clips = resolve_clips(inputs, metadata)
+    method_allowlist = resolve_method_allowlist(method_names)
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     used_names: Dict[str, int] = {}
@@ -138,6 +142,7 @@ def run_suite(
             "include_rts_smoother": include_rts_smoother,
             "include_candidate_consistency": include_candidate_consistency,
             "candidate_reference": candidate_reference,
+            "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
         },
         "clips": [],
     }
@@ -188,6 +193,7 @@ def run_suite(
             gravity_y=gravity_y,
             use_online_position=use_online_position,
             use_static_known_z=use_static_known_z,
+            method_allowlist=method_allowlist,
         )
         robust_eval_json = clip_dir / "robust_smooth_eval.json"
         robust_report = _evaluate_csv(robust_csv, metadata_path, robust_eval_json)
@@ -216,6 +222,7 @@ def run_suite(
                 gravity_y=gravity_y,
                 use_online_position=use_online_position,
                 use_static_known_z=use_static_known_z,
+                method_allowlist=method_allowlist,
                 rts=True,
             )
             robust_rts_eval_json = clip_dir / "robust_rts_smooth_eval.json"
@@ -270,7 +277,9 @@ def run_suite(
                     gravity_y=gravity_y,
                     use_online_position=use_online_position,
                     use_static_known_z=use_static_known_z,
+                    method_allowlist=method_allowlist,
                 ),
+                method_names=method_allowlist,
             )
             _write_json(calibrated_json, calibrated_report)
             calibrated_eval_json = clip_dir / "calibrated_smoother_eval.json"
@@ -294,7 +303,9 @@ def run_suite(
                         gravity_y=gravity_y,
                         use_online_position=use_online_position,
                         use_static_known_z=use_static_known_z,
+                        method_allowlist=method_allowlist,
                     ),
+                    method_names=method_allowlist,
                     rts=True,
                 )
                 _write_json(calibrated_rts_json, calibrated_rts_report)
@@ -324,6 +335,7 @@ def run_suite(
                 output_csv=direct_csv,
                 metadata_path=metadata_path,
                 device=device,
+                method_names=method_allowlist,
             )
             _write_json(direct_json, direct_report)
             direct_eval_json = clip_dir / "reliability_direct_eval.json"
@@ -341,7 +353,9 @@ def run_suite(
                     gravity_y=gravity_y,
                     use_online_position=use_online_position,
                     use_static_known_z=use_static_known_z,
+                    method_allowlist=method_allowlist,
                 ),
+                method_names=method_allowlist,
             )
             _write_json(smoother_json, smoother_report)
             smoother_eval_json = clip_dir / "reliability_smoother_eval.json"
@@ -370,8 +384,10 @@ def run_suite(
                         gravity_y=gravity_y,
                         use_online_position=use_online_position,
                         use_static_known_z=use_static_known_z,
+                        method_allowlist=method_allowlist,
                     ),
                     rts=True,
+                    method_names=method_allowlist,
                 )
                 _write_json(smoother_rts_json, smoother_rts_report)
                 smoother_rts_eval_json = clip_dir / "reliability_rts_smoother_eval.json"
@@ -414,6 +430,7 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--candidate-reference", default="auto")
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset such as p0, p0p1, p0p1_ncc_xfeat")
     parser.add_argument("--skip-depth-polyfit", action="store_true")
     parser.add_argument("--skip-rts-smoother", action="store_true")
     parser.add_argument("--skip-candidate-consistency", action="store_true")
@@ -434,6 +451,7 @@ def main() -> int:
         include_rts_smoother=not args.skip_rts_smoother,
         include_candidate_consistency=not args.skip_candidate_consistency,
         candidate_reference=args.candidate_reference,
+        method_names=args.methods,
     )
     print(f"wrote suite for {len(report['clips'])} clip(s) to {report['output_dir']}")
     for clip in report["clips"]:

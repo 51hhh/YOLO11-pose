@@ -46,6 +46,32 @@ METHOD_COLUMNS = (
     ("fallback_feature_points", "z_fallback_feature_points"),
 )
 METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
+P0_METHODS = (
+    "bbox_center",
+    "circle_center",
+    "roi_edge_centroid",
+    "roi_radial_center",
+    "roi_edge_pair_center",
+)
+P1_METHODS = (
+    "roi_center_patch",
+    "roi_multi_point",
+)
+NCC_METHODS = ("roi_cuda_template_match",)
+XFEAT_METHODS = ("roi_neural_xfeat",)
+METHOD_SET_PRESETS = {
+    "all": METHOD_NAMES,
+    "mono": ("mono",),
+    "p0": P0_METHODS,
+    "p1": P1_METHODS,
+    "p0p1": (*P0_METHODS, *P1_METHODS),
+    "ncc": NCC_METHODS,
+    "xfeat": XFEAT_METHODS,
+    "p0p1_ncc": (*P0_METHODS, *P1_METHODS, *NCC_METHODS),
+    "p0p1_xfeat": (*P0_METHODS, *P1_METHODS, *XFEAT_METHODS),
+    "p0p1_ncc_xfeat": (*P0_METHODS, *P1_METHODS, *NCC_METHODS, *XFEAT_METHODS),
+    "p0p1_xfeat_ncc": (*P0_METHODS, *P1_METHODS, *NCC_METHODS, *XFEAT_METHODS),
+}
 NEURAL_TOP_BACKENDS = (
     "roi_neural_xfeat",
     "roi_neural_superpoint",
@@ -85,6 +111,45 @@ P0P1_TRUST_FIELDS = (
     "p0p1_cuda_template_match_trust",
     "p0p1_neural_xfeat_trust",
 )
+
+
+def resolve_method_allowlist(methods: Sequence[str] | str | None) -> Tuple[str, ...] | None:
+    """Resolve method names/presets into METHOD_NAMES order.
+
+    ``None`` and ``all`` mean no masking. Comma-separated strings are accepted
+    for CLI/config usage, and preset tokens can be mixed with explicit method
+    names.
+    """
+
+    if methods is None:
+        return None
+    if isinstance(methods, str):
+        raw_items = [item.strip() for item in methods.split(",")]
+    else:
+        raw_items = [str(item).strip() for item in methods]
+    items = [item for item in raw_items if item]
+    if not items or items == ["all"]:
+        return None
+
+    requested: List[str] = []
+    valid_names = set(METHOD_NAMES)
+    for item in items:
+        if item == "all":
+            return None
+        if item in METHOD_SET_PRESETS:
+            requested.extend(METHOD_SET_PRESETS[item])
+            continue
+        if item not in valid_names:
+            raise ValueError(f"unknown depth method or method preset: {item}")
+        requested.append(item)
+
+    requested_set = set(requested)
+    return tuple(name for name in METHOD_NAMES if name in requested_set)
+
+
+def method_allowlist_set(methods: Sequence[str] | str | None) -> set[str] | None:
+    resolved = resolve_method_allowlist(methods)
+    return set(resolved) if resolved is not None else None
 
 
 def neural_top_feature_names() -> List[str]:
@@ -865,12 +930,17 @@ def weak_label_names() -> List[str]:
     ]
 
 
-def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]]:
+def build_legacy_arrays(
+    sequence: LegacySequence,
+    *,
+    method_names: Sequence[str] | str | None = None,
+) -> Dict[str, List[List[float]]]:
     """Build feature, measurement and validity arrays from a recorder sequence.
 
     measurements order: METHOD_NAMES.
     """
 
+    enabled_methods = method_allowlist_set(method_names)
     dt_values: List[List[float]] = []
     features: List[List[float]] = []
     measurements: List[List[float]] = []
@@ -906,9 +976,10 @@ def build_legacy_arrays(sequence: LegacySequence) -> Dict[str, List[List[float]]
 
         measurements_row = []
         valid_row = []
-        for _, key in METHOD_COLUMNS:
+        for method_name, key in METHOD_COLUMNS:
             value = row[key]
-            is_valid = 1.0 if value > 0.1 else 0.0
+            method_enabled = enabled_methods is None or method_name in enabled_methods
+            is_valid = 1.0 if method_enabled and value > 0.1 else 0.0
             measurements_row.append(value if is_valid else 0.0)
             valid_row.append(is_valid)
         valid_by_key = {

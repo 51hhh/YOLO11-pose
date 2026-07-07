@@ -28,6 +28,7 @@ try:
         build_legacy_arrays,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from .models import MeasurementReliabilityNet
     from .robust_smoother import (
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover - direct script execution
         build_legacy_arrays,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from models import MeasurementReliabilityNet
     from robust_smoother import (
@@ -248,14 +250,24 @@ def apply_reliability_smoother(
     smoother_cfg: SmootherConfig | None = None,
     learned_cfg: LearnedObservationConfig | None = None,
     rts: bool = False,
+    method_names: Sequence[str] | str | None = None,
 ) -> Dict[str, Any]:
     model, checkpoint = _load_model(checkpoint_path, device)
     feature_names = checkpoint.get("feature_names") or legacy_feature_names()
-    method_names = list(checkpoint.get("method_names") or METHOD_NAMES)
+    model_method_names = list(checkpoint.get("method_names") or METHOD_NAMES)
     if list(feature_names) != legacy_feature_names():
         raise ValueError("checkpoint feature_names do not match current legacy_feature_names()")
-    if method_names != list(METHOD_NAMES):
+    if model_method_names != list(METHOD_NAMES):
         raise ValueError("checkpoint method_names do not match current METHOD_NAMES")
+    checkpoint_allowlist = checkpoint.get("method_allowlist")
+    requested_allowlist = resolve_method_allowlist(method_names)
+    if (
+        requested_allowlist is not None
+        and checkpoint_allowlist is not None
+        and list(requested_allowlist) != list(checkpoint_allowlist)
+    ):
+        raise ValueError("requested method_names do not match checkpoint method_allowlist")
+    method_allowlist = requested_allowlist if requested_allowlist is not None else checkpoint_allowlist
 
     feature_mean = checkpoint["feature_mean"]
     feature_std = checkpoint["feature_std"]
@@ -268,7 +280,7 @@ def apply_reliability_smoother(
 
     with torch.no_grad():  # type: ignore[union-attr]
         for sequence in sequences:
-            arrays = build_legacy_arrays(sequence)
+            arrays = build_legacy_arrays(sequence, method_names=method_allowlist)
             features = apply_feature_normalizer(arrays["features"], feature_mean, feature_std)
             feature_tensor = torch.tensor(features, dtype=torch.float32, device=device).unsqueeze(0)  # type: ignore[union-attr]
             output = model(feature_tensor)
@@ -276,7 +288,7 @@ def apply_reliability_smoother(
                 arrays["measurements"],
                 arrays["valid"],
                 output,
-                method_names,
+                model_method_names,
                 learned_cfg,
             )
 
@@ -303,6 +315,7 @@ def apply_reliability_smoother(
     report["checkpoint"] = str(checkpoint_path)
     report["rows"] = len(all_rows)
     report["rts"] = rts
+    report["method_allowlist"] = list(method_allowlist) if method_allowlist is not None else None
     report["learned_observation_config"] = learned_cfg.__dict__
     report["smoother_config"] = smoother_cfg.__dict__
     return report
@@ -316,6 +329,7 @@ def main() -> int:
     parser.add_argument("--metadata")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--json-out")
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset; defaults to checkpoint allowlist.")
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--use-online-position", action="store_true")
     parser.add_argument("--rts", action="store_true", help="Run offline RTS backward smoothing after learned observations")
@@ -363,6 +377,7 @@ def main() -> int:
         smoother_cfg=smoother_cfg,
         learned_cfg=learned_cfg,
         rts=args.rts,
+        method_names=args.methods,
     )
     if args.json_out:
         output = Path(args.json_out)

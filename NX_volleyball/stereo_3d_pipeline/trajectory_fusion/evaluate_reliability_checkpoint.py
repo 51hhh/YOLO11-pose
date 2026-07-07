@@ -21,6 +21,7 @@ try:
         build_legacy_arrays,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from .models import MeasurementReliabilityNet, reliability_weight, weighted_depth_consensus
 except ImportError:  # pragma: no cover - direct script execution
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - direct script execution
         build_legacy_arrays,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
     )
     from models import MeasurementReliabilityNet, reliability_weight, weighted_depth_consensus
 
@@ -141,14 +143,24 @@ def apply_checkpoint(
     output_csv: str | Path,
     metadata_path: str | Path | None = None,
     device: str = "cpu",
+    method_names: Sequence[str] | str | None = None,
 ) -> Dict[str, Any]:
     model, checkpoint = _load_model(checkpoint_path, device)
     feature_names = checkpoint.get("feature_names") or legacy_feature_names()
-    method_names = list(checkpoint.get("method_names") or METHOD_NAMES)
+    model_method_names = list(checkpoint.get("method_names") or METHOD_NAMES)
     if list(feature_names) != legacy_feature_names():
         raise ValueError("checkpoint feature_names do not match current legacy_feature_names()")
-    if method_names != list(METHOD_NAMES):
+    if model_method_names != list(METHOD_NAMES):
         raise ValueError("checkpoint method_names do not match current METHOD_NAMES")
+    checkpoint_allowlist = checkpoint.get("method_allowlist")
+    requested_allowlist = resolve_method_allowlist(method_names)
+    if (
+        requested_allowlist is not None
+        and checkpoint_allowlist is not None
+        and list(requested_allowlist) != list(checkpoint_allowlist)
+    ):
+        raise ValueError("requested method_names do not match checkpoint method_allowlist")
+    method_allowlist = requested_allowlist if requested_allowlist is not None else checkpoint_allowlist
 
     feature_mean = checkpoint["feature_mean"]
     feature_std = checkpoint["feature_std"]
@@ -158,7 +170,7 @@ def apply_checkpoint(
 
     with torch.no_grad():
         for sequence in sequences:
-            arrays = build_legacy_arrays(sequence)
+            arrays = build_legacy_arrays(sequence, method_names=method_allowlist)
             features = apply_feature_normalizer(arrays["features"], feature_mean, feature_std)
             feature_tensor = torch.tensor(features, dtype=torch.float32, device=device).unsqueeze(0)
             measurements = torch.tensor(arrays["measurements"], dtype=torch.float32, device=device).unsqueeze(0)
@@ -185,7 +197,7 @@ def apply_checkpoint(
                     masked[~method_valid] = -1.0
                     top_index = int(torch.argmax(masked).item())
                     top_method = float(top_index)
-                    top_method_name = method_names[top_index]
+                    top_method_name = model_method_names[top_index]
                     top_weight = float(masked[top_index].item())
                 else:
                     top_method = -1.0
@@ -214,7 +226,7 @@ def apply_checkpoint(
                 {
                     "track_id": sequence.track_id,
                     "frames": sequence.length,
-                    "method_summary": _method_summary(method_names, weights, valid),
+                    "method_summary": _method_summary(model_method_names, weights, valid),
                 }
             )
 
@@ -222,6 +234,7 @@ def apply_checkpoint(
     report["output_csv"] = str(output_csv)
     report["input_csv"] = str(input_csv)
     report["checkpoint"] = str(checkpoint_path)
+    report["method_allowlist"] = list(method_allowlist) if method_allowlist is not None else None
     report["rows"] = len(all_rows)
     return report
 
@@ -233,6 +246,7 @@ def main() -> int:
     parser.add_argument("-o", "--output", default="reliability_consensus.csv")
     parser.add_argument("--metadata")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset; defaults to checkpoint allowlist.")
     parser.add_argument("--json-out")
     args = parser.parse_args()
 
@@ -242,6 +256,7 @@ def main() -> int:
         output_csv=args.output,
         metadata_path=args.metadata,
         device=args.device,
+        method_names=args.methods,
     )
     if args.json_out:
         output = Path(args.json_out)

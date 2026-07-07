@@ -88,6 +88,8 @@ def _check_context(clip: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def iter_summary_rows(suite_summary: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    method_allowlist = suite_summary.get("config", {}).get("method_allowlist")
+    method_allowlist_text = ",".join(method_allowlist) if isinstance(method_allowlist, list) else ""
     for clip in suite_summary.get("clips", []):
         context = _check_context(clip)
         for variant, key in VARIANT_JSON_KEYS:
@@ -104,6 +106,7 @@ def iter_summary_rows(suite_summary: Dict[str, Any]) -> Iterable[Dict[str, Any]]
                     "clip": clip.get("name", ""),
                     "split": clip.get("split", ""),
                     "variant": variant,
+                    "method_allowlist": method_allowlist_text,
                     "track_id": track_id,
                     "known_z": "" if known_z is None else known_z,
                     "rows": context["rows"],

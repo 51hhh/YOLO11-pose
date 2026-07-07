@@ -12,10 +12,10 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List, Sequence
 
 try:
-    from .dataset import METHOD_COLUMNS, load_legacy_sequences
+    from .dataset import METHOD_COLUMNS, load_legacy_sequences, resolve_method_allowlist
     from .manifest import DatasetClip, is_manifest_path, load_manifest
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import METHOD_COLUMNS, load_legacy_sequences
+    from dataset import METHOD_COLUMNS, load_legacy_sequences, resolve_method_allowlist
     from manifest import DatasetClip, is_manifest_path, load_manifest
 
 
@@ -115,9 +115,14 @@ def fit_method_calibration(
     clips: Sequence[DatasetClip],
     *,
     cfg: CalibrationConfig | None = None,
+    method_names: Sequence[str] | str | None = None,
 ) -> Dict[str, Any]:
     cfg = cfg or CalibrationConfig()
-    residuals_by_method: Dict[str, List[float]] = {name: [] for name, _ in METHOD_COLUMNS}
+    method_allowlist = resolve_method_allowlist(method_names)
+    enabled = set(method_allowlist) if method_allowlist is not None else None
+    residuals_by_method: Dict[str, List[float]] = {
+        name: [] for name, _ in METHOD_COLUMNS if enabled is None or name in enabled
+    }
     used_clips: List[Dict[str, Any]] = []
     skipped_clips: List[Dict[str, Any]] = []
     frame_count = 0
@@ -138,6 +143,8 @@ def fit_method_calibration(
                 frame_count += 1
                 clip_known_frames += 1
                 for method_name, key in METHOD_COLUMNS:
+                    if enabled is not None and method_name not in enabled:
+                        continue
                     value = float(row.get(key, -1.0))
                     if value > 0.1 and math.isfinite(value):
                         residuals_by_method[method_name].append(value - known_z)
@@ -158,6 +165,8 @@ def fit_method_calibration(
     methods: Dict[str, Dict[str, Any]] = {}
     insufficient: Dict[str, Dict[str, Any]] = {}
     for method_name, key in METHOD_COLUMNS:
+        if enabled is not None and method_name not in enabled:
+            continue
         residuals = residuals_by_method[method_name]
         stats = _fit_method_stats(residuals, cfg)
         stats["key"] = key
@@ -174,6 +183,7 @@ def fit_method_calibration(
             "min_count": cfg.min_count,
             "min_sigma": cfg.min_sigma,
             "mad_sigma_scale": cfg.mad_sigma_scale,
+            "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
         },
         "frame_count": frame_count,
         "used_clips": used_clips,
@@ -236,6 +246,7 @@ def main() -> int:
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--min-count", type=int, default=8)
     parser.add_argument("--min-sigma", type=float, default=0.015)
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset such as p0, p0p1, p0p1_ncc_xfeat")
     args = parser.parse_args()
 
     clips = resolve_clips(args.inputs, metadata=args.metadata)
@@ -246,6 +257,7 @@ def main() -> int:
             min_count=args.min_count,
             min_sigma=args.min_sigma,
         ),
+        method_names=args.methods,
     )
     write_calibration(args.output, calibration)
     print_report(calibration)

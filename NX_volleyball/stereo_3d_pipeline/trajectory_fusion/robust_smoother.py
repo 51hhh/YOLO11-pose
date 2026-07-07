@@ -17,9 +17,9 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 
 try:
-    from .dataset import METHOD_COLUMNS, LegacySequence, load_legacy_sequences
+    from .dataset import METHOD_COLUMNS, LegacySequence, load_legacy_sequences, resolve_method_allowlist
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import METHOD_COLUMNS, LegacySequence, load_legacy_sequences
+    from dataset import METHOD_COLUMNS, LegacySequence, load_legacy_sequences, resolve_method_allowlist
 
 
 @dataclass
@@ -33,6 +33,7 @@ class SmootherConfig:
     use_method_depths: bool = True
     use_online_position: bool = False
     use_static_known_z: bool = False
+    method_allowlist: Tuple[str, ...] | None = None
 
 
 ZMeasurement = Tuple[float, float, str]
@@ -188,8 +189,11 @@ def _quality_scale(row: Dict[str, float], name: str) -> float:
 def _z_measurements(row: Dict[str, float], cfg: SmootherConfig) -> List[Tuple[float, float, str]]:
     if not cfg.use_method_depths:
         return []
+    enabled = set(cfg.method_allowlist) if cfg.method_allowlist is not None else None
     grouped: Dict[str, List[Tuple[float, float]]] = {}
     for name, key in METHOD_COLUMNS:
+        if enabled is not None and name not in enabled:
+            continue
         z_value = row.get(key, -1.0)
         if z_value <= 0.1:
             continue
@@ -238,8 +242,13 @@ def group_correlated_z_measurements(
     return out
 
 
-def _initial_z(row: Dict[str, float]) -> float:
-    candidates = [row.get(key, -1.0) for _, key in METHOD_COLUMNS]
+def _initial_z(row: Dict[str, float], method_allowlist: Tuple[str, ...] | None = None) -> float:
+    enabled = set(method_allowlist) if method_allowlist is not None else None
+    candidates = [
+        row.get(key, -1.0)
+        for name, key in METHOD_COLUMNS
+        if enabled is None or name in enabled
+    ]
     valid = [value for value in candidates if value > 0.1]
     if valid:
         return _median(valid)
@@ -337,7 +346,7 @@ def _forward_filter_sequence(
 ) -> Tuple[List[Dict[str, float]], Dict[str, float], Dict[str, List[np.ndarray] | List[float]]]:
     rows = sequence.rows
     first = rows[0]
-    state = np.array([first["x"], first["y"], _initial_z(first), 0.0, 0.0, 0.0], dtype=np.float64)
+    state = np.array([first["x"], first["y"], _initial_z(first, cfg.method_allowlist), 0.0, 0.0, 0.0], dtype=np.float64)
     cov = np.diag([0.1, 0.1, 0.2, 10.0, 10.0, 10.0]).astype(np.float64)
     h_xyz = np.zeros((3, 6), dtype=np.float64)
     h_xyz[0, 0] = 1.0
@@ -490,6 +499,7 @@ def main() -> int:
     parser.add_argument("-o", "--output", default="trajectory_fusion_smooth.csv")
     parser.add_argument("--metadata", help="Optional metadata.yaml with weak labels")
     parser.add_argument("--no-method-depths", action="store_true", help="Do not use raw candidate z_* updates")
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset such as p0, p0p1, p0p1_ncc_xfeat")
     parser.add_argument("--use-online-position", action="store_true", help="Also use legacy online x/y/z as a position update")
     parser.add_argument("--rts", action="store_true", help="Run an offline Rauch-Tung-Striebel backward pass after forward filtering")
     parser.add_argument(
@@ -513,6 +523,7 @@ def main() -> int:
         use_online_position=args.use_online_position,
         use_static_known_z=args.use_static_known_z,
         gravity_y=args.gravity_y,
+        method_allowlist=resolve_method_allowlist(args.methods),
     )
     sequences = load_legacy_sequences(args.input, metadata_path=args.metadata)
     all_rows: List[Dict[str, float]] = []

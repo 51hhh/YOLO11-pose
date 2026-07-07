@@ -1,0 +1,65 @@
+{
+  "configs": [
+    {
+      "name": "p0_h32_e80_bias10",
+      "methods": "p0",
+      "epochs": 80,
+      "hidden": 32,
+      "static_jitter_weight": 1.0,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 101
+    },
+    {
+      "name": "p0p1_h32_e80_bias10",
+      "methods": "p0p1",
+      "epochs": 80,
+      "hidden": 32,
+      "static_jitter_weight": 1.0,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 103
+    },
+    {
+      "name": "p0p1_ncc_h32_e80_bias10",
+      "methods": "p0p1_ncc",
+      "epochs": 80,
+      "hidden": 32,
+      "static_jitter_weight": 1.0,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 107
+    },
+    {
+      "name": "p0p1_ncc_xfeat_h32_e80_bias10",
+      "methods": "p0p1_ncc_xfeat",
+      "epochs": 80,
+      "hidden": 32,
+      "static_jitter_weight": 1.0,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 109
+    },
+    {
+      "name": "p0p1_ncc_xfeat_h32_e80_leave002",
+      "methods": "p0p1_ncc_xfeat",
+      "epochs": 80,
+      "hidden": 32,
+      "static_jitter_weight": 1.0,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.02,
+      "leave_one_max_methods": 8,
+      "seed": 113
+    }
+  ]
+}

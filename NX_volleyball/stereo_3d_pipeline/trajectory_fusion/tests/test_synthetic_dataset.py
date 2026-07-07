@@ -43,6 +43,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     legacy_feature_names,
     load_legacy_sequences,
     read_metadata,
+    resolve_method_allowlist,
 )
 from trajectory_fusion.evaluate_calibrated_smoother import apply_calibrated_smoother  # noqa: E402
 from trajectory_fusion.evaluate_reliability_smoother import (  # noqa: E402
@@ -461,6 +462,29 @@ class SyntheticDatasetTest(unittest.TestCase):
                 arrays["features"][0][feature_index["roi_ring_edge_profile_support"]],
                 9.0,
             )
+
+    def test_method_allowlist_masks_training_measurements_and_features(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _write_synthetic_clip(Path(tmp))
+            sequence = load_legacy_sequences(csv_path)[0]
+            arrays = build_legacy_arrays(sequence, method_names="p0")
+
+            method_index = {name: idx for idx, (name, _key) in enumerate(METHOD_COLUMNS)}
+            feature_index = {name: idx for idx, name in enumerate(legacy_feature_names())}
+
+            self.assertEqual(arrays["valid"][0][method_index["bbox_center"]], 1.0)
+            self.assertEqual(arrays["valid"][0][method_index["circle_center"]], 1.0)
+            self.assertEqual(arrays["valid"][0][method_index["roi_multi_point"]], 0.0)
+            self.assertEqual(arrays["valid"][0][method_index["roi_cuda_template_match"]], 0.0)
+            self.assertEqual(arrays["measurements"][0][method_index["roi_multi_point"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["z_roi_multi_point"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["z_roi_cuda_template_match"]], 0.0)
+
+            p0p1_ncc_xfeat = resolve_method_allowlist("p0p1_ncc_xfeat")
+            self.assertIsNotNone(p0p1_ncc_xfeat)
+            self.assertIn("roi_cuda_template_match", p0p1_ncc_xfeat or ())
+            self.assertIn("roi_neural_xfeat", p0p1_ncc_xfeat or ())
+            self.assertNotIn("roi_neural_superpoint", p0p1_ncc_xfeat or ())
 
     def test_audit_training_inputs_reports_exact_model_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1463,6 +1487,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                                 "hidden": 16,
                                 "bias_reg_weight": 0.5,
                                 "leave_one_weight": 0.02,
+                                "methods": ["p0", "ncc"],
                                 "seed": 123,
                             }
                         ]
@@ -1487,12 +1512,15 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("--metadata", command)
             self.assertIn("--seed", command)
             self.assertIn("123", command)
+            self.assertIn("--methods", command)
+            self.assertIn("p0,ncc", command)
 
     def test_repository_sweep_configs_load(self) -> None:
         config_dir = PROJECT / "trajectory_fusion" / "configs"
         expected = {
             "sweep_smoke.json": 1,
             "sweep_known_distance_selection.json": 5,
+            "sweep_method_ablation.json": 5,
             "sweep_dynamic_regularization.json": 5,
         }
         for filename, count in expected.items():
@@ -1510,10 +1538,11 @@ class SyntheticDatasetTest(unittest.TestCase):
             calibration_path = root / "method_calibration.json"
             calibration_path.write_text("{}", encoding="utf-8")
             config_path.write_text(
-                json.dumps({"configs": [{"name": "quick", "epochs": 1, "hidden": 8}]}),
+                json.dumps({"configs": [{"name": "quick", "epochs": 1, "hidden": 8, "methods": "p0p1_ncc"}]}),
                 encoding="utf-8",
             )
             metric_row = {
+                "config": "baseline",
                 "clip": "clip",
                 "split": "val",
                 "variant": "reliability_smoother",
@@ -1525,6 +1554,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                 "known_z_mad": "0.002",
             }
             method_row = {
+                "config": "baseline",
                 "clip": "clip",
                 "split": "val",
                 "variant": "reliability_smoother",
@@ -1564,11 +1594,19 @@ class SyntheticDatasetTest(unittest.TestCase):
 
             run_mock.assert_called_once()
             suite_mock.assert_called_once()
+            train_command = run_mock.call_args.args[0]
+            self.assertIn("--methods", train_command)
+            self.assertIn("p0p1_ncc", train_command)
             self.assertEqual(summary["calibration"], str(calibration_path))
             self.assertEqual(suite_mock.call_args.kwargs["calibration"], calibration_path)
+            self.assertEqual(suite_mock.call_args.kwargs["method_names"], "p0p1_ncc")
+            self.assertEqual(summary["runs"][0]["methods"], "p0p1_ncc")
             self.assertEqual(summary["runs"][0]["calibration"], str(calibration_path))
             self.assertEqual(summary["sweep_variant_ranking"], str(root / "sweep_out" / "sweep_variant_ranking.csv"))
             self.assertTrue((root / "sweep_out" / "sweep_variant_ranking.csv").exists())
+            with (root / "sweep_out" / "sweep_metrics.csv").open(newline="", encoding="utf-8") as handle:
+                metrics_rows = list(csv.DictReader(handle))
+            self.assertEqual(metrics_rows[0]["config"], "quick")
             self.assertEqual(
                 summary["sweep_reliability_methods"],
                 str(root / "sweep_out" / "sweep_reliability_methods.csv"),
@@ -2178,6 +2216,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                     "config",
                     "split",
                     "variant",
+                    "method_allowlist",
                     "clip",
                     "track_id",
                     "z_std",
@@ -2195,6 +2234,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "config": config,
                             "split": "val",
                             "variant": "calibrated_smoother",
+                            "method_allowlist": "",
                             "clip": "static_3m",
                             "track_id": "0",
                             "z_std": "0.003",
@@ -2210,6 +2250,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "config": config,
                             "split": "val",
                             "variant": "calibrated_rts_smoother",
+                            "method_allowlist": "",
                             "clip": "static_3m",
                             "track_id": "0",
                             "z_std": "0.002",
@@ -2225,6 +2266,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "config": "net_a",
                         "split": "val",
                         "variant": "reliability_smoother",
+                        "method_allowlist": "",
                         "clip": "static_3m",
                         "track_id": "0",
                         "z_std": "0.002",
@@ -2235,14 +2277,37 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "suite_dir": "net_a_suite",
                     }
                 )
+                for config, methods, z_std in (
+                    ("p0_cfg", "bbox_center,circle_center", "0.004"),
+                    ("p0p1_cfg", "bbox_center,circle_center,roi_multi_point", "0.0035"),
+                ):
+                    writer.writerow(
+                        {
+                            "config": config,
+                            "split": "val",
+                            "variant": "robust_smooth",
+                            "method_allowlist": methods,
+                            "clip": "static_3m",
+                            "track_id": "0",
+                            "z_std": z_std,
+                            "z_peak_to_peak": "0.01",
+                            "known_z_bias": "0.006",
+                            "known_z_mad": "0.002",
+                            "checkpoint": f"{config}.pt",
+                            "suite_dir": f"{config}_suite",
+                        }
+                    )
 
             ranked = rank_metrics(path, variant="all", split="val")
             variants = {(row["config"], row["variant"]): row for row in ranked}
             self.assertIn(("baseline", "calibrated_smoother"), variants)
             self.assertIn(("baseline", "calibrated_rts_smoother"), variants)
+            self.assertIn(("p0_cfg", "robust_smooth"), variants)
+            self.assertIn(("p0p1_cfg", "robust_smooth"), variants)
             self.assertIn(("net_a", "reliability_smoother"), variants)
             self.assertEqual(variants[("baseline", "calibrated_smoother")]["clip_count"], 1)
             self.assertEqual(variants[("baseline", "calibrated_rts_smoother")]["clip_count"], 1)
+            self.assertEqual(variants[("p0_cfg", "robust_smooth")]["method_allowlist"], "bbox_center,circle_center")
 
     def test_rank_sweep_metrics_uses_motion_when_known_z_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

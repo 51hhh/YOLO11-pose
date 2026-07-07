@@ -16,9 +16,12 @@ Files:
 
 - `sweep_smoke.json`: one quick run to check PyTorch, manifest, suite, method audit, and model selection wiring.
 - `sweep_known_distance_selection.json`: first real model-selection set for multi-distance static clips with train/val split and `known_z`.
+- `sweep_method_ablation.json`: method-set ablation for P0-only, P0+P1, P0+P1+NCC, and P0+P1+NCC+XFeat. Use it after the basic known-distance workflow is clean to test whether NCC/XFeat actually improve heldout distance accuracy.
 - `sweep_dynamic_regularization.json`: second-pass exploratory set for dynamic clips after the fixed calibration baseline and known-distance set are already reviewed.
 
 Each config pins `seed` so repeated runs on the same dataset are comparable. A good model still needs heldout `known_z` and dynamic validation; a stable seeded run on one no-label clip is not evidence of final accuracy.
+
+Configs may include `methods`, either as a preset string or comma-separated method names. Supported presets include `p0`, `p0p1`, `p0p1_ncc`, `p0p1_xfeat`, and `p0p1_ncc_xfeat`. The allowlist is applied consistently to ReliabilityNet training, direct consensus, robust smoother, calibrated smoother, and ReliabilityNet smoother evaluation.
 
 For ordinary multi-distance static selection, generate the manifest with `--stratify-known-z` so each measured distance has train/val coverage when enough clips exist. For leave-one-distance-out checks, use `--holdout-known-z <distance> --holdout-split val` to keep one distance bucket fully held out.
 

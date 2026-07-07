@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 try:
-    from .dataset import METHOD_COLUMNS, load_legacy_sequences
+    from .dataset import METHOD_COLUMNS, load_legacy_sequences, resolve_method_allowlist
     from .fit_method_calibration import load_calibration
     from .robust_smoother import (
         SmootherConfig,
@@ -21,7 +21,7 @@ try:
         write_output,
     )
 except ImportError:  # pragma: no cover - direct script execution
-    from dataset import METHOD_COLUMNS, load_legacy_sequences
+    from dataset import METHOD_COLUMNS, load_legacy_sequences, resolve_method_allowlist
     from fit_method_calibration import load_calibration
     from robust_smoother import (
         SmootherConfig,
@@ -52,8 +52,10 @@ def _method_observations(
     *,
     min_sigma: float,
     relative_floor: float,
+    method_allowlist: Tuple[str, ...] | None = None,
 ) -> Tuple[List[ZMeasurement], Dict[str, float | str], Dict[str, float]]:
     methods = calibration.get("methods", {})
+    enabled = set(method_allowlist) if method_allowlist is not None else None
     raw_candidates: List[ZMeasurement] = []
     diagnostic = _empty_diagnostic()
     top_weight = -1.0
@@ -61,6 +63,8 @@ def _method_observations(
     method_counts: Dict[str, float] = {}
 
     for method_name, key in METHOD_COLUMNS:
+        if enabled is not None and method_name not in enabled:
+            continue
         method_stats = methods.get(method_name)
         if not method_stats:
             continue
@@ -104,14 +108,17 @@ def apply_calibrated_smoother(
     min_sigma: float = 0.015,
     relative_floor: float = 0.01,
     rts: bool = False,
+    method_names: Tuple[str, ...] | str | None = None,
 ) -> Dict[str, Any]:
     calibration = load_calibration(calibration_path)
+    method_allowlist = resolve_method_allowlist(method_names)
     sequences = load_legacy_sequences(input_csv, metadata_path=metadata_path)
     smoother_cfg = smoother_cfg or SmootherConfig()
     all_rows: List[Dict[str, float]] = []
     report: Dict[str, Any] = {
         "input_csv": str(input_csv),
         "calibration": str(calibration_path),
+        "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
         "calibrated_methods": sorted(calibration.get("methods", {}).keys()),
         "sequences": [],
     }
@@ -127,6 +134,7 @@ def apply_calibrated_smoother(
                 calibration,
                 min_sigma=min_sigma,
                 relative_floor=relative_floor,
+                method_allowlist=method_allowlist,
             )
             diagnostics.append(diagnostic)
             for method, count in counts.items():
@@ -168,6 +176,7 @@ def main() -> int:
     parser.add_argument("--gravity-y", type=float, default=9.81)
     parser.add_argument("--min-sigma", type=float, default=0.015)
     parser.add_argument("--relative-floor", type=float, default=0.01)
+    parser.add_argument("--methods", default=None, help="Optional method allowlist/preset such as p0, p0p1, p0p1_ncc_xfeat")
     parser.add_argument("--rts", action="store_true", help="Run offline RTS backward smoothing after calibrated observations")
     parser.add_argument(
         "--use-static-known-z",
@@ -190,6 +199,7 @@ def main() -> int:
         min_sigma=args.min_sigma,
         relative_floor=args.relative_floor,
         rts=args.rts,
+        method_names=args.methods,
     )
     if args.json_out:
         _write_json(args.json_out, report)

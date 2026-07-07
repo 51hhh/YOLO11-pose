@@ -20,6 +20,7 @@ try:
         compute_feature_normalizer,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
         weak_label_names,
     )
     from .manifest import DatasetClip, is_manifest_path, load_manifest
@@ -31,6 +32,7 @@ except ImportError:  # pragma: no cover - direct script execution
         compute_feature_normalizer,
         legacy_feature_names,
         load_legacy_sequences,
+        resolve_method_allowlist,
         weak_label_names,
     )
     from manifest import DatasetClip, is_manifest_path, load_manifest
@@ -118,6 +120,11 @@ def main() -> int:
     parser.add_argument("--bias-reg-weight", type=float, default=0.02)
     parser.add_argument("--leave-one-weight", type=float, default=0.0)
     parser.add_argument("--leave-one-max-methods", type=int, default=8)
+    parser.add_argument(
+        "--methods",
+        default="all",
+        help="Comma-separated method names or preset such as p0, p0p1, p0p1_ncc, p0p1_ncc_xfeat.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -151,6 +158,9 @@ def main() -> int:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
+    method_allowlist = resolve_method_allowlist(args.methods)
+    print(f"method allowlist: {method_allowlist or 'all'}")
+
     clips = resolve_input_clips(args.inputs, args.metadata)
     train_items, heldout_items = load_sequences_from_clips(clips, args.train_split)
     if not train_items:
@@ -163,7 +173,7 @@ def main() -> int:
     sequence_arrays: List[dict] = []
     all_features: List[List[float]] = []
     for clip, seq in train_items:
-        arrays = build_legacy_arrays(seq)
+        arrays = build_legacy_arrays(seq, method_names=method_allowlist)
         sequence_arrays.append({"clip": clip.name, "track_id": seq.track_id, **arrays})
         all_features.extend(arrays["features"])
     label_summary = _training_label_summary(sequence_arrays)
@@ -277,6 +287,7 @@ def main() -> int:
         "feature_mean": feature_mean,
         "feature_std": feature_std,
         "method_names": METHOD_NAMES,
+        "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
         "weak_label_names": weak_label_names(),
         "train_split": args.train_split,
         "source_clips": [
@@ -300,6 +311,7 @@ def main() -> int:
             "bias_reg_weight": args.bias_reg_weight,
             "leave_one_weight": args.leave_one_weight,
             "leave_one_max_methods": args.leave_one_max_methods,
+            "methods": args.methods,
             "seed": args.seed,
         },
         "note": "Experimental reliability model. It predicts sigma/bias/outlier, not final trajectory.",
