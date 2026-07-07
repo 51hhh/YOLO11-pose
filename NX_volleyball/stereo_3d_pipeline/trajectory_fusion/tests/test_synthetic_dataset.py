@@ -527,6 +527,14 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertGreater(arrays["features"][0][feature_index["z_roi_neural_xfeat"]], 0.1)
             self.assertGreater(arrays["features"][0][feature_index["roi_neural_xfeat_top1_z"]], 0.1)
 
+    def test_formal_sweep_configs_pin_current_candidate_methods(self) -> None:
+        config_dir = PROJECT / "trajectory_fusion" / "configs"
+        for filename in ("sweep_known_distance_selection.json", "sweep_dynamic_regularization.json"):
+            with self.subTest(filename=filename):
+                configs = load_sweep_configs(config_dir / filename)
+                self.assertTrue(configs)
+                self.assertTrue(all(config.get("methods") == "p0p1_ncc_xfeat" for config in configs))
+
     def test_audit_training_inputs_reports_exact_model_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
