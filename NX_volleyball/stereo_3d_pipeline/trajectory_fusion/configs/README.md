@@ -27,4 +27,4 @@ Selection rule:
 - Treat `calibrated_smoother` as the non-neural baseline.
 - Treat `robust_smooth` as the uncalibrated physical baseline.
 - Prefer `reliability_smoother` only when heldout `known_z` bias/MAD improves without method-audit warnings.
-- Do not select a model from no-`known_z` static clips; those clips only validate stability and toolchain behavior.
+- Do not select a model from no-`known_z` static clips; `select_reliability_model.py` hard-rejects `known_clip_count=0` as `no_known_z`.
