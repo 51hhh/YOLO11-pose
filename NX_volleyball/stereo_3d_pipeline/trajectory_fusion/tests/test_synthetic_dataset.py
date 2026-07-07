@@ -1964,6 +1964,43 @@ class SyntheticDatasetTest(unittest.TestCase):
                             "audit_warnings": "",
                         }
                     )
+                method_path = workflow / "training_method_coverage.csv"
+                with method_path.open("w", newline="", encoding="utf-8") as handle:
+                    fieldnames = [
+                        "method",
+                        "column",
+                        "split",
+                        "valid",
+                        "total",
+                        "hit_rate",
+                        "median",
+                        "mad",
+                        "mean",
+                        "min",
+                        "max",
+                    ]
+                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for method, column in (
+                        ("bbox_center", "z_bbox_center"),
+                        ("circle_center", "z_circle_center"),
+                        ("roi_neural_xfeat", "z_roi_neural_xfeat"),
+                    ):
+                        writer.writerow(
+                            {
+                                "method": method,
+                                "column": column,
+                                "split": "val" if known else "train",
+                                "valid": "10" if method != "roi_neural_xfeat" or not known else "0",
+                                "total": "10",
+                                "hit_rate": "1.0" if method != "roi_neural_xfeat" or not known else "0.0",
+                                "median": "3.0",
+                                "mad": "0.001",
+                                "mean": "3.0",
+                                "min": "2.99",
+                                "max": "3.01",
+                            }
+                        )
                 variant_path = workflow / "sweep_variant_ranking.csv"
                 with variant_path.open("w", newline="", encoding="utf-8") as handle:
                     fieldnames = [
@@ -2041,6 +2078,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                         "method_count": 3,
                         "feature_count": 5,
                         "warnings": [],
+                        "method_csv": str(method_path),
                     },
                     "candidate_consistency": {
                         "frames": 10,
@@ -2094,6 +2132,14 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(
                 ready_report["sweep"]["method_allowlists"],
                 ["bbox_center,circle_center"],
+            )
+            self.assertEqual(
+                [row["method"] for row in ready_report["training_input_audit"]["configured_methods"]["rows"]],
+                ["bbox_center", "circle_center"],
+            )
+            self.assertEqual(
+                ready_report["training_input_audit"]["configured_methods"]["problem_count"],
+                0,
             )
 
             csv_path = root / "workflow_compare.csv"

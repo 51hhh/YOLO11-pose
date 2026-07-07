@@ -227,6 +227,66 @@ def _key_method_coverage(rows: List[Dict[str, str]]) -> Dict[str, Any]:
     }
 
 
+def _configured_method_coverage(
+    rows: List[Dict[str, str]],
+    method_allowlists: List[str],
+) -> Dict[str, Any]:
+    methods: List[str] = []
+    seen_methods = set()
+    for allowlist in method_allowlists:
+        for raw_method in str(allowlist).split(","):
+            method = raw_method.strip()
+            if not method or method in seen_methods:
+                continue
+            seen_methods.add(method)
+            methods.append(method)
+    if not methods:
+        return {
+            "method_allowlists": method_allowlists,
+            "methods": [],
+            "rows": [],
+            "problem_rows": [],
+            "problem_count": 0,
+        }
+
+    by_split_method = {
+        (str(row.get("split", "")), str(row.get("method", ""))): row
+        for row in rows
+    }
+    splits = sorted({str(row.get("split", "")) for row in rows}) or [""]
+    method_order = {name: idx for idx, (name, _column) in enumerate(METHOD_COLUMNS)}
+    methods = sorted(methods, key=lambda name: method_order.get(name, len(method_order)))
+
+    report_rows: List[Dict[str, Any]] = []
+    problem_rows: List[Dict[str, Any]] = []
+    for method in methods:
+        for split in splits:
+            source = by_split_method.get((split, method))
+            status = _method_coverage_status(source)
+            row = {
+                "method": method,
+                "column": METHOD_COLUMN_BY_NAME.get(method, ""),
+                "split": split,
+                "status": status,
+                "valid": int(_safe_float(source.get("valid")) or 0) if source else 0,
+                "total": int(_safe_float(source.get("total")) or 0) if source else 0,
+                "hit_rate": _safe_float(source.get("hit_rate")) if source else None,
+                "median": _safe_float(source.get("median")) if source else None,
+                "mad": _safe_float(source.get("mad")) if source else None,
+            }
+            report_rows.append(row)
+            if status != "ok":
+                problem_rows.append(row)
+
+    return {
+        "method_allowlists": method_allowlists,
+        "methods": methods,
+        "rows": report_rows,
+        "problem_rows": problem_rows,
+        "problem_count": len(problem_rows),
+    }
+
+
 def _key_method_warning_rows(key_methods: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [
         row
@@ -474,10 +534,15 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
     sweep = summary.get("sweep", {})
     selection_rows = _read_csv(sweep.get("sweep_model_selection"))
     variant_rows = _read_csv(sweep.get("sweep_variant_ranking"))
+    method_allowlists = _method_allowlists(selection_rows, variant_rows)
     audit_rows = _read_csv(sweep.get("sweep_reliability_method_audit"))
     training_input_audit = dict(summary.get("training_input_audit", {}))
     method_coverage_rows = _read_csv(training_input_audit.get("method_csv"))
     training_input_audit["key_methods"] = _key_method_coverage(method_coverage_rows)
+    training_input_audit["configured_methods"] = _configured_method_coverage(
+        method_coverage_rows,
+        method_allowlists,
+    )
     candidate_consistency = dict(summary.get("candidate_consistency", {}))
     candidate_rows = _read_csv(candidate_consistency.get("method_csv"))
     candidate_consistency["top_aggregate"] = _top_candidate_rows(candidate_rows, scope="aggregate")
@@ -501,7 +566,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
             "variant_ranking_csv": sweep.get("sweep_variant_ranking"),
             "method_audit_csv": sweep.get("sweep_reliability_method_audit"),
             "selection_status": _selection_status(selection_rows),
-            "method_allowlists": _method_allowlists(selection_rows, variant_rows),
+            "method_allowlists": method_allowlists,
             "top_selection": _top_rows(selection_rows, limit=5),
             "top_variant_ranking": _top_rows(variant_rows, limit=8),
             "audit_rows": _top_rows(audit_rows, limit=8),
@@ -580,6 +645,27 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
 
     lines.extend(["", "## Recommended Actions", ""])
     lines.extend(f"- {action}" for action in report.get("recommended_actions", []))
+
+    configured_methods = training_audit.get("configured_methods", {})
+    configured_table = _markdown_table(
+        ["method", "column", "split", "valid", "total", "hit", "median", "mad", "status"],
+        [
+            [
+                str(row.get("method", "")),
+                str(row.get("column", "")),
+                str(row.get("split", "")),
+                str(row.get("valid", "")),
+                str(row.get("total", "")),
+                _fmt(row.get("hit_rate"), digits=3),
+                _fmt(row.get("median")),
+                _fmt(row.get("mad")),
+                str(row.get("status", "")),
+            ]
+            for row in configured_methods.get("rows", [])
+        ],
+    )
+    lines.extend(["", "## Configured Method Coverage", ""])
+    lines.append(configured_table or "No configured sweep method coverage rows.")
 
     key_methods = training_audit.get("key_methods", {})
     key_method_table = _markdown_table(
