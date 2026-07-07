@@ -104,6 +104,20 @@ HEADER = [
     "z_roi_center_patch",
     "z_roi_multi_point",
     "z_roi_neural_feature",
+    "z_roi_neural_xfeat",
+    "z_roi_cuda_template_match",
+    "disparity_roi_neural_xfeat",
+    "disparity_roi_cuda_template_match",
+    "roi_neural_xfeat_support",
+    "roi_neural_xfeat_std_px",
+    "roi_neural_xfeat_confidence",
+    "roi_cuda_template_match_support",
+    "roi_cuda_template_match_std_px",
+    "roi_cuda_template_match_confidence",
+    "roi_neural_xfeat_top_count",
+    "roi_neural_xfeat_top1_z",
+    "roi_neural_xfeat_top1_disparity",
+    "roi_neural_xfeat_top1_score",
     "z_roi_cuda_stereo_bm",
     "z_roi_ring_edge_profile",
     "disparity_roi_cuda_stereo_bm",
@@ -129,7 +143,7 @@ HEADER = [
 ]
 
 
-def _write_synthetic_clip(root: Path) -> Path:
+def _write_synthetic_clip(root: Path, include_feature_methods: bool = False) -> Path:
     csv_path = root / "traj_p0p1_001.csv"
     rows = []
     for index in range(4):
@@ -167,6 +181,20 @@ def _write_synthetic_clip(root: Path) -> Path:
                 "z_roi_center_patch": f"{z + 0.05:.3f}",
                 "z_roi_multi_point": f"{z - 0.05:.3f}",
                 "z_roi_neural_feature": "-1",
+                "z_roi_neural_xfeat": f"{z + 0.08:.3f}" if include_feature_methods else "-1",
+                "z_roi_cuda_template_match": f"{z - 0.08:.3f}" if include_feature_methods else "-1",
+                "disparity_roi_neural_xfeat": "430.0" if include_feature_methods else "-1",
+                "disparity_roi_cuda_template_match": "440.0" if include_feature_methods else "-1",
+                "roi_neural_xfeat_support": "5" if include_feature_methods else "0",
+                "roi_neural_xfeat_std_px": "0.5" if include_feature_methods else "-1",
+                "roi_neural_xfeat_confidence": "0.6" if include_feature_methods else "0",
+                "roi_cuda_template_match_support": "1" if include_feature_methods else "0",
+                "roi_cuda_template_match_std_px": "0.2" if include_feature_methods else "-1",
+                "roi_cuda_template_match_confidence": "0.9" if include_feature_methods else "0",
+                "roi_neural_xfeat_top_count": "5" if include_feature_methods else "0",
+                "roi_neural_xfeat_top1_z": f"{z + 0.09:.3f}" if include_feature_methods else "0",
+                "roi_neural_xfeat_top1_disparity": "431.0" if include_feature_methods else "0",
+                "roi_neural_xfeat_top1_score": "0.7" if include_feature_methods else "0",
                 "z_roi_cuda_stereo_bm": "3.200" if index == 0 else "-1",
                 "z_roi_ring_edge_profile": "3.300" if index == 0 else "-1",
                 "disparity_roi_cuda_stereo_bm": "456.0" if index == 0 else "-1",
@@ -465,7 +493,7 @@ class SyntheticDatasetTest(unittest.TestCase):
 
     def test_method_allowlist_masks_training_measurements_and_features(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            csv_path = _write_synthetic_clip(Path(tmp))
+            csv_path = _write_synthetic_clip(Path(tmp), include_feature_methods=True)
             sequence = load_legacy_sequences(csv_path)[0]
             arrays = build_legacy_arrays(sequence, method_names="p0")
 
@@ -479,12 +507,25 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(arrays["measurements"][0][method_index["roi_multi_point"]], 0.0)
             self.assertEqual(arrays["features"][0][feature_index["z_roi_multi_point"]], 0.0)
             self.assertEqual(arrays["features"][0][feature_index["z_roi_cuda_template_match"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["disparity_roi_cuda_template_match"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["roi_cuda_template_match_support"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["z_roi_neural_xfeat"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["disparity_roi_neural_xfeat"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["roi_neural_xfeat_support"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["roi_neural_xfeat_top_count"]], 0.0)
+            self.assertEqual(arrays["features"][0][feature_index["roi_neural_xfeat_top1_z"]], 0.0)
 
             p0p1_ncc_xfeat = resolve_method_allowlist("p0p1_ncc_xfeat")
             self.assertIsNotNone(p0p1_ncc_xfeat)
             self.assertIn("roi_cuda_template_match", p0p1_ncc_xfeat or ())
             self.assertIn("roi_neural_xfeat", p0p1_ncc_xfeat or ())
             self.assertNotIn("roi_neural_superpoint", p0p1_ncc_xfeat or ())
+
+            arrays = build_legacy_arrays(sequence, method_names="p0p1_ncc_xfeat")
+            self.assertGreater(arrays["features"][0][feature_index["z_roi_cuda_template_match"]], 0.1)
+            self.assertGreater(arrays["features"][0][feature_index["roi_cuda_template_match_support"]], 0.0)
+            self.assertGreater(arrays["features"][0][feature_index["z_roi_neural_xfeat"]], 0.1)
+            self.assertGreater(arrays["features"][0][feature_index["roi_neural_xfeat_top1_z"]], 0.1)
 
     def test_audit_training_inputs_reports_exact_model_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
