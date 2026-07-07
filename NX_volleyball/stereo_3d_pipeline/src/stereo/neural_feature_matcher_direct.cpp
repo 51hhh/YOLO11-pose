@@ -368,13 +368,15 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
     TrtEngine::TensorBuffer* direct_keypoints = find_keypoint_tensor();
     TrtEngine::TensorBuffer* direct_descriptors = find_descriptor_tensor();
     TrtEngine::TensorBuffer* direct_scores = find_score_tensor();
+    const int matcher_required_matches =
+        config_.soft_topk_scoring ? 1 : config_.min_matches;
 
     auto parse_features = [&](int batch_index,
                               std::vector<DirectFeature>* features) -> bool {
         const int count = std::min(keypoint_count(direct_keypoints),
                                    descriptor_count(direct_descriptors));
         if (!direct_keypoints || !direct_descriptors ||
-            count < config_.min_matches) {
+            count < matcher_required_matches) {
             return false;
         }
         features->clear();
@@ -401,7 +403,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         if (static_cast<int>(features->size()) > config_.top_k) {
             features->resize(static_cast<size_t>(config_.top_k));
         }
-        return static_cast<int>(features->size()) >= config_.min_matches;
+        return static_cast<int>(features->size()) >= matcher_required_matches;
     };
 
     auto elapsed_ms_since = [](const std::chrono::steady_clock::time_point& t0) {
@@ -546,7 +548,8 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         [&](const std::vector<NeuralFeaturePointMatch>& candidates,
             const char* ok_status) {
             NeuralFeatureMatchResult result;
-            if (static_cast<int>(candidates.size()) < config_.min_matches) {
+            const int required_matches = matcher_required_matches;
+            if (static_cast<int>(candidates.size()) < required_matches) {
                 result.status = "not_enough_matches";
                 return result;
             }
@@ -573,7 +576,8 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             float max_y = -std::numeric_limits<float>::infinity();
             int quadrant_mask = 0;
             for (const auto& m : candidates) {
-                if (std::fabs(m.disparity - median) > gate) {
+                if (!config_.soft_topk_scoring &&
+                    std::fabs(m.disparity - median) > gate) {
                     append_debug_match(&result,
                                        m,
                                        SparseFeatureDebugStage::GEOMETRY,
@@ -596,7 +600,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                 const int qy = m.left_y >= left_det.cy ? 1 : 0;
                 quadrant_mask |= 1 << (qy * 2 + qx);
             }
-            if (static_cast<int>(result.matches.size()) < config_.min_matches) {
+            if (static_cast<int>(result.matches.size()) < required_matches) {
                 result.status = "not_enough_inliers";
                 result.matches.clear();
                 return result;
@@ -613,13 +617,15 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             const float min_spread =
                 std::min(left_det.width, left_det.height) *
                 std::max(0.0f, config_.min_spatial_spread_ratio);
-            if (config_.min_spatial_quadrants > 0 &&
+            if (!config_.soft_topk_scoring &&
+                config_.min_spatial_quadrants > 0 &&
                 quadrants < config_.min_spatial_quadrants) {
                 result.status = "poor_spatial_quadrants";
                 result.matches.clear();
                 return result;
             }
-            if (min_spread > 0.0f && spread < min_spread) {
+            if (!config_.soft_topk_scoring &&
+                min_spread > 0.0f && spread < min_spread) {
                 result.status = "poor_spatial_spread";
                 result.matches.clear();
                 return result;
@@ -635,7 +641,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             const float support_conf = std::min(
                 1.0f,
                 kept / static_cast<float>(
-                    std::max(1, config_.min_matches * 2)));
+                    std::max(1, required_matches * 2)));
             const float score_conf = std::clamp(
                 (score_sum / kept + 1.0f) * 0.5f, 0.0f, 1.0f);
             const float consistency =
@@ -685,9 +691,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                 if (disp <= 0.5f ||
                     disp > static_cast<float>(max_disparity_)) {
                     reject = SparseFeatureRejectReason::BAD_DISPARITY;
-                } else if (std::fabs(ly - ry) > config_.max_y_error_px) {
+                } else if (!config_.soft_topk_scoring &&
+                           std::fabs(ly - ry) > config_.max_y_error_px) {
                     reject = SparseFeatureRejectReason::Y_RESIDUAL;
-                } else if (std::fabs(disp - initial_disparity) >
+                } else if (!config_.soft_topk_scoring &&
+                           std::fabs(disp - initial_disparity) >
                            config_.max_disp_delta_px) {
                     reject = SparseFeatureRejectReason::DISP_DELTA;
                 }
@@ -749,9 +757,9 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         output_batch >= 2 &&
         direct_keypoints &&
         direct_descriptors &&
-        direct_keypoint_count >= config_.min_matches &&
-        direct_descriptor_count >= config_.min_matches &&
-        direct_score_count >= config_.min_matches &&
+        direct_keypoint_count >= matcher_required_matches &&
+        direct_descriptor_count >= matcher_required_matches &&
+        direct_score_count >= matcher_required_matches &&
         keypoint_layout(direct_keypoints, &direct_kpt_layout) &&
         descriptor_layout(direct_descriptors, &direct_desc_layout) &&
         ensureDirectFeatureGpuWorkspace(direct_gpu_workspace_,
@@ -793,6 +801,18 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
         const size_t score_stride = direct_scores ? batch_stride(direct_scores) : 0;
         std::vector<DirectFeatureGpuMatch> gpu_matches;
         const auto post_start = std::chrono::steady_clock::now();
+        const int post_min_matches =
+            config_.soft_topk_scoring ? 1 : config_.min_matches;
+        const float post_max_y_error_px =
+            config_.soft_topk_scoring
+                ? std::max(config_.max_y_error_px,
+                           static_cast<float>(std::max(1, img_height)))
+                : config_.max_y_error_px;
+        const float post_max_disp_delta_px =
+            config_.soft_topk_scoring
+                ? std::max(config_.max_disp_delta_px,
+                           static_cast<float>(std::max(1, max_disparity_)))
+                : config_.max_disp_delta_px;
         const bool gpu_path_ok = runDirectFeatureGpuPostprocess(
             direct_gpu_workspace_,
             kpt_base,
@@ -808,11 +828,11 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
             direct_kpt_layout,
             direct_desc_layout,
             config_.roi_size,
-            config_.min_matches,
+            post_min_matches,
             config_.min_score,
             config_.match_margin,
-            config_.max_y_error_px,
-            config_.max_disp_delta_px,
+            post_max_y_error_px,
+            post_max_disp_delta_px,
             initial_disparity,
             max_disparity_,
             left_det.cx, left_det.cy, left_det.width, left_det.height,

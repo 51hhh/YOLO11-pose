@@ -89,6 +89,24 @@ fi
 
 cd "${ROOT_DIR}"
 
+# Ensure GPU is locked at max frequency (jetson_clocks)
+GPU_FREQ_PATH="/sys/devices/platform/bus@0/17000000.gpu/devfreq/17000000.gpu"
+if [[ -f "${GPU_FREQ_PATH}/cur_freq" ]]; then
+  cur_freq=$(cat "${GPU_FREQ_PATH}/cur_freq" 2>/dev/null || echo 0)
+  max_freq=$(cat "${GPU_FREQ_PATH}/max_freq" 2>/dev/null || echo 0)
+  if [[ "${cur_freq}" -gt 0 && "${max_freq}" -gt 0 && "${cur_freq}" -lt "${max_freq}" ]]; then
+    echo "[INFO] GPU at ${cur_freq}/${max_freq} Hz, locking with jetson_clocks..."
+    if command -v sudo &>/dev/null; then
+      echo "nvidia" | sudo -S jetson_clocks 2>/dev/null || true
+      sleep 1
+      cur_freq=$(cat "${GPU_FREQ_PATH}/cur_freq" 2>/dev/null || echo 0)
+      echo "[INFO] GPU now at ${cur_freq} Hz"
+    else
+      echo "[WARN] sudo not available, cannot auto-lock GPU frequency" >&2
+    fi
+  fi
+fi
+
 BUILD_DIR=""
 for candidate in build_standalone build; do
   if [[ -x "${candidate}/stereo_pipeline" ]]; then

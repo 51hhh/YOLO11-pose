@@ -82,12 +82,20 @@ void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
                       float disparity,
                       float score,
                       float focal,
-                      float baseline) {
+                      float baseline,
+                      float min_depth,
+                      float max_depth) {
     if (!candidates ||
         !std::isfinite(lx) || !std::isfinite(ly) ||
         !std::isfinite(rx) || !std::isfinite(ry) ||
         !std::isfinite(disparity) || disparity <= 0.5f ||
         focal <= 1e-3f || baseline <= 1e-6f) {
+        return;
+    }
+    const float depth_m = focal * baseline / std::max(0.5f, disparity);
+    if (!std::isfinite(depth_m) ||
+        (min_depth > 0.0f && depth_m < min_depth) ||
+        (max_depth > 0.0f && depth_m > max_depth)) {
         return;
     }
     for (const auto& existing : *candidates) {
@@ -105,7 +113,7 @@ void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
     point.right_x = rx;
     point.right_y = ry;
     point.disparity = disparity;
-    point.depth_m = focal * baseline / std::max(0.5f, disparity);
+    point.depth_m = depth_m;
     point.score = std::isfinite(score) ? score : 0.0f;
     point.y_delta = ly - ry;
     candidates->push_back(point);
@@ -114,7 +122,10 @@ void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
 void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                                   float initial_disparity,
                                   float focal,
-                                  float baseline) {
+                                  float baseline,
+                                  float min_depth,
+                                  float max_depth,
+                                  bool promote_top_points) {
     (void)initial_disparity;
     result.top_point_count = 0;
     result.top_points = {};
@@ -132,7 +143,9 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                          m.disparity,
                          m.score,
                          focal,
-                         baseline);
+                         baseline,
+                         min_depth,
+                         max_depth);
     }
     for (int i = 0; i < result.debug_point_count; ++i) {
         const auto& p = result.debug_points[static_cast<size_t>(i)];
@@ -149,7 +162,9 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                          p.disparity,
                          p.score,
                          focal,
-                         baseline);
+                         baseline,
+                         min_depth,
+                         max_depth);
     }
     if (candidates.empty()) {
         return;
@@ -282,6 +297,9 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
             ranked[static_cast<size_t>(i)];
     }
     if (result.top_point_count <= 0) {
+        return;
+    }
+    if (!promote_top_points) {
         return;
     }
 
@@ -1850,7 +1868,10 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             populateSoftTopFeaturePoints(result,
                                          feature_initial_disparity,
                                          focal,
-                                         baseline);
+                                         baseline,
+                                         config_.depth.min_depth,
+                                         config_.depth.max_depth,
+                                         neural_cfg.soft_topk_scoring);
             const ROIFeatureMatchConfig neural_final_cfg =
                 make_neural_final_cfg(neural_cfg);
             const SparseFeatureRejectReason final_reason =
@@ -1884,6 +1905,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                  feature_initial_disparity,
                                  left_det,
                                  neural_final_cfg);
+                result.valid = false;
                 result.low_confidence = true;
                 result.confidence *= 0.75f;
             }
