@@ -2064,6 +2064,7 @@ class SyntheticDatasetTest(unittest.TestCase):
                 [data_dir],
                 output_dir,
                 include_dynamic=True,
+                include_method_ablation=True,
                 skip_sweep=True,
                 include_depth_polyfit=False,
                 include_rts_smoother=False,
@@ -2076,15 +2077,22 @@ class SyntheticDatasetTest(unittest.TestCase):
             names = {item["name"] for item in summary["workflows"]}
             self.assertEqual(
                 names,
-                {"known_stratified", "holdout_3m000", "holdout_4m000", "dynamic_regularization"},
+                {
+                    "known_stratified",
+                    "holdout_3m000",
+                    "holdout_4m000",
+                    "dynamic_regularization",
+                    "method_ablation",
+                },
             )
             self.assertEqual(summary["known_z_buckets"], ["3.000", "4.000"])
-            self.assertEqual(summary["workflow_count"], 4)
+            self.assertTrue(summary["include_method_ablation"])
+            self.assertEqual(summary["workflow_count"], 5)
             self.assertTrue((output_dir / "workflow_compare.csv").exists())
             self.assertTrue((output_dir / "workflow_compare.json").exists())
             self.assertTrue((output_dir / "workflow_matrix_summary.json").exists())
             rows = compare_workflows([Path(item["dir"]) for item in summary["workflows"]])
-            self.assertEqual(len(rows), 4)
+            self.assertEqual(len(rows), 5)
             self.assertTrue(all(row["readiness"] == "ready_for_sweep" for row in rows))
 
     def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:

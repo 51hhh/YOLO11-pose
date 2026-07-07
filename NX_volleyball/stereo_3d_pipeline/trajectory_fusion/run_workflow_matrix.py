@@ -125,7 +125,9 @@ def run_workflow_matrix(
     max_frame_gaps: int = 0,
     known_configs: str | Path | None = None,
     dynamic_configs: str | Path | None = None,
+    method_ablation_configs: str | Path | None = None,
     include_dynamic: bool = False,
+    include_method_ablation: bool = False,
     skip_sweep: bool = False,
     include_depth_polyfit: bool = True,
     include_rts_smoother: bool = True,
@@ -139,6 +141,11 @@ def run_workflow_matrix(
     root.mkdir(parents=True, exist_ok=True)
     known_config_path = Path(known_configs) if known_configs else _default_config("sweep_known_distance_selection.json")
     dynamic_config_path = Path(dynamic_configs) if dynamic_configs else _default_config("sweep_dynamic_regularization.json")
+    method_ablation_config_path = (
+        Path(method_ablation_configs)
+        if method_ablation_configs
+        else _default_config("sweep_method_ablation.json")
+    )
     common = _workflow_kwargs(
         recursive=recursive,
         val_ratio=val_ratio,
@@ -211,6 +218,12 @@ def run_workflow_matrix(
             configs=dynamic_config_path,
             stratify_known_z=True,
         )
+    if include_method_ablation:
+        run_named(
+            "method_ablation",
+            configs=method_ablation_config_path,
+            stratify_known_z=True,
+        )
 
     comparison_rows = compare_workflows(workflow_dirs)
     compare_csv = root / "workflow_compare.csv"
@@ -222,8 +235,10 @@ def run_workflow_matrix(
         "inputs": [str(item) for item in inputs],
         "known_configs": str(known_config_path),
         "dynamic_configs": str(dynamic_config_path),
+        "method_ablation_configs": str(method_ablation_config_path),
         "known_z_buckets": known_z_buckets,
         "include_dynamic": include_dynamic,
+        "include_method_ablation": include_method_ablation,
         "skip_sweep": skip_sweep,
         "workflow_count": len(runs),
         "workflows": runs,
@@ -256,7 +271,9 @@ def main() -> int:
     parser.add_argument("--max-frame-gaps", type=int, default=0)
     parser.add_argument("--known-configs", default=str(_default_config("sweep_known_distance_selection.json")))
     parser.add_argument("--dynamic-configs", default=str(_default_config("sweep_dynamic_regularization.json")))
+    parser.add_argument("--method-ablation-configs", default=str(_default_config("sweep_method_ablation.json")))
     parser.add_argument("--include-dynamic", action="store_true")
+    parser.add_argument("--include-method-ablation", action="store_true")
     parser.add_argument("--skip-sweep", action="store_true")
     parser.add_argument("--skip-depth-polyfit", action="store_true")
     parser.add_argument("--skip-rts-smoother", action="store_true")
@@ -283,7 +300,9 @@ def main() -> int:
         max_frame_gaps=args.max_frame_gaps,
         known_configs=args.known_configs,
         dynamic_configs=args.dynamic_configs,
+        method_ablation_configs=args.method_ablation_configs,
         include_dynamic=args.include_dynamic,
+        include_method_ablation=args.include_method_ablation,
         skip_sweep=args.skip_sweep,
         include_depth_polyfit=not args.skip_depth_polyfit,
         include_rts_smoother=not args.skip_rts_smoother,
