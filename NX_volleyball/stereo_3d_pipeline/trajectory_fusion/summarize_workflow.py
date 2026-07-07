@@ -71,6 +71,114 @@ def _selection_status(selection_rows: List[Dict[str, str]]) -> Dict[str, Any]:
     }
 
 
+def _warning_count(summary: Dict[str, Any], key: str) -> int:
+    return int(summary.get("validation", {}).get("warning_counts", {}).get(key, 0) or 0)
+
+
+def _derive_readiness(summary: Dict[str, Any], selection_rows: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Classify whether a workflow output is ready for model training/selection."""
+
+    blocking: List[str] = []
+    cautions: List[str] = []
+    validation_counts = summary.get("validation", {}).get("warning_counts", {})
+    training_audit = summary.get("training_input_audit", {})
+    training_warnings = set(training_audit.get("warnings", []))
+    candidate_consistency = summary.get("candidate_consistency", {})
+    calibration = summary.get("calibration", {})
+    sweep = summary.get("sweep", {})
+
+    for key in ("empty_manifest", "missing_file", "missing_required_fields"):
+        if _warning_count(summary, key):
+            blocking.append(f"validation:{key}")
+    for warning in training_warnings:
+        if warning in {"no_input_clips", "no_training_sequences", "no_training_frames"}:
+            blocking.append(f"training_input:{warning}")
+        if str(warning).startswith("legacy_"):
+            blocking.append(f"training_input:{warning}")
+
+    known_z_counts = summary.get("validation", {}).get("known_z_counts", {})
+    has_known_train = int(known_z_counts.get("train", 0) or 0) > 0
+    has_known_val = int(known_z_counts.get("val", 0) or 0) > 0
+    has_candidate_consistency = (
+        not bool(candidate_consistency.get("skipped", False))
+        and int(candidate_consistency.get("frames", 0) or 0) > 0
+    )
+    calibration_used = bool(calibration.get("used_for_suite", False))
+
+    if not has_known_train:
+        cautions.append("known_z:missing_train")
+    if not has_known_val:
+        cautions.append("known_z:missing_val")
+    if "missing_known_z_clips" in validation_counts:
+        cautions.append("known_z:missing_all")
+    if "missing_val_split" in validation_counts:
+        cautions.append("split:missing_val")
+    if "missing_known_z_val_split" in validation_counts:
+        cautions.append("known_z:missing_val_split")
+    if any(str(key).startswith("known_z_bucket_missing_") for key in validation_counts):
+        cautions.append("known_z:bucket_not_stratified")
+    if _warning_count(summary, "frame_gaps>0"):
+        cautions.append("frames:has_gaps")
+    if not has_candidate_consistency:
+        cautions.append("candidate_consistency:missing")
+    if not calibration_used:
+        cautions.append("calibration:not_used")
+    if any(str(item).startswith("low_method_coverage") for item in training_warnings):
+        cautions.append("training_input:low_method_coverage")
+    if any(str(item).startswith("mostly_zero_features") for item in training_warnings):
+        cautions.append("training_input:mostly_zero_features")
+
+    ready_for_sweep = (
+        not blocking
+        and has_known_train
+        and has_known_val
+        and has_candidate_consistency
+        and calibration_used
+    )
+
+    top = selection_rows[0] if selection_rows else {}
+    top_known_count = _safe_float(top.get("known_clip_count")) if top else None
+    top_decision = str(top.get("decision", "")) if top else ""
+    if bool(sweep.get("skipped", False)):
+        cautions.append("sweep:skipped")
+    elif not selection_rows:
+        cautions.append("sweep:missing_selection")
+    elif top_decision != "recommended":
+        cautions.append(f"selection:{top_decision or 'unknown'}")
+    if selection_rows and (top_known_count is None or top_known_count <= 0.0):
+        cautions.append("selection:no_known_z")
+
+    ready_for_model_selection = (
+        ready_for_sweep
+        and not bool(sweep.get("skipped", False))
+        and bool(selection_rows)
+        and top_decision == "recommended"
+        and top_known_count is not None
+        and top_known_count > 0.0
+    )
+
+    if blocking:
+        status = "blocked"
+    elif ready_for_model_selection:
+        status = "ready_for_model_selection"
+    elif ready_for_sweep:
+        status = "ready_for_sweep"
+    else:
+        status = "smoke_only"
+
+    return {
+        "status": status,
+        "ready_for_sweep": ready_for_sweep,
+        "ready_for_model_selection": ready_for_model_selection,
+        "blocking_reasons": blocking,
+        "cautions": sorted(set(cautions)),
+        "known_z_train_clips": int(known_z_counts.get("train", 0) or 0),
+        "known_z_val_clips": int(known_z_counts.get("val", 0) or 0),
+        "candidate_consistency_frames": int(candidate_consistency.get("frames", 0) or 0),
+        "calibration_used": calibration_used,
+    }
+
+
 def _derive_warnings(summary: Dict[str, Any], selection_rows: List[Dict[str, str]]) -> List[str]:
     warnings: List[str] = []
     validation_counts = summary.get("validation", {}).get("warning_counts", {})
@@ -180,6 +288,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
             "audit_rows": _top_rows(audit_rows, limit=8),
         },
     }
+    report["readiness"] = _derive_readiness(summary, selection_rows)
     report["warnings"] = _derive_warnings(summary, selection_rows)
     report["recommended_actions"] = _derive_actions(summary, selection_rows)
     return report
@@ -213,10 +322,12 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
     calibration = report.get("calibration", {})
     selection = report.get("sweep", {}).get("selection_status", {})
     top = selection.get("top") or {}
+    readiness = report.get("readiness", {})
     lines = [
         "# Trajectory Workflow Report",
         "",
         f"- output_dir: `{report.get('output_dir', '')}`",
+        f"- readiness: `{readiness.get('status', '')}` (sweep `{readiness.get('ready_for_sweep', False)}`, model selection `{readiness.get('ready_for_model_selection', False)}`)",
         f"- validation warnings: `{validation.get('warning_counts', {})}`",
         f"- splits: `{validation.get('split_counts', {})}`",
         f"- known_z: `{validation.get('known_z_counts', {})}`",
@@ -235,6 +346,15 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
     lines.extend(f"- `{warning}`" for warning in warnings)
     if not warnings:
         lines.append("- none")
+
+    lines.extend(["", "## Readiness", ""])
+    lines.append(f"- status: `{readiness.get('status', '')}`")
+    lines.append(f"- ready_for_sweep: `{readiness.get('ready_for_sweep', False)}`")
+    lines.append(f"- ready_for_model_selection: `{readiness.get('ready_for_model_selection', False)}`")
+    blockers = readiness.get("blocking_reasons", [])
+    cautions = readiness.get("cautions", [])
+    lines.append(f"- blocking: `{blockers}`")
+    lines.append(f"- cautions: `{cautions}`")
 
     lines.extend(["", "## Recommended Actions", ""])
     lines.extend(f"- {action}" for action in report.get("recommended_actions", []))
@@ -313,6 +433,7 @@ def print_report(report: Dict[str, Any]) -> None:
     selection = report.get("sweep", {}).get("selection_status", {})
     top = selection.get("top") or {}
     print(f"workflow={report.get('output_dir', '')}")
+    print(f"readiness={report.get('readiness', {}).get('status', '')}")
     print(f"warnings={report.get('warnings', [])}")
     print(f"top_selection={top.get('config', '')} decision={selection.get('decision', '')}")
     for action in report.get("recommended_actions", []):

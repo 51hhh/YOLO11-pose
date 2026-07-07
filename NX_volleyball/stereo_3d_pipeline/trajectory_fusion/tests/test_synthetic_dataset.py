@@ -1621,6 +1621,9 @@ class SyntheticDatasetTest(unittest.TestCase):
             report = build_workflow_report(output_dir)
             self.assertIn("sweep:skipped", report["warnings"])
             self.assertIn("calibrated_smoother", report["baseline_suite"]["variants"])
+            self.assertEqual(report["readiness"]["status"], "ready_for_sweep")
+            self.assertTrue(report["readiness"]["ready_for_sweep"])
+            self.assertFalse(report["readiness"]["ready_for_model_selection"])
             self.assertTrue(any("ReliabilityNet sweep" in action for action in report["recommended_actions"]))
 
     def test_dataset_workflow_can_generate_stratified_known_z_manifest(self) -> None:
@@ -1711,7 +1714,11 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertNotIn("validation:missing_val_split", report["warnings"])
             self.assertNotIn("calibration:not_used", report["warnings"])
             self.assertIn("sweep:skipped", report["warnings"])
+            self.assertEqual(report["readiness"]["status"], "ready_for_sweep")
+            self.assertTrue(report["readiness"]["ready_for_sweep"])
+            self.assertFalse(report["readiness"]["ready_for_model_selection"])
             markdown = (output_dir / "workflow_report.md").read_text(encoding="utf-8")
+            self.assertIn("readiness: `ready_for_sweep`", markdown)
             self.assertIn("static_val_4m", markdown)
             self.assertIn("calibrated_smoother", markdown)
 
