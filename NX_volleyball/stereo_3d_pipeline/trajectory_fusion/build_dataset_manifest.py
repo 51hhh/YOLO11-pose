@@ -120,7 +120,12 @@ def _safe_float(value: Any) -> float | None:
 def _known_z_for_metadata(metadata_path: Path | None) -> float | None:
     if metadata_path is None:
         return None
-    return _safe_float(read_metadata(metadata_path).get("known_z"))
+    metadata = read_metadata(metadata_path)
+    for key in ("known_z_m", "known_z", "known_distance_m"):
+        value = _safe_float(metadata.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _assign_split_counts(total: int, *, val_ratio: float, test_ratio: float) -> tuple[int, int]:

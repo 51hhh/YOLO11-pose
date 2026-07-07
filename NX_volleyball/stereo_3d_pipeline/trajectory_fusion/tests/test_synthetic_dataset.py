@@ -1708,6 +1708,32 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(summary["validation"]["known_z_counts"], {"train": 2, "val": 2})
             self.assertEqual(summary["config"]["holdout_known_z"], "4.0")
 
+    def test_build_manifest_reads_known_z_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_known_z_m", 5.0, rows=4)
+            (root / "static_known_z_m.metadata.yaml").write_text(
+                "known_z_m: 5.0\nstatic: true\n",
+                encoding="utf-8",
+            )
+            _write_known_distance_clip(root, "static_known_distance_m", 6.0, rows=4)
+            (root / "static_known_distance_m.metadata.yaml").write_text(
+                "known_distance_m: 6.0\nstatic: true\n",
+                encoding="utf-8",
+            )
+
+            entries = build_manifest(
+                [root],
+                output_path=root / "dataset_manifest.yaml",
+                split_mode="auto",
+                val_ratio=0.5,
+                seed=3,
+            )
+            known_by_name = {entry.name: entry.known_z for entry in entries}
+
+            self.assertEqual(known_by_name["static_known_z_m"], 5.0)
+            self.assertEqual(known_by_name["static_known_distance_m"], 6.0)
+
     def test_dataset_workflow_known_distance_report_is_ready_for_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
