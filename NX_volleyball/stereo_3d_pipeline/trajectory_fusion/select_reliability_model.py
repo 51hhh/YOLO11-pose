@@ -144,6 +144,13 @@ def _decision_for_audit(audit: Dict[str, str] | None) -> Tuple[str, str]:
     return "recommended", ""
 
 
+def _append_reason(reason: str, extra: str) -> str:
+    parts = [item for item in str(reason or "").split(";") if item]
+    if extra not in parts:
+        parts.insert(0, extra)
+    return ";".join(parts)
+
+
 def select_reliability_models(
     metrics_csv: str | Path,
     *,
@@ -174,6 +181,9 @@ def select_reliability_models(
         if audit is None and ranking_key[2] == "all":
             audit = audit_all_by_key.get(ranking_key)
         decision, reason = _decision_for_audit(audit)
+        if _safe_float(ranking.get("known_clip_count")) <= 0.0:
+            decision = "reject"
+            reason = _append_reason(reason, "no_known_z")
         selected.append(
             {
                 "selection_rank": 0,

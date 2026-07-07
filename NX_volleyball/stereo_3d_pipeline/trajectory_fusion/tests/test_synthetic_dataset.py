@@ -1428,8 +1428,8 @@ class SyntheticDatasetTest(unittest.TestCase):
             selected = select_reliability_models(metrics_path, audit_csv=audit_path)
             self.assertEqual(len(selected), 1)
             self.assertEqual(selected[0]["split"], "all")
-            self.assertEqual(selected[0]["decision"], "caution")
-            self.assertEqual(selected[0]["decision_reason"], "large_method_bias")
+            self.assertEqual(selected[0]["decision"], "reject")
+            self.assertEqual(selected[0]["decision_reason"], "no_known_z;large_method_bias")
             self.assertEqual(selected[0]["audit_warnings"], "large_method_bias")
             self.assertEqual(selected[0]["dominant_top_method"], "roi_multi_point")
 
