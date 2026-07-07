@@ -2090,6 +2090,11 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertEqual(rows[0]["best_variant_method_allowlist"], "bbox_center,circle_center")
             self.assertEqual(rows[1]["workflow"], "smoke_workflow")
             self.assertIn("selection:no_known_z", rows[1]["warnings"])
+            ready_report = build_workflow_report(ready)
+            self.assertEqual(
+                ready_report["sweep"]["method_allowlists"],
+                ["bbox_center,circle_center"],
+            )
 
             csv_path = root / "workflow_compare.csv"
             write_workflow_compare_csv(csv_path, rows)

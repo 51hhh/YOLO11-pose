@@ -269,6 +269,19 @@ def _selection_status(selection_rows: List[Dict[str, str]]) -> Dict[str, Any]:
     }
 
 
+def _method_allowlists(*row_groups: List[Dict[str, str]]) -> List[str]:
+    values: List[str] = []
+    seen = set()
+    for rows in row_groups:
+        for row in rows:
+            value = str(row.get("method_allowlist", "")).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+    return values
+
+
 def _warning_count(summary: Dict[str, Any], key: str) -> int:
     return int(summary.get("validation", {}).get("warning_counts", {}).get(key, 0) or 0)
 
@@ -488,6 +501,7 @@ def build_workflow_report(path: str | Path) -> Dict[str, Any]:
             "variant_ranking_csv": sweep.get("sweep_variant_ranking"),
             "method_audit_csv": sweep.get("sweep_reliability_method_audit"),
             "selection_status": _selection_status(selection_rows),
+            "method_allowlists": _method_allowlists(selection_rows, variant_rows),
             "top_selection": _top_rows(selection_rows, limit=5),
             "top_variant_ranking": _top_rows(variant_rows, limit=8),
             "audit_rows": _top_rows(audit_rows, limit=8),
@@ -529,6 +543,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
     selection = report.get("sweep", {}).get("selection_status", {})
     top = selection.get("top") or {}
     readiness = report.get("readiness", {})
+    sweep_methods = report.get("sweep", {}).get("method_allowlists", [])
     lines = [
         "# Trajectory Workflow Report",
         "",
@@ -543,6 +558,7 @@ def write_markdown_report(path: str | Path, report: Dict[str, Any]) -> None:
         f"- candidate consistency: frames `{candidate_consistency.get('frames', 0)}`, methods `{candidate_consistency.get('method_count', 0)}`, known_z buckets `{candidate_consistency.get('known_z_bucket_count', 0)}`",
         f"- calibration methods: `{calibration.get('method_count', 0)}`",
         f"- calibration used: `{calibration.get('used_for_suite', False)}`",
+        f"- sweep method allowlists: `{sweep_methods}`",
         f"- top selection: `{top.get('config', '')}` / `{top.get('decision', selection.get('decision', ''))}`",
         "",
         "## Warnings",
