@@ -60,6 +60,7 @@ from trajectory_fusion.rank_sweep_metrics import rank_metrics  # noqa: E402
 from trajectory_fusion.robust_smoother import group_correlated_z_measurements  # noqa: E402
 from trajectory_fusion.run_evaluation_suite import run_suite  # noqa: E402
 from trajectory_fusion.run_dataset_workflow import run_workflow  # noqa: E402
+from trajectory_fusion.run_workflow_matrix import run_workflow_matrix  # noqa: E402
 from trajectory_fusion.run_reliability_sweep import build_train_command, load_sweep_configs  # noqa: E402
 from trajectory_fusion.select_reliability_model import select_reliability_models  # noqa: E402
 from trajectory_fusion.summarize_evaluation_suite import summarize_reliability_methods, summarize_suite  # noqa: E402
@@ -1987,6 +1988,44 @@ class SyntheticDatasetTest(unittest.TestCase):
             with csv_path.open(newline="", encoding="utf-8") as handle:
                 written = list(csv.DictReader(handle))
             self.assertEqual(written[0]["workflow"], "ready_workflow")
+
+    def test_workflow_matrix_runs_stratified_holdout_and_dynamic_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            _write_known_distance_clip(data_dir, "static_3m_a", 3.0, rows=8)
+            _write_known_distance_clip(data_dir, "static_3m_b", 3.0, rows=8)
+            _write_known_distance_clip(data_dir, "static_4m_a", 4.0, rows=8)
+            _write_known_distance_clip(data_dir, "static_4m_b", 4.0, rows=8)
+            output_dir = root / "matrix"
+
+            summary = run_workflow_matrix(
+                [data_dir],
+                output_dir,
+                include_dynamic=True,
+                skip_sweep=True,
+                include_depth_polyfit=False,
+                include_rts_smoother=False,
+                calibration_min_count=1,
+                min_rows=1,
+                min_fps=0.0,
+                min_p0_hit=0.0,
+            )
+
+            names = {item["name"] for item in summary["workflows"]}
+            self.assertEqual(
+                names,
+                {"known_stratified", "holdout_3m000", "holdout_4m000", "dynamic_regularization"},
+            )
+            self.assertEqual(summary["known_z_buckets"], ["3.000", "4.000"])
+            self.assertEqual(summary["workflow_count"], 4)
+            self.assertTrue((output_dir / "workflow_compare.csv").exists())
+            self.assertTrue((output_dir / "workflow_compare.json").exists())
+            self.assertTrue((output_dir / "workflow_matrix_summary.json").exists())
+            rows = compare_workflows([Path(item["dir"]) for item in summary["workflows"]])
+            self.assertEqual(len(rows), 4)
+            self.assertTrue(all(row["readiness"] == "ready_for_sweep" for row in rows))
 
     def test_dataset_workflow_passes_sweep_options_without_known_z_leakage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
