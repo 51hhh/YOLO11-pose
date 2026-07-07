@@ -1027,9 +1027,14 @@ def build_legacy_arrays(
     if known_z > 0.0 and known_z_tol > 0.0 and (known_z_min <= 0.0 or known_z_max <= 0.0):
         known_z_min = known_z - known_z_tol
         known_z_max = known_z + known_z_tol
-    known_z_valid = 1.0 if known_z > 0.0 else 0.0
-    known_z_range_valid = 1.0 if known_z_min > 0.0 and known_z_max > known_z_min else 0.0
     static_flag = 1.0 if _metadata_bool(metadata, ("static", "is_static"), False) else 0.0
+    known_z_training = static_flag > 0.0 or _metadata_bool(
+        metadata,
+        ("known_z_training", "known_z_supervision", "use_known_z_for_training"),
+        False,
+    )
+    known_z_valid = 1.0 if known_z > 0.0 and known_z_training else 0.0
+    known_z_range_valid = 1.0 if known_z_training and known_z_min > 0.0 and known_z_max > known_z_min else 0.0
     landing_frame = _metadata_float(metadata, ("landing_frame",), -1.0)
     landing_frame_valid = 1.0 if landing_frame >= 0.0 else 0.0
 

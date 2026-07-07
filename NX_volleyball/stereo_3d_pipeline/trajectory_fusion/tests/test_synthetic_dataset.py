@@ -44,6 +44,7 @@ from trajectory_fusion.dataset import (  # noqa: E402
     load_legacy_sequences,
     read_metadata,
     resolve_method_allowlist,
+    weak_label_names,
 )
 from trajectory_fusion.evaluate_calibrated_smoother import apply_calibrated_smoother  # noqa: E402
 from trajectory_fusion.evaluate_reliability_smoother import (  # noqa: E402
@@ -527,6 +528,35 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertGreater(arrays["features"][0][feature_index["roi_cuda_template_match_support"]], 0.0)
             self.assertGreater(arrays["features"][0][feature_index["z_roi_neural_xfeat"]], 0.1)
             self.assertGreater(arrays["features"][0][feature_index["roi_neural_xfeat_top1_z"]], 0.1)
+
+    def test_known_z_training_labels_require_static_or_explicit_override(self) -> None:
+        label_index = {name: idx for idx, name in enumerate(weak_label_names())}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = _write_synthetic_clip(root)
+            metadata_path = root / "traj_p0p1_001.metadata.yaml"
+
+            metadata_path.write_text("known_z: 3.0\nstatic: true\n", encoding="utf-8")
+            sequence = load_legacy_sequences(csv_path)[0]
+            arrays = build_legacy_arrays(sequence)
+            self.assertEqual(arrays["labels"][0][label_index["known_z_valid"]], 1.0)
+            self.assertEqual(arrays["labels"][0][label_index["static"]], 1.0)
+
+            metadata_path.write_text("known_z: 3.0\nstatic: false\n", encoding="utf-8")
+            sequence = load_legacy_sequences(csv_path)[0]
+            arrays = build_legacy_arrays(sequence)
+            self.assertEqual(arrays["labels"][0][label_index["known_z_valid"]], 0.0)
+            self.assertEqual(arrays["labels"][0][label_index["static"]], 0.0)
+            self.assertEqual(arrays["labels"][0][label_index["known_z"]], 3.0)
+
+            metadata_path.write_text(
+                "known_z: 3.0\nstatic: false\nknown_z_training: true\n",
+                encoding="utf-8",
+            )
+            sequence = load_legacy_sequences(csv_path)[0]
+            arrays = build_legacy_arrays(sequence)
+            self.assertEqual(arrays["labels"][0][label_index["known_z_valid"]], 1.0)
+            self.assertEqual(arrays["labels"][0][label_index["static"]], 0.0)
 
     def test_formal_sweep_configs_pin_current_candidate_methods(self) -> None:
         config_dir = PROJECT / "trajectory_fusion" / "configs"
