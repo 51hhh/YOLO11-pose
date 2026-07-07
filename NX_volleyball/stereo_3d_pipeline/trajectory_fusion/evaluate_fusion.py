@@ -69,7 +69,14 @@ def _f(row: Dict[str, str], key: str, default: float = 0.0) -> float:
 
 
 def _series(rows: List[Dict[str, str]], key: str) -> List[float]:
-    return [_f(row, key) for row in rows if _f(row, key) > -1e20]
+    values: List[float] = []
+    for row in rows:
+        if key not in row or row.get(key, "") == "":
+            continue
+        value = _f(row, key)
+        if value > -1e20:
+            values.append(value)
+    return values
 
 
 def _valid_depth_series(rows: List[Dict[str, str]], key: str) -> List[float]:
@@ -175,7 +182,14 @@ def _motion_metrics(rows: List[Dict[str, str]], metadata: Dict[str, Any], prefix
             _f(row, z_key),
         )
         for row in rows
-        if x_key in row and y_key in row and z_key in row
+        if (
+            x_key in row
+            and y_key in row
+            and z_key in row
+            and row.get(x_key, "") != ""
+            and row.get(y_key, "") != ""
+            and row.get(z_key, "") != ""
+        )
     ]
     if len(samples) < 2:
         return {

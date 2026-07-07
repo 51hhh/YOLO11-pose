@@ -50,6 +50,7 @@ from trajectory_fusion.evaluate_reliability_smoother import (  # noqa: E402
     LearnedObservationConfig,
     _build_learned_observations,
 )
+from trajectory_fusion.evaluate_reliability_checkpoint import _finite_diff as reliability_direct_finite_diff  # noqa: E402
 from trajectory_fusion.fit_method_calibration import (  # noqa: E402
     CalibrationConfig,
     fit_method_calibration,
@@ -749,6 +750,59 @@ class SyntheticDatasetTest(unittest.TestCase):
             csv_text = csv_out.read_text(encoding="utf-8")
             self.assertIn("candidate_depths.z_circle_center.known_z_bias", csv_text)
             self.assertIn("raw.ballistic_residual_rms_mps2", csv_text)
+
+    def test_evaluate_fusion_ignores_blank_smooth_samples(self) -> None:
+        rows = [
+            {
+                "frame_id": "1",
+                "timestamp": "0.00",
+                "track_id": "0",
+                "x": "0.0",
+                "y": "0.0",
+                "z": "3.00",
+                "smooth_x": "0.0",
+                "smooth_y": "0.0",
+                "smooth_z": "3.00",
+            },
+            {
+                "frame_id": "2",
+                "timestamp": "0.01",
+                "track_id": "0",
+                "x": "0.0",
+                "y": "0.0",
+                "z": "3.01",
+                "smooth_x": "",
+                "smooth_y": "",
+                "smooth_z": "",
+            },
+            {
+                "frame_id": "3",
+                "timestamp": "0.02",
+                "track_id": "0",
+                "x": "0.0",
+                "y": "0.0",
+                "z": "3.02",
+                "smooth_x": "0.0",
+                "smooth_y": "0.0",
+                "smooth_z": "3.02",
+            },
+        ]
+
+        report = evaluate_fusion.build_report(rows, {})
+        smooth = report["tracks"]["0"]["smooth"]
+        self.assertAlmostEqual(smooth["z_mean"], 3.01, places=6)
+        self.assertAlmostEqual(smooth["z_peak_to_peak"], 0.02, places=6)
+        self.assertNotEqual(smooth["z_mean"], (3.00 + 0.00 + 3.02) / 3.0)
+
+    def test_reliability_direct_velocity_breaks_at_invalid_frames(self) -> None:
+        values = [3.0, 0.0, 3.2, 3.3]
+        dts = [0.01, 0.01, 0.01, 0.01]
+        valid = [True, False, True, True]
+
+        velocity = reliability_direct_finite_diff(values, dts, valid)
+        self.assertEqual(velocity[1], "")
+        self.assertEqual(velocity[2], 0.0)
+        self.assertAlmostEqual(float(velocity[3]), 10.0, places=6)
 
     def test_known_z_loss_if_torch_available(self) -> None:
         try:

@@ -65,10 +65,15 @@ def _load_model(checkpoint_path: str | Path, device: str) -> tuple[MeasurementRe
     return model, checkpoint
 
 
-def _finite_diff(values: Sequence[float], dts: Sequence[float]) -> List[float]:
-    out: List[float] = []
+def _finite_diff(values: Sequence[float], dts: Sequence[float], valid: Sequence[bool] | None = None) -> List[float | str]:
+    out: List[float | str] = []
     previous = None
-    for value, dt in zip(values, dts):
+    valid_values = valid if valid is not None else [True] * len(values)
+    for value, dt, is_valid in zip(values, dts, valid_values):
+        if not is_valid:
+            out.append("")
+            previous = None
+            continue
         if previous is None:
             out.append(0.0)
         else:
@@ -181,18 +186,20 @@ def apply_checkpoint(
 
             z_values = consensus.squeeze(0).squeeze(-1).detach().cpu().tolist()
             dts = [item[0] for item in arrays["dt"]]
-            vz_values = _finite_diff(z_values, dts)
             weights_cpu = weights.squeeze(0).detach().cpu()
             valid_cpu = valid.squeeze(0).detach().cpu()
+            frame_valid = [bool((valid_cpu[idx, :] > 0.0).any()) for idx in range(len(sequence.rows))]
+            vz_values = _finite_diff(z_values, dts, frame_valid)
             common_sigma = torch.exp(output.common_log_sigma).squeeze(0).squeeze(-1).detach().cpu().tolist()
 
             for idx, source_row in enumerate(sequence.rows):
                 row = dict(source_row)
                 method_weights = weights_cpu[idx, :, 0]
                 method_valid = valid_cpu[idx, :] > 0.0
-                valid_weight_sum = float(method_weights[method_valid].sum().item()) if bool(method_valid.any()) else 0.0
+                has_observation = bool(method_valid.any())
+                valid_weight_sum = float(method_weights[method_valid].sum().item()) if has_observation else 0.0
                 consensus_sigma = valid_weight_sum ** -0.5 if valid_weight_sum > 1e-12 else 0.0
-                if bool(method_valid.any()):
+                if has_observation:
                     masked = method_weights.clone()
                     masked[~method_valid] = -1.0
                     top_index = int(torch.argmax(masked).item())
@@ -206,13 +213,13 @@ def apply_checkpoint(
                 row.update(
                     {
                         "track_id": float(sequence.track_id),
-                        "smooth_x": row.get("x", 0.0),
-                        "smooth_y": row.get("y", 0.0),
-                        "smooth_z": float(z_values[idx]),
-                        "smooth_vx": 0.0,
-                        "smooth_vy": 0.0,
-                        "smooth_vz": float(vz_values[idx]),
-                        "smooth_sigma_z": float(consensus_sigma),
+                        "smooth_x": row.get("x", 0.0) if has_observation else "",
+                        "smooth_y": row.get("y", 0.0) if has_observation else "",
+                        "smooth_z": float(z_values[idx]) if has_observation else "",
+                        "smooth_vx": 0.0 if has_observation else "",
+                        "smooth_vy": 0.0 if has_observation else "",
+                        "smooth_vz": vz_values[idx] if has_observation else "",
+                        "smooth_sigma_z": float(consensus_sigma) if has_observation else "",
                         "reliability_common_sigma": float(common_sigma[idx]),
                         "reliability_valid_count": float(method_valid.sum().item()),
                         "reliability_top_method": top_method,
