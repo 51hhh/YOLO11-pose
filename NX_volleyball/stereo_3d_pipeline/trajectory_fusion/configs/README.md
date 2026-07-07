@@ -26,7 +26,7 @@ Configs may include `methods`, either as a preset string or comma-separated meth
 
 For ordinary multi-distance static selection, generate the manifest with `--stratify-known-z` so each measured distance has train/val coverage when enough clips exist. For leave-one-distance-out checks, use `--holdout-known-z <distance> --holdout-split val` to keep one distance bucket fully held out.
 
-`known_z` is a training label only for clips marked `static: true` by default. Dynamic clips may still carry `known_z` metadata for evaluation/grouping, but ReliabilityNet ignores it for training unless `known_z_training: true` is explicitly set.
+`known_z` is a training/calibration label only for clips marked `static: true` by default. Dynamic clips may still carry `known_z` metadata for evaluation/grouping, but ReliabilityNet ignores it for training unless `known_z_training: true` is explicitly set, and fixed method calibration ignores it unless `known_z_calibration: true` or the shared training override is explicitly set.
 
 Selection rule:
 

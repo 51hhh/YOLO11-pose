@@ -1349,6 +1349,58 @@ class SyntheticDatasetTest(unittest.TestCase):
             self.assertIn("calibrated_smoother", {row["variant"] for row in rows})
             self.assertIn("calibrated_rts_smoother", {row["variant"] for row in rows})
 
+    def test_method_calibration_requires_static_known_z_or_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_known_distance_clip(root, "static_train", 3.0, rows=8)
+            _write_known_distance_clip(root, "dynamic_train", 5.0, rows=8)
+            (root / "dynamic_train.metadata.yaml").write_text(
+                "known_z: 5.0\nstatic: false\nscene: synthetic_dynamic\n",
+                encoding="utf-8",
+            )
+            _write_known_distance_clip(root, "dynamic_override_train", 4.0, rows=8)
+            (root / "dynamic_override_train.metadata.yaml").write_text(
+                "known_z: 4.0\nstatic: false\nknown_z_calibration: true\nscene: synthetic_dynamic\n",
+                encoding="utf-8",
+            )
+            manifest_path = root / "dataset_manifest.yaml"
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        "clips:",
+                        "  - csv: static_train.csv",
+                        "    metadata: static_train.metadata.yaml",
+                        "    split: train",
+                        "  - csv: dynamic_train.csv",
+                        "    metadata: dynamic_train.metadata.yaml",
+                        "    split: train",
+                        "  - csv: dynamic_override_train.csv",
+                        "    metadata: dynamic_override_train.metadata.yaml",
+                        "    split: train",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            calibration = fit_method_calibration(
+                load_manifest(manifest_path),
+                cfg=CalibrationConfig(min_count=1, min_sigma=0.01),
+                method_names=["bbox_center"],
+            )
+
+            used_names = {clip["name"] for clip in calibration["used_clips"]}
+            self.assertEqual(used_names, {"static_train", "dynamic_override_train"})
+            skipped = {Path(clip["csv"]).stem: clip["reason"] for clip in calibration["skipped_clips"]}
+            self.assertEqual(skipped["dynamic_train"], "known_z_not_static_for_calibration")
+            self.assertEqual(calibration["frame_count"], 16)
+            self.assertEqual(calibration["methods"]["bbox_center"]["count"], 16)
+            self.assertAlmostEqual(
+                calibration["methods"]["bbox_center"]["bias_median"],
+                0.020,
+                places=6,
+            )
+
     def test_run_evaluation_suite_writes_baseline_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

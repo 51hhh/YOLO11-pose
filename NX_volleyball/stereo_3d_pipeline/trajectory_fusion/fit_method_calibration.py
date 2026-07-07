@@ -44,6 +44,32 @@ def _metadata_float(metadata: Dict[str, Any], keys: Sequence[str]) -> float:
     return 0.0
 
 
+def _metadata_bool(metadata: Dict[str, Any], keys: Sequence[str], default: bool = False) -> bool:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().lower() in {"1", "true", "yes", "on", "static"}
+    return default
+
+
+def _known_z_calibration_allowed(metadata: Dict[str, Any]) -> bool:
+    if _metadata_bool(metadata, ("static", "is_static"), False):
+        return True
+    return _metadata_bool(
+        metadata,
+        (
+            "known_z_calibration",
+            "known_z_training",
+            "known_z_supervision",
+            "use_known_z_for_calibration",
+            "use_known_z_for_training",
+        ),
+        False,
+    )
+
+
 def _median(values: Sequence[float]) -> float | None:
     if not values:
         return None
@@ -133,10 +159,16 @@ def fit_method_calibration(
             continue
         sequences = load_legacy_sequences(clip.csv, metadata_path=clip.metadata)
         clip_known_frames = 0
+        clip_known_z_present = False
+        clip_known_z_blocked = False
         clip_known_z_values: List[float] = []
         for sequence in sequences:
             known_z = _metadata_float(sequence.metadata, ("known_z_m", "known_z", "known_distance_m"))
             if known_z <= 0.0:
+                continue
+            clip_known_z_present = True
+            if not _known_z_calibration_allowed(sequence.metadata):
+                clip_known_z_blocked = True
                 continue
             clip_known_z_values.append(known_z)
             for row in sequence.rows:
@@ -160,7 +192,8 @@ def fit_method_calibration(
                 }
             )
         else:
-            skipped_clips.append({"csv": str(clip.csv), "split": clip.split, "reason": "missing_known_z"})
+            reason = "known_z_not_static_for_calibration" if clip_known_z_present and clip_known_z_blocked else "missing_known_z"
+            skipped_clips.append({"csv": str(clip.csv), "split": clip.split, "reason": reason})
 
     methods: Dict[str, Dict[str, Any]] = {}
     insufficient: Dict[str, Dict[str, Any]] = {}
@@ -184,6 +217,7 @@ def fit_method_calibration(
             "min_sigma": cfg.min_sigma,
             "mad_sigma_scale": cfg.mad_sigma_scale,
             "method_allowlist": list(method_allowlist) if method_allowlist is not None else None,
+            "known_z_calibration_policy": "static_or_explicit_override",
         },
         "frame_count": frame_count,
         "used_clips": used_clips,
