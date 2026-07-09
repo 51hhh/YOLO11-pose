@@ -62,6 +62,7 @@ __global__ void dualYoloDepthCandidatesKernel(
     int compute_patch_iou_color_edge,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth) {
     const int pair_idx = blockIdx.x;
@@ -141,7 +142,7 @@ __global__ void dualYoloDepthCandidatesKernel(
         ? left_cy - right_cy
         : pair.epipolar_y_delta_px;
     const float pair_feature_y_offset_px = feature_y_offset_px + pair_y_delta;
-    const float max_delta = disparityDeltaGate(initial_disp, focal, baseline,
+    const float max_delta = disparityDeltaGate(initial_disp, focal, baseline, d0,
                                                max_disp_delta_px,
                                                max_disp_delta_ratio,
                                                max_depth_delta_m);
@@ -168,6 +169,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_delta,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           pair.left,
@@ -192,6 +194,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                              max_stddev_px,
                              focal,
                              baseline,
+                             d0,
                              min_depth,
                              max_depth,
                              feature_y_tolerance_px,
@@ -229,6 +232,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -266,6 +270,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -303,6 +308,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -340,6 +346,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -377,6 +384,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -414,6 +422,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -451,6 +460,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -488,6 +498,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -525,6 +536,7 @@ __global__ void dualYoloDepthCandidatesKernel(
                           max_stddev_px,
                           focal,
                           baseline,
+                          d0,
                           min_depth,
                           max_depth,
                           feature_y_tolerance_px,
@@ -593,6 +605,7 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     int compute_patch_iou_color_edge,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth,
     cudaStream_t stream) {
@@ -643,6 +656,7 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
         compute_patch_iou_color_edge,
         focal,
         baseline,
+        d0,
         min_depth,
         max_depth);
 }

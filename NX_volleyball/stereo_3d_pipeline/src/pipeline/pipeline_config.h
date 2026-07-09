@@ -67,6 +67,13 @@ struct PipelineConfig {
     // 标定
     std::string calibration_file = "config/intrinsics.yaml";
 
+    struct DisparityOffsetConfig {
+        bool enabled = false;       ///< true: apply z=fB/(disparity-d0)
+        std::string file;           ///< YAML/JSON fit file, same runtime-root semantics as calibration_file
+        float d0 = 0.0f;            ///< disparity zero-point offset in pixels
+        float fitted_fB = 0.0f;     ///< optional fit metadata; runtime still uses calibration fx*baseline
+    } disparity_offset;
+
     // 检测
     std::string engine_file = "models/yolov8n_int8.engine";
     int  input_size      = 320;    ///< 模型输入尺寸

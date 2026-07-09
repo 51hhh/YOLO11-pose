@@ -52,6 +52,7 @@ extern "C" void launchDualYoloDepthCandidatesGpu(
     int compute_patch_iou_color_edge,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth,
     cudaStream_t stream);
@@ -109,9 +110,10 @@ bool DualYoloDepthGpuMatcher::init(float focal, float baseline, float cx, float 
     }
 
     ready_ = true;
-    LOG_INFO("DualYoloDepthGpuMatcher: maxPairs=%d maxDisp=%d patch=%d search=%d points=%d/%d",
+    LOG_INFO("DualYoloDepthGpuMatcher: maxPairs=%d maxDisp=%d patch=%d search=%d points=%d/%d d0=%.3fpx",
              max_pairs_, config_.max_disparity, config_.patch_radius,
-             config_.search_radius_px, config_.min_points, config_.max_points);
+             config_.search_radius_px, config_.min_points, config_.max_points,
+             config_.disparity_zero_offset);
     LOG_INFO("  GPU candidate modes: geom=%d centerPatch=%d multi=%d corner=%d texture=%d binary=%d orb=%d brisk=%d akaze=%d sift=%d colorPatch=%d colorEdge=%d",
              config_.compute_geometry,
              config_.compute_center_patch,
@@ -294,6 +296,7 @@ bool DualYoloDepthGpuMatcher::submitPairs(
         (config_.compute_patch_iou_color_edge && bgr_available) ? 1 : 0,
         focal_,
         baseline_,
+        config_.disparity_zero_offset,
         config_.min_depth,
         config_.max_depth,
         stream);

@@ -59,6 +59,19 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_ERROR("Failed to load calibration");
         return false;
     }
+    if (config_.disparity_offset.enabled) {
+        LOG_INFO("Disparity zero-point correction enabled: d0=%.3f px file=%s",
+                 activeDisparityOffset(),
+                 config_.disparity_offset.file.empty()
+                     ? "<inline>"
+                     : config_.disparity_offset.file.c_str());
+        if (config_.disparity_offset.fitted_fB > 0.0f) {
+            LOG_INFO("  disparity offset fit fB=%.3f (runtime fB uses calibration fx*baseline)",
+                     config_.disparity_offset.fitted_fB);
+        }
+    } else {
+        LOG_INFO("Disparity zero-point correction disabled (raw z=fB/disparity)");
+    }
 
     // 4. 初始化 VPI Rectifier
     //    Rectifier 按校正后分辨率初始化
@@ -367,7 +380,8 @@ bool Pipeline::init(const PipelineConfig& config) {
             if (!neural_feature_matcher_->init(config_.neural_features,
                                                focal,
                                                baseline,
-                                               config_.max_disparity)) {
+                                               config_.max_disparity,
+                                               activeDisparityOffset())) {
                 LOG_ERROR("NeuralFeatureMatcher init failed");
                 return false;
             }
@@ -408,7 +422,8 @@ bool Pipeline::init(const PipelineConfig& config) {
                 return true;
             }
             matcher = std::make_unique<NeuralFeatureMatcher>();
-            if (!matcher->init(ncfg, focal, baseline, config_.max_disparity)) {
+            if (!matcher->init(ncfg, focal, baseline, config_.max_disparity,
+                               activeDisparityOffset())) {
                 LOG_ERROR("%s init failed", label);
                 matcher.reset();
                 return false;
@@ -581,6 +596,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             gpu_cfg.feature_sphere_radius_scale =
                 config_.dual_yolo.feature_sphere_radius_scale;
             gpu_cfg.feature_sphere_margin_m = config_.dual_yolo.feature_sphere_margin_m;
+            gpu_cfg.disparity_zero_offset = activeDisparityOffset();
             gpu_cfg.min_depth = config_.depth.min_depth;
             gpu_cfg.max_depth = config_.depth.max_depth;
             gpu_cfg.compute_center_patch =
@@ -657,6 +673,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             roi_cfg.patchRadius     = 5;
             roi_cfg.minDepth        = config_.depth.min_depth;
             roi_cfg.maxDepth        = config_.depth.max_depth;
+            roi_cfg.disparityZeroOffset = activeDisparityOffset();
             roi_cfg.objectDiameter  = config_.depth.object_diameter;
             roi_cfg.useCircleFit    = true;
             roi_matcher_->init(focal, calibration_->getBaseline(), cx, cy, roi_cfg);
@@ -699,7 +716,8 @@ bool Pipeline::init(const PipelineConfig& config) {
         fusion_ = std::make_unique<Coordinate3D>();
         fusion_->init(calibration_->getProjectionLeft(),
                       calibration_->getBaseline(),
-                      config_.depth.min_depth, config_.depth.max_depth);
+                      config_.depth.min_depth, config_.depth.max_depth,
+                      activeDisparityOffset());
     }
 
     if (config_.async_roi_stage2 &&

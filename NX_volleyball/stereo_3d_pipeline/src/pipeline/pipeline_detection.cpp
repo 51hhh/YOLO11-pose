@@ -60,6 +60,12 @@ bool Pipeline::colorPipelineEnabled() const {
            (config_.dual_yolo.enabled && rightDetectorUsesBGR());
 }
 
+float Pipeline::activeDisparityOffset() const {
+    return config_.disparity_offset.enabled
+        ? config_.disparity_offset.d0
+        : 0.0f;
+}
+
 void Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {
     // 左目 lock/enqueue 失败时也要刷新 event，否则下游可能等待到旧 slot 事件。
     cudaEventRecord(slot.evtDetectDone,

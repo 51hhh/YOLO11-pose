@@ -42,6 +42,7 @@ struct DualYoloDepthGpuConfig {
     float feature_sphere_radius_m = 0.10f;
     float feature_sphere_radius_scale = 1.8f;
     float feature_sphere_margin_m = 0.02f;
+    float disparity_zero_offset = 0.0f;
     float min_depth = 0.3f;
     float max_depth = 15.0f;
     bool compute_geometry = true;

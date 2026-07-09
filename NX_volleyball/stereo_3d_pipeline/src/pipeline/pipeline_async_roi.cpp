@@ -257,13 +257,14 @@ const char* p2DiagnosticModeName(uint32_t mode_bit) {
     }
 }
 
-float p2DepthFromDisparity(float disparity, float focal, float baseline) {
+float p2DepthFromDisparity(float disparity, float focal, float baseline, float d0 = 0.0f) {
     if (!std::isfinite(disparity) || disparity <= 0.0f ||
         !std::isfinite(focal) || focal <= 0.0f ||
         !std::isfinite(baseline) || baseline <= 0.0f) {
         return std::numeric_limits<float>::quiet_NaN();
     }
-    return focal * baseline / disparity;
+    float denom = disparity - d0;
+    return (denom > 0.5f) ? (focal * baseline / denom) : std::numeric_limits<float>::quiet_NaN();
 }
 
 void writeCsvFloat(std::ostream& out, float value) {
@@ -1954,6 +1955,7 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                 ROIFeatureMatchConfig feature_cfg =
                     makeROIFeatureMatchConfig(config_.dual_yolo,
                                               config_.depth);
+                feature_cfg.disparity_zero_offset = activeDisparityOffset();
                 feature_cfg.debug_patch_enabled =
                     config_.p2_diagnostic_artifacts_enabled;
 
@@ -2002,7 +2004,8 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                     row.z_m = result.valid
                         ? p2DepthFromDisparity(result.disparity,
                                                focal,
-                                               baseline)
+                                               baseline,
+                                               activeDisparityOffset())
                         : std::numeric_limits<float>::quiet_NaN();
                     row.confidence = result.confidence;
                     row.stddev = result.stddev;
@@ -2192,7 +2195,8 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
                             row.z_m = row.valid
                                 ? p2DepthFromDisparity(row.disparity,
                                                        focal,
-                                                       baseline)
+                                                       baseline,
+                                                       activeDisparityOffset())
                                 : std::numeric_limits<float>::quiet_NaN();
                         }
 

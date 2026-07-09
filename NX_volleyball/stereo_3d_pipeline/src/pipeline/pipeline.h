@@ -154,6 +154,7 @@ private:
     void recordDetectDoneEvents(FrameSlot& slot) const;
     void waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const;
     bool detectEventsReady(const FrameSlot& slot) const;
+    float activeDisparityOffset() const;
     void collectRightDetections(FrameSlot& slot, int slot_index);
     struct DualYoloMatchStats {
         int left_count = 0;

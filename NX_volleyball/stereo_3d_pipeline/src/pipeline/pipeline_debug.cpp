@@ -172,8 +172,9 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     const auto& P1 = calibration_->getProjectionLeft();
     const float focal = static_cast<float>(P1.at<double>(0, 0));
     const float baseline = calibration_->getBaseline();
-    const ROIFeatureMatchConfig feature_cfg =
+    ROIFeatureMatchConfig feature_cfg =
         makeROIFeatureMatchConfig(config_.dual_yolo, config_.depth);
+    feature_cfg.disparity_zero_offset = activeDisparityOffset();
 
     std::vector<DebugFeatureMatchResult> results;
     results.push_back(makeDebugSparseFeatureMatchesCPU(

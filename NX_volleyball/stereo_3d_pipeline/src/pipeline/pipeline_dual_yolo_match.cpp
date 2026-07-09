@@ -82,7 +82,7 @@ void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
                       float disparity,
                       float score,
                       float focal,
-                      float baseline,
+                      float baseline, float d0,
                       float min_depth,
                       float max_depth) {
     if (!candidates ||
@@ -92,7 +92,11 @@ void addRankCandidate(std::vector<SparseFeatureTopPoint>* candidates,
         focal <= 1e-3f || baseline <= 1e-6f) {
         return;
     }
-    const float depth_m = focal * baseline / std::max(0.5f, disparity);
+    const float denom = disparity - d0;
+    if (denom <= 0.5f) {
+        return;
+    }
+    const float depth_m = focal * baseline / denom;
     if (!std::isfinite(depth_m) ||
         (min_depth > 0.0f && depth_m < min_depth) ||
         (max_depth > 0.0f && depth_m > max_depth)) {
@@ -123,6 +127,7 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                                   float initial_disparity,
                                   float focal,
                                   float baseline,
+                                  float d0,
                                   float min_depth,
                                   float max_depth,
                                   bool promote_top_points) {
@@ -144,6 +149,7 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                          m.score,
                          focal,
                          baseline,
+                         d0,
                          min_depth,
                          max_depth);
     }
@@ -163,6 +169,7 @@ void populateSoftTopFeaturePoints(SparseFeatureDisparityResult& result,
                          p.score,
                          focal,
                          baseline,
+                         d0,
                          min_depth,
                          max_depth);
     }
@@ -610,6 +617,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const float baseline = calibration_->getBaseline();
     ROIFeatureMatchConfig feature_cfg =
         makeROIFeatureMatchConfig(config_.dual_yolo, config_.depth);
+    feature_cfg.disparity_zero_offset = activeDisparityOffset();
     feature_cfg.debug_patch_enabled = config_.p2_diagnostic_artifacts_enabled;
     const ROICircleSearchConfig circle_search_cfg =
         makeROICircleSearchConfig(config_.dual_yolo);
@@ -902,12 +910,17 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                             const P2EarlyFeatureResult* p2_early,
                             Object3D& obj) -> bool {
         const float fb = focal * baseline;
+        const float d0 = activeDisparityOffset();
         auto depth_from_disparity = [&](float disp) -> float {
             if (!std::isfinite(disp) || disp <= 0.0f ||
                 disp > static_cast<float>(config_.max_disparity)) {
                 return -1.0f;
             }
-            const float z_candidate = fb / disp;
+            const float denom = disp - d0;
+            if (denom <= 0.5f) {
+                return -1.0f;
+            }
+            const float z_candidate = fb / denom;
             if (z_candidate < config_.depth.min_depth ||
                 z_candidate > config_.depth.max_depth) {
                 return -1.0f;
@@ -1869,6 +1882,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                          feature_initial_disparity,
                                          focal,
                                          baseline,
+                                         activeDisparityOffset(),
                                          config_.depth.min_depth,
                                          config_.depth.max_depth,
                                          neural_cfg.soft_topk_scoring);
@@ -3183,7 +3197,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             if (z_prior >= config_.depth.min_depth &&
                 z_prior <= config_.depth.max_depth) {
                 ++local_stats.fallback_prior_depth;
-                return std::clamp(focal * baseline / z_prior,
+                return std::clamp(focal * baseline / z_prior +
+                                      activeDisparityOffset(),
                                   1.0f,
                                   static_cast<float>(config_.max_disparity));
             }

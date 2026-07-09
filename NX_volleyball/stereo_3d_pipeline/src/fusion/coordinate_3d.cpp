@@ -24,9 +24,10 @@ Coordinate3D::~Coordinate3D() {
 }
 
 void Coordinate3D::init(const cv::Mat& P1, float baseline,
-                        float minDepth, float maxDepth)
+                        float minDepth, float maxDepth, float d0)
 {
     baseline_ = baseline;
+    d0_       = d0;
     minDepth_ = minDepth;
     maxDepth_ = maxDepth;
 
@@ -37,8 +38,8 @@ void Coordinate3D::init(const cv::Mat& P1, float baseline,
         cy_    = static_cast<float>(P1.at<double>(1, 2));
     }
 
-    LOG_INFO("Coordinate3D: focal=%.1f, cx=%.1f, cy=%.1f, baseline=%.4fm",
-             focal_, cx_, cy_, baseline_);
+    LOG_INFO("Coordinate3D: focal=%.1f, cx=%.1f, cy=%.1f, baseline=%.4fm, d0=%.3fpx",
+             focal_, cx_, cy_, baseline_, d0_);
 
     ready_ = allocateGPUBuffers();
     if (!ready_) {
@@ -159,7 +160,9 @@ std::vector<Object3D> Coordinate3D::computeBatch(
 
         // VPI S16 Q10.5 格式: 实际视差 = d_peak / 32.0
         // 但 depth_extract.cu 已经做了除法，这里 d_peak 就是像素视差
-        float Z = (focal_ * baseline_) / d_peak;
+        const float denom = d_peak - d0_;
+        if (denom <= 0.5f) continue;
+        float Z = (focal_ * baseline_) / denom;
 
         if (Z < minDepth_ || Z > maxDepth_) continue;
 

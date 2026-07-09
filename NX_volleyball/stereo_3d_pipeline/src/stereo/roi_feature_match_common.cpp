@@ -30,14 +30,16 @@ float computeFeatureDeltaGate(
     float gate = std::max(abs_gate, ratio_gate);
 
     const float fb = focal * baseline;
-    if (fb > 1e-3f && initial_disp > 0.5f &&
+    const float d0 = cfg.disparity_zero_offset;
+    const float denom = initial_disp - d0;
+    if (fb > 1e-3f && denom > 0.5f &&
         cfg.subpixel_max_depth_delta_m > 0.01f) {
-        const float z0 = fb / initial_disp;
-        const float disp_far = fb / (z0 + cfg.subpixel_max_depth_delta_m);
+        const float z0 = fb / denom;
+        const float disp_far = fb / (z0 + cfg.subpixel_max_depth_delta_m) + d0;
         gate = std::max(gate, std::max(0.0f, initial_disp - disp_far));
         if (z0 > cfg.subpixel_max_depth_delta_m + 0.01f) {
             const float disp_near =
-                fb / (z0 - cfg.subpixel_max_depth_delta_m);
+                fb / (z0 - cfg.subpixel_max_depth_delta_m) + d0;
             gate = std::max(gate, std::max(0.0f, disp_near - initial_disp));
         }
     }
@@ -141,13 +143,14 @@ bool passesSphereRadiusGate(
     const ROIFeatureMatchConfig& cfg)
 {
     const float radius_m = cfg.feature_sphere_radius_m;
+    const float d0 = cfg.disparity_zero_offset;
     if (radius_m <= 0.0f || focal <= 1e-3f || baseline <= 1e-6f ||
-        initial_disp <= 0.5f || sample.disparity <= 0.5f) {
+        initial_disp - d0 <= 0.5f || sample.disparity - d0 <= 0.5f) {
         return true;
     }
     const float fb = focal * baseline;
-    const float center_z = fb / initial_disp;
-    const float z = fb / sample.disparity;
+    const float center_z = fb / (initial_disp - d0);
+    const float z = fb / (sample.disparity - d0);
     if (!std::isfinite(center_z) || !std::isfinite(z)) return false;
 
     const float dx = (sample.left_x - left_det.cx) * z / focal;

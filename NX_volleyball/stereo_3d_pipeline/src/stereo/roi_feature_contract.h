@@ -26,6 +26,7 @@ struct ROIFeatureMatchConfig {
     float feature_sphere_radius_m = 0.10f;
     float feature_sphere_radius_scale = 1.8f;
     float feature_sphere_margin_m = 0.02f;
+    float disparity_zero_offset = 0.0f;
     bool feature_normalize_large_roi = true;
     int feature_normalized_diameter_px = 96;
     float feature_normalize_min_diameter_px = 128.0f;

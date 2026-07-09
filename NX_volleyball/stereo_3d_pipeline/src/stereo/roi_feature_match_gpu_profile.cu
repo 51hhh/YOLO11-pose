@@ -254,11 +254,15 @@ float profileDeltaGate(float initial_disp,
         std::isfinite(initial_disp) && initial_disp > 0.5f &&
         std::isfinite(cfg.subpixel_max_depth_delta_m) &&
         cfg.subpixel_max_depth_delta_m > 0.0f) {
-        const float z = focal * baseline / initial_disp;
+        const float d0 = cfg.disparity_zero_offset;
+        if (initial_disp - d0 <= 0.5f) {
+            return std::clamp(gate, 1.0f, 64.0f);
+        }
+        const float z = focal * baseline / (initial_disp - d0);
         const float near_z = std::max(0.05f, z - cfg.subpixel_max_depth_delta_m);
         const float far_z = z + cfg.subpixel_max_depth_delta_m;
-        const float near_disp = focal * baseline / near_z;
-        const float far_disp = focal * baseline / far_z;
+        const float near_disp = focal * baseline / near_z + d0;
+        const float far_disp = focal * baseline / far_z + d0;
         gate = std::max(gate, std::abs(near_disp - initial_disp));
         gate = std::max(gate, std::abs(far_disp - initial_disp));
     }

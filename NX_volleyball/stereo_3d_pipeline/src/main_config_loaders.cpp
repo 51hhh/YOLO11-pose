@@ -7,7 +7,39 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <initializer_list>
+#include <stdexcept>
 #include <string>
+
+namespace {
+
+bool readFloatAny(const YAML::Node& node,
+                  std::initializer_list<const char*> keys,
+                  float& value) {
+    for (const char* key : keys) {
+        if (node[key]) {
+            value = node[key].as<float>();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool loadDisparityOffsetFile(const std::string& path,
+                             stereo3d::PipelineConfig::DisparityOffsetConfig& cfg) {
+    YAML::Node root = YAML::LoadFile(path);
+    YAML::Node fit = root["fit"] ? root["fit"] : root;
+    bool has_d0 = readFloatAny(fit,
+                               {"d0", "d0_px", "disparity_offset_px",
+                                "disparity_zero_offset_px"},
+                               cfg.d0);
+    readFloatAny(fit,
+                 {"fB", "fb", "focal_baseline", "focal_baseline_m"},
+                 cfg.fitted_fB);
+    return has_d0;
+}
+
+}  // namespace
 
 stereo3d::PipelineConfig loadConfig(const std::string& path) {
     stereo3d::PipelineConfig cfg;
@@ -49,6 +81,35 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
     // Calibration
     if (auto cal = root["calibration"]) {
         if (cal["file"]) cfg.calibration_file = cal["file"].as<std::string>();
+    }
+
+    // Disparity zero-point calibration. Kept independent from stereo
+    // calibration so known-distance recording can disable d0 and preserve raw
+    // depth residuals for re-fitting.
+    if (auto d0 = root["disparity_offset"]) {
+        if (d0["enabled"])
+            cfg.disparity_offset.enabled = d0["enabled"].as<bool>();
+        if (d0["file"])
+            cfg.disparity_offset.file = d0["file"].as<std::string>();
+
+        bool has_d0 = false;
+        if (cfg.disparity_offset.enabled &&
+            !cfg.disparity_offset.file.empty()) {
+            has_d0 = loadDisparityOffsetFile(cfg.disparity_offset.file,
+                                             cfg.disparity_offset);
+        }
+        has_d0 = readFloatAny(d0,
+                              {"d0", "d0_px", "disparity_offset_px",
+                               "disparity_zero_offset_px"},
+                              cfg.disparity_offset.d0) || has_d0;
+        readFloatAny(d0,
+                     {"fB", "fb", "fitted_fB", "focal_baseline"},
+                     cfg.disparity_offset.fitted_fB);
+
+        if (cfg.disparity_offset.enabled && !has_d0) {
+            throw std::runtime_error(
+                "disparity_offset.enabled=true but no d0 was found in config or file");
+        }
     }
 
     // Rectify (输出分辨率, 与相机原始分辨率分离)

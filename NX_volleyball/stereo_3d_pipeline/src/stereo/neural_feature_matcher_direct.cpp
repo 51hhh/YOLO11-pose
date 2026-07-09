@@ -637,7 +637,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchDirectExtractorGpuRoi(
                 0.0f, sum2 / kept - result.disparity * result.disparity);
             result.stddev_px = std::sqrt(var);
             result.depth_m =
-                focal_ * baseline_ / std::max(0.5f, result.disparity);
+                focal_ * baseline_ / std::max(0.5f, result.disparity - d0_);
             const float support_conf = std::min(
                 1.0f,
                 kept / static_cast<float>(

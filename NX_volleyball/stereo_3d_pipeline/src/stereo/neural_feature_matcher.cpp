@@ -49,12 +49,13 @@ NeuralFeatureMatcher::~NeuralFeatureMatcher() {
 }
 
 bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
-                                float focal, float baseline, int max_disparity) {
+                                float focal, float baseline, int max_disparity, float d0) {
     config_ = config;
     config_.backend = parseNeuralFeatureBackend(config.backend_name);
     focal_ = focal;
     baseline_ = baseline;
     max_disparity_ = max_disparity;
+    d0_ = d0;
     ready_ = false;
 
     if (!config_.enabled) {
@@ -83,11 +84,12 @@ bool NeuralFeatureMatcher::init(const NeuralFeatureConfig& config,
     }
 
     ready_ = true;
-    LOG_INFO("Neural feature matcher ready: backend=%s roi=%d top_k=%d min_matches=%d",
+    LOG_INFO("Neural feature matcher ready: backend=%s roi=%d top_k=%d min_matches=%d d0=%.3fpx",
              neuralFeatureBackendName(config_.backend),
              config_.roi_size,
              config_.top_k,
-             config_.min_matches);
+             config_.min_matches,
+             d0_);
     return true;
 }
 

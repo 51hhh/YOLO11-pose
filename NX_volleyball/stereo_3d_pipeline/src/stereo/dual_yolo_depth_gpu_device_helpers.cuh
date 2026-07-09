@@ -327,19 +327,32 @@ __device__ float disparityDeltaGate(
     float initial_disp,
     float focal,
     float baseline,
+    float d0,
     float max_disp_delta_px,
     float max_disp_delta_ratio,
     float max_depth_delta_m) {
     float gate = fmaxf(max_disp_delta_px, fabsf(initial_disp) * max_disp_delta_ratio);
     const float fb = focal * baseline;
-    if (fb > 0.0f && max_depth_delta_m > 0.0f && initial_disp > 0.5f) {
-        const float z = fb / initial_disp;
+    const float denom = initial_disp - d0;
+    if (fb > 0.0f && max_depth_delta_m > 0.0f && denom > 0.5f) {
+        const float z = fb / denom;
         const float near_z = fmaxf(0.01f, z - max_depth_delta_m);
         const float far_z = z + max_depth_delta_m;
-        gate = fmaxf(gate, fabsf(fb / near_z - initial_disp));
-        gate = fmaxf(gate, fabsf(initial_disp - fb / far_z));
+        gate = fmaxf(gate, fabsf((fb / near_z + d0) - initial_disp));
+        gate = fmaxf(gate, fabsf(initial_disp - (fb / far_z + d0)));
     }
     return fmaxf(gate, 0.5f);
+}
+
+__device__ __forceinline__ float depthFromDisparity(
+    float focal,
+    float baseline,
+    float d0,
+    float disparity) {
+    const float denom = disparity - d0;
+    return denom > 0.5f
+        ? focal * baseline / denom
+        : CUDART_NAN_F;
 }
 
 __device__ __forceinline__ float sampleWeight(float score) {
@@ -671,16 +684,16 @@ __device__ bool passesSphereRadiusGate(
     float initial_disp,
     float focal,
     float baseline,
+    float d0,
     float radius_m,
     float radius_scale,
     float margin_m) {
     if (radius_m <= 0.0f || focal <= 1e-3f || baseline <= 1e-6f ||
-        initial_disp <= 0.5f || disparity <= 0.5f) {
+        initial_disp - d0 <= 0.5f || disparity - d0 <= 0.5f) {
         return true;
     }
-    const float fb = focal * baseline;
-    const float center_z = fb / initial_disp;
-    const float z = fb / disparity;
+    const float center_z = depthFromDisparity(focal, baseline, d0, initial_disp);
+    const float z = depthFromDisparity(focal, baseline, d0, disparity);
     if (!isfinite(center_z) || !isfinite(z)) return false;
     const float dx = (left_x - ball_cx) * z / focal;
     const float dy = (left_y - ball_cy) * z / focal;

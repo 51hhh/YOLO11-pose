@@ -194,6 +194,7 @@ __device__ void matchPatchAtPoint(
     float max_delta,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth,
     const stereo3d::DualYoloGpuDetection& left_det,
@@ -209,9 +210,9 @@ __device__ void matchPatchAtPoint(
 
     const int x_left = static_cast<int>(rintf(x_left_f));
     const int y_left = static_cast<int>(rintf(y_left_f));
-    const int d0 = static_cast<int>(rintf(initial_disp));
-    const int d_start = max(1, d0 - search_radius);
-    const int d_end = min(max_disparity, d0 + search_radius);
+    const int d_center = static_cast<int>(rintf(initial_disp));
+    const int d_start = max(1, d_center - search_radius);
+    const int d_end = min(max_disparity, d_center + search_radius);
     if (!patchInside(img_w, img_h, x_left, y_left, patch_radius) ||
         d_start >= d_end) {
         __syncthreads();
@@ -313,7 +314,7 @@ __device__ void matchPatchAtPoint(
         }
 
         const float uniqueness = second_score > -1.5f ? best_score - second_score : 1.0f;
-        const float z = focal * baseline / fmaxf(0.5f, sub_disp);
+        const float z = depthFromDisparity(focal, baseline, d0, sub_disp);
         if (accept &&
             ((uniqueness < 0.01f && best_score < 0.75f) ||
              fabsf(sub_disp - initial_disp) > max_delta ||
@@ -365,6 +366,7 @@ __device__ void matchSparsePoints(
     float max_stddev,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth,
     float feature_y_tolerance_px,
@@ -450,9 +452,9 @@ __device__ void matchSparsePoints(
             const float response_floor =
                 mode == 3 ? 24.0f : (mode == 4 ? 12.0f : (mode == 1 ? 20.0f : 8.0f));
             if (mode >= 3 || response > response_floor) {
-                const int d0 = static_cast<int>(rintf(initial_disp));
-                const int d_start = max(1, d0 - search_radius);
-                const int d_end = min(max_disparity, d0 + search_radius);
+                const int d_center = static_cast<int>(rintf(initial_disp));
+                const int d_start = max(1, d_center - search_radius);
+                const int d_end = min(max_disparity, d_center + search_radius);
                 if (d_start < d_end) {
                     const int range = d_end - d_start + 1;
                     const int per = (range + kThreadsPerPoint - 1) / kThreadsPerPoint;
@@ -525,7 +527,7 @@ __device__ void matchSparsePoints(
                 : fmaxf(0.12f, min_confidence * 0.60f));
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
-            const float z = focal * baseline / best_disp;
+            const float z = depthFromDisparity(focal, baseline, d0, best_disp);
             const float left_x = point_x[point_idx];
             const float left_y = point_y[point_idx];
             const float right_x = left_x - best_disp;
@@ -542,14 +544,14 @@ __device__ void matchSparsePoints(
                 passesSphereRadiusGate(left_x, left_y,
                                        center_x, center_y,
                                        best_disp, initial_disp,
-                                       focal, baseline,
+                                       focal, baseline, d0,
                                        feature_sphere_radius_m,
                                        feature_sphere_radius_scale,
                                        feature_sphere_margin_m);
             if (cheap_ok) {
-                const int d0 = static_cast<int>(rintf(initial_disp));
-                const int d_start = max(1, d0 - search_radius);
-                const int d_end = min(max_disparity, d0 + search_radius);
+                const int d_center = static_cast<int>(rintf(initial_disp));
+                const int d_start = max(1, d_center - search_radius);
+                const int d_end = min(max_disparity, d_center + search_radius);
                 const int reverse_y_radius = mode >= 3
                     ? 1
                     : clampInt(static_cast<int>(ceilf(
@@ -610,7 +612,7 @@ __device__ void matchSparsePoints(
                                         &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
             } else {
-                const float z = focal * baseline / fmaxf(disparity, 0.5f);
+                const float z = depthFromDisparity(focal, baseline, d0, disparity);
                 if (disparity > static_cast<float>(max_disparity) ||
                     z < min_depth || z > max_depth) {
                     out->low_confidence = 1;
@@ -672,6 +674,7 @@ __device__ void matchMultiPointPatch(
     float max_stddev,
     float focal,
     float baseline,
+    float d0,
     float min_depth,
     float max_depth,
     float feature_y_tolerance_px,
@@ -739,9 +742,9 @@ __device__ void matchMultiPointPatch(
         const int x = static_cast<int>(rintf(x_f));
         const int y = static_cast<int>(rintf(y_f));
         if (patchInside(img_w, img_h, x, y, patch_radius)) {
-            const int d0 = static_cast<int>(rintf(initial_disp));
-            const int d_start = max(1, d0 - search_radius);
-            const int d_end = min(max_disparity, d0 + search_radius);
+            const int d_center = static_cast<int>(rintf(initial_disp));
+            const int d_start = max(1, d_center - search_radius);
+            const int d_end = min(max_disparity, d_center + search_radius);
             if (d_start < d_end) {
                 const int range = d_end - d_start + 1;
                 const int per = (range + kThreadsPerPoint - 1) / kThreadsPerPoint;
@@ -800,7 +803,7 @@ __device__ void matchMultiPointPatch(
         const float min_score = fmaxf(0.10f, min_confidence * 0.60f);
         if (best_disp > 0.5f && best_score >= min_score &&
             fabsf(best_disp - initial_disp) <= max_delta) {
-            const float z = focal * baseline / best_disp;
+            const float z = depthFromDisparity(focal, baseline, d0, best_disp);
             const float left_x = point_x[point_idx];
             const float left_y = point_y[point_idx];
             const float right_x = left_x - best_disp;
@@ -817,14 +820,14 @@ __device__ void matchMultiPointPatch(
                 passesSphereRadiusGate(left_x, left_y,
                                        center_x, center_y,
                                        best_disp, initial_disp,
-                                       focal, baseline,
+                                       focal, baseline, d0,
                                        feature_sphere_radius_m,
                                        feature_sphere_radius_scale,
                                        feature_sphere_margin_m);
             if (cheap_ok) {
-                const int d0 = static_cast<int>(rintf(initial_disp));
-                const int d_start = max(1, d0 - search_radius);
-                const int d_end = min(max_disparity, d0 + search_radius);
+                const int d_center = static_cast<int>(rintf(initial_disp));
+                const int d_start = max(1, d_center - search_radius);
+                const int d_end = min(max_disparity, d_center + search_radius);
                 const int reverse_y_radius = clampInt(
                     static_cast<int>(ceilf(
                         clampFloat(feature_y_tolerance_px, 0.5f, 8.0f))),
@@ -884,7 +887,7 @@ __device__ void matchMultiPointPatch(
                                         &stddev, &avg_score, &support)) {
                 out->low_confidence = 1;
             } else {
-                const float z = focal * baseline / fmaxf(disparity, 0.5f);
+                const float z = depthFromDisparity(focal, baseline, d0, disparity);
                 if (disparity > static_cast<float>(max_disparity) ||
                     z < min_depth || z > max_depth) {
                     out->low_confidence = 1;

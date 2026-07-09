@@ -18,7 +18,7 @@ extern "C" void launchROIMultiPointMatch(
     int numBoxes,
     float* results,
     int maxDisparity, int patchRadius,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth,
     cudaStream_t stream);
@@ -32,7 +32,7 @@ extern "C" void launchROICircleFitMatch(
     int numBoxes,
     float* results,
     int maxDisparity,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth,
     float objectDiameter,
@@ -60,8 +60,8 @@ void ROIStereoMatcher::init(float focal, float baseline, float cx, float cy,
     }
     ready_ = true;
 
-    LOG_INFO("ROIStereoMatcher: focal=%.1f, baseline=%.4fm, cx=%.1f, cy=%.1f",
-             focal_, baseline_, cx_, cy_);
+    LOG_INFO("ROIStereoMatcher: focal=%.1f, baseline=%.4fm, d0=%.3fpx, cx=%.1f, cy=%.1f",
+             focal_, baseline_, config_.disparityZeroOffset, cx_, cy_);
     LOG_INFO("  maxDisparity=%d, patchRadius=%d, depth=[%.1f, %.1f]m",
              config_.maxDisparity, config_.patchRadius,
              config_.minDepth, config_.maxDepth);
@@ -169,7 +169,7 @@ std::vector<Object3D> ROIStereoMatcher::match(
             bboxes_device_, detCx_device_, detCy_device_, numBoxes,
             results_device_,
             config_.maxDisparity,
-            focal_, baseline_, cx_, cy_,
+            focal_, baseline_, config_.disparityZeroOffset, cx_, cy_,
             config_.minDepth, config_.maxDepth,
             config_.objectDiameter,
             stream);
@@ -180,7 +180,7 @@ std::vector<Object3D> ROIStereoMatcher::match(
             bboxes_device_, detCx_device_, detCy_device_, numBoxes,
             results_device_,
             config_.maxDisparity, config_.patchRadius,
-            focal_, baseline_, cx_, cy_,
+            focal_, baseline_, config_.disparityZeroOffset, cx_, cy_,
             config_.minDepth, config_.maxDepth,
             stream);
     }

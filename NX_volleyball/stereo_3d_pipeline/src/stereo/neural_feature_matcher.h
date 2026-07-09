@@ -57,7 +57,7 @@ public:
     NeuralFeatureMatcher& operator=(const NeuralFeatureMatcher&) = delete;
 
     bool init(const NeuralFeatureConfig& config,
-              float focal, float baseline, int max_disparity);
+              float focal, float baseline, int max_disparity, float d0 = 0.0f);
 
     bool isReady() const { return ready_; }
     const NeuralFeatureConfig& config() const { return config_; }
@@ -101,6 +101,7 @@ private:
     NeuralFeatureConfig config_;
     float focal_ = 0.0f;
     float baseline_ = 0.0f;
+    float d0_       = 0.0f;    ///< disparity zero-point offset (pixels)
     int max_disparity_ = 0;
     bool ready_ = false;
 

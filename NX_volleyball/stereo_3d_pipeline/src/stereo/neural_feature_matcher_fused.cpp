@@ -294,7 +294,7 @@ NeuralFeatureMatchResult NeuralFeatureMatcher::matchGpuRoi(
     const float var = std::max(0.0f, sum2 / static_cast<float>(kept) -
                                       out.disparity * out.disparity);
     out.stddev_px = std::sqrt(var);
-    out.depth_m = focal_ * baseline_ / std::max(0.5f, out.disparity);
+    out.depth_m = focal_ * baseline_ / std::max(0.5f, out.disparity - d0_);
     out.confidence = std::min(1.0f, static_cast<float>(kept) /
                                     std::max(1, config_.top_k));
     out.valid = true;
