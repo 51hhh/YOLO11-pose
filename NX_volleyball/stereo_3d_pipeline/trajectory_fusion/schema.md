@@ -110,6 +110,7 @@
 | z_roi_neural_feature | float | ROI TensorRT 神经特征兼容字段；split 模式下仅作旧字段兼容 |
 | z_roi_neural_xfeat | float | ROI XFeat TensorRT 神经特征匹配视差三角测距；主 CSV 或 sidecar `mode=neural_xfeat` 合并 |
 | z_roi_neural_superpoint | float | ROI SuperPoint TensorRT 神经特征匹配视差三角测距；主 CSV 或 sidecar `mode=neural_superpoint` 合并 |
+| z_roi_neural_aliked | float | ROI ALIKED TensorRT 神经特征匹配视差三角测距；主 CSV 或 sidecar `mode=neural_aliked` 合并 |
 | z_roi_center_patch | float | ROI 中心 patch ZNCC 视差三角测距 |
 | z_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差三角测距 |
 | z_fallback | float | fallback 测距兼容汇总字段，优先 feature，其次 epipolar/template |
@@ -146,6 +147,7 @@
 | disparity_roi_neural_feature | float | ROI 神经特征兼容聚合视差 |
 | disparity_roi_neural_xfeat | float | ROI XFeat 神经特征聚合视差 |
 | disparity_roi_neural_superpoint | float | ROI SuperPoint 神经特征聚合视差 |
+| disparity_roi_neural_aliked | float | ROI ALIKED 神经特征聚合视差 |
 | disparity_roi_center_patch | float | ROI 中心 patch ZNCC 视差 |
 | disparity_roi_multi_point | float | ROI 多点 ZNCC 亚像素视差 |
 | disparity_fallback_epipolar | float | 极线搜索 fallback 视差 |
@@ -189,6 +191,9 @@
 | roi_cuda_template_match_support | int | 自研 CUDA Template/NCC 支撑点数；主 CSV 或 sidecar `cuda_template` 合并 |
 | roi_cuda_template_match_std_px | float | 自研 CUDA Template/NCC 视差标准差 |
 | roi_cuda_template_match_confidence | float | 自研 CUDA Template/NCC 匹配置信度 |
+| roi_cuda_stereo_bm_support | int | OpenCV CUDA StereoBM 有效采样点数 |
+| roi_cuda_stereo_bm_std_px | float | OpenCV CUDA StereoBM 视差标准差 |
+| roi_cuda_stereo_bm_confidence | float | OpenCV CUDA StereoBM 匹配置信度 |
 | roi_cuda_stereo_sgm_support | int | OpenCV CUDA StereoSGM 有效采样点数 |
 | roi_cuda_stereo_sgm_std_px | float | OpenCV CUDA StereoSGM 视差标准差 |
 | roi_cuda_stereo_sgm_confidence | float | OpenCV CUDA StereoSGM 匹配置信度 |
@@ -213,6 +218,11 @@
 | roi_neural_superpoint_support | int | SuperPoint 神经特征匹配支撑点数 |
 | roi_neural_superpoint_std_px | float | SuperPoint 神经特征视差标准差 |
 | roi_neural_superpoint_confidence | float | SuperPoint 神经特征匹配置信度 |
+| roi_neural_aliked_support | int | ALIKED 神经特征匹配支撑点数 |
+| roi_neural_aliked_std_px | float | ALIKED 神经特征视差标准差 |
+| roi_neural_aliked_confidence | float | ALIKED 神经特征匹配置信度 |
+| roi_neural_xfeat/superpoint/aliked_top_count | int | 对应神经后端记录的 top ranked point 数量 |
+| roi_neural_xfeat/superpoint/aliked_top{1..5}_* | float | 每个 top 点的 `left_x,left_y,right_x,right_y,z,disparity,score,y_delta,rank_score` |
 | fallback_feature_points_support | int | 单侧漏检特征 fallback 支撑点数 |
 | fallback_feature_points_std_px | float | 单侧漏检特征 fallback 视差标准差 |
 | fallback_feature_points_confidence | float | 单侧漏检特征 fallback 置信度 |
@@ -277,13 +287,13 @@
 
 当 `performance.p2_diagnostic_results_enabled=true` 时，运行时会写同名前缀 `*.p2_diagnostic.csv`。如果 `p2_diagnostic_results_path` 为空，`main.cpp` 会从最终 `recording.output_path` 或 `--recording-out` 自动派生，例如 `traj_001.csv` -> `traj_001.p2_diagnostic.csv`。
 
-这个文件不替代主 trajectory CSV，不回写 `Object3D`。`trajectory_fusion/dataset.py` 当前只把 `mode=vpi_template_match` 和 `mode=vpi_orb` 按 `frame_id` 合并为训练候选字段:
+这个文件不替代主 trajectory CSV，不回写 `Object3D`。`trajectory_fusion/dataset.py` 当前按 `frame_id + mode` 合并这些 diagnostic mode: `cuda_template`, `cuda_stereo_bm`, `cuda_stereo_sgm`, `vpi_template_match`, `vpi_orb`, `opencv_cuda_gftt_lk`, `cuda_ring_edge_profile`, `neural_feature`, `neural_xfeat`, `neural_superpoint`, `neural_aliked`。合并内容包括 `z/disparity/support/std/confidence`，目标列由 `P2_DIAGNOSTIC_MODE_COLUMNS` 定义。
 
 | sidecar 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | frame_id | int | 对应主 CSV 的 frame id |
 | lane | str | `diagnostic` |
-| mode | str | 算法名，例如 `vpi_template_match`、`vpi_orb` |
+| mode | str | 算法名，例如 `cuda_template`、`neural_xfeat`、`vpi_template_match`、`opencv_cuda_gftt_lk` |
 | status | str | `valid`、`invalid`、`unsupported`、`no_pair` 等 |
 | valid | int | 1=本行有有效视差/深度 |
 | disparity | float | 聚合视差 |
