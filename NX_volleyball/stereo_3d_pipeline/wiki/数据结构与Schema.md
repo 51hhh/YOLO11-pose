@@ -57,12 +57,12 @@
 
 ### 深度视差零点(d0)与反投影一致性
 
-重要口径(2026-07-08 核实): CSV 里所有 `z_*` 深度字段都是实时 C++ 用 `z = fB / disparity` 写出的**原始深度,未做视差零点修正**。经米尺实测 known_z 标定发现存在系统性视差零点偏移 `d0 ≈ -13.3px`,真实模型是 `z = fB / (disparity - d0)`。未修正的原始 `z_*` 在 3m 处偏差约 6cm、8m 约 63cm、12m 约 86cm(远距 z² 放大)。详见 [视差零点标定与反投影](视差零点标定与反投影.md)。
+重要口径(2026-07-10 核实): 多距离训练采集 CSV 里的 `z_*` 深度字段应保持实时 C++ 的**原始深度** `z = fB / disparity`，不启用视差零点修正；实际运行配置则启用 `z = fB / (disparity - d0)`。当前 `config/disparity_offset_fit_20260709.json` 在固定当前标定 fB 的前提下拟合出 `d0=-5.324px`，使 3–12m 静态聚合 RMS 从约 0.292m 降到约 0.049m。详见 [视差零点标定与反投影](视差零点标定与反投影.md)。
 
 由此产生两条必须保持一致的规则:
 
-- **现有 CSV 训练前必须转换**: 轨迹模型不直接吃 CSV 的 `z_*`,而是经 `trajectory_fusion/reproject.py` 用 `z = fB/(disparity - d0)` 重算深度再反投影出米制 `[X,Y,Z]`。d0/fB 来自 `calibrate_disparity_offset.py` 拟合的 `disparity_offset_fit.json`。
-- **后续录制应内置 d0 修正**: C++ 深度换算(`z = fB/disparity`)后续应加入 d0 项写出修正后深度,使实时管线与离线训练口径一致。在 C++ 未改前,`disparity_*` 字段是权威原料,`z_*` 视为未修正的诊断值,训练一律走离线反投影转换。改动 C++ 深度换算或引入 d0 时,必须同步更新本页和 [视差零点标定与反投影](视差零点标定与反投影.md)。
+- **raw 采集 CSV 训练前必须转换**: 轨迹模型不直接吃 raw CSV 的 `z_*`,而是经 `trajectory_fusion/reproject.py` 用 `z = fB/(disparity - d0)` 重算深度再反投影出米制 `[X,Y,Z]`。d0 来自 `config/disparity_offset_fit_20260709.json` 或同口径重拟合文件。
+- **实际运行 CSV 不得二次修正**: 实时 C++ 已支持 `disparity_offset`，启用后写出的 `z_*` / 3D 坐标已经是 d0 修正口径；这类 CSV 不能再用同一个 d0 二次反投影。切换 d0 开关时必须在 manifest/metadata 里标明 raw 还是 d0-applied。
 
 `stereo_depth_source` 当前注释映射:
 
