@@ -267,12 +267,15 @@ def build_manifest(
         metadata_path = find_metadata_for_csv(csv_path)
         if require_metadata and metadata_path is None:
             continue
+        name = csv_path.stem
+        if name in {"traj", "trajectory"}:
+            name = csv_path.parent.name
         entries.append(
             ManifestClipEntry(
                 csv=csv_path,
                 metadata=metadata_path,
                 split="train",
-                name=csv_path.stem,
+                name=name,
                 known_z=_known_z_for_metadata(metadata_path),
             )
         )

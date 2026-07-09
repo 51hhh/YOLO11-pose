@@ -8,6 +8,14 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
+try:
+    from .reproject import ReprojectionModel, method_disparity_column
+except ImportError:
+    ReprojectionModel = None  # type: ignore
+    def method_disparity_column(depth_column):
+        if depth_column.startswith("z_"):
+            return "disparity_" + depth_column[2:]
+        return "disparity_" + depth_column
 
 
 METHOD_COLUMNS = (
@@ -995,6 +1003,7 @@ def build_legacy_arrays(
     sequence: LegacySequence,
     *,
     method_names: Sequence[str] | str | None = None,
+    reprojection_model = None,
 ) -> Dict[str, List[List[float]]]:
     """Build feature, measurement and validity arrays from a recorder sequence.
 
@@ -1050,7 +1059,19 @@ def build_legacy_arrays(
         measurements_row = []
         valid_row = []
         for method_name, key in METHOD_COLUMNS:
-            value = row[key]
+            if reprojection_model is not None:
+                disp_col = method_disparity_column(key)
+                disparity = row.get(disp_col, -1.0)
+                if disparity > 0.1:
+                    corrected = reprojection_model.depth_from_disparity(disparity)
+                else:
+                    corrected = None
+                if corrected is not None and corrected > 0.1:
+                    value = corrected
+                else:
+                    value = row.get(key, -1.0)
+            else:
+                value = row.get(key, -1.0)
             method_enabled = enabled_methods is None or method_name in enabled_methods
             is_valid = 1.0 if method_enabled and value > 0.1 else 0.0
             measurements_row.append(value if is_valid else 0.0)
@@ -1344,3 +1365,236 @@ def normalize_features(features: Sequence[Sequence[float]]) -> List[List[float]]
 
     means, stds = compute_feature_normalizer(features)
     return apply_feature_normalizer(features, means, stds)
+
+
+# ---------------------------------------------------------------------------
+# Stage-2: metric 3D state arrays for the causal trajectory state estimator.
+#
+# Unlike build_legacy_arrays (which fuses scalar depth z only), this builder
+# reprojects every candidate's disparity into a metric [X, Y, Z] point using the
+# d0-corrected stereo model. The state estimator consumes per-method 3D points
+# plus their quality so it can fuse XYZ jointly and learn that XY jitter is
+# driven by Z jitter (shared pixel anchor, see reproject.py).
+#
+# It deliberately does NOT read legacy online x/y/z/v/a. Metric XY comes only
+# from each candidate's own disparity + pixel, never from the old fused state.
+# ---------------------------------------------------------------------------
+
+# Per-method quality columns fed alongside the metric point. Kept compact and
+# method-owned so a method allowlist can zero them without cross-leakage.
+_METRIC_QUALITY_SUFFIXES = ("support", "std_px", "confidence")
+
+
+def metric_state_method_names(
+    method_names: Sequence[str] | str | None = None,
+) -> Tuple[str, ...]:
+    """Depth methods used by the metric-state builder, in METHOD_NAMES order.
+
+    Only methods that carry a companion ``disparity_*`` column can be
+    reprojected; ``mono`` and the fused ``z_stereo/z`` are never included.
+    """
+
+    enabled = method_allowlist_set(method_names)
+    names: List[str] = []
+    for name, _column in METHOD_COLUMNS:
+        if name == "mono":
+            continue
+        if enabled is not None and name not in enabled:
+            continue
+        names.append(name)
+    return tuple(names)
+
+
+def metric_feature_names(method_names: Sequence[str] | str | None = None) -> List[str]:
+    """Per-frame feature vector order for build_metric_state_arrays().
+
+    Layout: global temporal/consistency features, then per-method
+    [X, Y, Z, disparity, support, std_px, confidence, trust].
+    """
+
+    names = [
+        "dt",
+        "metric_valid_count",
+        "metric_median_z",
+        "metric_mad_z",
+        "metric_dz",
+        "metric_ddz",
+    ]
+    for method in metric_state_method_names(method_names):
+        names.extend(
+            [
+                f"{method}_X",
+                f"{method}_Y",
+                f"{method}_Z",
+                f"{method}_disparity",
+                f"{method}_support",
+                f"{method}_std_px",
+                f"{method}_confidence",
+                f"{method}_trust",
+            ]
+        )
+    return names
+
+
+def _method_trust_column(method: str) -> str | None:
+    for column, owner in P0P1_TRUST_FIELD_METHODS.items():
+        if owner == method:
+            return column
+    return None
+
+
+def build_metric_state_arrays(
+    sequence: LegacySequence,
+    reprojection_model,
+    *,
+    method_names: Sequence[str] | str | None = None,
+    min_disparity: float = 0.1,
+) -> Dict[str, List]:
+    """Reproject candidate disparities into per-method metric 3D observations.
+
+    Returns a dict with:
+      - ``features``:      [T, feature_dim]   per metric_feature_names()
+      - ``points``:        [T, M, 3]          per-method [X, Y, Z] (0 if invalid)
+      - ``point_valid``:   [T, M]             1.0 where the method reprojected
+      - ``dt``:            [T, 1]             causal frame delta seconds
+      - ``labels``:        [T, L]             weak_label_names() order
+      - ``method_names``:  tuple[str]         column order of M
+
+    ``reprojection_model`` is a reproject.ReprojectionModel (or any object with a
+    compatible ``reproject``). The metric arrays share the known_z / static label
+    semantics of build_legacy_arrays so both paths agree on supervision.
+    """
+
+    try:
+        from .reproject import reproject_row
+    except ImportError:  # pragma: no cover - direct script execution
+        from reproject import reproject_row
+
+    methods = metric_state_method_names(method_names)
+    method_columns = [(name, dict(METHOD_COLUMNS)[name]) for name in methods]
+    trust_columns = {name: _method_trust_column(name) for name in methods}
+
+    metadata = sequence.metadata
+    known_z = _metadata_float(metadata, ("known_z_m", "known_z", "known_distance_m"), 0.0)
+    known_z_tol = _metadata_float(metadata, ("known_z_tolerance_m", "known_z_tolerance"), 0.0)
+    known_z_min = _metadata_float(metadata, ("known_z_min_m", "known_z_min"), 0.0)
+    known_z_max = _metadata_float(metadata, ("known_z_max_m", "known_z_max"), 0.0)
+    if known_z > 0.0 and known_z_tol > 0.0 and (known_z_min <= 0.0 or known_z_max <= 0.0):
+        known_z_min = known_z - known_z_tol
+        known_z_max = known_z + known_z_tol
+    static_flag = 1.0 if _metadata_bool(metadata, ("static", "is_static"), False) else 0.0
+    known_z_training = static_flag > 0.0 or _metadata_bool(
+        metadata,
+        ("known_z_training", "known_z_supervision", "use_known_z_for_training"),
+        False,
+    )
+    known_z_valid = 1.0 if known_z > 0.0 and known_z_training else 0.0
+    known_z_range_valid = 1.0 if known_z_training and known_z_min > 0.0 and known_z_max > known_z_min else 0.0
+    landing_frame = _metadata_float(metadata, ("landing_frame",), -1.0)
+    landing_frame_valid = 1.0 if landing_frame >= 0.0 else 0.0
+
+    features: List[List[float]] = []
+    points: List[List[List[float]]] = []
+    point_valid: List[List[float]] = []
+    dt_values: List[List[float]] = []
+    labels: List[List[float]] = []
+
+    prev_ts = None
+    prev_valid_ts = None
+    prev_median_z = 0.0
+    prev_metric_dz = 0.0
+    have_prev_median = False
+
+    for row in sequence.rows:
+        ts = row["timestamp"]
+        if prev_ts is None:
+            dt = 0.01
+        else:
+            dt = max(1e-4, min(0.2, ts - prev_ts))
+        prev_ts = ts
+
+        reprojected = reproject_row(row, reprojection_model, method_columns, min_disparity=min_disparity)
+
+        method_points: List[List[float]] = []
+        valid_row: List[float] = []
+        per_method_feats: List[float] = []
+        valid_z: List[float] = []
+        for name, _column in method_columns:
+            pt = reprojected[name]
+            is_valid = 1.0 if pt.valid else 0.0
+            method_points.append([pt.x, pt.y, pt.z] if pt.valid else [0.0, 0.0, 0.0])
+            valid_row.append(is_valid)
+            if pt.valid:
+                valid_z.append(pt.z)
+            support = row.get(f"{name}_support", 0.0)
+            std_px = row.get(f"{name}_std_px", 0.0)
+            confidence = row.get(f"{name}_confidence", 0.0)
+            if name == "roi_multi_point":
+                support = row.get("subpixel_support", support)
+                std_px = row.get("subpixel_std_px", std_px)
+                confidence = row.get("subpixel_confidence", confidence)
+            trust_col = trust_columns.get(name)
+            trust = row.get(trust_col, 0.0) if trust_col else 0.0
+            per_method_feats.extend(
+                [
+                    pt.x if pt.valid else 0.0,
+                    pt.y if pt.valid else 0.0,
+                    pt.z if pt.valid else 0.0,
+                    pt.disparity if pt.valid else 0.0,
+                    float(support) * is_valid,
+                    float(std_px) * is_valid,
+                    float(confidence) * is_valid,
+                    float(trust) * is_valid,
+                ]
+            )
+
+        valid_count = float(len(valid_z))
+        median_z = _median(valid_z)
+        mad_z = _mad(valid_z)
+        if valid_count <= 0.0:
+            metric_dz = 0.0
+            metric_ddz = 0.0
+        elif have_prev_median and prev_valid_ts is not None:
+            raw_valid_dt = ts - prev_valid_ts
+            valid_dt = max(1e-4, min(0.5, raw_valid_dt))
+            metric_dz = (median_z - prev_median_z) / valid_dt
+            if raw_valid_dt > dt * 1.5:
+                metric_ddz = 0.0
+            else:
+                metric_ddz = (metric_dz - prev_metric_dz) / dt
+        else:
+            metric_dz = 0.0
+            metric_ddz = 0.0
+        if valid_count > 0.0:
+            prev_median_z = median_z
+            prev_metric_dz = metric_dz
+            prev_valid_ts = ts
+            have_prev_median = True
+
+        feature_row = [dt, valid_count, median_z, mad_z, metric_dz, metric_ddz, *per_method_feats]
+
+        features.append(feature_row)
+        points.append(method_points)
+        point_valid.append(valid_row)
+        dt_values.append([dt])
+        labels.append(
+            [
+                known_z,
+                known_z_valid,
+                known_z_min,
+                known_z_max,
+                known_z_range_valid,
+                static_flag,
+                landing_frame,
+                landing_frame_valid,
+            ]
+        )
+
+    return {
+        "features": features,
+        "points": points,
+        "point_valid": point_valid,
+        "dt": dt_values,
+        "labels": labels,
+        "method_names": methods,
+    }
