@@ -15,11 +15,13 @@ NX_DIR  = "/home/nvidia/NX_volleyball/stereo_3d_pipeline"
 LOCAL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SYNC_ALL_CONFIGS = os.environ.get("DEPLOY_SYNC_ALL_CONFIGS", "0") == "1"
 CONFIG_SYNC_ALLOWLIST = {
+    "disparity_offset_fit_20260709.json",
     "pipeline.yaml",
     "pipeline_roi.yaml",
     "pipeline_dla.yaml",
     "pipeline_yolo26_gpu.yaml",
     "pipeline_dual_yolo_roi.yaml",
+    "pipeline_record_p0p1.yaml",
 }
 
 def get_ssh():

@@ -23,6 +23,10 @@ camera:
 calibration:
   file: "calibration/stereo_calib.yaml"
 
+disparity_offset:
+  enabled: false
+  file: "config/disparity_offset_fit_20260709.json"
+
 rectify:
   backend: "CUDA"
   output_width: 1440

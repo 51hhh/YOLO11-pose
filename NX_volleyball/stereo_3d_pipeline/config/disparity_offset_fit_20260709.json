@@ -1,0 +1,36 @@
+{
+  "schema": "disparity_zero_offset_fit/v1",
+  "created_at": "2026-07-10",
+  "source": {
+    "runs_dir": "test_logs",
+    "run_prefix": "p1_dy_regression_20260709_",
+    "static_clip_count": 30,
+    "disparity_field": "disparity_bbox_center",
+    "depth_field": "z_bbox_center",
+    "label_assumption": "first 30 static clips grouped as 3-12m, three clips per meter",
+    "note": "The current dataset note says 3-13m, but the final three raw depths are self-consistent with a 12m bucket; the 13m label needs metadata confirmation before using it for d0."
+  },
+  "runtime_model": "Z = calib_fB / (disparity - d0)",
+  "fit": {
+    "d0": -5.324,
+    "fB": 1497.079,
+    "rms_error_m": 0.0493,
+    "mean_abs_error_m": 0.0425,
+    "max_abs_error_m": 0.0994,
+    "raw_rms_error_m": 0.2921,
+    "raw_mean_abs_error_m": 0.2242,
+    "n_points": 10
+  },
+  "distance_points": [
+    {"known_z": 3.0, "disparity_median": 500.221, "raw_z": 2.993, "raw_error_m": -0.007, "corrected_z": 2.961, "corrected_error_m": -0.039},
+    {"known_z": 4.0, "disparity_median": 372.278, "raw_z": 4.021, "raw_error_m": 0.021, "corrected_z": 3.965, "corrected_error_m": -0.035},
+    {"known_z": 5.0, "disparity_median": 296.684, "raw_z": 5.046, "raw_error_m": 0.046, "corrected_z": 4.957, "corrected_error_m": -0.043},
+    {"known_z": 6.0, "disparity_median": 245.215, "raw_z": 6.105, "raw_error_m": 0.105, "corrected_z": 5.975, "corrected_error_m": -0.025},
+    {"known_z": 7.0, "disparity_median": 210.709, "raw_z": 7.105, "raw_error_m": 0.105, "corrected_z": 6.930, "corrected_error_m": -0.070},
+    {"known_z": 8.0, "disparity_median": 182.940, "raw_z": 8.183, "raw_error_m": 0.183, "corrected_z": 7.952, "corrected_error_m": -0.048},
+    {"known_z": 9.0, "disparity_median": 159.201, "raw_z": 9.404, "raw_error_m": 0.404, "corrected_z": 9.099, "corrected_error_m": 0.099},
+    {"known_z": 10.0, "disparity_median": 143.767, "raw_z": 10.413, "raw_error_m": 0.413, "corrected_z": 10.041, "corrected_error_m": 0.041},
+    {"known_z": 11.0, "disparity_median": 130.935, "raw_z": 11.434, "raw_error_m": 0.434, "corrected_z": 10.987, "corrected_error_m": -0.013},
+    {"known_z": 12.0, "disparity_median": 119.549, "raw_z": 12.523, "raw_error_m": 0.523, "corrected_z": 11.989, "corrected_error_m": -0.011}
+  ]
+}
