@@ -113,7 +113,7 @@ inline void renderPipelineDisplayFrame(
             snprintf(pred_text, sizeof(pred_text),
                      "LAND(%.1f,%.1f) %.2fs %s",
                      p.x, p.y, p.time_to_land,
-                     p.method == 0 ? "B" : "P");
+                     p.method == 0 ? "E" : (p.method == 1 ? "P" : "?"));
             cv::putText(frame, pred_text,
                         cv::Point(x1, y1 + bh + 60),
                         cv::FONT_HERSHEY_SIMPLEX, 0.5,

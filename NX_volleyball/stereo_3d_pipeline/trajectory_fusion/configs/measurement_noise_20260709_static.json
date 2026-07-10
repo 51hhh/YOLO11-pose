@@ -1,0 +1,242 @@
+{
+  "description": "Known-distance static clips for measurement-noise calibration. Source: NX_volleyball/stereo_3d_pipeline/test_logs/p1_dy_regression_20260709_*.",
+  "policy": {
+    "use": "static tape-measured clips with stable labels",
+    "exclude": [
+      "141742 is a known bad segment",
+      "13m bucket is label-suspect and excluded until distance is confirmed"
+    ]
+  },
+  "clips": [
+    {
+      "name": "130138",
+      "csv": "../../test_logs/p1_dy_regression_20260709_130138/traj.csv",
+      "split": "train",
+      "known_z": 3.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "130300",
+      "csv": "../../test_logs/p1_dy_regression_20260709_130300/traj.csv",
+      "split": "train",
+      "known_z": 3.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "130433",
+      "csv": "../../test_logs/p1_dy_regression_20260709_130433/traj.csv",
+      "split": "train",
+      "known_z": 3.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "130707",
+      "csv": "../../test_logs/p1_dy_regression_20260709_130707/traj.csv",
+      "split": "train",
+      "known_z": 4.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "131813",
+      "csv": "../../test_logs/p1_dy_regression_20260709_131813/traj.csv",
+      "split": "train",
+      "known_z": 4.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "131944",
+      "csv": "../../test_logs/p1_dy_regression_20260709_131944/traj.csv",
+      "split": "train",
+      "known_z": 4.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "132131",
+      "csv": "../../test_logs/p1_dy_regression_20260709_132131/traj.csv",
+      "split": "train",
+      "known_z": 5.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "132305",
+      "csv": "../../test_logs/p1_dy_regression_20260709_132305/traj.csv",
+      "split": "train",
+      "known_z": 5.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "132526",
+      "csv": "../../test_logs/p1_dy_regression_20260709_132526/traj.csv",
+      "split": "train",
+      "known_z": 5.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "133347",
+      "csv": "../../test_logs/p1_dy_regression_20260709_133347/traj.csv",
+      "split": "train",
+      "known_z": 6.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "133528",
+      "csv": "../../test_logs/p1_dy_regression_20260709_133528/traj.csv",
+      "split": "train",
+      "known_z": 6.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "133829",
+      "csv": "../../test_logs/p1_dy_regression_20260709_133829/traj.csv",
+      "split": "train",
+      "known_z": 6.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "134557",
+      "csv": "../../test_logs/p1_dy_regression_20260709_134557/traj.csv",
+      "split": "train",
+      "known_z": 7.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "134809",
+      "csv": "../../test_logs/p1_dy_regression_20260709_134809/traj.csv",
+      "split": "train",
+      "known_z": 7.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "135115",
+      "csv": "../../test_logs/p1_dy_regression_20260709_135115/traj.csv",
+      "split": "train",
+      "known_z": 7.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "135244",
+      "csv": "../../test_logs/p1_dy_regression_20260709_135244/traj.csv",
+      "split": "train",
+      "known_z": 8.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "135424",
+      "csv": "../../test_logs/p1_dy_regression_20260709_135424/traj.csv",
+      "split": "train",
+      "known_z": 8.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "135854",
+      "csv": "../../test_logs/p1_dy_regression_20260709_135854/traj.csv",
+      "split": "train",
+      "known_z": 8.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "140149",
+      "csv": "../../test_logs/p1_dy_regression_20260709_140149/traj.csv",
+      "split": "train",
+      "known_z": 9.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "140335",
+      "csv": "../../test_logs/p1_dy_regression_20260709_140335/traj.csv",
+      "split": "train",
+      "known_z": 9.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "140512",
+      "csv": "../../test_logs/p1_dy_regression_20260709_140512/traj.csv",
+      "split": "train",
+      "known_z": 9.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "140851",
+      "csv": "../../test_logs/p1_dy_regression_20260709_140851/traj.csv",
+      "split": "train",
+      "known_z": 10.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "141034",
+      "csv": "../../test_logs/p1_dy_regression_20260709_141034/traj.csv",
+      "split": "train",
+      "known_z": 10.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "141222",
+      "csv": "../../test_logs/p1_dy_regression_20260709_141222/traj.csv",
+      "split": "train",
+      "known_z": 10.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "141456",
+      "csv": "../../test_logs/p1_dy_regression_20260709_141456/traj.csv",
+      "split": "train",
+      "known_z": 11.0,
+      "static": true,
+      "known_z_calibration": true
+    },
+    {
+      "name": "141939",
+      "csv": "../../test_logs/p1_dy_regression_20260709_141939/traj.csv",
+      "split": "train",
+      "known_z": 11.0,
+      "static": true,
+      "known_z_calibration": true
+    }
+  ],
+  "excluded_clips": [
+    {
+      "name": "141742",
+      "known_z": 11.0,
+      "reason": "known bad segment"
+    },
+    {
+      "name": "142201",
+      "known_z": 13.0,
+      "reason": "13m bucket label suspect"
+    },
+    {
+      "name": "142340",
+      "known_z": 13.0,
+      "reason": "13m bucket label suspect"
+    },
+    {
+      "name": "142648",
+      "known_z": 13.0,
+      "reason": "13m bucket label suspect"
+    }
+  ]
+}

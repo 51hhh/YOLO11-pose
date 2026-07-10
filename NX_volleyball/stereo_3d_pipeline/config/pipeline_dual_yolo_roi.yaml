@@ -289,13 +289,32 @@ tracker:
   min_confidence: 0.3
 
 prediction:
+  # Realtime landing path:
+  #   bbox_center disparity + d0 -> Student-t EKF -> RK4 rollout
+  #   circle is fallback/consistency only; polynomial remains backup.
   gravity: 9.81
   air_density: 1.225
   ball_mass: 0.270
   ball_radius: 0.105
-  drag_coeff: 0.47
-  ground_y: 0.0
+  drag_coeff: 0.10          # tuned on 2026-07-09 throw set (old 0.47 over-dragged)
+  # Ground plane from landing_eval/throws_gt.json (2026-07-09). Re-fit if camera moves.
+  use_g_hat: true
+  g_hat: [0.0018134, 0.9701361, 0.2425544]
+  ground_h: -1.259294
+  ground_y: 1.26            # legacy Y-down fallback if use_g_hat=false
   max_predict_time: 3.0
+  rk4_dt: 0.008
+  min_speed: 0.5
+  use_student_t_ekf: true
+  student_t_nu: 12.0
+  sigma_d_px: 0.4
+  q_pos: 0.0001
+  q_vel: 1.5
+  prefer_bbox: true
+  enable_circle_fallback: true
+  circle_consistency_m: 0.35
+  allow_raw_fallback: true
+  allow_filtered_fallback: true
 
 display:
   enable: false
