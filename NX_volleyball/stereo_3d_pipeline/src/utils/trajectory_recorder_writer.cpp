@@ -168,6 +168,14 @@ void TrajectoryRecorder::writeHeader() {
         writeNeuralTopPointHeader(file_, "roi_neural_superpoint");
         writeNeuralTopPointHeader(file_, "roi_neural_aliked");
     }
+    // Always-recorded prediction audit columns. Unlike legacy landing_x/y/t,
+    // these remain populated when recording.raw_mode=true.
+    file_ << ",pred_valid_ungated,pred_x_ungated,pred_y_ungated,pred_t_ungated"
+          << ",pred_method,pred_confidence,pred_speed_mps,pred_student_w,pred_obs_source"
+          << ",control_gate_selected,control_gate_passed,control_gate_reason"
+          << ",control_gate_stable_frames"
+          << ",pred_x_gated,pred_y_gated,pred_t_gated"
+          << ",control_base_x,control_base_y";
     file_ << "\n";
     header_written_ = true;
 }
@@ -214,7 +222,10 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
     for (size_t i = 0; i < entry.results.size(); ++i) {
         const auto& r = entry.results[i];
         if (r.track_id < 0) continue;
-        if (cfg_.raw_mode && !r.raw_observation_valid) continue;
+        const bool has_prediction_audit =
+            i < entry.preds.size() &&
+            (entry.preds[i].valid || entry.preds[i].control_gate_selected != 0);
+        if (cfg_.raw_mode && !r.raw_observation_valid && !has_prediction_audit) continue;
 
         const bool use_raw = cfg_.raw_mode && r.raw_observation_valid;
         const float out_x = use_raw ? r.raw_x : r.x;
@@ -427,6 +438,28 @@ void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
                 r.roi_neural_aliked_top_count,
                 r.roi_neural_aliked_top_points);
         }
+        const LandingPrediction* pred =
+            i < entry.preds.size() ? &entry.preds[i] : nullptr;
+        const bool ungated_valid = pred && pred->valid;
+        const bool gated_valid = ungated_valid && pred->control_gate_passed != 0;
+        file_ << "," << (ungated_valid ? 1 : 0)
+              << "," << (ungated_valid ? pred->x : 0.0f)
+              << "," << (ungated_valid ? pred->y : 0.0f)
+              << "," << (ungated_valid ? pred->time_to_land : 0.0f)
+              << "," << (ungated_valid ? pred->method : -1)
+              << "," << (ungated_valid ? pred->confidence : 0.0f)
+              << "," << (ungated_valid ? pred->speed_mps : 0.0f)
+              << "," << (ungated_valid ? pred->student_w : 0.0f)
+              << "," << (ungated_valid ? pred->obs_source : -1)
+              << "," << (pred ? pred->control_gate_selected : 0)
+              << "," << (pred ? pred->control_gate_passed : 0)
+              << "," << (pred ? pred->control_gate_reason : 0)
+              << "," << (pred ? pred->control_gate_stable_frames : 0)
+              << "," << (gated_valid ? pred->x : 0.0f)
+              << "," << (gated_valid ? pred->y : 0.0f)
+              << "," << (gated_valid ? pred->time_to_land : 0.0f)
+              << "," << (gated_valid ? pred->control_base_x : 0.0f)
+              << "," << (gated_valid ? pred->control_base_y : 0.0f);
         file_ << "\n";
     }
 }
