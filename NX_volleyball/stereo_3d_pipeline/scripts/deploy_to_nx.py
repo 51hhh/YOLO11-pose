@@ -142,7 +142,10 @@ def sync_files(ssh):
     removed = " ".join(f"config/{name}" for name in sorted(REMOVED_CONFIGS))
     run_cmd(ssh, f"cd {NX_DIR} && rm -f {removed}")
     run_cmd(ssh, "mkdir -p /home/nvidia/NX_volleyball/calibration")
-    run_cmd(ssh, "sudo install -d -o nvidia -g nvidia /run/volleyball")
+    _, _, runtime_rc = run_cmd(
+        ssh, "sudo install -d -o nvidia -g nvidia /run/volleyball")
+    if runtime_rc != 0:
+        raise RuntimeError("Cannot prepare writable /run/volleyball on NX")
     calibration_file = os.path.abspath(
         os.path.join(LOCAL_DIR, "..", "calibration", "stereo_calib.yaml"))
     if not os.path.isfile(calibration_file):
