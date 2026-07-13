@@ -19,7 +19,16 @@ struct Ros2BridgeConfig {
     std::string topic_landing_base = "/nx/debug/ball/landing_base";
     bool nx_observation_enabled = true;
     std::string nx_observation_topic = "/nx/ball/observation";
-    std::string nx_observation_frame_id = "nx_camera_optical_frame";
+    std::string nx_observation_frame_id = "nx_left_rectified_optical_frame";
+    std::string nx_observation_source_epoch_file =
+        "/run/volleyball/nx_source_epoch";
+    int nx_observation_class_id = 0;
+    double nx_observation_min_depth_m = 0.8;
+    double nx_observation_max_depth_m = 15.0;
+    double nx_observation_max_speed_mps = 35.0;
+    double nx_observation_reacquire_timeout_s = 3.0;
+    double nx_observation_reacquire_base_gate_m = 0.75;
+    bool nx_observation_allow_fallback = false;
     bool swap_xy = false;
     bool invert_x = false;
     bool invert_y = false;

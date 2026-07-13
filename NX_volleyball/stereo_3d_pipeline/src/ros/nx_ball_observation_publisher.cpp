@@ -1,13 +1,12 @@
 #ifdef HAS_ROS2
 #include "nx_ball_observation_publisher.h"
+#include "nx_observation_quality.h"
+#include "source_epoch.h"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <limits>
-#include <random>
-#include <unistd.h>
 
 namespace stereo3d {
 
@@ -81,81 +80,162 @@ float selectedDisparity(const Object3D& obj) {
         : std::numeric_limits<float>::quiet_NaN();
 }
 
-float selectedMatchConfidence(const Object3D& obj) {
-    switch (obj.stereo_depth_source) {
-    case 2:  return clamp01(obj.subpixel_confidence);
-    case 4:  return clamp01(obj.p0p1_center_patch_trust);
-    case 5:  return clamp01(obj.p0p1_edge_centroid_trust);
-    case 8:  return clamp01(obj.p0p1_radial_center_trust);
-    case 9:  return clamp01(obj.p0p1_edge_pair_center_trust);
-    case 10: return clamp01(obj.roi_corner_points_confidence);
-    case 11: return clamp01(obj.roi_texture_points_confidence);
-    case 12: return clamp01(obj.fallback_feature_points_confidence);
-    case 13: return clamp01(obj.roi_binary_points_confidence);
-    case 14: return clamp01(obj.roi_orb_points_confidence);
-    case 15: return clamp01(obj.roi_brisk_points_confidence);
-    case 16: return clamp01(obj.roi_akaze_points_confidence);
-    case 17: return clamp01(obj.roi_sift_points_confidence);
-    case 18: return clamp01(obj.roi_iou_region_color_patch_confidence);
-    case 19: return clamp01(obj.roi_patch_iou_color_edge_confidence);
-    case 20:
-        return clamp01(std::max(obj.roi_neural_xfeat_confidence,
-                                obj.roi_neural_feature_confidence));
-    case 21: return clamp01(obj.roi_cuda_template_match_confidence);
-    case 22: return clamp01(obj.roi_cuda_stereo_bm_confidence);
-    case 23: return clamp01(obj.roi_cuda_stereo_sgm_confidence);
-    case 24: return clamp01(obj.roi_ring_edge_profile_confidence);
-    default: break;
-    }
-    return clamp01(obj.pair_score);
-}
-
-double depthSigmaFromObservation(const Object3D& obj, float confidence) {
-    const double z = std::max(0.1, static_cast<double>(obj.raw_z));
-    double sigma = std::max(0.05, 0.025 * z);
-    const double conf = std::max(0.05, static_cast<double>(confidence));
-    sigma /= std::sqrt(conf);
-    if (obj.stereo_match_source != 1) sigma *= 2.0;
-    if (obj.stereo_depth_source == 0) sigma *= 3.0;
-    return sigma;
-}
-
 }  // namespace
 
 NxBallObservationPublisher::NxBallObservationPublisher(
     const std::shared_ptr<rclcpp::Node>& node,
     const std::string& topic,
-    const std::string& frame_id)
-    : node_(node), frame_id_(frame_id) {
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+    const std::string& frame_id,
+    const std::string& source_epoch_file,
+    int class_id,
+    double min_depth_m,
+    double max_depth_m,
+    double max_speed_mps,
+    double reacquire_timeout_s,
+    double reacquire_base_gate_m,
+    bool allow_fallback)
+    : node_(node),
+      frame_id_(frame_id),
+      class_id_(class_id),
+      min_depth_m_(std::max(0.0, min_depth_m)),
+      max_depth_m_(std::max(min_depth_m_ + 0.1, max_depth_m)),
+      max_speed_mps_(std::max(1.0, max_speed_mps)),
+      reacquire_timeout_s_(std::max(0.0, reacquire_timeout_s)),
+      reacquire_base_gate_m_(std::max(0.0, reacquire_base_gate_m)),
+      allow_fallback_(allow_fallback) {
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1))
+                   .best_effort()
+                   .durability_volatile()
+                   .deadline(rclcpp::Duration::from_seconds(0.05));
     pub_ = node_->create_publisher<volleyball_interfaces::msg::NxBallObservation>(
         topic, qos);
-    std::random_device rd;
-    source_epoch_ = rd() ^ uint32_t(::getpid()) ^
-        uint32_t(std::chrono::system_clock::now().time_since_epoch().count());
-    if (source_epoch_ == 0) source_epoch_ = 1;
-    RCLCPP_INFO(node_->get_logger(), "NX raw observation: %s epoch=%u frame=%s",
-                topic.c_str(), source_epoch_, frame_id_.c_str());
+    source_epoch_ = createSourceEpoch(source_epoch_file);
+    RCLCPP_INFO(
+        node_->get_logger(),
+        "NX raw observation: %s epoch=%u epoch_file=%s frame=%s depth=[%.2f,%.2f) "
+        "max_speed=%.1f reacquire=%.2fs fallback=%d",
+        topic.c_str(), source_epoch_, source_epoch_file.c_str(), frame_id_.c_str(),
+        min_depth_m_, max_depth_m_, max_speed_mps_,
+        reacquire_timeout_s_, allow_fallback_ ? 1 : 0);
+}
+
+bool NxBallObservationPublisher::eligible(const Object3D& obj) const {
+    if (!obj.raw_observation_valid || !std::isfinite(obj.raw_x) ||
+        !std::isfinite(obj.raw_y) || !std::isfinite(obj.raw_z) ||
+        obj.class_id != class_id_ ||
+        obj.raw_z < min_depth_m_ || obj.raw_z >= max_depth_m_ ||
+        obj.stereo_match_source <= 0 || obj.depth_method == 0 ||
+        (!allow_fallback_ && obj.stereo_match_source != 1)) {
+        return false;
+    }
+    const double speed = std::sqrt(
+        static_cast<double>(obj.vx) * obj.vx +
+        static_cast<double>(obj.vy) * obj.vy +
+        static_cast<double>(obj.vz) * obj.vz);
+    return std::isfinite(speed) && speed <= max_speed_mps_;
+}
+
+bool NxBallObservationPublisher::physicallyPlausible(
+    const Object3D& obj, double stamp_s) const {
+    if (!have_last_state_) return true;
+    const double dt = stamp_s - last_stamp_s_;
+    if (!std::isfinite(dt) || dt <= 0.0) return false;
+    if (dt > reacquire_timeout_s_) return true;
+    double distance_sq = 0.0;
+    const double observed[3] = {obj.raw_x, obj.raw_y, obj.raw_z};
+    for (int axis = 0; axis < 3; ++axis) {
+        const double predicted = last_position_[axis] + last_velocity_[axis] * dt;
+        const double delta = observed[axis] - predicted;
+        distance_sq += delta * delta;
+    }
+    const double gate = reacquire_base_gate_m_ + max_speed_mps_ * dt;
+    return distance_sq <= gate * gate;
+}
+
+void NxBallObservationPublisher::acceptObservation(
+    const Object3D& obj, double stamp_s, bool new_logical_track) {
+    if (new_logical_track || active_output_track_id_ < 0) {
+        active_output_track_id_ = next_output_track_id_;
+        next_output_track_id_ =
+            next_output_track_id_ >= std::numeric_limits<int>::max()
+                ? 1
+                : next_output_track_id_ + 1;
+    }
+    active_source_track_id_ = obj.track_id;
+    last_stamp_s_ = stamp_s;
+    last_position_ = {obj.raw_x, obj.raw_y, obj.raw_z};
+    last_velocity_ = {obj.vx, obj.vy, obj.vz};
+    have_last_state_ = true;
+}
+
+int NxBallObservationPublisher::selectObservation(
+    const std::vector<Object3D>& results, double stamp_s) {
+    int same_track = -1;
+    for (size_t i = 0; i < results.size(); ++i) {
+        const auto& obj = results[i];
+        if (!eligible(obj) || obj.track_id != active_source_track_id_ ||
+            !physicallyPlausible(obj, stamp_s)) {
+            continue;
+        }
+        if (same_track < 0 || obj.confidence > results[same_track].confidence) {
+            same_track = static_cast<int>(i);
+        }
+    }
+    if (same_track >= 0) {
+        acceptObservation(results[same_track], stamp_s, false);
+        return same_track;
+    }
+
+    const double gap = have_last_state_ ? stamp_s - last_stamp_s_
+                                        : std::numeric_limits<double>::infinity();
+    if (have_last_state_ && gap >= 0.0 && gap <= reacquire_timeout_s_) {
+        int associated = -1;
+        double best_score = std::numeric_limits<double>::infinity();
+        for (size_t i = 0; i < results.size(); ++i) {
+            const auto& obj = results[i];
+            if (!eligible(obj) || !physicallyPlausible(obj, stamp_s)) continue;
+            double distance_sq = 0.0;
+            const double observed[3] = {obj.raw_x, obj.raw_y, obj.raw_z};
+            for (int axis = 0; axis < 3; ++axis) {
+                const double predicted =
+                    last_position_[axis] + last_velocity_[axis] * gap;
+                const double delta = observed[axis] - predicted;
+                distance_sq += delta * delta;
+            }
+            const double score = std::sqrt(distance_sq) -
+                                 0.25 * clamp01(obj.confidence);
+            if (score < best_score) {
+                best_score = score;
+                associated = static_cast<int>(i);
+            }
+        }
+        if (associated >= 0) {
+            acceptObservation(results[associated], stamp_s, false);
+            return associated;
+        }
+        return -1;
+    }
+
+    int best = -1;
+    for (size_t i = 0; i < results.size(); ++i) {
+        const auto& obj = results[i];
+        if (eligible(obj) &&
+            (best < 0 || obj.confidence > results[best].confidence)) {
+            best = static_cast<int>(i);
+        }
+    }
+    if (best >= 0) acceptObservation(results[best], stamp_s, true);
+    return best;
 }
 
 void NxBallObservationPublisher::publish(
     int frame_id,
     const std::vector<Object3D>& results,
     const FrameMetadata& metadata) {
-    int best = -1;
-    for (size_t i = 0; i < results.size(); ++i) {
-        const auto& obj = results[i];
-        const bool stereo =
-            obj.raw_observation_valid &&
-            validPositive(obj.raw_z) &&
-            obj.stereo_match_source > 0 &&
-            obj.depth_method != 0 &&
-            std::isfinite(obj.raw_x) &&
-            std::isfinite(obj.raw_y);
-        if (stereo && (best < 0 || obj.confidence > results[best].confidence)) {
-            best = static_cast<int>(i);
-        }
-    }
+    const double stamp_s = metadata.host_capture_timestamp_ns > 0
+        ? static_cast<double>(metadata.host_capture_timestamp_ns) * 1e-9
+        : node_->get_clock()->now().seconds();
+    const int best = selectObservation(results, stamp_s);
     if (best < 0) return;
 
     const auto& obj = results[best];
@@ -170,7 +250,7 @@ void NxBallObservationPublisher::publish(
     msg.header.frame_id = frame_id_;
     msg.source_epoch = source_epoch_;
     msg.frame_id = frame_id;
-    msg.track_id = obj.track_id;
+    msg.track_id = active_output_track_id_;
     msg.class_id = obj.class_id;
     msg.detection_confidence = obj.confidence;
 
@@ -200,9 +280,7 @@ void NxBallObservationPublisher::publish(
     msg.fallback_observation = obj.stereo_match_source != 1;
     msg.left_device_timestamp = obj.left_timestamp_us;
     msg.right_device_timestamp = obj.right_timestamp_us;
-    msg.stereo_timestamp_delta_ns =
-        static_cast<int64_t>(obj.left_timestamp_us) -
-        static_cast<int64_t>(obj.right_timestamp_us);
+    msg.stereo_timestamp_delta_ns = metadata.stereo_timestamp_residual_ns;
     pub_->publish(msg);
 }
 

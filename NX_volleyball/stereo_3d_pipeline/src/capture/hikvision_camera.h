@@ -58,6 +58,7 @@ struct GrabResult {
     bool success = false;
     uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
     int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
+    int64_t stereo_timestamp_residual_ns = 0; // 去除左右设备固定偏移后的配对残差
     uint32_t frame_number = 0;    // SDK 帧号
     uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
     uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断

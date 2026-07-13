@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 project(stereo_3d_pipeline LANGUAGES CXX CUDA)
 
 # ==================== ROS2 ament_cmake ====================
+option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
 find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
   set(USE_ROS2 ON)
@@ -12,6 +13,11 @@ if(ament_cmake_FOUND)
   find_package(volleyball_interfaces REQUIRED)
   message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
 else()
+  if(REQUIRE_ROS2)
+    message(FATAL_ERROR
+      "REQUIRE_ROS2=ON but ament_cmake was not found. Source ROS2 and the "
+      "volleyball_interfaces workspace before configuring.")
+  endif()
   set(USE_ROS2 OFF)
   message(STATUS "ROS2: not found, standalone build")
 endif()
@@ -300,6 +306,8 @@ if(USE_ROS2)
     src/ros/goal_pose_bridge.cpp
     src/ros/diagnostic_publisher.cpp
     src/ros/nx_ball_observation_publisher.cpp
+    src/ros/nx_observation_quality.cpp
+    src/ros/source_epoch.cpp
   )
 endif()
 
@@ -361,6 +369,20 @@ endif()
 if(USE_ROS2)
   ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(source_epoch_test
+    tests/source_epoch_test.cpp
+    src/ros/source_epoch.cpp)
+  add_test(NAME source_epoch_test COMMAND source_epoch_test)
+
+  add_executable(nx_observation_quality_test
+    tests/nx_observation_quality_test.cpp
+    src/ros/nx_observation_quality.cpp)
+  target_include_directories(nx_observation_quality_test PRIVATE src)
+  add_test(NAME nx_observation_quality_test COMMAND nx_observation_quality_test)
 endif()
 
 # ==================== 标定工具 ====================

@@ -63,6 +63,7 @@ struct FrameMetadata {
     int64_t frame_counter_delta = 0;
     int64_t frame_number_delta = 0;
     int64_t timestamp_delta_us = 0;
+    int64_t stereo_timestamp_residual_ns = 0;
     bool grab_failed = false;
     bool is_detect_frame = true;
     bool p2_depth_modes_enabled = false;
@@ -102,6 +103,7 @@ struct FrameSlot {
     uint32_t right_frame_counter = 0;
     uint32_t left_trigger_index = 0;
     uint32_t right_trigger_index = 0;
+    int64_t stereo_timestamp_residual_ns = 0;
 
     // =========== Stage 0: 原始图像 ===========
     VPIImage rawL      = nullptr;         ///< 左原始图 (Pinned + Mapped)
@@ -237,6 +239,7 @@ struct FrameSlot {
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        stereo_timestamp_residual_ns = 0;
         p2_depth_modes_enabled = false;
         p2_depth_mode_mask = 0;
         p2_feature_job_scaffold_enabled = false;
@@ -270,6 +273,7 @@ struct FrameSlot {
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        stereo_timestamp_residual_ns = 0;
         p2_depth_modes_enabled = false;
         p2_depth_mode_mask = 0;
         p2_feature_job_scaffold_enabled = false;
@@ -337,6 +341,7 @@ inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     meta.timestamp_delta_us =
         (static_cast<int64_t>(slot.left_timestamp_us) -
          static_cast<int64_t>(slot.right_timestamp_us)) / 1000;
+    meta.stereo_timestamp_residual_ns = slot.stereo_timestamp_residual_ns;
     meta.grab_failed = slot.grab_failed;
     meta.is_detect_frame = slot.is_detect_frame;
     meta.p2_depth_modes_enabled = slot.p2_depth_modes_enabled;

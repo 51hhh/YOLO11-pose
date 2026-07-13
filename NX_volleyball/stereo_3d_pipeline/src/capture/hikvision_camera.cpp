@@ -472,6 +472,10 @@ bool HikvisionCamera::grabFramePair(
         return false;
     }
 
+    int64_t timestamp_residual_ns =
+        static_cast<int64_t>(result_left.timestamp_us) -
+        static_cast<int64_t>(result_right.timestamp_us);
+
     // 检查硬触发配对: FrameCounter 是随图像 payload 到达的水印计数。
     // PWM 在两台相机 StartGrabbing 之后启动，因此同一触发脉冲应满足 Lfc==Rfc。
     // Timestamp 只用于确认相位稳定和诊断 USB/SDK 队列抖动，不替代 FrameCounter。
@@ -480,8 +484,7 @@ bool HikvisionCamera::grabFramePair(
             config_.trigger_frequency_hz > 0
                 ? static_cast<int64_t>(1000000000LL / config_.trigger_frequency_hz)
                 : 10000000LL;
-        const int64_t timestamp_match_tol =
-            std::max<int64_t>(1000000LL, trigger_period_ns / 4);
+        constexpr int64_t timestamp_match_tol = 1000000LL;
         const unsigned int align_timeout_ms = std::min<unsigned int>(
             timeout_ms,
             std::max<unsigned int>(
@@ -632,6 +635,7 @@ bool HikvisionCamera::grabFramePair(
             expected_trigger_delta_ = trigger_delta;
             sync_initialized_ = true;
             consecutive_sync_mismatches_ = 0;
+            timestamp_residual_ns = 0;
             LOG_INFO("[HikCam] L/R sync initialized: frame_counter_delta=%ld, "
                      "frame_number_delta=%ld, trigger_delta=%ld, timestamp_offset=%ldns "
                      "(stable samples=%d)",
@@ -691,6 +695,7 @@ bool HikvisionCamera::grabFramePair(
             }
 
             consecutive_sync_mismatches_ = 0;
+            timestamp_residual_ns = offset_err;
             if (align_reads > 0) {
                 LOG_WARN("[HikCam] Frame pair realigned: reads=%d "
                          "Lfc=%u/Rfc=%u frame_counter_delta=%ld "
@@ -719,6 +724,9 @@ bool HikvisionCamera::grabFramePair(
             expected_timestamp_offset_ns_ = dt;
         }
     }
+
+    result_left.stereo_timestamp_residual_ns = timestamp_residual_ns;
+    result_right.stereo_timestamp_residual_ns = timestamp_residual_ns;
 
     consecutive_failures_ = 0;
     return true;

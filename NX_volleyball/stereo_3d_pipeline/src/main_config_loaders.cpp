@@ -447,6 +447,25 @@ stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
             n["topic"].as<std::string>(cfg.nx_observation_topic);
         cfg.nx_observation_frame_id =
             n["frame_id"].as<std::string>(cfg.nx_observation_frame_id);
+        cfg.nx_observation_source_epoch_file =
+            n["source_epoch_file"].as<std::string>(
+                cfg.nx_observation_source_epoch_file);
+        cfg.nx_observation_class_id =
+            n["class_id"].as<int>(cfg.nx_observation_class_id);
+        cfg.nx_observation_min_depth_m =
+            n["min_depth_m"].as<double>(cfg.nx_observation_min_depth_m);
+        cfg.nx_observation_max_depth_m =
+            n["max_depth_m"].as<double>(cfg.nx_observation_max_depth_m);
+        cfg.nx_observation_max_speed_mps =
+            n["max_speed_mps"].as<double>(cfg.nx_observation_max_speed_mps);
+        cfg.nx_observation_reacquire_timeout_s =
+            n["reacquire_timeout_s"].as<double>(
+                cfg.nx_observation_reacquire_timeout_s);
+        cfg.nx_observation_reacquire_base_gate_m =
+            n["reacquire_base_gate_m"].as<double>(
+                cfg.nx_observation_reacquire_base_gate_m);
+        cfg.nx_observation_allow_fallback =
+            n["allow_fallback"].as<bool>(cfg.nx_observation_allow_fallback);
     }
     if (auto v = ros["vision_to_world"]) {
         cfg.swap_xy       = v["swap_xy"].as<bool>(false);

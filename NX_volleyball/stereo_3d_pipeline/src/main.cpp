@@ -190,7 +190,15 @@ int main(int argc, char* argv[]) {
             nx_observation_pub = std::make_unique<stereo3d::NxBallObservationPublisher>(
                 ros2_node,
                 ros2_cfg.nx_observation_topic,
-                ros2_cfg.nx_observation_frame_id);
+                ros2_cfg.nx_observation_frame_id,
+                ros2_cfg.nx_observation_source_epoch_file,
+                ros2_cfg.nx_observation_class_id,
+                ros2_cfg.nx_observation_min_depth_m,
+                ros2_cfg.nx_observation_max_depth_m,
+                ros2_cfg.nx_observation_max_speed_mps,
+                ros2_cfg.nx_observation_reacquire_timeout_s,
+                ros2_cfg.nx_observation_reacquire_base_gate_m,
+                ros2_cfg.nx_observation_allow_fallback);
         }
 
         // 诊断发布器 (录制深度图 + 检测框)
