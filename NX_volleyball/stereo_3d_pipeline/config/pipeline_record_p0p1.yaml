@@ -24,7 +24,7 @@ calibration:
   file: "calibration/stereo_calib.yaml"
 
 disparity_offset:
-  enabled: false
+  enabled: true
   file: "config/disparity_offset_fit_20260709.json"
 
 rectify:
@@ -289,13 +289,30 @@ tracker:
   min_confidence: 0.3
 
 prediction:
+  # Same realtime landing path as pipeline_dual_yolo_roi.yaml:
+  # bbox_center disparity + d0 -> Student-t EKF -> RK4 rollout.
   gravity: 9.81
   air_density: 1.225
   ball_mass: 0.270
   ball_radius: 0.105
-  drag_coeff: 0.47
-  ground_y: 0.0
+  drag_coeff: 0.10
+  use_g_hat: true
+  g_hat: [0.0018134, 0.9701361, 0.2425544]
+  ground_h: -0.50
+  ground_y: 0.50
   max_predict_time: 3.0
+  rk4_dt: 0.008
+  min_speed: 0.5
+  use_student_t_ekf: true
+  student_t_nu: 12.0
+  sigma_d_px: 0.4
+  q_pos: 0.0001
+  q_vel: 1.5
+  prefer_bbox: true
+  enable_circle_fallback: true
+  circle_consistency_m: 0.35
+  allow_raw_fallback: true
+  allow_filtered_fallback: true
 
 display:
   enable: false
@@ -307,12 +324,16 @@ ros2:
   odom_topic: "/odom"
   odom_timeout_sec: 0.5
   topics:
-    ball_realtime: "/ball/realtime"
-    ball_landing: "/ball/landing"
-    predicted_path: "/ball/predicted_path"
-    actual_path: "/ball/actual_path"
-    ball_realtime_base: "/ball/realtime_base"
-    ball_landing_base: "/ball/landing_base"
+    ball_realtime: "/nx/debug/ball/realtime"
+    ball_landing: "/nx/debug/ball/landing"
+    predicted_path: "/nx/debug/ball/predicted_path"
+    actual_path: "/nx/debug/ball/actual_path"
+    ball_realtime_base: "/nx/debug/ball/realtime_base"
+    ball_landing_base: "/nx/debug/ball/landing_base"
+  nx_observation:
+    enable: true
+    topic: "/nx/ball/observation"
+    frame_id: "nx_camera_optical_frame"
   vision_to_world:
     swap_xy: false
     invert_x: false
@@ -320,6 +341,21 @@ ros2:
     rotation_deg: 0.0
     translation_x: 0.0
     translation_y: 0.0
+  control_goal:
+    enable: true
+    topic: "/nx/debug/auto_goal_pose"
+    min_depth_m: 0.0
+    max_depth_m: 14.0
+    max_abs_x_m: 3.6
+    min_confidence: 0.70
+    min_time_to_land_s: 0.25
+    max_time_to_land_s: 2.20
+    min_speed_mps: 0.80
+    min_student_w: 0.15
+    stable_frames: 3
+    max_stable_jump_m: 0.35
+    allow_polynomial: false
+    allow_fallback_observation: false
   diagnostic:
     enable: true
     depth_full_divisor: 6

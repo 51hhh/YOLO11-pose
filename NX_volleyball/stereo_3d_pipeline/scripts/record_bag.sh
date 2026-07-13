@@ -10,7 +10,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 CONFIG="${CONFIG:-$PROJECT_DIR/config/pipeline_yolo26_gpu.yaml}"
 DURATION=""
 OUTPUT_DIR="$PROJECT_DIR/bags"
-TOPICS="/debug/depth_full /debug/depth_roi /debug/raw_obs /ball/realtime /ball/landing /ball/predicted_path /ball/actual_path"
+TOPICS="/debug/depth_full /debug/depth_roi /debug/raw_obs /nx/ball/observation /nx/debug/ball/realtime /nx/debug/ball/landing /nx/debug/ball/predicted_path /nx/debug/ball/actual_path"
 
 # 解析参数
 while [[ $# -gt 0 ]]; do

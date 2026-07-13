@@ -297,11 +297,13 @@ prediction:
   ball_mass: 0.270
   ball_radius: 0.105
   drag_coeff: 0.10          # tuned on 2026-07-09 throw set (old 0.47 over-dragged)
-  # Ground plane from landing_eval/throws_gt.json (2026-07-09). Re-fit if camera moves.
+  # Test setup: camera optical center is 0.50 m above the floor.
+  # g_hat keeps the measured camera tilt; ground_h is the signed plane offset,
+  # so height(camera_origin) = -ground_h = 0.50 m.
   use_g_hat: true
   g_hat: [0.0018134, 0.9701361, 0.2425544]
-  ground_h: -1.259294
-  ground_y: 1.26            # legacy Y-down fallback if use_g_hat=false
+  ground_h: -0.50
+  ground_y: 0.50            # legacy Y-down fallback if use_g_hat=false
   max_predict_time: 3.0
   rk4_dt: 0.008
   min_speed: 0.5
@@ -326,12 +328,16 @@ ros2:
   odom_topic: "/odom"
   odom_timeout_sec: 0.5
   topics:
-    ball_realtime: "/ball/realtime"
-    ball_landing: "/ball/landing"
-    predicted_path: "/ball/predicted_path"
-    actual_path: "/ball/actual_path"
-    ball_realtime_base: "/ball/realtime_base"
-    ball_landing_base: "/ball/landing_base"
+    ball_realtime: "/nx/debug/ball/realtime"
+    ball_landing: "/nx/debug/ball/landing"
+    predicted_path: "/nx/debug/ball/predicted_path"
+    actual_path: "/nx/debug/ball/actual_path"
+    ball_realtime_base: "/nx/debug/ball/realtime_base"
+    ball_landing_base: "/nx/debug/ball/landing_base"
+  nx_observation:
+    enable: true
+    topic: "/nx/ball/observation"
+    frame_id: "nx_camera_optical_frame"
   vision_to_world:
     swap_xy: false
     invert_x: false
@@ -339,6 +345,23 @@ ros2:
     rotation_deg: 0.0
     translation_x: 0.0
     translation_y: 0.0
+  control_goal:
+    enable: false
+    topic: "/nx/debug/auto_goal_pose"
+    # 落点先在相机平面范围内检查：X 为左右，depth 为前方距离。
+    min_depth_m: 0.0
+    max_depth_m: 14.0
+    max_abs_x_m: 3.6
+    # 控制质量门控；多项式 fallback 仅保留给 RViz。
+    min_confidence: 0.70
+    min_time_to_land_s: 0.25
+    max_time_to_land_s: 2.20
+    min_speed_mps: 0.80
+    min_student_w: 0.15
+    stable_frames: 3
+    max_stable_jump_m: 0.35
+    allow_polynomial: false
+    allow_fallback_observation: false
   diagnostic:
     enable: true
     depth_full_divisor: 6
