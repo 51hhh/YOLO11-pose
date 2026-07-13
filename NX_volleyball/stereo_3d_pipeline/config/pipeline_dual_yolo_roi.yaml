@@ -1,8 +1,7 @@
 # ============================================================
-# Dual YOLO ROI test config
-# Purpose: run left/right YOLO concurrently, then use epipolar
-# center disparity as the stereo observation. Runtime baseline
-# still comes from calibration.file, not fusion.baseline_mm.
+# Current NX runtime main config.
+# Runs left/right YOLO concurrently and produces ROI stereo observations.
+# Runtime baseline comes from calibration.file, not fusion.baseline_mm.
 # ============================================================
 
 camera:
@@ -26,7 +25,9 @@ calibration:
   file: "calibration/stereo_calib.yaml"
 
 disparity_offset:
-  enabled: true
+  # Disabled after the 853.154 mm stereo recalibration. Re-enable only after
+  # fitting a new d0 with images rectified by the current calibration file.
+  enabled: false
   file: "config/disparity_offset_fit_20260709.json"
 
 rectify:
@@ -229,7 +230,7 @@ neural_feature_matching_aliked:
 fusion:
   min_depth: 0.8
   max_depth: 20.0
-  baseline_mm: 1000.0          # reference only; calibration file is authoritative
+  baseline_mm: 853.154         # reference only; calibration file is authoritative
   object_diameter: 0.200
   stereo_min_z: 0.8            # accept dual-YOLO stereo from the near test range
   mono_max_z: 1.2              # above this range, prefer stereo observations
@@ -337,7 +338,8 @@ ros2:
   nx_observation:
     enable: true
     topic: "/nx/ball/observation"
-    frame_id: "nx_camera_optical_frame"
+    frame_id: "nx_left_rectified_optical_frame"
+    source_epoch_file: "/run/volleyball/nx_source_epoch"
   vision_to_world:
     swap_xy: false
     invert_x: false

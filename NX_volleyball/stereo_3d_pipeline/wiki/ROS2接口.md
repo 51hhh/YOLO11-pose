@@ -31,7 +31,8 @@ ros2:
   nx_observation:
     enable: true
     topic: "/nx/ball/observation"
-    frame_id: "nx_camera_optical_frame"
+    frame_id: "nx_left_rectified_optical_frame"
+    source_epoch_file: "/run/volleyball/nx_source_epoch"
 ```
 
 视觉到世界平面变换:
@@ -64,7 +65,7 @@ ros2:
 | `/nx/debug/ball/actual_path` | `nav_msgs/Path` | `world_frame_id` | 实际轨迹 trail |
 | `/nx/debug/ball/realtime_base` | `geometry_msgs/PointStamped` | `base_frame_id` | 机器人本体系实时球位置 |
 | `/nx/debug/ball/landing_base` | `geometry_msgs/PointStamped` | `base_frame_id` | 机器人本体系落点 |
-| `/nx/ball/observation` | `volleyball_interfaces/NxBallObservation` | `nx_camera_optical_frame` | NX 当前帧原始双目观测 |
+| `/nx/ball/observation` | `volleyball_interfaces/NxBallObservation` | `nx_left_rectified_optical_frame` | NX 当前帧原始双目观测；坐标基于当前标定的 `R1/P1` |
 | `/nx/debug/auto_goal_pose` | `geometry_msgs/PoseStamped` | `base_frame_id` | 本机门控录制用 debug 目标，不接底盘 |
 
 `/auto/goal_pose` 归 RDK `catch_controller` 独占。NX 侧代码会拒绝把本机门控目标发布到

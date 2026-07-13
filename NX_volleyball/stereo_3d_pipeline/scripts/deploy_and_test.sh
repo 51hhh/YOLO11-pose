@@ -5,12 +5,12 @@
 # 使用方法:
 #   bash scripts/deploy_and_test.sh [build|test|all]
 #
-# 前提: ssh-copy-id nvidia@192.168.31.56 (或使用密码)
+# 前提: ssh-copy-id nvidia@10.42.0.149 (或通过 NX_HOST 覆盖)
 # ============================================================
 
 set -e
 
-NX_HOST="nvidia@192.168.31.56"
+NX_HOST="nvidia@${NX_HOST:-10.42.0.149}"
 NX_DIR="/home/nvidia/NX_volleyball/stereo_3d_pipeline"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -21,12 +21,14 @@ SCP_CMD="scp -o StrictHostKeyChecking=no -r"
 sync_code() {
     echo "=== Syncing code to NX ==="
     # 创建远端目录结构
-    ${SSH_CMD} "mkdir -p ${NX_DIR}/{src/{pipeline,stereo,detect,fusion,calibration,rectify,capture,utils},config,scripts}"
+    ${SSH_CMD} "mkdir -p ${NX_DIR}/{src/{pipeline,stereo,detect,fusion,calibration,rectify,capture,utils},config,scripts} /home/nvidia/NX_volleyball/calibration && sudo install -d -o nvidia -g nvidia /run/volleyball"
 
     # 同步源文件
     ${SCP_CMD} "${LOCAL_DIR}/src/" "${NX_HOST}:${NX_DIR}/src/"
     ${SCP_CMD} "${LOCAL_DIR}/config/" "${NX_HOST}:${NX_DIR}/config/"
     ${SCP_CMD} "${LOCAL_DIR}/CMakeLists.txt" "${NX_HOST}:${NX_DIR}/"
+    ${SCP_CMD} "${LOCAL_DIR}/package.xml" "${NX_HOST}:${NX_DIR}/"
+    ${SCP_CMD} "${LOCAL_DIR}/../calibration/stereo_calib.yaml" "${NX_HOST}:/home/nvidia/NX_volleyball/calibration/"
 
     echo "=== Code synced ==="
 }
@@ -36,6 +38,15 @@ build() {
     echo "=== Building on NX ==="
     ${SSH_CMD} << 'ENDSSH'
 cd /home/nvidia/NX_volleyball/stereo_3d_pipeline
+. /opt/ros/humble/setup.bash
+if [ -f /home/nvidia/volleyball_ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/volleyball_ros2_ws/install/setup.bash
+elif [ -f /home/nvidia/ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/ros2_ws/install/setup.bash
+else
+    echo "volleyball_interfaces workspace setup.bash not found" >&2
+    exit 2
+fi
 
 # 创建 build 目录
 mkdir -p build && cd build
@@ -44,6 +55,7 @@ mkdir -p build && cd build
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCUDA_ARCH="87" \
+    -DREQUIRE_ROS2=ON \
     2>&1
 
 # 编译 (NX 6核)
@@ -59,9 +71,25 @@ test_dry_run() {
     echo "=== Testing (dry-run, ROI mode) ==="
     ${SSH_CMD} << 'ENDSSH'
 cd /home/nvidia/NX_volleyball/stereo_3d_pipeline
+. /opt/ros/humble/setup.bash
+if [ -f /home/nvidia/volleyball_ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/volleyball_ros2_ws/install/setup.bash
+elif [ -f /home/nvidia/ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/ros2_ws/install/setup.bash
+else
+    echo "volleyball_interfaces workspace setup.bash not found" >&2
+    exit 2
+fi
 
-# 使用 ROI 配置, dry-run 模式 (无相机时自动使用合成帧)
-timeout 10 build/stereo_pipeline --config config/pipeline_roi.yaml 2>&1 || true
+# 使用当前主配置进行初始化测试
+set +e
+timeout 10 build/stereo_pipeline --config config/pipeline_rdk_joint.yaml 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+    echo "stereo_pipeline startup test failed: rc=$rc" >&2
+    exit "$rc"
+fi
 
 echo "=== Dry-run test complete ==="
 ENDSSH
@@ -72,13 +100,29 @@ perf_test() {
     echo "=== Performance test (ROI mode, 5 seconds) ==="
     ${SSH_CMD} << 'ENDSSH'
 cd /home/nvidia/NX_volleyball/stereo_3d_pipeline
+. /opt/ros/humble/setup.bash
+if [ -f /home/nvidia/volleyball_ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/volleyball_ros2_ws/install/setup.bash
+elif [ -f /home/nvidia/ros2_ws/install/setup.bash ]; then
+    . /home/nvidia/ros2_ws/install/setup.bash
+else
+    echo "volleyball_interfaces workspace setup.bash not found" >&2
+    exit 2
+fi
 
 # 设置最大性能模式
 sudo nvpmodel -m 0 2>/dev/null || true
 sudo jetson_clocks 2>/dev/null || true
 
 # 运行 5 秒性能测试
-timeout 5 build/stereo_pipeline --config config/pipeline_roi.yaml 2>&1 || true
+set +e
+timeout 5 build/stereo_pipeline --config config/pipeline_rdk_joint.yaml 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+    echo "stereo_pipeline performance test failed: rc=$rc" >&2
+    exit "$rc"
+fi
 
 echo ""
 echo "=== Performance test complete ==="

@@ -175,9 +175,16 @@ echo "Delete stale remote synced files: ${DELETE}"
 echo "Checksum compare: ${CHECKSUM}"
 
 "${ssh_base[@]}" "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}'"
+"${ssh_base[@]}" "${REMOTE_HOST}" \
+  "mkdir -p '/home/nvidia/NX_volleyball/calibration'"
 
 rsync "${rsync_opts[@]}" \
   -e "${rsync_rsh[*]}" \
   "${excludes[@]}" \
   "${LOCAL_DIR}/" \
   "${REMOTE_HOST}:${REMOTE_DIR}/"
+
+rsync "${rsync_opts[@]}" \
+  -e "${rsync_rsh[*]}" \
+  "${LOCAL_DIR}/../calibration/stereo_calib.yaml" \
+  "${REMOTE_HOST}:/home/nvidia/NX_volleyball/calibration/stereo_calib.yaml"
