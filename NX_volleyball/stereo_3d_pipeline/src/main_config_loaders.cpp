@@ -427,12 +427,26 @@ stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
     cfg.odom_timeout_sec = ros["odom_timeout_sec"].as<double>(0.5);
 
     if (auto t = ros["topics"]) {
-        cfg.topic_realtime       = t["ball_realtime"].as<std::string>("/ball/realtime");
-        cfg.topic_landing        = t["ball_landing"].as<std::string>("/ball/landing");
-        cfg.topic_predicted_path = t["predicted_path"].as<std::string>("/ball/predicted_path");
-        cfg.topic_actual_path    = t["actual_path"].as<std::string>("/ball/actual_path");
-        cfg.topic_realtime_base  = t["ball_realtime_base"].as<std::string>("/ball/realtime_base");
-        cfg.topic_landing_base   = t["ball_landing_base"].as<std::string>("/ball/landing_base");
+        cfg.topic_realtime = t["ball_realtime"].as<std::string>(
+            "/nx/debug/ball/realtime");
+        cfg.topic_landing = t["ball_landing"].as<std::string>(
+            "/nx/debug/ball/landing");
+        cfg.topic_predicted_path = t["predicted_path"].as<std::string>(
+            "/nx/debug/ball/predicted_path");
+        cfg.topic_actual_path = t["actual_path"].as<std::string>(
+            "/nx/debug/ball/actual_path");
+        cfg.topic_realtime_base = t["ball_realtime_base"].as<std::string>(
+            "/nx/debug/ball/realtime_base");
+        cfg.topic_landing_base = t["ball_landing_base"].as<std::string>(
+            "/nx/debug/ball/landing_base");
+    }
+    if (auto n = ros["nx_observation"]) {
+        cfg.nx_observation_enabled =
+            n["enable"].as<bool>(cfg.nx_observation_enabled);
+        cfg.nx_observation_topic =
+            n["topic"].as<std::string>(cfg.nx_observation_topic);
+        cfg.nx_observation_frame_id =
+            n["frame_id"].as<std::string>(cfg.nx_observation_frame_id);
     }
     if (auto v = ros["vision_to_world"]) {
         cfg.swap_xy       = v["swap_xy"].as<bool>(false);
@@ -441,6 +455,30 @@ stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
         cfg.rotation_deg  = v["rotation_deg"].as<double>(0.0);
         cfg.translation_x = v["translation_x"].as<double>(0.0);
         cfg.translation_y = v["translation_y"].as<double>(0.0);
+    }
+    if (auto g = ros["control_goal"]) {
+        cfg.control_goal_enabled = g["enable"].as<bool>(false);
+        cfg.control_goal_topic =
+            g["topic"].as<std::string>("/nx/debug/auto_goal_pose");
+        cfg.control_min_depth_m = g["min_depth_m"].as<double>(0.0);
+        cfg.control_max_depth_m = g["max_depth_m"].as<double>(14.0);
+        cfg.control_max_abs_x_m = g["max_abs_x_m"].as<double>(3.6);
+        cfg.control_min_confidence = g["min_confidence"].as<double>(0.70);
+        cfg.control_min_time_to_land_s = g["min_time_to_land_s"].as<double>(0.25);
+        cfg.control_max_time_to_land_s = g["max_time_to_land_s"].as<double>(2.20);
+        cfg.control_min_speed_mps = g["min_speed_mps"].as<double>(0.80);
+        cfg.control_min_student_w = g["min_student_w"].as<double>(0.15);
+        cfg.control_stable_frames = g["stable_frames"].as<int>(3);
+        cfg.control_max_stable_jump_m = g["max_stable_jump_m"].as<double>(0.35);
+        cfg.control_allow_polynomial = g["allow_polynomial"].as<bool>(false);
+        cfg.control_allow_fallback_observation =
+            g["allow_fallback_observation"].as<bool>(false);
+    } else {
+        cfg.control_goal_enabled = false;
+        cfg.control_goal_topic = "/nx/debug/auto_goal_pose";
+        cfg.control_min_depth_m = 0.0;
+        cfg.control_max_depth_m = 14.0;
+        cfg.control_max_abs_x_m = 3.6;
     }
     return cfg;
 }

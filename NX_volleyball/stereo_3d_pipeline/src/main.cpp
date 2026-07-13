@@ -30,6 +30,7 @@
 #include <algorithm>
 
 #ifdef HAS_ROS2
+#include "ros/nx_ball_observation_publisher.h"
 #include <rclcpp/rclcpp.hpp>
 #include "ros/goal_pose_bridge.h"
 #include "ros/diagnostic_publisher.h"
@@ -167,6 +168,7 @@ int main(int argc, char* argv[]) {
     std::shared_ptr<rclcpp::Node> ros2_node;
     std::unique_ptr<stereo3d::GoalPoseBridge> ros2_bridge;
     std::unique_ptr<stereo3d::DiagnosticPublisher> ros2_diag;
+    std::unique_ptr<stereo3d::NxBallObservationPublisher> nx_observation_pub;
     std::thread ros2_spin_thread;
     stereo3d::Ros2BridgeConfig ros2_cfg{};
 
@@ -184,6 +186,12 @@ int main(int argc, char* argv[]) {
         rclcpp::init(argc, argv);
         ros2_node = std::make_shared<rclcpp::Node>("stereo_3d_pipeline");
         ros2_bridge = std::make_unique<stereo3d::GoalPoseBridge>(ros2_node, ros2_cfg);
+        if (ros2_cfg.nx_observation_enabled) {
+            nx_observation_pub = std::make_unique<stereo3d::NxBallObservationPublisher>(
+                ros2_node,
+                ros2_cfg.nx_observation_topic,
+                ros2_cfg.nx_observation_frame_id);
+        }
 
         // 诊断发布器 (录制深度图 + 检测框)
         stereo3d::DiagnosticPublisherConfig diag_cfg;
@@ -242,18 +250,12 @@ int main(int argc, char* argv[]) {
 
             // 预测落点
             auto preds = predictor.update(results, dt);
-            {
-                std::lock_guard<std::mutex> lock(pred_mutex);
-                latest_preds = preds;
-            }
-
-            // 记录轨迹
             double timestamp = std::chrono::duration<double>(
                 now.time_since_epoch()).count();
-            recorder.record(frame_id, timestamp, results, preds, metadata);
 
-            // ROS2 发布
+            // ROS2 发布并把实时控制门控审计结果写回 preds，随后统一录制。
 #ifdef HAS_ROS2
+            if (nx_observation_pub) nx_observation_pub->publish(frame_id, results, metadata);
             if (ros2_bridge && ros2_bridge->enabled()) {
                 auto stamp = ros2_node->get_clock()->now();
                 for (size_t i = 0; i < results.size(); ++i) {
@@ -265,19 +267,76 @@ int main(int argc, char* argv[]) {
                         ros2_bridge->publishRealtimeBase(bx, by, -obj.y, stamp);
                     }
                 }
+                // 从所有有效候选中优先选择 Student-t EKF 且置信度最高的
+                // track，避免按检测数组顺序把低质量 fallback 送入控制门控。
+                size_t best_pred = preds.size();
+                double best_score = -1.0;
                 for (size_t i = 0; i < preds.size(); ++i) {
-                    if (preds[i].valid) {
-                        auto wl = ros2_bridge->transformVisionToWorld(preds[i].x, preds[i].y);
-                        ros2_bridge->publishLandingWorld(wl.x, wl.y, stamp);
-                        double bx, by;
-                        if (ros2_bridge->tryWorldToBase(wl.x, wl.y, bx, by)) {
-                            ros2_bridge->publishLandingBase(bx, by, stamp);
-                        }
-                        break;  // 只发布第一个有效落点
+                    if (!preds[i].valid || i >= results.size()) continue;
+                    const bool method_ok = preds[i].method == 0 ||
+                        (preds[i].method == 1 && ros2_cfg.control_allow_polynomial);
+                    const bool obs_ok = preds[i].obs_source >= 0 &&
+                        (preds[i].obs_source < 3 ||
+                         ros2_cfg.control_allow_fallback_observation);
+                    const bool quality_hint = method_ok && obs_ok &&
+                        preds[i].confidence >= ros2_cfg.control_min_confidence &&
+                        preds[i].time_to_land >= ros2_cfg.control_min_time_to_land_s &&
+                        preds[i].time_to_land <= ros2_cfg.control_max_time_to_land_s &&
+                        preds[i].speed_mps >= ros2_cfg.control_min_speed_mps &&
+                        preds[i].student_w >= ros2_cfg.control_min_student_w &&
+                        std::fabs(preds[i].x) <= ros2_cfg.control_max_abs_x_m &&
+                        preds[i].y > ros2_cfg.control_min_depth_m &&
+                        preds[i].y <= ros2_cfg.control_max_depth_m;
+                    const double score = preds[i].confidence +
+                        (quality_hint ? 4.0 : 0.0) +
+                        (preds[i].method == 0 ? 2.0 : 0.0) +
+                        (preds[i].obs_source >= 0 && preds[i].obs_source < 3 ? 0.5 : 0.0) +
+                        0.1 * std::clamp(static_cast<double>(preds[i].student_w), 0.0, 1.0);
+                    if (score > best_score) {
+                        best_score = score;
+                        best_pred = i;
+                    }
+                }
+                if (best_pred < preds.size()) {
+                    const size_t i = best_pred;
+                    auto wl = ros2_bridge->transformVisionToWorld(preds[i].x, preds[i].y);
+                    ros2_bridge->publishLandingWorld(wl.x, wl.y, stamp);
+                    double bx, by;
+                    if (ros2_bridge->tryWorldToBase(wl.x, wl.y, bx, by)) {
+                        ros2_bridge->publishLandingBase(bx, by, stamp);
+                    }
+                    // 控制目标与 RViz 落点分离：仅在预测质量、范围、
+                    // 坐标变换和 odom 全部有效时，才发布 debug gate topic。
+                    stereo3d::ControlGoalGateResult gate_result;
+                    const bool gate_passed = ros2_bridge->tryPublishControlGoalFromVision(
+                        preds[i].x, preds[i].y,
+                        results[i].track_id,
+                        preds[i].confidence,
+                        preds[i].time_to_land,
+                        preds[i].speed_mps,
+                        preds[i].method,
+                        preds[i].student_w,
+                        preds[i].obs_source,
+                        stamp,
+                        &gate_result);
+                    preds[i].control_gate_selected = 1;
+                    preds[i].control_gate_passed = gate_passed ? 1 : 0;
+                    preds[i].control_gate_reason =
+                        static_cast<int>(gate_result.reason);
+                    preds[i].control_gate_stable_frames = gate_result.stable_frames;
+                    if (gate_passed) {
+                        preds[i].control_base_x = static_cast<float>(gate_result.base_x);
+                        preds[i].control_base_y = static_cast<float>(gate_result.base_y);
                     }
                 }
             }
 #endif
+
+            {
+                std::lock_guard<std::mutex> lock(pred_mutex);
+                latest_preds = preds;
+            }
+            recorder.record(frame_id, timestamp, results, preds, metadata);
 
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;

@@ -51,6 +51,7 @@ enum class TrackerState {
  * @brief Per-frame stereo sync metadata exposed to callbacks and recorders.
  */
 struct FrameMetadata {
+    uint64_t host_capture_timestamp_ns = 0;
     uint64_t left_timestamp_us = 0;
     uint64_t right_timestamp_us = 0;
     uint32_t left_frame_number = 0;
@@ -93,6 +94,7 @@ struct FrameSlot {
     int frame_id = -1;                    ///< 帧序号
     bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
     uint64_t left_timestamp_us = 0;
+    uint64_t host_capture_timestamp_ns = 0;
     uint64_t right_timestamp_us = 0;
     uint32_t left_frame_number = 0;
     uint32_t right_frame_number = 0;
@@ -231,6 +233,7 @@ struct FrameSlot {
         is_detect_frame = true;
         frame_id = -1;
         left_timestamp_us = right_timestamp_us = 0;
+        host_capture_timestamp_ns = 0;
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
@@ -283,8 +286,40 @@ struct FrameSlot {
     }
 };
 
+inline uint64_t normalizeUnixHostTimestampNs(int64_t timestamp) {
+    if (timestamp <= 0) return 0;
+    // Hikvision host timestamps are platform/SDK dependent. Accept values that
+    // look like Unix epoch nanoseconds or microseconds; reject monotonic-like
+    // counters so ROS consumers do not see stale absolute times.
+    constexpr int64_t kEpochNsMin = 100000000000000000LL;  // ~1973
+    constexpr int64_t kEpochUsMin = 100000000000000LL;     // ~1973
+    if (timestamp >= kEpochNsMin) {
+        return static_cast<uint64_t>(timestamp);
+    }
+    if (timestamp >= kEpochUsMin) {
+        return static_cast<uint64_t>(timestamp) * 1000ULL;
+    }
+    return 0;
+}
+
+inline uint64_t chooseCaptureTimestampNs(
+    int64_t left_host_timestamp,
+    int64_t right_host_timestamp,
+    uint64_t fallback_ns) {
+    const uint64_t left_ns = normalizeUnixHostTimestampNs(left_host_timestamp);
+    const uint64_t right_ns = normalizeUnixHostTimestampNs(right_host_timestamp);
+    if (left_ns > 0 && right_ns > 0) {
+        return left_ns / 2ULL + right_ns / 2ULL +
+               (left_ns % 2ULL + right_ns % 2ULL) / 2ULL;
+    }
+    if (left_ns > 0) return left_ns;
+    if (right_ns > 0) return right_ns;
+    return fallback_ns;
+}
+
 inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     FrameMetadata meta;
+    meta.host_capture_timestamp_ns = slot.host_capture_timestamp_ns;
     meta.left_timestamp_us = slot.left_timestamp_us;
     meta.right_timestamp_us = slot.right_timestamp_us;
     meta.left_frame_number = slot.left_frame_number;

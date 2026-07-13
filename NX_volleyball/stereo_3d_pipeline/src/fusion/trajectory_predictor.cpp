@@ -545,6 +545,8 @@ LandingPrediction TrajectoryPredictor::predictFromState(const TrackState& tr) co
     auto pred = predictBallisticState(
         tr.x[0], tr.x[1], tr.x[2], tr.x[3], tr.x[4], tr.x[5]);
     if (pred.valid) {
+        pred.speed_mps = static_cast<float>(std::sqrt(
+            tr.x[3] * tr.x[3] + tr.x[4] * tr.x[4] + tr.x[5] * tr.x[5]));
         pred.student_w = tr.last_student_w;
         pred.obs_source = tr.last_obs_source;
         // Confidence: higher when Student-t weight is healthy and TTI not tiny.
@@ -598,10 +600,19 @@ LandingPrediction TrajectoryPredictor::predictPolynomial(const TrackState& tr) c
     if (!fitLinear(t, zs, za, zb)) return pred;
     if (!fitLinear(t, ys, ya, yb)) return pred;
 
+    const double time_to_land = t_land - t_last;
+    const double fitted_speed = std::sqrt(xa * xa + ya * ya + za * za);
+    if (!std::isfinite(time_to_land) || time_to_land <= 0.0 ||
+        time_to_land > cfg_.max_predict_time ||
+        !std::isfinite(fitted_speed) || fitted_speed < cfg_.min_speed_for_predict) {
+        return pred;
+    }
+
     pred.x = static_cast<float>(xa * t_land + xb);
     pred.y = static_cast<float>(za * t_land + zb);  // depth
     pred.z = static_cast<float>(ya * t_land + yb);
-    pred.time_to_land = static_cast<float>(t_land - t_last);
+    pred.time_to_land = static_cast<float>(time_to_land);
+    pred.speed_mps = static_cast<float>(fitted_speed);
     pred.method = 1;
     pred.valid = true;
     pred.confidence = 0.5f;
@@ -650,7 +661,10 @@ std::vector<LandingPrediction> TrajectoryPredictor::update(
             const float speed = std::sqrt(obj.vx * obj.vx + obj.vy * obj.vy + obj.vz * obj.vz);
             if (speed >= cfg_.min_speed_for_predict) {
                 ekf_pred = predictBallisticState(obj.x, obj.y, obj.z, obj.vx, obj.vy, obj.vz);
-                if (ekf_pred.valid) ekf_pred.confidence = 0.7f;
+                if (ekf_pred.valid) {
+                    ekf_pred.confidence = 0.7f;
+                    ekf_pred.speed_mps = speed;
+                }
             }
         }
 

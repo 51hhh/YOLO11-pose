@@ -5,6 +5,7 @@
 #include <vpi/algo/ConvertImageFormat.h>
 
 #include <cstdint>
+#include <chrono>
 
 // Custom CUDA Bayer -> BGR8 kernel in detect_preprocess.cu.
 extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
@@ -34,6 +35,11 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
                 imgDataL.buffer.pitch.planes[0].pitchBytes,
                 imgDataR.buffer.pitch.planes[0].pitchBytes,
                 1000, resL, resR);
+            const uint64_t fallback_capture_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+            slot.host_capture_timestamp_ns = chooseCaptureTimestampNs(
+                resL.host_timestamp, resR.host_timestamp, fallback_capture_ns);
             slot.left_timestamp_us = resL.timestamp_us;
             slot.right_timestamp_us = resR.timestamp_us;
             slot.left_frame_number = resL.frame_number;

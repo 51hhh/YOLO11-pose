@@ -16,7 +16,7 @@
 #ifndef STEREO_3D_PIPELINE_TRAJECTORY_PREDICTOR_H_
 #define STEREO_3D_PIPELINE_TRAJECTORY_PREDICTOR_H_
 
-#include "../pipeline/frame_slot.h"
+#include "../pipeline/object3d_types.h"
 #include <vector>
 #include <deque>
 #include <array>
@@ -30,10 +30,20 @@ struct LandingPrediction {
     float z = 0.0f;            ///< Landing camera-Y (optional/debug)
     float time_to_land = 0.0f; ///< Time until landing (s)
     float confidence = 0.0f;   ///< Prediction confidence [0,1]
+    float speed_mps = 0.0f;    ///< Speed of the state used for rollout
     int   method = -1;         ///< 0=student-t EKF ballistic, 1=polynomial, -1=invalid
     bool  valid = false;
     float student_w = 1.0f;    ///< Last Student-t innovation weight
     int   obs_source = -1;     ///< 0=bbox_disp,1=bbox_z,2=circle,3=raw,4=filtered
+
+    // Realtime control-gate audit fields. The ungated prediction above is
+    // always preserved; these fields describe the selected control candidate.
+    int   control_gate_selected = 0;
+    int   control_gate_passed = 0;
+    int   control_gate_reason = 0;
+    int   control_gate_stable_frames = 0;
+    float control_base_x = 0.0f;
+    float control_base_y = 0.0f;
 };
 
 struct TrajectoryPredictorConfig {

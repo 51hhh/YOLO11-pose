@@ -9,6 +9,9 @@
 #include "../capture/hikvision_camera.h"
 #include "../fusion/hybrid_depth.h"
 #include "../stereo/neural_feature_config.h"
+#ifdef HAS_ROS2
+#include "../ros/ros2_bridge_config.h"
+#endif
 
 #include <vpi/algo/TemporalNoiseReduction.h>
 
@@ -24,28 +27,6 @@ enum class DisparityStrategy {
     HALF_RESOLUTION,   ///< 半分辨率 (由 rect_width/rect_height 计算)
     ROI_ONLY           ///< 仅计算 ROI 区域
 };
-
-#ifdef HAS_ROS2
-struct Ros2BridgeConfig {
-    bool enabled;
-    std::string world_frame_id;
-    std::string base_frame_id;
-    std::string odom_topic;
-    double odom_timeout_sec;
-    std::string topic_realtime;
-    std::string topic_landing;
-    std::string topic_predicted_path;
-    std::string topic_actual_path;
-    std::string topic_realtime_base;
-    std::string topic_landing_base;
-    bool swap_xy;
-    bool invert_x;
-    bool invert_y;
-    double rotation_deg;
-    double translation_x;
-    double translation_y;
-};
-#endif
 
 /**
  * @brief Pipeline 运行时参数

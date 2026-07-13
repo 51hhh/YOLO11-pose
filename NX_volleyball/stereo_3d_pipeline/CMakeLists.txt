@@ -9,6 +9,7 @@ if(ament_cmake_FOUND)
   find_package(geometry_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
+  find_package(volleyball_interfaces REQUIRED)
   message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
 else()
   set(USE_ROS2 OFF)
@@ -298,6 +299,7 @@ if(USE_ROS2)
   list(APPEND PIPELINE_SOURCES
     src/ros/goal_pose_bridge.cpp
     src/ros/diagnostic_publisher.cpp
+    src/ros/nx_ball_observation_publisher.cpp
   )
 endif()
 
@@ -357,7 +359,7 @@ endif()
 
 # ROS2 链接
 if(USE_ROS2)
-  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs)
+  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
