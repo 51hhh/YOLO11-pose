@@ -93,7 +93,11 @@ NxBallObservationPublisher::NxBallObservationPublisher(
     double max_speed_mps,
     double reacquire_timeout_s,
     double reacquire_base_gate_m,
-    bool allow_fallback)
+    bool allow_fallback,
+    int timestamp_warmup_frames,
+    int timestamp_window_frames,
+    double timestamp_offset_us,
+    double max_timestamp_uncertainty_s)
     : node_(node),
       frame_id_(frame_id),
       class_id_(class_id),
@@ -102,7 +106,14 @@ NxBallObservationPublisher::NxBallObservationPublisher(
       max_speed_mps_(std::max(1.0, max_speed_mps)),
       reacquire_timeout_s_(std::max(0.0, reacquire_timeout_s)),
       reacquire_base_gate_m_(std::max(0.0, reacquire_base_gate_m)),
-      allow_fallback_(allow_fallback) {
+      allow_fallback_(allow_fallback),
+      timestamp_warmup_frames_(std::max(3, timestamp_warmup_frames)),
+      timestamp_window_frames_(std::max(timestamp_warmup_frames_,
+                                        timestamp_window_frames)),
+      timestamp_offset_ns_(static_cast<int64_t>(
+          std::llround(timestamp_offset_us * 1000.0))),
+      max_timestamp_uncertainty_ns_(static_cast<uint64_t>(std::max(
+          0.0001, max_timestamp_uncertainty_s) * 1e9)) {
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1))
                    .best_effort()
                    .durability_volatile()
@@ -113,10 +124,75 @@ NxBallObservationPublisher::NxBallObservationPublisher(
     RCLCPP_INFO(
         node_->get_logger(),
         "NX raw observation: %s epoch=%u epoch_file=%s frame=%s depth=[%.2f,%.2f) "
-        "max_speed=%.1f reacquire=%.2fs fallback=%d",
+        "max_speed=%.1f reacquire=%.2fs fallback=%d timestamp_warmup=%d "
+        "timestamp_window=%d timestamp_offset=%.1fus timestamp_uncertainty<=%.3fms",
         topic.c_str(), source_epoch_, source_epoch_file.c_str(), frame_id_.c_str(),
         min_depth_m_, max_depth_m_, max_speed_mps_,
-        reacquire_timeout_s_, allow_fallback_ ? 1 : 0);
+        reacquire_timeout_s_, allow_fallback_ ? 1 : 0,
+        timestamp_warmup_frames_, timestamp_window_frames_,
+        static_cast<double>(timestamp_offset_ns_) * 1e-3,
+        static_cast<double>(max_timestamp_uncertainty_ns_) * 1e-6);
+}
+
+NxBallObservationPublisher::CaptureTimestamp
+NxBallObservationPublisher::mapCaptureTimestamp(
+    const FrameMetadata& metadata) {
+    CaptureTimestamp result;
+    const uint64_t device_ns = metadata.left_timestamp_us;
+    const uint64_t host_ns = metadata.host_capture_timestamp_ns;
+    result.timestamp_ns = host_ns;
+    result.uncertainty_ns = std::numeric_limits<uint64_t>::max();
+    if (device_ns == 0 || host_ns == 0 ||
+        host_ns > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+        device_ns > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        return result;
+    }
+
+    if ((last_device_timestamp_ns_ > 0 && device_ns <= last_device_timestamp_ns_) ||
+        (last_host_timestamp_ns_ > 0 && host_ns <= last_host_timestamp_ns_)) {
+        device_to_host_offsets_ns_.clear();
+    }
+    last_device_timestamp_ns_ = device_ns;
+    last_host_timestamp_ns_ = host_ns;
+
+    const int64_t offset = static_cast<int64_t>(host_ns) -
+                           static_cast<int64_t>(device_ns);
+    device_to_host_offsets_ns_.push_back(offset);
+    while (static_cast<int>(device_to_host_offsets_ns_.size()) >
+           timestamp_window_frames_) {
+        device_to_host_offsets_ns_.pop_front();
+    }
+
+    std::vector<int64_t> sorted_offsets(
+        device_to_host_offsets_ns_.begin(), device_to_host_offsets_ns_.end());
+    std::sort(sorted_offsets.begin(), sorted_offsets.end());
+    const size_t count = sorted_offsets.size();
+    const size_t baseline_index = std::min(count - 1, count / 20);
+    const size_t uncertainty_index = std::min(count - 1, count / 4);
+    const int64_t baseline_offset = sorted_offsets[baseline_index];
+    const int64_t spread = std::max<int64_t>(
+        0, sorted_offsets[uncertainty_index] - baseline_offset);
+    result.uncertainty_ns = static_cast<uint64_t>(
+        std::max<int64_t>(100000, spread));
+
+    const long double mapped = static_cast<long double>(device_ns) +
+                               static_cast<long double>(baseline_offset) +
+                               static_cast<long double>(timestamp_offset_ns_);
+    if (mapped <= 0.0L ||
+        mapped > static_cast<long double>(
+                     std::numeric_limits<uint64_t>::max())) {
+        return result;
+    }
+    result.timestamp_ns = static_cast<uint64_t>(std::llround(mapped));
+    const uint64_t max_future_ns = 2000000;
+    const bool not_future = result.timestamp_ns <= host_ns + max_future_ns;
+    const bool plausible_age = host_ns <= result.timestamp_ns ||
+        host_ns - result.timestamp_ns <= 100000000;
+    result.mapping_valid =
+        static_cast<int>(count) >= timestamp_warmup_frames_ &&
+        result.uncertainty_ns <= max_timestamp_uncertainty_ns_ &&
+        not_future && plausible_age;
+    return result;
 }
 
 bool NxBallObservationPublisher::eligible(const Object3D& obj) const {
@@ -236,16 +312,17 @@ void NxBallObservationPublisher::publish(
     int frame_id,
     const std::vector<Object3D>& results,
     const FrameMetadata& metadata) {
-    const double stamp_s = metadata.host_capture_timestamp_ns > 0
-        ? static_cast<double>(metadata.host_capture_timestamp_ns) * 1e-9
+    const CaptureTimestamp capture_timestamp = mapCaptureTimestamp(metadata);
+    const double stamp_s = capture_timestamp.timestamp_ns > 0
+        ? static_cast<double>(capture_timestamp.timestamp_ns) * 1e-9
         : node_->get_clock()->now().seconds();
     const int best = selectObservation(results, stamp_s);
     if (best < 0) return;
 
     const auto& obj = results[best];
     volleyball_interfaces::msg::NxBallObservation msg;
-    if (metadata.host_capture_timestamp_ns > 0) {
-        const uint64_t ns = metadata.host_capture_timestamp_ns;
+    if (capture_timestamp.timestamp_ns > 0) {
+        const uint64_t ns = capture_timestamp.timestamp_ns;
         msg.header.stamp.sec = static_cast<int32_t>(ns / 1000000000ULL);
         msg.header.stamp.nanosec = static_cast<uint32_t>(ns % 1000000000ULL);
     } else {
@@ -285,6 +362,8 @@ void NxBallObservationPublisher::publish(
     msg.left_device_timestamp = obj.left_timestamp_us;
     msg.right_device_timestamp = obj.right_timestamp_us;
     msg.stereo_timestamp_delta_ns = metadata.stereo_timestamp_residual_ns;
+    msg.capture_timestamp_mapping_valid = capture_timestamp.mapping_valid;
+    msg.capture_timestamp_uncertainty_ns = capture_timestamp.uncertainty_ns;
     pub_->publish(msg);
 }
 

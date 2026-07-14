@@ -358,6 +358,15 @@ ros2:
     reacquire_timeout_s: 0.3
     reacquire_base_gate_m: 0.75
     allow_fallback: false
+    # Map the left camera device clock (current camera reports ns ticks) to
+    # NX CLOCK_REALTIME using the low-latency edge of a rolling host/device
+    # offset window. RDK rejects observations until the mapping is stable.
+    timestamp_warmup_frames: 30
+    timestamp_window_frames: 180
+    # Device timestamp exposure reference has not been verified yet. Keep zero
+    # instead of guessing start/end exposure; calibrate this to exposure midpoint.
+    timestamp_offset_us: 0.0
+    max_timestamp_uncertainty_s: 0.002
   vision_to_world:
     swap_xy: false
     invert_x: false

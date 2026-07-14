@@ -1,6 +1,6 @@
 # ROS2 接口
 
-最后核对: 2026-07-13
+最后核对: 2026-07-15
 
 ROS2 支持是条件编译功能。只有 CMake 找到 `ament_cmake`、`rclcpp`、`geometry_msgs`、`nav_msgs`、`sensor_msgs`、`volleyball_interfaces` 时，`stereo_pipeline` 才会编译 ROS2 bridge，宏为 `HAS_ROS2`。
 
@@ -33,6 +33,10 @@ ros2:
     topic: "/nx/ball/observation"
     frame_id: "nx_left_rectified_optical_frame"
     source_epoch_file: "/run/volleyball/nx_source_epoch"
+    timestamp_warmup_frames: 30
+    timestamp_window_frames: 180
+    timestamp_offset_us: 0.0
+    max_timestamp_uncertainty_s: 0.002
 ```
 
 视觉到世界平面变换:
@@ -67,6 +71,24 @@ ros2:
 | `/nx/debug/ball/landing_base` | `geometry_msgs/PointStamped` | `base_frame_id` | 机器人本体系落点 |
 | `/nx/ball/observation` | `volleyball_interfaces/NxBallObservation` | `nx_left_rectified_optical_frame` | NX 当前帧原始双目观测；坐标基于当前标定的 `R1/P1` |
 | `/nx/debug/auto_goal_pose` | `geometry_msgs/PoseStamped` | `base_frame_id` | 本机门控录制用 debug 目标，不接底盘 |
+
+### NxBallObservation 时间戳字段
+
+NX 发布器先用左相机设备时间戳和 NX 主机采集时间建立滚动 offset 映射，再把设备
+采集时刻映射到 `CLOCK_REALTIME` 写入 `header.stamp`。接口包必须包含以下字段，RDK
+在 `capture_timestamp_mapping_valid=false` 或不确定度超过配置上限时必须拒绝该观测：
+
+```text
+bool capture_timestamp_mapping_valid
+uint64 capture_timestamp_uncertainty_ns
+```
+
+字段语义：
+
+- `header.stamp`：映射后的 NX `CLOCK_REALTIME` 采集时刻，不是推理完成时刻；
+- `capture_timestamp_mapping_valid`：滚动映射已预热且不确定度在上限内；
+- `capture_timestamp_uncertainty_ns`：设备时钟到 NX 主机时钟映射的不确定度；
+- `timestamp_offset_us`：曝光时刻相对设备时间戳的校正量，目前未确认时保持 0。
 
 `/auto/goal_pose` 归 RDK `catch_controller` 独占。NX 侧代码会拒绝把本机门控目标发布到
 `/auto/goal_pose`；如需录制门控结果，只能使用 `/nx/debug/auto_goal_pose`。

@@ -497,6 +497,18 @@ stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
                 cfg.nx_observation_reacquire_base_gate_m);
         cfg.nx_observation_allow_fallback =
             n["allow_fallback"].as<bool>(cfg.nx_observation_allow_fallback);
+        cfg.nx_observation_timestamp_warmup_frames =
+            n["timestamp_warmup_frames"].as<int>(
+                cfg.nx_observation_timestamp_warmup_frames);
+        cfg.nx_observation_timestamp_window_frames =
+            n["timestamp_window_frames"].as<int>(
+                cfg.nx_observation_timestamp_window_frames);
+        cfg.nx_observation_timestamp_offset_us =
+            n["timestamp_offset_us"].as<double>(
+                cfg.nx_observation_timestamp_offset_us);
+        cfg.nx_observation_max_timestamp_uncertainty_s =
+            n["max_timestamp_uncertainty_s"].as<double>(
+                cfg.nx_observation_max_timestamp_uncertainty_s);
     }
     if (auto v = ros["vision_to_world"]) {
         cfg.swap_xy       = v["swap_xy"].as<bool>(false);

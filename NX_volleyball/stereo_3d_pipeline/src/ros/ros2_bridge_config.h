@@ -29,6 +29,10 @@ struct Ros2BridgeConfig {
     double nx_observation_reacquire_timeout_s = 3.0;
     double nx_observation_reacquire_base_gate_m = 0.75;
     bool nx_observation_allow_fallback = false;
+    int nx_observation_timestamp_warmup_frames = 30;
+    int nx_observation_timestamp_window_frames = 180;
+    double nx_observation_timestamp_offset_us = 0.0;
+    double nx_observation_max_timestamp_uncertainty_s = 0.002;
     bool swap_xy = false;
     bool invert_x = false;
     bool invert_y = false;

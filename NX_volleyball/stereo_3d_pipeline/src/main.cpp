@@ -205,7 +205,11 @@ int main(int argc, char* argv[]) {
                 ros2_cfg.nx_observation_max_speed_mps,
                 ros2_cfg.nx_observation_reacquire_timeout_s,
                 ros2_cfg.nx_observation_reacquire_base_gate_m,
-                ros2_cfg.nx_observation_allow_fallback);
+                ros2_cfg.nx_observation_allow_fallback,
+                ros2_cfg.nx_observation_timestamp_warmup_frames,
+                ros2_cfg.nx_observation_timestamp_window_frames,
+                ros2_cfg.nx_observation_timestamp_offset_us,
+                ros2_cfg.nx_observation_max_timestamp_uncertainty_s);
         }
 
         // 诊断发布器 (录制深度图 + 检测框)

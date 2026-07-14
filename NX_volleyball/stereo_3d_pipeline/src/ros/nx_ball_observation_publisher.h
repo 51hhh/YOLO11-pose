@@ -1,6 +1,8 @@
 #pragma once
 #ifdef HAS_ROS2
 #include <array>
+#include <cstdint>
+#include <deque>
 #include <memory>
 #include <vector>
 #include <rclcpp/rclcpp.hpp>
@@ -19,7 +21,11 @@ public:
                                double max_speed_mps,
                                double reacquire_timeout_s,
                                double reacquire_base_gate_m,
-                               bool allow_fallback);
+                               bool allow_fallback,
+                               int timestamp_warmup_frames,
+                               int timestamp_window_frames,
+                               double timestamp_offset_us,
+                               double max_timestamp_uncertainty_s);
     void publish(int frame_id, const std::vector<Object3D>& results,
                  const FrameMetadata& metadata);
 private:
@@ -34,6 +40,17 @@ private:
     double reacquire_timeout_s_{3.0};
     double reacquire_base_gate_m_{0.75};
     bool allow_fallback_{false};
+    int timestamp_warmup_frames_{30};
+    int timestamp_window_frames_{180};
+    int64_t timestamp_offset_ns_{0};
+    uint64_t max_timestamp_uncertainty_ns_{2000000};
+    // Hikvision's current USB path reports nDevTimeStamp as ns ticks even
+    // though the legacy field is named *_timestamp_us throughout the
+    // pipeline. Keep the explicit ns suffix here to prevent accidental
+    // microsecond conversion in the device-to-host mapping.
+    uint64_t last_device_timestamp_ns_{0};
+    uint64_t last_host_timestamp_ns_{0};
+    std::deque<int64_t> device_to_host_offsets_ns_;
     int active_source_track_id_{-1};
     int active_output_track_id_{-1};
     int next_output_track_id_{1};
@@ -47,6 +64,12 @@ private:
     int selectObservation(const std::vector<Object3D>& results, double stamp_s);
     void acceptObservation(const Object3D& obj, double stamp_s,
                            bool new_logical_track);
+    struct CaptureTimestamp {
+        uint64_t timestamp_ns = 0;
+        uint64_t uncertainty_ns = 0;
+        bool mapping_valid = false;
+    };
+    CaptureTimestamp mapCaptureTimestamp(const FrameMetadata& metadata);
 };
 }
 #endif
