@@ -289,6 +289,7 @@ private:
     void applyRoiStage2Output(FrameSlot& slot, RoiStage2Output&& output);
     void publishRoiResultCallback(FrameSlot& slot);
     void publishRoiFrameCallbacks(FrameSlot& slot);
+    double fusionDtForFrame(const FrameSlot& slot);
 
     struct AsyncRoiBuffer {
         uint8_t* left_gray_gpu = nullptr;
@@ -516,6 +517,7 @@ private:
 
     // ===== Kalman dt 实测时间间隔 =====
     std::chrono::steady_clock::time_point last_fuse_time_{};
+    uint64_t last_fuse_capture_timestamp_ns_ = 0;
 
     // ===== 状态 =====
     std::atomic<bool> running_{false};

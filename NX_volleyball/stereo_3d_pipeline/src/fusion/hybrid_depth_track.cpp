@@ -140,6 +140,8 @@ void DepthTrack::update(float obs_x, float obs_y, float obs_z,
         }
     std::memcpy(P, P_new, sizeof(P));
 
+    last_raw_x = obs_x;
+    last_raw_y = obs_y;
     last_raw_z = obs_z;
     lost_count = 0;
 }

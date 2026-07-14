@@ -1,5 +1,6 @@
 #include "pipeline.h"
 #include "pipeline_depth_modes.h"
+#include "fusion_timing.h"
 #include "pipeline_roi_match_helpers.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
@@ -13,6 +14,27 @@
 #include <vector>
 
 namespace stereo3d {
+
+double Pipeline::fusionDtForFrame(const FrameSlot& slot) {
+    const double default_dt = config_.trigger_freq_hz > 0
+        ? 1.0 / static_cast<double>(config_.trigger_freq_hz)
+        : 0.01;
+    const auto now = std::chrono::steady_clock::now();
+    const double wall_dt = last_fuse_time_.time_since_epoch().count() > 0
+        ? std::chrono::duration<double>(now - last_fuse_time_).count()
+        : 0.0;
+    const double dt = chooseFusionDtSeconds(
+        slot.host_capture_timestamp_ns,
+        last_fuse_capture_timestamp_ns_,
+        wall_dt,
+        default_dt);
+
+    if (slot.host_capture_timestamp_ns > last_fuse_capture_timestamp_ns_) {
+        last_fuse_capture_timestamp_ns_ = slot.host_capture_timestamp_ns;
+    }
+    last_fuse_time_ = now;
+    return dt;
+}
 
 Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
     const RoiStage2Input& input) {
@@ -291,7 +313,7 @@ void Pipeline::applyRoiStage2Output(FrameSlot& slot,
     if (output.predict_only || slot.detections.empty()) {
         if (hybrid_depth_) {
             std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-            slot.results = hybrid_depth_->predictOnly();
+            slot.results = hybrid_depth_->predictOnly(fusionDtForFrame(slot));
             stampFrameMetadata(slot);
         } else {
             slot.results.clear();
@@ -301,13 +323,7 @@ void Pipeline::applyRoiStage2Output(FrameSlot& slot,
 
     if (hybrid_depth_) {
         std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-        auto now = std::chrono::steady_clock::now();
-        double dt = 0.01;
-        if (last_fuse_time_.time_since_epoch().count() > 0) {
-            dt = std::chrono::duration<double>(now - last_fuse_time_).count();
-            dt = std::clamp(dt, 0.002, 0.1);
-        }
-        last_fuse_time_ = now;
+        const double dt = fusionDtForFrame(slot);
         ScopedTimer thd("Stage2_HybridDepth");
         slot.results = hybrid_depth_->estimate(slot.detections,
                                                output.roi_results,

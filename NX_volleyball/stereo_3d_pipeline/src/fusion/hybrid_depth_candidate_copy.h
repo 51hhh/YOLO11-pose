@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../pipeline/frame_slot.h"
+#include "../pipeline/object3d_types.h"
 
 namespace stereo3d {
 

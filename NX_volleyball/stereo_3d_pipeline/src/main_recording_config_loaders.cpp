@@ -121,6 +121,7 @@ stereo3d::TrajectoryPredictorConfig loadPredictorConfig(const std::string& path)
         }
 
         if (auto pred = root["prediction"]) {
+            if (pred["enable"])           tcfg.enabled       = pred["enable"].as<bool>();
             if (pred["gravity"])          tcfg.gravity       = pred["gravity"].as<float>();
             if (pred["air_density"])      tcfg.air_density   = pred["air_density"].as<float>();
             if (pred["ball_mass"])        tcfg.ball_mass     = pred["ball_mass"].as<float>();

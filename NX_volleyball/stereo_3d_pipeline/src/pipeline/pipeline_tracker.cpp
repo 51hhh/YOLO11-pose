@@ -97,7 +97,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     if (slot.bbox_source != BboxSource::TRACKER || !slot.sot_bbox_result.valid) {
         if (hybrid_depth_) {
             std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-            slot.results = hybrid_depth_->predictOnly();
+            slot.results = hybrid_depth_->predictOnly(fusionDtForFrame(slot));
             stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
@@ -118,7 +118,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         LOG_ERROR("Tracker ROI fuse requested but ROIStereoMatcher is not initialized");
         if (hybrid_depth_) {
             std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-            slot.results = hybrid_depth_->predictOnly();
+            slot.results = hybrid_depth_->predictOnly(fusionDtForFrame(slot));
             stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
@@ -134,7 +134,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
     if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
         if (hybrid_depth_) {
             std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-            slot.results = hybrid_depth_->predictOnly();
+            slot.results = hybrid_depth_->predictOnly(fusionDtForFrame(slot));
             stampFrameMetadata(slot);
         }
         NVTX_RANGE_POP();
@@ -153,13 +153,7 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
 
     if (hybrid_depth_) {
         std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
-        auto now = std::chrono::steady_clock::now();
-        double dt = 0.01;
-        if (last_fuse_time_.time_since_epoch().count() > 0) {
-            dt = std::chrono::duration<double>(now - last_fuse_time_).count();
-            dt = std::clamp(dt, 0.002, 0.1);
-        }
-        last_fuse_time_ = now;
+        const double dt = fusionDtForFrame(slot);
         slot.results = hybrid_depth_->estimate(slot.detections, roi_results, dt);
         stampFrameMetadata(slot);
     } else {

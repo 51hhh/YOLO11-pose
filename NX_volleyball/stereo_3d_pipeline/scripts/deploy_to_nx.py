@@ -100,7 +100,7 @@ def sync_files(ssh):
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
         sync_list = ["CMakeLists.txt", "package.xml"]
-        for root in ("src", "config"):
+        for root in ("src", "config", "tests"):
             root_dir = os.path.join(LOCAL_DIR, root)
             if not os.path.isdir(root_dir):
                 continue

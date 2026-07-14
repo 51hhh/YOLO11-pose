@@ -135,6 +135,9 @@ bool isUsableDepthCandidate(const DepthCandidateObservation& candidate);
 bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate);
 DepthCandidateSelection selectLegacyDepthOutputCandidate(
     const std::vector<DepthCandidateObservation>& candidates);
+DepthCandidateSelection selectPreferredDepthOutputCandidate(
+    const std::vector<DepthCandidateObservation>& candidates,
+    DepthCandidateMethod preferred_method);
 
 bool evaluateStereoRoiPair(
     const Detection& left,

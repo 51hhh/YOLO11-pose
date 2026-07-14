@@ -170,10 +170,16 @@ void NxBallObservationPublisher::acceptObservation(
 
 int NxBallObservationPublisher::selectObservation(
     const std::vector<Object3D>& results, double stamp_s) {
+    const double gap = have_last_state_ ? stamp_s - last_stamp_s_
+                                        : std::numeric_limits<double>::infinity();
+    const bool continuity_window =
+        !have_last_state_ ||
+        (gap >= 0.0 && gap <= reacquire_timeout_s_);
     int same_track = -1;
     for (size_t i = 0; i < results.size(); ++i) {
         const auto& obj = results[i];
-        if (!eligible(obj) || obj.track_id != active_source_track_id_ ||
+        if (!continuity_window || !eligible(obj) ||
+            obj.track_id != active_source_track_id_ ||
             !physicallyPlausible(obj, stamp_s)) {
             continue;
         }
@@ -186,8 +192,6 @@ int NxBallObservationPublisher::selectObservation(
         return same_track;
     }
 
-    const double gap = have_last_state_ ? stamp_s - last_stamp_s_
-                                        : std::numeric_limits<double>::infinity();
     if (have_last_state_ && gap >= 0.0 && gap <= reacquire_timeout_s_) {
         int associated = -1;
         double best_score = std::numeric_limits<double>::infinity();

@@ -144,10 +144,17 @@ int main(int argc, char* argv[]) {
     stereo3d::TrajectoryRecorder recorder;
     stereo3d::BaselineClipRecorder baseline_recorder;
     RealtimeDebugDumper realtime_debug_dumper;
+    bool nx_prediction_enabled = false;
     if (baseline_cfg.enabled) {
         baseline_recorder.init(baseline_cfg);
     } else {
-        predictor.init(loadPredictorConfig(config_path));
+        const auto predictor_cfg = loadPredictorConfig(config_path);
+        nx_prediction_enabled = predictor_cfg.enabled;
+        if (nx_prediction_enabled) {
+            predictor.init(predictor_cfg);
+        } else {
+            LOG_INFO("NX landing predictor disabled; RDK owns ballistic prediction");
+        }
         auto recorder_cfg = loadRecorderConfig(config_path);
         if (!recording_out_override.empty()) {
             recorder_cfg.output_path = recording_out_override;
@@ -257,7 +264,9 @@ int main(int argc, char* argv[]) {
             last_result_time = now;
 
             // 预测落点
-            auto preds = predictor.update(results, dt);
+            auto preds = nx_prediction_enabled
+                ? predictor.update(results, dt)
+                : std::vector<stereo3d::LandingPrediction>{};
             double timestamp = std::chrono::duration<double>(
                 now.time_since_epoch()).count();
 

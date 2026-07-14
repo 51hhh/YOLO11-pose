@@ -21,6 +21,7 @@ void HybridDepthEstimator::init(float focal, float baseline, float cx, float cy,
     cx_       = cx;
     cy_       = cy;
     config_   = config;
+    stereo_bias_ = std::max(0.1f, config_.stereo_bias_initial);
 }
 
 float HybridDepthEstimator::monoDepth(const Detection& det) const {
@@ -90,9 +91,9 @@ std::vector<int> HybridDepthEstimator::greedyIoUMatch(
     std::vector<int> det_to_track(N, -1);
     std::vector<bool> track_used(M, false);
 
-    // Build IoU matrix and greedily match highest IoU pairs
+    // Build gated association candidates and greedily match the best pairs.
     struct Match {
-        float iou;
+        float score;
         int det_idx;
         int track_idx;
     };
@@ -105,19 +106,39 @@ std::vector<int> HybridDepthEstimator::greedyIoUMatch(
             const auto& trk = tracks_[t];
             if (trk.last_w < 1.0f) continue;  // track has no bbox yet
 
+            if (trk.class_id >= 0 && det.class_id != trk.class_id) continue;
+            if (trk.lost_count > config_.lost_degrade_frames) continue;
+
+            float predicted_cx = trk.last_cx;
+            float predicted_cy = trk.last_cy;
+            if (trk.z() > config_.min_depth && std::isfinite(trk.z())) {
+                predicted_cx = cx_ + focal_ * trk.x() / trk.z();
+                predicted_cy = cy_ + focal_ * trk.y() / trk.z();
+            }
+
             float iou = computeIoU(
                 det.cx, det.cy, det.width, det.height,
-                trk.last_cx, trk.last_cy, trk.last_w, trk.last_h);
+                predicted_cx, predicted_cy, trk.last_w, trk.last_h);
 
-            if (iou >= iou_threshold) {
-                candidates.push_back({iou, d, t});
+            const float scale_x = std::max(1.0f, 0.5f * (det.width + trk.last_w));
+            const float scale_y = std::max(1.0f, 0.5f * (det.height + trk.last_h));
+            const float dx = (det.cx - predicted_cx) / scale_x;
+            const float dy = (det.cy - predicted_cy) / scale_y;
+            const float center_distance = std::sqrt(dx * dx + dy * dy);
+
+            if (iou >= iou_threshold ||
+                center_distance <= config_.match_center_gate) {
+                const float score = 2.0f * iou - 0.15f * center_distance +
+                                    0.20f * trk.confidence -
+                                    0.05f * static_cast<float>(trk.lost_count);
+                candidates.push_back({score, d, t});
             }
         }
     }
 
-    // Sort by IoU descending
+    // Sort by combined predicted-IoU/center/confidence score descending.
     std::sort(candidates.begin(), candidates.end(),
-        [](const Match& a, const Match& b) { return a.iou > b.iou; });
+        [](const Match& a, const Match& b) { return a.score > b.score; });
 
     // Greedy assignment
     for (const auto& m : candidates) {
@@ -146,7 +167,8 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
     }
 
     // Step 1: IoU greedy matching
-    std::vector<int> det_to_track = greedyIoUMatch(detections);
+    std::vector<int> det_to_track = greedyIoUMatch(
+        detections, std::max(0.0f, config_.match_iou_threshold));
     const size_t original_track_count = tracks_.size();
 
     for (size_t i = 0; i < detections.size(); ++i) {
@@ -181,7 +203,8 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
 
         // Step 3.5: 自适应偏差校正 — EMA 跟踪 zs/zm 比例
         float z_stereo_corrected = z_stereo;
-        if (has_stereo && !stereo_is_fallback && z_mono > 0.5f) {
+        if (config_.stereo_bias_correction_enabled &&
+            has_stereo && !stereo_is_fallback && z_mono > 0.5f) {
             float ratio = z_stereo / z_mono;
             // 合理范围内更新 EMA (排除异常帧)
             if (ratio > 0.85f && ratio < 1.15f) {
@@ -223,8 +246,16 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
             method = 2;
         }
 
-        // Step 5: 范围检查
-        z_obs = std::max(config_.min_depth, std::min(config_.max_depth, z_obs));
+        // Step 5: 范围检查。超范围观测不能通过 clamp 污染内部速度状态。
+        if (!std::isfinite(z_obs) ||
+            z_obs < config_.min_depth || z_obs >= config_.max_depth) {
+            if (det_to_track[i] >= 0) {
+                track->lost_count++;
+            } else {
+                tracks_.pop_back();
+            }
+            continue;
+        }
 
         // Step 6: 计算 3D 观测 (像素→世界坐标)
         float obs_x = (det.cx - cx_) * z_obs / focal_;
@@ -247,10 +278,34 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         const float innovation_z = z_obs - predicted_z;
         const float innovation_norm =
             innovation_z / std::sqrt(std::max(1e-6f, prior_z_var + Rz));
+        const float innovation_x = obs_x - track->x();
+        const float innovation_y = obs_y - track->y();
+        const float innovation_norm_x =
+            innovation_x / std::sqrt(std::max(1e-6f, track->P[0][0] + Rxy));
+        const float innovation_norm_y =
+            innovation_y / std::sqrt(std::max(1e-6f, track->P[1][1] + Rxy));
+        const float gate_sigma = config_.innovation_gate_sigma;
+        const bool innovation_rejected =
+            track->age > std::max(0, config_.innovation_gate_min_age) &&
+            gate_sigma > 0.0f &&
+            (std::abs(innovation_norm_x) > gate_sigma ||
+             std::abs(innovation_norm_y) > gate_sigma ||
+             std::abs(innovation_norm) > gate_sigma);
+        if (innovation_rejected) {
+            track->lost_count++;
+            continue;
+        }
         track->update(obs_x, obs_y, z_obs, Rxy, Rz);
         const float kalman_sigma_z =
             std::sqrt(std::max(0.0f, track->P[2][2]));
         track->method = method;
+        track->class_id = det.class_id;
+        const float confidence_alpha =
+            std::clamp(config_.track_confidence_alpha, 0.0f, 1.0f);
+        track->confidence = track->age <= 1
+            ? det.confidence
+            : (1.0f - confidence_alpha) * track->confidence +
+                  confidence_alpha * det.confidence;
         track->updateBBox(det.cx, det.cy, det.width, det.height);
 
         // Step 8: 输出 3D 结果 (从 Kalman 状态读取)
@@ -298,11 +353,14 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
     return output;
 }
 
-std::vector<Object3D> HybridDepthEstimator::predictOnly() {
+std::vector<Object3D> HybridDepthEstimator::predictOnly(double actual_dt) {
     std::vector<Object3D> output;
+    const float dt = (actual_dt > 0.001)
+        ? static_cast<float>(actual_dt)
+        : config_.dt;
 
     for (auto& track : tracks_) {
-        track.predict(config_.dt, config_.process_accel);
+        track.predict(dt, config_.process_accel);
         track.lost_count++;
 
         if (track.lost_count <= config_.lost_predict_frames && track.z() > config_.min_depth) {
@@ -312,8 +370,9 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
             obj.ax = track.ax();   obj.ay = track.ay();   obj.az = track.az();
             obj.predicted_z = track.z();
             obj.kalman_sigma_z = std::sqrt(std::max(0.0f, track.P[2][2]));
-            obj.confidence = std::max(0.0f, 0.5f - track.lost_count * 0.1f);
-            obj.class_id = 0;
+            obj.confidence = track.confidence *
+                std::max(0.0f, 1.0f - track.lost_count * 0.15f);
+            obj.class_id = track.class_id;
             obj.track_id = track.track_id;
             output.push_back(obj);
         }
@@ -326,7 +385,7 @@ std::vector<Object3D> HybridDepthEstimator::predictOnly() {
 void HybridDepthEstimator::reset() {
     tracks_.clear();
     next_track_id_ = 0;
-    stereo_bias_ = 0.95f;
+    stereo_bias_ = std::max(0.1f, config_.stereo_bias_initial);
 }
 
 int HybridDepthEstimator::activeTrackCount() const {
@@ -341,22 +400,40 @@ float HybridDepthEstimator::predictDepthForDetection(
     const Detection& det,
     float iou_threshold) const
 {
-    float best_iou = iou_threshold;
+    float best_score = -std::numeric_limits<float>::infinity();
     float best_z = -1.0f;
 
     for (const auto& track : tracks_) {
         if (track.lost_count > config_.lost_degrade_frames ||
+            (track.class_id >= 0 && det.class_id != track.class_id) ||
             track.last_w < 1.0f ||
             track.z() < config_.min_depth ||
             track.z() > config_.max_depth) {
             continue;
         }
 
+        float predicted_cx = track.last_cx;
+        float predicted_cy = track.last_cy;
+        if (track.z() > config_.min_depth && std::isfinite(track.z())) {
+            predicted_cx = cx_ + focal_ * track.x() / track.z();
+            predicted_cy = cy_ + focal_ * track.y() / track.z();
+        }
         const float iou = computeIoU(
             det.cx, det.cy, det.width, det.height,
-            track.last_cx, track.last_cy, track.last_w, track.last_h);
-        if (iou > best_iou) {
-            best_iou = iou;
+            predicted_cx, predicted_cy, track.last_w, track.last_h);
+        const float scale_x = std::max(1.0f, 0.5f * (det.width + track.last_w));
+        const float scale_y = std::max(1.0f, 0.5f * (det.height + track.last_h));
+        const float dx = (det.cx - predicted_cx) / scale_x;
+        const float dy = (det.cy - predicted_cy) / scale_y;
+        const float center_distance = std::sqrt(dx * dx + dy * dy);
+        if (iou < iou_threshold && center_distance > config_.match_center_gate) {
+            continue;
+        }
+        const float score = 2.0f * iou - 0.15f * center_distance +
+                            0.20f * track.confidence -
+                            0.05f * static_cast<float>(track.lost_count);
+        if (score > best_score) {
+            best_score = score;
             best_z = track.z();
         }
     }
@@ -366,7 +443,7 @@ float HybridDepthEstimator::predictDepthForDetection(
 
 float HybridDepthEstimator::predictPrimaryDepth() const
 {
-    float best_score = -1.0f;
+    float best_score = -std::numeric_limits<float>::infinity();
     float best_z = -1.0f;
 
     for (const auto& track : tracks_) {
@@ -396,6 +473,22 @@ void HybridDepthEstimator::pruneDeadTracks() {
             }),
         tracks_.end()
     );
+
+    const size_t max_tracks = static_cast<size_t>(std::max(1, config_.max_tracks));
+    while (tracks_.size() > max_tracks) {
+        const auto worst = std::min_element(
+            tracks_.begin(), tracks_.end(),
+            [](const DepthTrack& a, const DepthTrack& b) {
+                const float score_a = a.confidence -
+                    0.10f * static_cast<float>(a.lost_count) +
+                    0.001f * static_cast<float>(a.age);
+                const float score_b = b.confidence -
+                    0.10f * static_cast<float>(b.lost_count) +
+                    0.001f * static_cast<float>(b.age);
+                return score_a < score_b;
+            });
+        tracks_.erase(worst);
+    }
 }
 
 }  // namespace stereo3d

@@ -2766,12 +2766,20 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
         const DepthCandidateBuildResult depth_candidate_build =
             buildDepthCandidateObservations(depth_candidate_input);
-        const DepthCandidateSelection& depth_selection =
+        DepthCandidateSelection depth_selection =
             depth_candidate_build.selection;
-        const bool has_legacy_depth = depth_selection.valid;
+        if (direct_yolo_match) {
+            const DepthCandidateMethod preferred_method =
+                isROISubpixelDepthSolver(config_.dual_yolo.depth_solver)
+                    ? DepthCandidateMethod::ROI_MULTI_POINT
+                    : DepthCandidateMethod::CIRCLE_CENTER;
+            depth_selection = selectPreferredDepthOutputCandidate(
+                depth_candidate_build.candidates, preferred_method);
+        }
+        const bool has_selected_depth = depth_selection.valid;
         const bool emit_record_only_candidate =
             direct_yolo_match && direct_depth_without_circle_enabled;
-        if (has_legacy_depth) {
+        if (has_selected_depth) {
             disparity = depth_selection.observation.disparity_px;
             depth_source = depth_selection.observation.stereo_depth_source;
             disparity_conf = depth_selection.observation.fusion_confidence;
@@ -2784,8 +2792,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             return false;
         }
 
-        const float z = has_legacy_depth ? depth_selection.observation.depth_m : -1.0f;
-        if (has_legacy_depth &&
+        const float z = has_selected_depth ? depth_selection.observation.depth_m : -1.0f;
+        if (has_selected_depth &&
             (z < config_.depth.min_depth || z > config_.depth.max_depth)) {
             ++local_stats.depth_reject;
             return false;
@@ -2802,7 +2810,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             anchor_cx = left_det.cx;
             anchor_cy = left_det.cy;
         }
-        if (has_legacy_depth) {
+        if (has_selected_depth) {
             obj.x = (anchor_cx - cx0) * z / focal;
             obj.y = (anchor_cy - cy0) * z / focal;
             obj.z = z;

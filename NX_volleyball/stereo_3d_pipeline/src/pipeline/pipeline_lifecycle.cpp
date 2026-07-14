@@ -32,6 +32,12 @@ Pipeline::~Pipeline() {
 void Pipeline::start() {
     if (running_.exchange(true)) return;
 
+    last_fuse_time_ = {};
+    last_fuse_capture_timestamp_ns_ = 0;
+    if (hybrid_depth_) {
+        hybrid_depth_->reset();
+    }
+
     if (!startAsyncRoiStage2()) {
         running_ = false;
         return;

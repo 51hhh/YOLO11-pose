@@ -12,10 +12,9 @@
 #ifndef STEREO_3D_PIPELINE_HYBRID_DEPTH_H_
 #define STEREO_3D_PIPELINE_HYBRID_DEPTH_H_
 
-#include "../pipeline/frame_slot.h"
-#include "../stereo/roi_stereo_matcher.h"
+#include "../pipeline/detection_types.h"
+#include "../pipeline/object3d_types.h"
 #include <vector>
-#include <cuda_runtime.h>
 
 namespace stereo3d {
 
@@ -39,13 +38,24 @@ struct HybridDepthConfig {
     int   lost_predict_frames = 5;     ///< 丢失后纯预测帧数
     int   lost_degrade_frames = 20;    ///< 降级帧数
     int   lost_delete_frames  = 40;    ///< 删除帧数
+    int   max_tracks          = 64;    ///< 轨迹数量硬上限，防止误检导致状态无限增长
     float min_confidence      = 0.1f;  ///< 最低输出置信度
+    float track_confidence_alpha = 0.25f; ///< 检测置信度 EMA 更新系数
+
+    // 2D/3D 关联与异常观测门控
+    float match_iou_threshold = 0.10f;
+    float match_center_gate   = 2.5f;  ///< 预测中心距离，以平均 bbox 尺寸归一化
+    float innovation_gate_sigma = 6.0f; ///< 单轴归一化创新门限；<=0 表示关闭
+    int   innovation_gate_min_age = 3; ///< 新轨迹先积累速度，再启用创新门控
 
     // 深度限制
     float min_depth = 0.3f;
     float max_depth = 15.0f;
 
-    // 自适应偏差校正 (EMA)
+    // 自适应偏差校正 (EMA)。准确双目标定下应关闭；仅用于明确做过
+    // 单目/双目尺度联合标定的历史配置。
+    bool  stereo_bias_correction_enabled = false;
+    float stereo_bias_initial = 1.0f;
     float stereo_bias_alpha = 0.05f;  ///< EMA 平滑因子 (加快偏差收敛)
 
     // IVW 融合权重 (与 Kalman R 分离)
@@ -97,6 +107,9 @@ struct DepthTrack {
     int   age        = 0;         ///< 总帧数
     int   lost_count = 0;         ///< 连续丢失帧数
     float confidence = 0.0f;
+    int   class_id   = -1;
+    float last_raw_x = 0.0f;
+    float last_raw_y = 0.0f;
     float last_raw_z = 0.0f;      ///< 上一次原始 z 测量
     int   method     = 0;         ///< 0=mono, 1=stereo, 2=blend
 
@@ -146,7 +159,7 @@ public:
      * @brief 处理丢帧 (无检测时调用, 纯 Kalman 预测)
      * @return 预测的 3D 结果
      */
-    std::vector<Object3D> predictOnly();
+    std::vector<Object3D> predictOnly(double actual_dt = 0.0);
 
     /**
      * @brief 重置所有跟踪
@@ -186,7 +199,7 @@ private:
     int next_track_id_ = 0;
 
     // 自适应偏差校正: EMA 跟踪 zs/zm 比例
-    float stereo_bias_ = 0.95f;      ///< 校准初始值 (3-5m实测 zs/zm ≈ 0.95)
+    float stereo_bias_ = 1.0f;
 
     // 内部方法
     float monoDepth(const Detection& det) const;

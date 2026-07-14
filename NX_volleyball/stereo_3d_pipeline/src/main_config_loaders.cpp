@@ -286,6 +286,25 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (fus["mono_max_z"])      cfg.depth.mono_max_z      = fus["mono_max_z"].as<float>();
         if (fus["stereo_min_z"])    cfg.depth.stereo_min_z    = fus["stereo_min_z"].as<float>();
         if (fus["min_confidence"])  cfg.depth.min_confidence  = fus["min_confidence"].as<float>();
+        if (fus["max_tracks"])      cfg.depth.max_tracks      = fus["max_tracks"].as<int>();
+        if (fus["track_confidence_alpha"])
+            cfg.depth.track_confidence_alpha =
+                fus["track_confidence_alpha"].as<float>();
+        if (fus["match_iou_threshold"])
+            cfg.depth.match_iou_threshold = fus["match_iou_threshold"].as<float>();
+        if (fus["match_center_gate"])
+            cfg.depth.match_center_gate = fus["match_center_gate"].as<float>();
+        if (fus["innovation_gate_sigma"])
+            cfg.depth.innovation_gate_sigma = fus["innovation_gate_sigma"].as<float>();
+        if (fus["innovation_gate_min_age"])
+            cfg.depth.innovation_gate_min_age = fus["innovation_gate_min_age"].as<int>();
+        if (fus["stereo_bias_correction_enabled"])
+            cfg.depth.stereo_bias_correction_enabled =
+                fus["stereo_bias_correction_enabled"].as<bool>();
+        if (fus["stereo_bias_initial"])
+            cfg.depth.stereo_bias_initial = fus["stereo_bias_initial"].as<float>();
+        if (fus["stereo_bias_alpha"])
+            cfg.depth.stereo_bias_alpha = fus["stereo_bias_alpha"].as<float>();
         // Kalman 观测噪声 (距离自适应基值)
         if (fus["R_mono"])          cfg.depth.R_mono          = fus["R_mono"].as<float>();
         if (fus["R_stereo"])        cfg.depth.R_stereo        = fus["R_stereo"].as<float>();
@@ -298,6 +317,18 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (fus["fallback_obs_noise_scale"])
             cfg.depth.fallback_obs_noise_scale =
                 fus["fallback_obs_noise_scale"].as<float>();
+        cfg.depth.max_tracks = std::max(1, cfg.depth.max_tracks);
+        cfg.depth.track_confidence_alpha =
+            std::clamp(cfg.depth.track_confidence_alpha, 0.0f, 1.0f);
+        cfg.depth.match_iou_threshold =
+            std::clamp(cfg.depth.match_iou_threshold, 0.0f, 1.0f);
+        cfg.depth.match_center_gate = std::max(0.0f, cfg.depth.match_center_gate);
+        cfg.depth.innovation_gate_min_age =
+            std::max(0, cfg.depth.innovation_gate_min_age);
+        cfg.depth.stereo_bias_initial =
+            std::max(0.1f, cfg.depth.stereo_bias_initial);
+        cfg.depth.stereo_bias_alpha =
+            std::clamp(cfg.depth.stereo_bias_alpha, 0.0f, 1.0f);
     }
 
     // Performance

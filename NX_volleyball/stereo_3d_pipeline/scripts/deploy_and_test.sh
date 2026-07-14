@@ -21,11 +21,12 @@ SCP_CMD="scp -o StrictHostKeyChecking=no -r"
 sync_code() {
     echo "=== Syncing code to NX ==="
     # 创建远端目录结构
-    ${SSH_CMD} "mkdir -p ${NX_DIR}/{src/{pipeline,stereo,detect,fusion,calibration,rectify,capture,utils},config,scripts} /home/nvidia/NX_volleyball/calibration && sudo install -d -o nvidia -g nvidia /run/volleyball"
+    ${SSH_CMD} "mkdir -p ${NX_DIR}/{src/{pipeline,stereo,detect,fusion,calibration,rectify,capture,utils},config,scripts,tests} /home/nvidia/NX_volleyball/calibration && sudo install -d -o nvidia -g nvidia /run/volleyball"
 
     # 同步源文件
     ${SCP_CMD} "${LOCAL_DIR}/src/." "${NX_HOST}:${NX_DIR}/src/"
     ${SCP_CMD} "${LOCAL_DIR}/config/." "${NX_HOST}:${NX_DIR}/config/"
+    ${SCP_CMD} "${LOCAL_DIR}/tests/." "${NX_HOST}:${NX_DIR}/tests/"
     ${SCP_CMD} "${LOCAL_DIR}/CMakeLists.txt" "${NX_HOST}:${NX_DIR}/"
     ${SCP_CMD} "${LOCAL_DIR}/package.xml" "${NX_HOST}:${NX_DIR}/"
     ${SCP_CMD} "${LOCAL_DIR}/../calibration/stereo_calib.yaml" "${NX_HOST}:/home/nvidia/NX_volleyball/calibration/"

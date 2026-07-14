@@ -239,6 +239,16 @@ fusion:
   R_stereo: 0.020
   ivw_R_mono: 0.004
   ivw_R_stereo: 0.025
+  # Current 853.154 mm calibration is authoritative. Do not rescale stereo
+  # depth toward the monocular bbox estimate used by historical configs.
+  stereo_bias_correction_enabled: false
+  stereo_bias_initial: 1.0
+  innovation_gate_sigma: 6.0
+  innovation_gate_min_age: 3
+  match_iou_threshold: 0.10
+  match_center_gate: 2.5
+  track_confidence_alpha: 0.25
+  max_tracks: 64
 
 performance:
   pwm_frequency: 90.0
@@ -290,6 +300,7 @@ tracker:
   min_confidence: 0.3
 
 prediction:
+  enable: false               # RDK owns Student-t filtering and landing prediction
   # Realtime landing path:
   #   bbox_center disparity + d0 -> Student-t EKF -> RK4 rollout
   #   circle is fallback/consistency only; polynomial remains backup.

@@ -47,6 +47,8 @@ struct LandingPrediction {
 };
 
 struct TrajectoryPredictorConfig {
+    bool enabled = true;          ///< false 时仅发布 NX 原始观测，由 RDK 负责弹道预测
+
     // Physics
     float gravity       = 9.81f;
     float air_density   = 1.225f;

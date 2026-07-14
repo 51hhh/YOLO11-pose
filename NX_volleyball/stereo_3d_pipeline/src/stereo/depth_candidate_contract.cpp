@@ -188,6 +188,22 @@ DepthCandidateSelection selectLegacyDepthOutputCandidate(
     return DepthCandidateSelection{};
 }
 
+DepthCandidateSelection selectPreferredDepthOutputCandidate(
+    const std::vector<DepthCandidateObservation>& candidates,
+    DepthCandidateMethod preferred_method) {
+    for (const auto& candidate : candidates) {
+        if (candidate.method != preferred_method ||
+            !isUsableDepthCandidate(candidate)) {
+            continue;
+        }
+        DepthCandidateSelection selection;
+        selection.valid = true;
+        selection.observation = candidate;
+        return selection;
+    }
+    return selectLegacyDepthOutputCandidate(candidates);
+}
+
 const char* depthCandidateStatusName(DepthCandidateStatus status) {
     switch (status) {
     case DepthCandidateStatus::NOT_RUN: return "not_run";

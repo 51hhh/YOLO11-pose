@@ -700,6 +700,14 @@ bool Pipeline::init(const PipelineConfig& config) {
         hybrid_depth_->init(focal, calibration_->getBaseline(), cx, cy, hd_cfg);
         LOG_INFO("  Hybrid Depth: mono(<%.0fm) + stereo(>%.0fm) + Kalman @ %.0fHz",
                  hd_cfg.mono_max_z, hd_cfg.stereo_min_z, 1.0f / hd_cfg.dt);
+        LOG_INFO("  Hybrid tracking: stereo_bias=%s initial=%.3f innovation=%.1fsigma "
+                 "match(iou=%.2f center=%.2f) max_tracks=%d",
+                 hd_cfg.stereo_bias_correction_enabled ? "enabled" : "disabled",
+                 hd_cfg.stereo_bias_initial,
+                 hd_cfg.innovation_gate_sigma,
+                 hd_cfg.match_iou_threshold,
+                 hd_cfg.match_center_gate,
+                 hd_cfg.max_tracks);
     } else {
         // 全帧/半分辨率模式: VPI SGM
         LOG_INFO("Initializing VPI Stereo (maxDisp=%d, winSize=%d, %dx%d)...",
