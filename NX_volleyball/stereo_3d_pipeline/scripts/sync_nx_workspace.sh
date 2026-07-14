@@ -147,7 +147,10 @@ excludes=(
   "--exclude=recordings/"
   "--exclude=trajectory_dataset/"
   "--exclude=baseline_clips/"
-  "--exclude=calibration/"
+  # Only exclude the top-level calibration data directory.  A plain
+  # `calibration/` pattern also matches src/calibration/ and silently drops
+  # the calibration tool sources from the NX workspace.
+  "--exclude=/calibration/"
   "--exclude=calibration_images/"
   "--exclude=\$(ALLUSERSPROFILE)/"
   "--exclude=*.csv"
