@@ -144,7 +144,7 @@ neural_feature_matching:
   enabled: false # legacy single-backend alias disabled; split blocks below write independent fields
 
 neural_feature_matching_xfeat:
-  enabled: true # XFeat runs inline on synchronized 90Hz frames
+  enabled: false # P0/P1 signed-dy regression does not require the optional XFeat engine
   backend: "xfeat"
   extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_160_b2.engine"
   matcher_engine_path: ""
@@ -253,7 +253,7 @@ performance:
   async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
   async_roi_deadline_ms: 11.1   # 90Hz 下给 ROI 后处理的软预算
   p2_feature_job_scaffold_enabled: true      # keep P2 lane decisions visible in frame summary
-  p2_realtime_lane_decision_enabled: true    # run NCC + XFeat inline on each 90Hz frame; SuperPoint/ALIKED remain disabled in this config
+  p2_realtime_lane_decision_enabled: true    # run the CUDA NCC candidate inline; neural feature engines remain disabled
   p2_diagnostic_lane_decision_enabled: false # no async sidecar sampling; write candidates to main CSV fields
   p2_selective_trigger: false
   p2_trigger_on_fallback: true
