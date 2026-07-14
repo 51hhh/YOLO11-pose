@@ -21,7 +21,9 @@ camera:
   height: 1080
 
 calibration:
-  file: "calibration/stereo_calib.yaml"
+  # Calibration is deployed beside the project directory:
+  # <workspace>/calibration/stereo_calib.yaml.
+  file: "../calibration/stereo_calib.yaml"
 
 disparity_offset:
   # Old d0 was fitted before the 853.154 mm recalibration. Keep raw disparity

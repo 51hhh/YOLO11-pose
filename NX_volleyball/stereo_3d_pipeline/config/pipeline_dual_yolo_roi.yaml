@@ -22,7 +22,7 @@ camera:
   height: 1080
 
 calibration:
-  file: "calibration/stereo_calib.yaml"
+  file: "../calibration/stereo_calib.yaml"
 
 disparity_offset:
   # Disabled after the 853.154 mm stereo recalibration. Re-enable only after

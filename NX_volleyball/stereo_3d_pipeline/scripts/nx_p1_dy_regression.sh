@@ -97,6 +97,17 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
 fi
 set +u
 source /opt/ros/humble/setup.bash
+# The pipeline publishes volleyball_interfaces messages.  Source the local
+# interface workspace as well; sourcing only /opt/ros leaves the generated
+# FastRTPS typesupport library out of AMENT_PREFIX_PATH/LD_LIBRARY_PATH.
+for ros_ws_setup in \
+  /home/nvidia/ros2_ws/install/setup.bash \
+  /home/nvidia/volleyball_ros2_ws/install/setup.bash; do
+  if [[ -f "${ros_ws_setup}" ]]; then
+    source "${ros_ws_setup}"
+    break
+  fi
+done
 set -u
 
 # Ensure GPU is locked at max frequency (jetson_clocks)
