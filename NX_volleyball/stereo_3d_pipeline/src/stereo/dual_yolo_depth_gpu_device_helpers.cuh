@@ -352,7 +352,10 @@ __device__ __forceinline__ float depthFromDisparity(
     const float denom = disparity - d0;
     return denom > 0.5f
         ? focal * baseline / denom
-        : CUDART_NAN_F;
+        // CUDART_NAN_F was removed from recent CUDA runtime headers
+        // (including the CUDA 12.6 toolchain on Orin NX).  Construct a
+        // quiet NaN with the device-side integer bitcast instead.
+        : __int_as_float(0x7fffffff);
 }
 
 __device__ __forceinline__ float sampleWeight(float score) {
