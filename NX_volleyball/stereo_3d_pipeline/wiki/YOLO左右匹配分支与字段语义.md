@@ -81,7 +81,7 @@
 | `z_circle_center` / `disparity_circle_center` | 左右 circle source 都是 `2` 且深度范围有效 | 有效，正常 ROI 圆心/球心拟合 |
 | `z_circle_center` | 任一侧 circle source 为 `1` bbox proxy | 无效，即使 `circle_disparity` 数值存在也不作为正常圆心候选 |
 | `z_roi_edge_centroid`, `z_roi_radial_center`, `z_roi_edge_pair_center` | 对应 depth mode 开启并通过 y/depth gate | 有效，属于直接左右 YOLO pair 的 P0 几何候选 |
-| `z_roi_multi_point`, `z_roi_center_patch` | 对应 mode 开启并通过自身 gate | 写入原始字段，但当前不参与 legacy `z_stereo/obj.z` 选择 |
+| `z_roi_multi_point`, `z_roi_center_patch` | 对应 mode 开启并通过自身 gate | 都写入原始字段；当前 direct pair 首选 multi-point，center patch 不参与在线选择 |
 | `z_roi_patch_iou_color_edge`, `z_roi_iou_region_color_patch` | BGR GPU snapshot 可用，且对应 mode 开启 | 字段保留；2026-07-04 artifact 显示错配，当前默认关闭，不参与 legacy `z_stereo/obj.z` |
 | `z_roi_cuda_stereo_sgm` | gray GPU snapshot 和 CUDA stream 可用，且对应 mode 开启 | 字段保留；联合运行长尾/覆盖率不准入，当前默认关闭 |
 | `z_roi_cuda_template_match` | direct pair 成功，NCC sidecar 命中，gray GPU snapshot 可用 | 写入 `*.p2_diagnostic.csv` 的 `mode=cuda_template`，由 `trajectory_fusion/dataset.py` 合并为 P1 训练候选；不回写主 `Object3D` |
@@ -204,7 +204,7 @@ z_fallback = z_fallback_feature_points if valid
 
 ## Legacy `z_stereo` 选择
 
-`buildDepthCandidateObservations()` 会把所有候选放进一个列表，再由 `selectLegacyDepthOutputCandidate()` 选择第一个可用于 legacy 输出的候选。当前 legacy allow-list 允许 P0 几何/bbox 和退化 fallback，不允许 P1/实验候选抢占 `z_stereo/obj.z`。
+`buildDepthCandidateObservations()` 会把所有候选放进一个列表。direct pair 根据 `depth_solver` 先调用 `selectPreferredDepthOutputCandidate()`；当前正式配置首选 P1 `ROI_MULTI_POINT`。若首选无效，或不是 direct pair，再由 `selectLegacyDepthOutputCandidate()` 从 P0 几何/bbox 和退化 fallback allow-list 选择。除 multi-point 外的 P1/实验候选不抢占 `z_stereo/obj.z`。
 
 候选构造顺序中，`fallback_epipolar` 和正常 `circle_center` 共用同一个槽位:
 

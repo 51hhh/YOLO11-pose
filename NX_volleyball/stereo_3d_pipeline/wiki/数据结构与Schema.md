@@ -49,7 +49,7 @@
 
 兼容旧 CSV 的 alias 字段仍存在: `z_yolo_bbox_pair`、`z_circle`、`z_subpixel`、`disparity_yolo`、`disparity_circle`、`disparity_subpixel`。它们分别对应 bbox center、circle center 和 ROI multi-point/subpixel，不应按新增测距方法重复统计。
 
-`z_stereo` 和 `z` 也是兼容字段，不是新增候选方法。当前实时管线用 `buildDepthCandidateObservations()` 收集候选，并由 `selectLegacyDepthOutputCandidate()` 从 P0 几何/bbox 和退化 fallback 中选择兼容输出，写入 `z_stereo/z/raw_z/stereo_depth_source`。训练可靠性模型时应读取各个原始 `z_*` 候选字段；`z_stereo/z` 只作为旧在线 baseline 或诊断字段。
+`z_stereo` 和 `z` 也是兼容字段，不是新增候选方法。当前实时管线用 `buildDepthCandidateObservations()` 收集候选；direct pair 根据 `depth_solver` 首选 `z_roi_multi_point`，无效时再由 P0 几何/bbox 和退化 fallback 选择兼容输出，写入 `z_stereo/z/raw_z/stereo_depth_source`。训练可靠性模型时应读取各个原始 `z_*` 候选字段；`z_stereo/z` 只作为在线 baseline 或诊断字段。
 
 直接左右 YOLO pair 的误匹配诊断字段为: `pair_initial_disparity`, `pair_epipolar_dy`, `pair_y_tolerance`, `pair_size_ratio`, `pair_shifted_iou`, `pair_score`, `pair_bbox_prior_penalty`, `pair_positive_disparity`。这些字段从 `DEPTH_CANDIDATES` 记录级别开始写入；fallback 行保持 `-1/0`，用 `stereo_match_source` 区分匹配来源。
 

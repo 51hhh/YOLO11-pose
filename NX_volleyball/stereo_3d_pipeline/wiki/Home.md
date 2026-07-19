@@ -1,6 +1,6 @@
 # 排球双目追踪系统 Wiki
 
-最后更新: 2026-07-10
+最后更新: 2026-07-19
 
 本 Wiki 是 `stereo_3d_pipeline` 的正式文档入口，覆盖 Jetson Orin NX 上的双目排球追踪、标定、录制、深度测量、轨迹融合、部署和排障。仓库内旧 `docs/` 保留为历史资料、实验报告和迁移来源，不再作为首要入口。
 
@@ -11,12 +11,20 @@
 当前主路径:
 
 - 实时程序: `stereo_pipeline`
-- 生产/测试配置: `config/pipeline_dual_yolo_roi.yaml`
+- 正式 NX→RDK 配置: `config/pipeline_rdk_joint.yaml`
+- 深度/性能专项配置: `config/pipeline_dual_yolo_roi.yaml`
 - 标定采集: `capture_chessboard`
 - 标定求解: `stereo_calibrate` 或本机 `stereo_calibration.py`
 - 轨迹模型训练采集: [轨迹模型数据采集流程](轨迹模型数据采集流程.md)
 - 基准片段录制: `--record-baseline-clip`, 详见 [录制与离线评估](录制与离线评估.md)
 - 单帧 legacy CPU 特征匹配可视化: `--debug-feature-matches`
+
+当前正式深度不是全帧 SGM 或神经特征匹配。左右 YOLO direct pair 成功后，
+`depth_solver=roi_subpixel_match` 首选 CUDA ROI 多点亚像素候选
+`z_roi_multi_point`；若候选无效，再回退到圆心、径向中心、成对边缘中心、
+边缘质心和 bbox 几何深度。XFeat、NCC、SuperPoint、ALIKED、BM/SGM 与 VPI
+Stereo 在联合配置中关闭。完整口径见仓库根 `README.md` 和
+[深度算法导航](深度算法导航.md)。
 
 ## 阅读路径
 

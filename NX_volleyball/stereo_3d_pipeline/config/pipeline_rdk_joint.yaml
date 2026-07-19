@@ -86,8 +86,8 @@ detector:
       roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
       roi_libsgm: false # P2 Fixstars libSGM candidate
       roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
-      roi_center_patch: true   # P1 100fps training candidate; record z_roi_center_patch
-      roi_subpixel: true       # P1 CUDA multi-point candidate; record z_roi_multi_point
+      roi_center_patch: true   # auxiliary P1 candidate; record z_roi_center_patch
+      roi_subpixel: true       # production-preferred CUDA multi-point candidate
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
       fallback_template: false # CPU fallback; keep off in 100fps realtime config
       fallback_feature_points: false # CPU fallback; keep off in 100fps realtime config
@@ -98,7 +98,7 @@ detector:
     roi_denoise: true                  # local 3x3 denoise only inside ROI
     log_matches: false
     depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match
-    subpixel_enabled: true             # enables z_roi_multi_point P1 candidate for model training
+    subpixel_enabled: true             # enables preferred z_roi_multi_point output
     subpixel_patch_radius: 5
     subpixel_search_radius_px: 8
     subpixel_max_points: 12
