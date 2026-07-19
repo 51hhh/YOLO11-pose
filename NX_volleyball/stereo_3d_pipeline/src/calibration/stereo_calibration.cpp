@@ -16,7 +16,7 @@ bool StereoCalibration::load(const std::string& filepath) {
         return false;
     }
 
-    // 读取标定参数 (键名与 stereo_calibration.py 输出一致)
+    // 读取标定参数 (键名与 C++/Python 标定工具输出一致)
     fs["camera_matrix_left"]  >> K1_;
     fs["distortion_coefficients_left"]  >> D1_;
     fs["camera_matrix_right"] >> K2_;
@@ -96,11 +96,33 @@ cv::Point2f StereoCalibration::getPrincipalPoint() const {
             static_cast<float>(P.at<double>(1, 2))};
 }
 
-void StereoCalibration::buildRemapMaps(
+bool StereoCalibration::buildRemapMaps(
     cv::Mat& map1L, cv::Mat& map2L,
     cv::Mat& map1R, cv::Mat& map2R,
     int width, int height) const
 {
+    auto clearMaps = [&] {
+        map1L.release();
+        map2L.release();
+        map1R.release();
+        map2R.release();
+    };
+
+    if (width <= 0 || height <= 0) {
+        clearMaps();
+        LOG_ERROR("Invalid rectified output size: %dx%d", width, height);
+        return false;
+    }
+
+    if (!isOutputAspectCompatible(width, height)) {
+        clearMaps();
+        LOG_ERROR("Rectified output aspect mismatch: calibration=%dx%d, "
+                  "requested=%dx%d. Non-uniform rectification changes circle "
+                  "geometry; use the calibration aspect ratio.",
+                  image_width_, image_height_, width, height);
+        return false;
+    }
+
     // 若输出分辨率与标定分辨率不同, 缩放 P1/P2 的 fx/fy/cx/cy
     cv::Mat P1_use = P1_, P2_use = P2_;
     if (image_width_ > 0 && image_height_ > 0 &&
@@ -136,6 +158,7 @@ void StereoCalibration::buildRemapMaps(
                                 CV_32FC1, map1R, map2R);
 
     LOG_INFO("Built remap LUTs: %dx%d", width, height);
+    return true;
 }
 
 }  // namespace stereo3d

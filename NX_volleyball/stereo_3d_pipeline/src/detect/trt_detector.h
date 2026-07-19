@@ -69,7 +69,7 @@ public:
      * @brief 异步提交一次推理 (不阻塞)
      * @param slotId RingBuffer 槽位 ID [0, RING_BUFFER_SIZE)
      */
-    void enqueue(int slotId,
+    bool enqueue(int slotId,
                  const void* gpuImageU8, int pitch,
                  int width, int height,
                  cudaStream_t stream);
@@ -109,7 +109,11 @@ private:
     // TensorRT 组件
     nvinfer1::IRuntime* runtime_   = nullptr;
     nvinfer1::ICudaEngine* engine_ = nullptr;
-    nvinfer1::IExecutionContext* context_ = nullptr;
+    // One execution context per ring slot. TensorRT tensor addresses are
+    // context state, so sharing one context across asynchronous slot enqueues
+    // can race when the next frame updates bindings before the previous one
+    // has finished.
+    std::array<nvinfer1::IExecutionContext*, RING_BUFFER_SIZE> contexts_{};
 
     // 每个 RingSlot 一套 I/O 缓冲, 避免异步覆盖
     std::array<BufferSet, RING_BUFFER_SIZE> buffers_;

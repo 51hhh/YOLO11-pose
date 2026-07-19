@@ -127,8 +127,8 @@ print("VPI Stereo Disparity Benchmark")
 print("=" * 60)
 
 configs = [
-    ("Full 1280x720 maxDisp=256", 1280, 720, 256),
-    ("Half 640x360 maxDisp=128",   640,  360, 128),
+    ("Full 1440x1080 maxDisp=256", 1440, 1080, 256),
+    ("Half 720x540 maxDisp=128",    720,  540, 128),
 ]
 backends = [("CUDA", vpi.Backend.CUDA)]
 # PVA stereo may not support all configs on VPI 3.x
@@ -159,10 +159,10 @@ for res_name, W, H, maxd in configs:
         except Exception as e:
             print(f"  {res_name} / {bk_name}: FAILED ({e})")
 
-print("\nVPI Remap (PVA) 1280x720:")
+print("\nVPI Remap (PVA) 1440x1080:")
 try:
-    img = vpi.asimage(np.random.randint(0, 255, (720, 1280), dtype=np.uint8))
-    warp = vpi.WarpMap(vpi.WarpGrid(1280, 720))
+    img = vpi.asimage(np.random.randint(0, 255, (1080, 1440), dtype=np.uint8))
+    warp = vpi.WarpMap(vpi.WarpGrid(1440, 1080))
     for _ in range(10):
         o = vpi.remap(img, warp, backend=vpi.Backend.PVA, interp=vpi.Interp.LINEAR)
     with o.rlock():
@@ -196,7 +196,7 @@ try:
     import torch
     print(f"PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}, device={torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'}")
 
-    dummy = np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
+    dummy = np.random.randint(0, 255, (1080, 1440, 3), dtype=np.uint8)
 
     for label, path in [("PT", pt), ("TRT", eng)]:
         if not os.path.exists(path):

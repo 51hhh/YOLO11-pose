@@ -9,57 +9,101 @@
 #ifndef STEREO_3D_PIPELINE_FRAME_SLOT_H_
 #define STEREO_3D_PIPELINE_FRAME_SLOT_H_
 
+#include "detection_types.h"
+#include "object3d_types.h"
+
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
+#include <cstdint>
 #include <vector>
-#include <cstring>
 
 namespace stereo3d {
 
 /**
- * @brief 单个检测结果
+ * @brief SOT 跟踪结果
  */
-struct Detection {
-    float cx, cy;          ///< 检测框中心 (像素坐标)
-    float width, height;   ///< 检测框尺寸
-    float confidence;      ///< 置信度
-    int class_id;          ///< 类别 ID
-
-    Detection() : cx(0), cy(0), width(0), height(0), confidence(0), class_id(0) {}
+struct SOTResult {
+    float cx, cy, width, height;
+    float confidence;
+    bool valid;
+    SOTResult() : cx(0), cy(0), width(0), height(0), confidence(0), valid(false) {}
 };
 
 /**
- * @brief 3D 定位结果
+ * @brief bbox 来源
  */
-struct Object3D {
-    float x, y, z;         ///< 3D 坐标 (米)
-    float vx, vy, vz;      ///< 3D 速度 (m/s)
-    float ax, ay, az;       ///< 3D 加速度 (m/s²)
-    float z_mono;          ///< 单目测距 (m), 校准用
-    float z_stereo;        ///< 双目测距 (m), -1=无效
-    float confidence;      ///< 定位置信度
-    int class_id;          ///< 类别 ID
-    int track_id;          ///< 跟踪 ID (-1 = 未跟踪)
-    int depth_method;      ///< 0=单目, 1=双目, 2=融合
+enum class BboxSource {
+    NONE,       ///< 无检测
+    YOLO,       ///< YOLO 检测
+    TRACKER     ///< SOT 补帧
+};
 
-    Object3D() : x(0), y(0), z(0), vx(0), vy(0), vz(0),
-                 ax(0), ay(0), az(0), z_mono(0), z_stereo(-1),
-                 confidence(0), class_id(0), track_id(-1), depth_method(0) {}
+/**
+ * @brief Tracker 状态
+ */
+enum class TrackerState {
+    IDLE,       ///< 无目标
+    TRACKING,   ///< 正常跟踪
+    LOST        ///< 目标丢失，等待 YOLO 重检测
+};
+
+/**
+ * @brief Per-frame stereo sync metadata exposed to callbacks and recorders.
+ */
+struct FrameMetadata {
+    uint64_t host_capture_timestamp_ns = 0;
+    uint64_t left_timestamp_us = 0;
+    uint64_t right_timestamp_us = 0;
+    uint32_t left_frame_number = 0;
+    uint32_t right_frame_number = 0;
+    uint32_t left_frame_counter = 0;
+    uint32_t right_frame_counter = 0;
+    uint32_t left_trigger_index = 0;
+    uint32_t right_trigger_index = 0;
+    int64_t frame_counter_delta = 0;
+    int64_t frame_number_delta = 0;
+    int64_t timestamp_delta_us = 0;
+    int64_t stereo_timestamp_residual_ns = 0;
+    bool grab_failed = false;
+    bool is_detect_frame = true;
+    bool p2_depth_modes_enabled = false;
+    uint32_t p2_depth_mode_mask = 0;
+    bool p2_feature_job_scaffold_enabled = false;
+    bool p2_realtime_requested = false;
+    bool p2_diagnostic_requested = false;
+    uint32_t p2_realtime_triggers = 0;
+    uint32_t p2_diagnostic_triggers = 0;
+    uint32_t p2_realtime_skip_reasons = 0;
+    uint32_t p2_diagnostic_skip_reasons = 0;
+    int p2_feature_job_count = 0;
+    int p2_left_count = 0;
+    int p2_right_count = 0;
+    int p2_valid_direct_pair_count = 0;
 };
 
 /**
  * @brief 一帧数据的完整生命周期容器
  *
  * Pipeline 每一帧在此结构中流转:
- *   Stage 0 写入 rawL/rawR → rectL/rectR
+ *   Stage 0 写入 rawL/rawR -> rectL/rectR
  *   Stage 1 写入 detections
- *   Stage 2 写入 disparityMap
- *   Stage 3 读取 detections + disparityMap → 写入 results
+ *   全帧模式 Stage 2 写入 disparityMap
+ *   ROI/双路 YOLO Stage 2 直接写入 results
  */
 struct FrameSlot {
     // =========== 帧标识 ===========
     int frame_id = -1;                    ///< 帧序号
     bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
+    uint64_t left_timestamp_us = 0;
+    uint64_t host_capture_timestamp_ns = 0;
+    uint64_t right_timestamp_us = 0;
+    uint32_t left_frame_number = 0;
+    uint32_t right_frame_number = 0;
+    uint32_t left_frame_counter = 0;
+    uint32_t right_frame_counter = 0;
+    uint32_t left_trigger_index = 0;
+    uint32_t right_trigger_index = 0;
+    int64_t stereo_timestamp_residual_ns = 0;
 
     // =========== Stage 0: 原始图像 ===========
     VPIImage rawL      = nullptr;         ///< 左原始图 (Pinned + Mapped)
@@ -74,7 +118,28 @@ struct FrameSlot {
     VPIImage rectGray_vpiR  = nullptr;   ///< 右校正灰度 (rect res)
 
     // =========== Stage 1: 检测结果 ===========
-    std::vector<Detection> detections;    ///< YOLO 检测结果列表
+    std::vector<Detection> detections;    ///< 左目 YOLO 检测结果列表
+    std::vector<Detection> detections_right; ///< 右目 YOLO 检测结果列表 (双路测试)
+    bool detection_submitted = false;      ///< 本帧是否真正提交过左目 YOLO
+    bool right_detection_submitted = false; ///< 本帧是否提交过右目 YOLO
+
+    // =========== SOT Tracker 补帧 ===========
+    SOTResult sot_bbox_result;            ///< SOT tracker 输出
+    BboxSource bbox_source = BboxSource::NONE; ///< 最终 bbox 来源
+    bool is_detect_frame = true;          ///< 是否为 YOLO 检测帧
+    bool p2_depth_modes_enabled = false;
+    uint32_t p2_depth_mode_mask = 0;
+    bool p2_feature_job_scaffold_enabled = false;
+    bool p2_realtime_requested = false;
+    bool p2_diagnostic_requested = false;
+    uint32_t p2_realtime_triggers = 0;
+    uint32_t p2_diagnostic_triggers = 0;
+    uint32_t p2_realtime_skip_reasons = 0;
+    uint32_t p2_diagnostic_skip_reasons = 0;
+    int p2_feature_job_count = 0;
+    int p2_left_count = 0;
+    int p2_right_count = 0;
+    int p2_valid_direct_pair_count = 0;
 
     // =========== Stage 2: 视差图 ===========
     VPIImage disparityMap  = nullptr;     ///< 视差图 (S16 格式)
@@ -85,7 +150,8 @@ struct FrameSlot {
 
     // =========== CUDA Event 同步 ===========
     cudaEvent_t evtRectDone   = nullptr;  ///< Stage 0 校正完成
-    cudaEvent_t evtDetectDone = nullptr;  ///< Stage 1 检测完成
+    cudaEvent_t evtDetectDone = nullptr;  ///< Stage 1 左目检测完成
+    cudaEvent_t evtDetectRightDone = nullptr; ///< Stage 1 右目检测完成
     cudaEvent_t evtStereoDone = nullptr;  ///< Stage 2 视差完成
 
     // =========== Cached CUDA Pointers (Tegra 统一内存优化) ===========
@@ -97,6 +163,9 @@ struct FrameSlot {
     };
     CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
     CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
+    CachedGPU rectBGR_L_gpu, rectBGR_R_gpu;   ///< 校正 BGR 图 CUDA 指针
+    CachedGPU rectGray_L_gpu;                 ///< 校正灰度左图 CUDA 指针
+    CachedGPU rectGray_R_gpu;                 ///< 校正灰度右图 CUDA 指针
 
     // =========== 生命周期 ===========
 
@@ -109,8 +178,24 @@ struct FrameSlot {
         if (err != cudaSuccess) return false;
         err = cudaEventCreateWithFlags(&evtDetectDone, cudaEventDisableTiming);
         if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; return false; }
+        err = cudaEventCreateWithFlags(&evtDetectRightDone, cudaEventDisableTiming);
+        if (err != cudaSuccess) {
+            cudaEventDestroy(evtRectDone);
+            evtRectDone = nullptr;
+            cudaEventDestroy(evtDetectDone);
+            evtDetectDone = nullptr;
+            return false;
+        }
         err = cudaEventCreateWithFlags(&evtStereoDone, cudaEventDisableTiming);
-        if (err != cudaSuccess) { cudaEventDestroy(evtRectDone); evtRectDone = nullptr; cudaEventDestroy(evtDetectDone); evtDetectDone = nullptr; return false; }
+        if (err != cudaSuccess) {
+            cudaEventDestroy(evtRectDone);
+            evtRectDone = nullptr;
+            cudaEventDestroy(evtDetectDone);
+            evtDetectDone = nullptr;
+            cudaEventDestroy(evtDetectRightDone);
+            evtDetectRightDone = nullptr;
+            return false;
+        }
         return true;
     }
 
@@ -137,11 +222,37 @@ struct FrameSlot {
         };
         destroyEvent(evtRectDone);
         destroyEvent(evtDetectDone);
+        destroyEvent(evtDetectRightDone);
         destroyEvent(evtStereoDone);
 
         detections.clear();
+        detections_right.clear();
+        detection_submitted = false;
+        right_detection_submitted = false;
         results.clear();
+        sot_bbox_result = SOTResult();
+        bbox_source = BboxSource::NONE;
+        is_detect_frame = true;
         frame_id = -1;
+        left_timestamp_us = right_timestamp_us = 0;
+        host_capture_timestamp_ns = 0;
+        left_frame_number = right_frame_number = 0;
+        left_frame_counter = right_frame_counter = 0;
+        left_trigger_index = right_trigger_index = 0;
+        stereo_timestamp_residual_ns = 0;
+        p2_depth_modes_enabled = false;
+        p2_depth_mode_mask = 0;
+        p2_feature_job_scaffold_enabled = false;
+        p2_realtime_requested = false;
+        p2_diagnostic_requested = false;
+        p2_realtime_triggers = 0;
+        p2_diagnostic_triggers = 0;
+        p2_realtime_skip_reasons = 0;
+        p2_diagnostic_skip_reasons = 0;
+        p2_feature_job_count = 0;
+        p2_left_count = 0;
+        p2_right_count = 0;
+        p2_valid_direct_pair_count = 0;
     }
 
     /**
@@ -149,11 +260,105 @@ struct FrameSlot {
      */
     void reset() {
         detections.clear();
+        detections_right.clear();
+        detection_submitted = false;
+        right_detection_submitted = false;
         results.clear();
+        sot_bbox_result = SOTResult();
+        bbox_source = BboxSource::NONE;
+        is_detect_frame = true;
         frame_id = -1;
         grab_failed = false;
+        left_timestamp_us = right_timestamp_us = 0;
+        left_frame_number = right_frame_number = 0;
+        left_frame_counter = right_frame_counter = 0;
+        left_trigger_index = right_trigger_index = 0;
+        stereo_timestamp_residual_ns = 0;
+        p2_depth_modes_enabled = false;
+        p2_depth_mode_mask = 0;
+        p2_feature_job_scaffold_enabled = false;
+        p2_realtime_requested = false;
+        p2_diagnostic_requested = false;
+        p2_realtime_triggers = 0;
+        p2_diagnostic_triggers = 0;
+        p2_realtime_skip_reasons = 0;
+        p2_diagnostic_skip_reasons = 0;
+        p2_feature_job_count = 0;
+        p2_left_count = 0;
+        p2_right_count = 0;
+        p2_valid_direct_pair_count = 0;
     }
 };
+
+inline uint64_t normalizeUnixHostTimestampNs(int64_t timestamp) {
+    if (timestamp <= 0) return 0;
+    // Hikvision host timestamps are platform/SDK dependent. Accept values that
+    // look like Unix epoch nanoseconds or microseconds; reject monotonic-like
+    // counters so ROS consumers do not see stale absolute times.
+    constexpr int64_t kEpochNsMin = 100000000000000000LL;  // ~1973
+    constexpr int64_t kEpochUsMin = 100000000000000LL;     // ~1973
+    if (timestamp >= kEpochNsMin) {
+        return static_cast<uint64_t>(timestamp);
+    }
+    if (timestamp >= kEpochUsMin) {
+        return static_cast<uint64_t>(timestamp) * 1000ULL;
+    }
+    return 0;
+}
+
+inline uint64_t chooseCaptureTimestampNs(
+    int64_t left_host_timestamp,
+    int64_t right_host_timestamp,
+    uint64_t fallback_ns) {
+    const uint64_t left_ns = normalizeUnixHostTimestampNs(left_host_timestamp);
+    const uint64_t right_ns = normalizeUnixHostTimestampNs(right_host_timestamp);
+    if (left_ns > 0 && right_ns > 0) {
+        return left_ns / 2ULL + right_ns / 2ULL +
+               (left_ns % 2ULL + right_ns % 2ULL) / 2ULL;
+    }
+    if (left_ns > 0) return left_ns;
+    if (right_ns > 0) return right_ns;
+    return fallback_ns;
+}
+
+inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
+    FrameMetadata meta;
+    meta.host_capture_timestamp_ns = slot.host_capture_timestamp_ns;
+    meta.left_timestamp_us = slot.left_timestamp_us;
+    meta.right_timestamp_us = slot.right_timestamp_us;
+    meta.left_frame_number = slot.left_frame_number;
+    meta.right_frame_number = slot.right_frame_number;
+    meta.left_frame_counter = slot.left_frame_counter;
+    meta.right_frame_counter = slot.right_frame_counter;
+    meta.left_trigger_index = slot.left_trigger_index;
+    meta.right_trigger_index = slot.right_trigger_index;
+    meta.frame_counter_delta =
+        static_cast<int64_t>(slot.left_frame_counter) -
+        static_cast<int64_t>(slot.right_frame_counter);
+    meta.frame_number_delta =
+        static_cast<int64_t>(slot.left_frame_number) -
+        static_cast<int64_t>(slot.right_frame_number);
+    meta.timestamp_delta_us =
+        (static_cast<int64_t>(slot.left_timestamp_us) -
+         static_cast<int64_t>(slot.right_timestamp_us)) / 1000;
+    meta.stereo_timestamp_residual_ns = slot.stereo_timestamp_residual_ns;
+    meta.grab_failed = slot.grab_failed;
+    meta.is_detect_frame = slot.is_detect_frame;
+    meta.p2_depth_modes_enabled = slot.p2_depth_modes_enabled;
+    meta.p2_depth_mode_mask = slot.p2_depth_mode_mask;
+    meta.p2_feature_job_scaffold_enabled = slot.p2_feature_job_scaffold_enabled;
+    meta.p2_realtime_requested = slot.p2_realtime_requested;
+    meta.p2_diagnostic_requested = slot.p2_diagnostic_requested;
+    meta.p2_realtime_triggers = slot.p2_realtime_triggers;
+    meta.p2_diagnostic_triggers = slot.p2_diagnostic_triggers;
+    meta.p2_realtime_skip_reasons = slot.p2_realtime_skip_reasons;
+    meta.p2_diagnostic_skip_reasons = slot.p2_diagnostic_skip_reasons;
+    meta.p2_feature_job_count = slot.p2_feature_job_count;
+    meta.p2_left_count = slot.p2_left_count;
+    meta.p2_right_count = slot.p2_right_count;
+    meta.p2_valid_direct_pair_count = slot.p2_valid_direct_pair_count;
+    return meta;
+}
 
 /**
  * @brief 三缓冲 Ring Buffer

@@ -24,9 +24,10 @@ Coordinate3D::~Coordinate3D() {
 }
 
 void Coordinate3D::init(const cv::Mat& P1, float baseline,
-                        float minDepth, float maxDepth)
+                        float minDepth, float maxDepth, float d0)
 {
     baseline_ = baseline;
+    d0_       = d0;
     minDepth_ = minDepth;
     maxDepth_ = maxDepth;
 
@@ -37,17 +38,21 @@ void Coordinate3D::init(const cv::Mat& P1, float baseline,
         cy_    = static_cast<float>(P1.at<double>(1, 2));
     }
 
-    LOG_INFO("Coordinate3D: focal=%.1f, cx=%.1f, cy=%.1f, baseline=%.4fm",
-             focal_, cx_, cy_, baseline_);
+    LOG_INFO("Coordinate3D: focal=%.1f, cx=%.1f, cy=%.1f, baseline=%.4fm, d0=%.3fpx",
+             focal_, cx_, cy_, baseline_, d0_);
 
-    allocateGPUBuffers();
+    ready_ = allocateGPUBuffers();
+    if (!ready_) {
+        LOG_ERROR("Coordinate3D: failed to allocate GPU buffers");
+    }
 }
 
 bool Coordinate3D::allocateGPUBuffers() {
     cudaError_t err;
 
     // 深度结果 (每个框一个 float)
-    err = cudaMalloc(&depthResults_device_, maxBoxes_ * sizeof(float));
+    err = cudaMalloc(reinterpret_cast<void**>(&depthResults_device_),
+                     maxBoxes_ * sizeof(float));
     if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     err = cudaHostAlloc(reinterpret_cast<void**>(&depthResults_host_),
@@ -55,13 +60,15 @@ bool Coordinate3D::allocateGPUBuffers() {
     if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     // BBox 数据 [x1, y1, x2, y2] * maxBoxes
-    err = cudaMalloc(&bboxes_device_, maxBoxes_ * 4 * sizeof(int));
+    err = cudaMalloc(reinterpret_cast<void**>(&bboxes_device_),
+                     maxBoxes_ * 4 * sizeof(int));
     if (err != cudaSuccess) { freeGPUBuffers(); return false; }
 
     return true;
 }
 
 void Coordinate3D::freeGPUBuffers() {
+    ready_ = false;
     if (depthResults_device_) { cudaFree(depthResults_device_); depthResults_device_ = nullptr; }
     if (depthResults_host_)   { cudaFreeHost(depthResults_host_); depthResults_host_ = nullptr; }
     if (bboxes_device_)       { cudaFree(bboxes_device_); bboxes_device_ = nullptr; }
@@ -88,6 +95,11 @@ std::vector<Object3D> Coordinate3D::computeBatch(
 {
     int numBoxes = std::min(static_cast<int>(dets.size()), maxBoxes_);
     if (numBoxes == 0) return {};
+    if (!ready_ || !disparityGPU || dispPitch <= 0 ||
+        imgWidth <= 0 || imgHeight <= 0) {
+        LOG_WARN("Coordinate3D::computeBatch invalid state/input");
+        return {};
+    }
 
     // 1. 准备 BBox 数据并上传到 GPU
     std::vector<int> bboxes_host(numBoxes * 4);
@@ -103,20 +115,37 @@ std::vector<Object3D> Coordinate3D::computeBatch(
         bboxes_host[i * 4 + 3] = y2;
     }
 
-    cudaMemcpyAsync(bboxes_device_, bboxes_host.data(),
-                    numBoxes * 4 * sizeof(int),
-                    cudaMemcpyHostToDevice, stream);
+    cudaError_t err = cudaMemcpyAsync(bboxes_device_, bboxes_host.data(),
+                                      numBoxes * 4 * sizeof(int),
+                                      cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("Coordinate3D: H2D bboxes failed: %s", cudaGetErrorString(err));
+        return {};
+    }
 
     // 2. CUDA kernel: 每个 block 处理一个 BBox，用直方图法求峰值视差
     launchDepthExtractKernel(disparityGPU, dispPitch, imgWidth,
                              bboxes_device_, numBoxes,
                              depthResults_device_, stream);
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        LOG_WARN("Coordinate3D: depth extract launch failed: %s", cudaGetErrorString(err));
+        return {};
+    }
 
     // 3. 拷回 CPU
-    cudaMemcpyAsync(depthResults_host_, depthResults_device_,
-                    numBoxes * sizeof(float),
-                    cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
+    err = cudaMemcpyAsync(depthResults_host_, depthResults_device_,
+                          numBoxes * sizeof(float),
+                          cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("Coordinate3D: D2H depth results failed: %s", cudaGetErrorString(err));
+        return {};
+    }
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        LOG_WARN("Coordinate3D: stream sync failed: %s", cudaGetErrorString(err));
+        return {};
+    }
 
     // 4. 3D 投影
     std::vector<Object3D> results;
@@ -131,7 +160,9 @@ std::vector<Object3D> Coordinate3D::computeBatch(
 
         // VPI S16 Q10.5 格式: 实际视差 = d_peak / 32.0
         // 但 depth_extract.cu 已经做了除法，这里 d_peak 就是像素视差
-        float Z = (focal_ * baseline_) / d_peak;
+        const float denom = d_peak - d0_;
+        if (denom <= 0.5f) continue;
+        float Z = (focal_ * baseline_) / denom;
 
         if (Z < minDepth_ || Z > maxDepth_) continue;
 
@@ -139,6 +170,10 @@ std::vector<Object3D> Coordinate3D::computeBatch(
         obj.x = (dets[i].cx - cx_) * Z / focal_;
         obj.y = (dets[i].cy - cy_) * Z / focal_;
         obj.z = Z;
+        obj.raw_x = obj.x;
+        obj.raw_y = obj.y;
+        obj.raw_z = obj.z;
+        obj.raw_observation_valid = 1;
         obj.confidence = dets[i].confidence;
         obj.class_id   = dets[i].class_id;
         results.push_back(obj);

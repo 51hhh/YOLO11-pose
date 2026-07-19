@@ -1,8 +1,10 @@
 # stereo_3d_pipeline — 实时双目排球追踪
 
-Jetson Orin NX Super 16GB 双目深度管线。**实测 98 FPS** (100Hz PWM 触发)。
+Jetson Orin NX Super 16GB 双目深度管线。
 
-> **当前状态**: 生产就绪 — ROI 模式 + DLA INT8 + VPI TNR，2026-04-03 验证通过。
+> **正式文档入口**: 新 Wiki 源目录见 [`wiki/Home.md`](wiki/Home.md)。旧 `docs/` 目录保留为历史报告和迁移来源。
+
+> **注意**: README 下方内容保留为历史概览，当前运行命令、配置字段、标定流程、深度候选和性能复测方法以 [`wiki/Home.md`](wiki/Home.md) 及其子页面为准。
 
 ## 架构
 
@@ -38,8 +40,11 @@ DLA 检测与 VPI Remap 完美并行 — 检测等待仅 0.12ms。
 stereo_3d_pipeline/
 ├── CMakeLists.txt
 ├── config/
-│   ├── pipeline.yaml           # 默认全帧模式配置
-│   └── pipeline_roi.yaml       # ✅ ROI 模式配置 (98 FPS 生产配置)
+│   ├── pipeline_rdk_joint.yaml     # NX→RDK联合项目正式运行配置
+│   ├── pipeline_dual_yolo_roi.yaml # 深度算法/性能诊断配置
+│   ├── pipeline_record_p0p1.yaml   # P0/P1 数据采集配置
+│   ├── pipeline.yaml               # 基础参考配置
+│   └── disparity_offset_fit_20260709.json # 视差零点修正
 ├── scripts/
 │   ├── build_engine.sh         # TensorRT FP16 引擎构建脚本 (GPU/DLA)
 │   ├── build_dla_engine.sh     # DLA 引擎一键构建脚本
@@ -70,6 +75,12 @@ stereo_3d_pipeline/
     │   ├── roi_stereo_matcher.h/cpp  # ✅ ROI 多点 CUDA 匹配器
     │   ├── roi_stereo_match.cu       # ✅ ROI 匹配 CUDA kernel
     │   └── onnx_stereo.h/cpp         # ONNX Runtime DL推理 (CREStereo/HITNet)
+    ├── track/
+    │   ├── sot_tracker.h             # SOT 抽象接口
+    │   ├── nanotrack_trt.h/cpp       # NanoTrack TRT (双backbone + BAN head)
+    │   ├── mixformer_trt.h/cpp       # MixFormerV2 TRT (单引擎)
+    │   ├── crop_resize.h/cu          # CUDA crop+resize kernel (1ch/3ch)
+    │   └── tracker_utils.h           # Hanning 窗 + decoder 工具
     └── utils/
         ├── logger.h                  # printf 格式日志
         ├── profiler.h                # 性能统计 (NVTX + 均值聚合)
@@ -141,52 +152,81 @@ cmake .. -DCUDA_ARCH="87"   # 仅 Orin NX
 
 实操版检查清单与交接模板见：`docs/相机标定实施手册.md`。
 
-### 1. 采集棋盘格图像
+### 0. 构建标定工具
 
-使用 C++ 采集工具（与主程序使用相同的海康 SDK 和 PWM 触发）：
+在 NX 的 `NX_volleyball/stereo_3d_pipeline` 目录执行：
 
 ```bash
-# PWM 触发模式（默认）
-./capture_chessboard -o calibration_images -e 3000
+cmake -S . -B build_standalone -DCMAKE_BUILD_TYPE=Release -DCUDA_ARCH=87 \
+  -DCMAKE_DISABLE_FIND_PACKAGE_ament_cmake=ON \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.6/bin/nvcc \
+  -DCUDAToolkit_ROOT=/usr/local/cuda-12.6
+cmake --build build_standalone --target capture_chessboard stereo_calibrate -j$(nproc)
+cd build_standalone
+```
 
-# 自由运行模式（无需外部触发信号）
-./capture_chessboard --free-run -o calibration_images
+### 1. 采集棋盘格图像
 
-# 自定义参数
-./capture_chessboard --board-w 9 --board-h 6 --left 0 --right 1 -e 2000
+正式采集统一使用 C++ `capture_chessboard`。它与主程序使用同一套海康 SDK、
+FrameSpecInfo 水印同步和 PWM 触发路径；Python 采集脚本已删除。
+
+在 `build_standalone` 下执行：
+
+```bash
+./capture_chessboard \
+  -o calibration_images \
+  -g 17.0 \
+  --serial-left 00D39342665 \
+  --serial-right 00219471413
 ```
 
 操作方式：
-- **空格** — 采集当前帧（需左右均检测到棋盘格）
+- **空格** — 保存当前同步帧
 - **q / ESC** — 退出
 - **c** — 清空已采集图像
 
-建议采集 20-30 对图像，覆盖不同角度和位置。
+说明：
+- 相机触发频率保持 `100Hz`，GUI 显示限到约 `60fps`。
+- 采集端不做棋盘/质量检测，只显示保存数量和同步状态，避免影响预览和触发。
+- 正式标定只使用硬触发同步；`--free-run` 只用于排查相机画面。
+- 棋盘内角点规格在求解阶段通过 `--board-w/--board-h` 指定。
+
+建议采集 30-50 对图像，覆盖不同角度、画面位置和距离。正式采集后检查
+`calibration_images/capture_metadata.csv`，`frame_counter_delta` 应稳定为 0。
 
 ### 2. 执行标定
 
+路径 A：在 NX 上直接用 C++ 求解：
+
 ```bash
-# 方格边长 30mm
-./stereo_calibrate -s 30.0 -d calibration_images -o calibration/stereo_calib.yaml
-
-# 自定义棋盘格尺寸
-./stereo_calibrate -s 25.0 --board-w 11 --board-h 8 -d calibration_images
-
-# 跳过可视化
-./stereo_calibrate -s 30.0 --no-vis
+./stereo_calibrate -s 26.0 --board-w 5 --board-h 8
 ```
 
+路径 B：把采集图下载到本机，用 Python 离线求解：
+
+```bash
+scp -r nvidia@10.42.0.148:~/NX_volleyball/stereo_3d_pipeline/build_standalone/calibration_images ./NX_volleyball/calibration
+cd ./NX_volleyball/calibration
+python3 stereo_calibration.py -s 26.0
+```
+
+如需 SSH 跳过可视化，追加 `--no-vis`。C++ 求解可用 `--gpu-preprocess` 做
+Bayer/BGR 转灰预处理；角点检测和非线性求解仍由 OpenCV CPU 完成。
+两条求解路径默认都固定单目标定内参求双目外参；如需联合优化内参，显式追加
+`--optimize-intrinsics`。
+
 标定工具自动完成：
-1. 多级角点检测（严格→宽松降级策略）
+1. 并行棋盘检测 + 多级经典检测兜底（`--sb/--exhaustive` 可显式启用慢速 SB 兜底）
 2. 亚像素精化（`cornerSubPix`）
-3. 单目标定 + 焦距合理性检查
-4. 2σ 异常图像剔除
-5. 立体标定（`CALIB_USE_INTRINSIC_GUESS`）
+3. 单目标定
+4. 逐图重投影误差报告（不做事后最佳帧筛选）
+5. 立体标定（默认 `CALIB_FIX_INTRINSIC`，可用 `--optimize-intrinsics` 联合优化）
 6. 立体校正（`stereoRectify`, `alpha=0`）
 7. 深度精度报告
 8. 校正效果可视化预览
 
-输出文件 `stereo_calib.yaml` 与 `StereoCalibration::load()` 完全兼容。
+输出文件 `stereo_calib.yaml` 与 `StereoCalibration::load()` 完全兼容。Python 目录只保留
+`stereo_calibration.py`、`stereo_depth_test.py` 和算法对比脚本，不再包含采集入口。
 
 ### 3. 配置使用
 
@@ -194,7 +234,7 @@ cmake .. -DCUDA_ARCH="87"   # 仅 Orin NX
 
 ```yaml
 calibration:
-  file: "calibration/stereo_calib.yaml"
+  file: "../calibration/stereo_calib.yaml"
 ```
 
 ## TensorRT 引擎构建
@@ -222,20 +262,14 @@ calibration:
 ## 运行
 
 ```bash
-# ROI 模式 (98 FPS, 推荐)
-./stereo_pipeline --config config/pipeline_roi.yaml
+# 当前实时主配置
+./stereo_pipeline --config config/pipeline_rdk_joint.yaml
 
-# 全帧模式 (用于调试/对比)
-./stereo_pipeline --config config/pipeline.yaml
-
-# GPU Mixed 模式 (yolo26_mixed, 低延迟)
-./stereo_pipeline --config config/pipeline_yolo26_mixed.yaml
-
-# 纯 GPU INT8 模式 (yolo26_gpu)
-./stereo_pipeline --config config/pipeline_yolo26_gpu.yaml
+# P0/P1 轨迹数据采集
+./stereo_pipeline --config config/pipeline_record_p0p1.yaml
 
 # 可视化窗口 (显示检测框 + 测距 + 3D坐标)
-./stereo_pipeline --config config/pipeline_yolo26_mixed.yaml --visualize
+./stereo_pipeline --config config/pipeline_dual_yolo_roi.yaml --visualize
 ```
 
 Ctrl+C 安全退出。
@@ -243,9 +277,10 @@ Ctrl+C 安全退出。
 > 若通过 SSH 无桌面会话运行，OpenCV 可能无法初始化 GTK 窗口并自动回退 headless；
 > 管线与检测仍会继续运行，可通过日志中的 `Ball:` 行确认检测与测距。
 
-### 推荐生产配置（GPU Mixed, 目标 100 FPS）
+### 推荐实时配置（目标 100 FPS）
 
-- 配置文件：`config/pipeline_yolo26_mixed.yaml`
+- 正式联合运行：`config/pipeline_rdk_joint.yaml`
+- 深度算法诊断：`config/pipeline_dual_yolo_roi.yaml`
 - 关键参数：
   - `rectify.backend: "CUDA"`（当前实机测试吞吐更高；也支持 `VIC`）
   - `stereo.strategy: "roi_only"`
@@ -254,9 +289,61 @@ Ctrl+C 安全退出。
   - `detector.input_format: "bayer"`（相机 BayerRG8 输入）
 - 可视化模式建议仅用于联调；追求极限 FPS 时关闭 `--visualize`。
 
+## SOT Tracker 补帧
+
+YOLO 检测间隔帧由轻量 SOT tracker 跟踪目标，降低 DLA/GPU 负载、提高等效检测帧率。
+
+### 支持的 Tracker
+
+| Tracker | 引擎数 | 输入通道 | 推理耗时 | 特点 |
+|---------|--------|---------|----------|------|
+| **NanoTrack** | 3 (template backbone + search backbone + BAN head) | 3ch (灰度复制) | **~1.1ms** | MobileNetV3, 48ch 特征, 最快 |
+| **MixFormerV2** | 1 (全模型) | 1ch 灰度 | ~2ms | Attention 架构, 精度更高 |
+
+### NanoTrack 双 Backbone 架构
+
+NanoTrack 使用 MobileNetV3 SE-block，TRT 10 的 FP16 ForeignNode fusion 不支持动态 shape，
+因此拆分为两个固定 shape 的 backbone engine：
+
+```
+Template backbone: [1,3,127,127] → [1,48,8,8]   (0.39ms)
+Search backbone:   [1,3,255,255] → [1,48,16,16]  (0.48ms)
+BAN head:          [1,48,8,8]+[1,48,16,16] → cls[1,2,16,16]+reg[1,4,16,16] (0.20ms)
+```
+
+灰度图像通过 CUDA kernel `cropResizeGPU_3ch` 复制到 3 通道 (CHW layout)。
+
+### 配置示例 (NanoTrack)
+
+```yaml
+tracker:
+  enabled: true
+  type: "nanotrack"
+  engine_path: "path/to/nanotrack_backbone_template.engine"
+  search_engine_path: "path/to/nanotrack_backbone_search.engine"   # 双backbone模式
+  head_engine_path: "path/to/nanotrack_head.engine"
+  detect_interval: 3           # YOLO 每3帧检测一次
+  lost_threshold: 5            # 连续5帧无检测 → tracker IDLE
+  min_confidence: 0.3          # tracker 置信度阈值
+```
+
+### TRT Engine 构建
+
+```bash
+# NanoTrack (从 ZhangLi1210/NanoTrack_Tensorrt_Cpp 获取 ONNX)
+trtexec --onnx=nanotrack_backbone_template.onnx --saveEngine=nanotrack_backbone_template.engine --fp16 --memPoolSize=workspace:256MiB
+trtexec --onnx=nanotrack_backbone_search.onnx --saveEngine=nanotrack_backbone_search.engine --fp16 --memPoolSize=workspace:256MiB
+trtexec --onnx=nanotrack_head.onnx --saveEngine=nanotrack_head.engine --fp16 --memPoolSize=workspace:256MiB
+
+# SiamFC (从 scripts/export_siamfc.py 导出)
+trtexec --onnx=siamfc_backbone.onnx --saveEngine=siamfc_backbone.engine --fp16 \
+  --minShapes=input:1x1x127x127 --optShapes=input:1x1x255x255 --maxShapes=input:1x1x255x255
+trtexec --onnx=siamfc_head.onnx --saveEngine=siamfc_head.engine --fp16
+```
+
 ## 配置说明
 
-生产配置 `config/pipeline_roi.yaml`：
+当前主配置 `config/pipeline_dual_yolo_roi.yaml`：
 
 ```yaml
 camera:

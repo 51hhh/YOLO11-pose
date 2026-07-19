@@ -34,10 +34,22 @@ bool VPIRectifier::init(const StereoCalibration& calib, int width, int height,
     backend_ = backend;
 
     const char* backendName = (backend & VPI_BACKEND_VIC) ? "VIC" : "CUDA";
+    const int calWidth = calib.imageWidth();
+    const int calHeight = calib.imageHeight();
+    if (!calib.isOutputAspectCompatible(width, height)) {
+        LOG_ERROR("Rectified output aspect mismatch: calibration=%dx%d, "
+                  "requested=%dx%d. Non-uniform rectification breaks "
+                  "circle/radius geometry; use the calibration aspect ratio "
+                  "(current max-resolution config is 1440x1080).",
+                  calWidth, calHeight, width, height);
+        return false;
+    }
 
     // 1. 用 OpenCV 生成 Remap LUT
     cv::Mat map1L, map2L, map1R, map2R;
-    calib.buildRemapMaps(map1L, map2L, map1R, map2R, width, height);
+    if (!calib.buildRemapMaps(map1L, map2L, map1R, map2R, width, height)) {
+        return false;
+    }
 
     // 2. 初始化 VPI WarpMap
     VPIStatus err;

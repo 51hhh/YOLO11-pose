@@ -43,7 +43,7 @@ ROS2 发布 pose / velocity / 调试图像
 ```text
 NX_volleyball/
 ├── README.md
-├── calibration/                         # 双目标定工具与标定相关脚本
+├── calibration/                         # 离线标定求解、验证脚本和标定文件
 ├── scripts/
 │   └── convert_yolo_to_tensorrt.py      # PT/ONNX/TensorRT 转换脚本
 ├── 启动追踪节点.sh

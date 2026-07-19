@@ -2,31 +2,32 @@
 """
 stereo_calibration.py - 双目相机标定
 
-流程: 检测角点 → 单目标定 → 异常剔除 → 立体标定 → 立体校正 → 保存
+流程: 读取 C++ capture_chessboard 采集图 → 检测角点 → 单目标定 → 立体标定 → 立体校正 → 保存
 
 参考: https://zhuanlan.zhihu.com/p/685376354
 关键修正:
   1. findChessboardCorners 使用 FILTER_QUADS 过滤假四边形
-  2. stereoCalibrate 使用 CALIB_USE_INTRINSIC_GUESS (非 flags=0)
-  3. 按重投影误差自动剔除异常图像对
+  2. stereoCalibrate 默认使用 CALIB_FIX_INTRINSIC，与 C++ 工具一致
+  3. 按重投影误差报告最差图像对，不自动剔除
   4. 焦距合理性检查 (不应超过 ~4000)
   5. 图像使用无损 PNG 格式
 
 用法:
-  python3 stereo_calibration.py -s 30.0
-  python3 stereo_calibration.py -s 25.0 -o my_calib.yaml
+  python3 stereo_calibration.py -s 26.0
+  python3 stereo_calibration.py -s 26.0 --board-w 5 --board-h 8 -o my_calib.yaml
 """
 
 import argparse
 import glob
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 # ================== 默认配置 ==================
-BOARD_WIDTH = 9         # 内角点列数
-BOARD_HEIGHT = 6        # 内角点行数
+BOARD_WIDTH = 5         # 内角点列数
+BOARD_HEIGHT = 8        # 内角点行数
 IMAGES_DIR = "calibration_images"
 OUTPUT_FILE = "stereo_calib.yaml"
 # ==============================================
@@ -55,7 +56,37 @@ def _glob_images(directory):
     """搜索目录下的 png 和 jpg 文件"""
     files = sorted(glob.glob(str(Path(directory) / "*.png")))
     files += sorted(glob.glob(str(Path(directory) / "*.jpg")))
+    files += sorted(glob.glob(str(Path(directory) / "*.jpeg")))
     return sorted(set(files))
+
+
+def _pair_images_by_stem(left_files, right_files):
+    """按文件名 stem 配对，避免左右数量不一致时错位 zip。"""
+    left_by_stem = {}
+    right_by_stem = {}
+    for path in left_files:
+        stem = Path(path).stem
+        if stem in left_by_stem:
+            print(f"[警告] 左图重复文件名 {stem}，忽略 {path}")
+            continue
+        left_by_stem[stem] = path
+    for path in right_files:
+        stem = Path(path).stem
+        if stem in right_by_stem:
+            print(f"[警告] 右图重复文件名 {stem}，忽略 {path}")
+            continue
+        right_by_stem[stem] = path
+
+    pairs = []
+    for stem in sorted(left_by_stem):
+        if stem not in right_by_stem:
+            print(f"[警告] 缺少右图: {stem}")
+            continue
+        pairs.append((stem, left_by_stem[stem], right_by_stem[stem]))
+    for stem in sorted(right_by_stem):
+        if stem not in left_by_stem:
+            print(f"[警告] 缺少左图: {stem}")
+    return pairs
 
 
 # ============================================================
@@ -100,7 +131,7 @@ def make_object_points(board_size, square_size):
 
 def collect_corners(images_dir, board_size):
     """扫描 left/ right/ 子目录，检测角点
-    返回 (objpoints, imgpoints_l, imgpoints_r, img_size)
+    返回 (objpoints, imgpoints_l, imgpoints_r, img_size, accepted_stems)
     """
     left_files = _glob_images(Path(images_dir) / "left")
     right_files = _glob_images(Path(images_dir) / "right")
@@ -112,15 +143,21 @@ def collect_corners(images_dir, board_size):
     if len(left_files) != len(right_files):
         print(f"[警告] 左右图像数量不匹配: L={len(left_files)} R={len(right_files)}")
 
-    n = min(len(left_files), len(right_files))
+    pairs = _pair_images_by_stem(left_files, right_files)
+    if not pairs:
+        raise FileNotFoundError(
+            f"在 {images_dir}/left/ 和 right/ 中未找到同名图像对")
+
+    n = len(pairs)
     objp_unit = make_object_points(board_size, 1.0)  # 单位模板，后续再乘 square_size
 
     objpoints, imgpoints_l, imgpoints_r = [], [], []
+    accepted_stems = []
     img_size = None
 
     print(f"\n共 {n} 对图像，开始检测角点...\n")
 
-    for i, (lp, rp) in enumerate(zip(left_files[:n], right_files[:n])):
+    for i, (stem, lp, rp) in enumerate(pairs):
         tag = f"[{i+1:3d}/{n}]"
 
         gl, _ = _to_gray(lp)
@@ -129,25 +166,33 @@ def collect_corners(images_dir, board_size):
             print(f"{tag} 跳过(无法读取)")
             continue
 
+        if gl.shape != gr.shape:
+            print(f"{tag} {stem} -- 左右图尺寸不一致 L={gl.shape[::-1]} R={gr.shape[::-1]}")
+            continue
+
         if img_size is None:
             img_size = (gl.shape[1], gl.shape[0])
             print(f"图像尺寸: {img_size[0]}x{img_size[1]}")
+        elif img_size != (gl.shape[1], gl.shape[0]):
+            print(f"{tag} {stem} -- 图像尺寸与首张不一致，跳过")
+            continue
 
         cl = find_corners(gl, board_size)
         cr = find_corners(gr, board_size)
 
         if cl is None or cr is None:
             side = "左" if cl is None else "右"
-            print(f"{tag} {Path(lp).stem} -- {side}图未检测到")
+            print(f"{tag} {stem} -- {side}图未检测到")
             continue
 
         objpoints.append(objp_unit)
         imgpoints_l.append(cl)
         imgpoints_r.append(cr)
-        print(f"{tag} {Path(lp).stem} OK")
+        accepted_stems.append(stem)
+        print(f"{tag} {stem} OK")
 
     print(f"\n成功检测 {len(objpoints)}/{n} 对")
-    return objpoints, imgpoints_l, imgpoints_r, img_size
+    return objpoints, imgpoints_l, imgpoints_r, img_size, accepted_stems
 
 
 # ============================================================
@@ -181,31 +226,19 @@ def calibrate_single(objpoints, imgpoints, img_size, name="相机"):
 
 
 # ============================================================
-#  异常图像剔除
+#  重投影误差报告
 # ============================================================
 
-def reject_outliers(objpoints, imgpoints_l, imgpoints_r,
-                    errors_l, errors_r, sigma=2.0):
-    """剔除重投影误差超过 mean + sigma*std 的图像对"""
+def print_worst_errors(stems, errors_l, errors_r, limit=8):
+    """报告最差图像对；正式流程不在求解端自动剔除样本。"""
+    if not stems:
+        return
     max_err = np.maximum(errors_l, errors_r)
-    threshold = np.mean(max_err) + sigma * np.std(max_err)
-    keep = [i for i, e in enumerate(max_err) if e < threshold]
-
-    n_removed = len(max_err) - len(keep)
-    if n_removed == 0:
-        return objpoints, imgpoints_l, imgpoints_r, 0
-
-    if len(keep) < 5:
-        print(f"[警告] 剔除后仅剩 {len(keep)} 对，跳过剔除")
-        return objpoints, imgpoints_l, imgpoints_r, 0
-
-    print(f"\n异常剔除: 移除 {n_removed} 对 (阈值={threshold:.3f})，"
-          f"保留 {len(keep)} 对")
-
-    return ([objpoints[i] for i in keep],
-            [imgpoints_l[i] for i in keep],
-            [imgpoints_r[i] for i in keep],
-            n_removed)
+    order = np.argsort(-max_err)
+    print("\n逐图重投影误差最高样本（只报告，不自动剔除）:")
+    for rank, idx in enumerate(order[:min(limit, len(order))], start=1):
+        print(f"  {rank}. {stems[idx]}  L={errors_l[idx]:.3f}px"
+              f"  R={errors_r[idx]:.3f}px  max={max_err[idx]:.3f}px")
 
 
 # ============================================================
@@ -213,8 +246,8 @@ def reject_outliers(objpoints, imgpoints_l, imgpoints_r,
 # ============================================================
 
 def calibrate_stereo(objpoints, imgpoints_l, imgpoints_r,
-                     img_size, square_size):
-    """完整流水线: 单目 → 剔除 → 立体标定 → 校正，返回结果字典"""
+                     img_size, square_size, stems, optimize_intrinsics=False):
+    """完整流水线: 单目 → 逐图误差报告 → 立体标定 → 校正，返回结果字典"""
     # 将单位模板乘以实际方格尺寸(mm)
     scaled_obj = [o * square_size for o in objpoints]
 
@@ -223,30 +256,24 @@ def calibrate_stereo(objpoints, imgpoints_l, imgpoints_r,
     print("单目标定")
     print("=" * 50)
 
-    _, mtx_l, dist_l, err_l = calibrate_single(
+    rms_l, mtx_l, dist_l, err_l = calibrate_single(
         scaled_obj, imgpoints_l, img_size, "左相机")
-    _, mtx_r, dist_r, err_r = calibrate_single(
+    rms_r, mtx_r, dist_r, err_r = calibrate_single(
         scaled_obj, imgpoints_r, img_size, "右相机")
 
-    # --- 异常剔除 ---
-    scaled_obj, imgpoints_l, imgpoints_r, n_removed = reject_outliers(
-        scaled_obj, imgpoints_l, imgpoints_r, err_l, err_r)
-
-    if n_removed > 0:
-        print("筛选后重新单目标定...")
-        _, mtx_l, dist_l, _ = calibrate_single(
-            scaled_obj, imgpoints_l, img_size, "左相机(筛选后)")
-        _, mtx_r, dist_r, _ = calibrate_single(
-            scaled_obj, imgpoints_r, img_size, "右相机(筛选后)")
+    print_worst_errors(stems, np.array(err_l), np.array(err_r))
+    if rms_l > 0.5 or rms_r > 0.5:
+        print("[警告] 单目 RMS 偏高。正式标定应回到采集端改善清晰度、覆盖、姿态和棋盘刚性。")
 
     # --- 立体标定 ---
     print("\n" + "=" * 50)
     print("立体标定")
     print("=" * 50)
 
-    # 关键: CALIB_USE_INTRINSIC_GUESS 以单目内参为起点优化
-    # flags=0 会忽略单目结果从头算，导致 RMS 偏高
-    stereo_flags = cv2.CALIB_USE_INTRINSIC_GUESS
+    stereo_flags = (cv2.CALIB_USE_INTRINSIC_GUESS if optimize_intrinsics
+                    else cv2.CALIB_FIX_INTRINSIC)
+    print("  模式 = " + ("CALIB_USE_INTRINSIC_GUESS" if optimize_intrinsics
+                       else "CALIB_FIX_INTRINSIC"))
     stereo_criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER,
                        100, 1e-6)
 
@@ -295,6 +322,9 @@ def calibrate_stereo(objpoints, imgpoints_l, imgpoints_r,
         'image_size': img_size,
         'baseline': baseline,
         'rms_error': rms,
+        'rms_left': rms_l,
+        'rms_right': rms_r,
+        'valid_pairs': len(scaled_obj),
         'map_lx': map_lx, 'map_ly': map_ly,
         'map_rx': map_rx, 'map_ry': map_ry,
     }
@@ -306,7 +336,13 @@ def calibrate_stereo(objpoints, imgpoints_l, imgpoints_r,
 
 def save_calibration(results, output_path):
     """保存标定结果到 OpenCV YAML + NumPy npz"""
-    fs = cv2.FileStorage(output_path, cv2.FILE_STORAGE_WRITE)
+    output_path = Path(output_path)
+    if output_path.parent and str(output_path.parent) != ".":
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fs = cv2.FileStorage(str(output_path), cv2.FILE_STORAGE_WRITE)
+    if not fs.isOpened():
+        raise OSError(f"无法打开输出文件: {output_path}")
     w, h = results['image_size']
 
     fs.write("image_width", w)
@@ -331,8 +367,8 @@ def save_calibration(results, output_path):
     fs.write("disparity_to_depth_map", results['Q'])
     fs.release()
 
-    npz_path = output_path.replace('.yaml', '.npz')
-    np.savez(npz_path,
+    npz_path = output_path.with_suffix('.npz')
+    np.savez(str(npz_path),
              camera_matrix_left=results['camera_matrix_left'],
              distortion_left=results['distortion_left'],
              camera_matrix_right=results['camera_matrix_right'],
@@ -349,22 +385,47 @@ def save_calibration(results, output_path):
     print(f"已保存: {npz_path}")
 
 
+def validate_calibration(results):
+    """正式输出前做硬性质量门槛，避免坏标定文件被后续 pipeline 使用。"""
+    ok = True
+    if results['rms_error'] > 1.0:
+        print(f"[错误] 立体 RMS={results['rms_error']:.4f}px > 1.0px，不保存标定文件")
+        ok = False
+    for name in ('roi_left', 'roi_right'):
+        roi = results[name]
+        if roi[2] <= 0 or roi[3] <= 0:
+            print(f"[错误] {name} 为空: {roi}，不保存标定文件")
+            ok = False
+    focal = float(results['P1'][0, 0])
+    if not np.isfinite(focal) or focal <= 0.0:
+        print(f"[错误] 焦距无效: {focal}，不保存标定文件")
+        ok = False
+    baseline = float(results['baseline'])
+    if not np.isfinite(baseline) or baseline <= 0.0:
+        print(f"[错误] 基线无效: {baseline}，不保存标定文件")
+        ok = False
+    if results.get('valid_pairs', 0) < 20:
+        print(f"[警告] 有效图像对仅 {results['valid_pairs']}，正式长基线标定建议 >=20")
+    return ok
+
+
 def visualize_rectification(results, images_dir, n_samples=3):
     """可视化校正效果: 水平极线应对齐"""
     left_files = _glob_images(Path(images_dir) / "left")
     right_files = _glob_images(Path(images_dir) / "right")
-    n = min(n_samples, len(left_files), len(right_files))
+    pairs = _pair_images_by_stem(left_files, right_files)
+    n = min(n_samples, len(pairs))
     if n == 0:
         return
 
     print("\n校正预览 (按任意键/ESC跳过)")
 
-    indices = np.random.choice(
-        min(len(left_files), len(right_files)), size=n, replace=False)
+    indices = np.random.choice(len(pairs), size=n, replace=False)
 
     for idx in indices:
-        img_l = cv2.imread(left_files[idx], cv2.IMREAD_UNCHANGED)
-        img_r = cv2.imread(right_files[idx], cv2.IMREAD_UNCHANGED)
+        _, left_path, right_path = pairs[idx]
+        img_l = cv2.imread(left_path, cv2.IMREAD_UNCHANGED)
+        img_r = cv2.imread(right_path, cv2.IMREAD_UNCHANGED)
         if img_l is None or img_r is None:
             continue
         # 海康 BayerRG8 sensor → OpenCV BayerBG convention
@@ -421,11 +482,21 @@ def main():
                     help='图像目录(默认: calibration_images)')
     ap.add_argument('-o', '--output', default=OUTPUT_FILE,
                     help='输出文件(默认: stereo_calib.yaml)')
+    ap.add_argument('--board-w', type=int, default=BOARD_WIDTH,
+                    help='棋盘内角点列数(默认: 5)')
+    ap.add_argument('--board-h', type=int, default=BOARD_HEIGHT,
+                    help='棋盘内角点行数(默认: 8)')
+    ap.add_argument('--optimize-intrinsics', action='store_true',
+                    help='允许 stereoCalibrate 联合优化内参(默认固定单目标定内参)')
     ap.add_argument('--no-vis', action='store_true',
                     help='跳过可视化')
     args = ap.parse_args()
 
-    board_size = (BOARD_WIDTH, BOARD_HEIGHT)
+    if args.board_w < 2 or args.board_h < 2:
+        print(f"[错误] 棋盘内角点参数无效: {args.board_w}x{args.board_h}")
+        return 1
+
+    board_size = (args.board_w, args.board_h)
 
     print("=" * 50)
     print("双目相机标定")
@@ -436,32 +507,41 @@ def main():
     print(f"输出:   {args.output}")
     print("=" * 50)
 
-    # 1) 采集角点
-    objpts, ipts_l, ipts_r, img_size = collect_corners(
-        args.images_dir, board_size)
+    try:
+        # 1) 采集角点
+        objpts, ipts_l, ipts_r, img_size, stems = collect_corners(
+            args.images_dir, board_size)
 
-    if len(objpts) < 5:
-        print(f"\n仅 {len(objpts)} 对有效图像，至少需要 5 对")
-        return
+        if len(objpts) < 5:
+            print(f"\n仅 {len(objpts)} 对有效图像，至少需要 5 对")
+            return 1
 
-    # 2) 标定
-    results = calibrate_stereo(
-        objpts, ipts_l, ipts_r, img_size, args.square_size)
+        # 2) 标定
+        results = calibrate_stereo(
+            objpts, ipts_l, ipts_r, img_size, args.square_size, stems,
+            args.optimize_intrinsics)
 
-    # 3) 保存
-    save_calibration(results, args.output)
+        if not validate_calibration(results):
+            return 1
 
-    # 4) 可视化
-    if not args.no_vis:
-        visualize_rectification(results, args.images_dir)
+        # 3) 保存
+        save_calibration(results, args.output)
 
-    # 5) 精度报告
-    print_depth_accuracy(results)
+        # 4) 可视化
+        if not args.no_vis:
+            visualize_rectification(results, args.images_dir)
 
-    print(f"\n标定完成！将文件复制到 ROS2 工作空间:")
-    print(f"  cp {args.output} ~/NX_volleyball/ros2_ws/src/"
-          f"volleyball_stereo_driver/calibration/")
+        # 5) 精度报告
+        print_depth_accuracy(results)
+
+    except (FileNotFoundError, OSError, RuntimeError, cv2.error) as exc:
+        print(f"[错误] {exc}")
+        return 1
+
+    print(f"\n标定完成！将文件复制到 pipeline 标定目录:")
+    print(f"  cp {args.output} ../stereo_3d_pipeline/build_standalone/calibration/stereo_calib.yaml")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

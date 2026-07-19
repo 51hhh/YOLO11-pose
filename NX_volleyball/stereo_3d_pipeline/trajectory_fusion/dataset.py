@@ -1,0 +1,1600 @@
+#!/usr/bin/env python3
+"""Dataset helpers for trajectory fusion experiments."""
+
+from __future__ import annotations
+
+import csv
+import io
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
+try:
+    from .reproject import ReprojectionModel, method_disparity_column
+except ImportError:
+    ReprojectionModel = None  # type: ignore
+    def method_disparity_column(depth_column):
+        if depth_column.startswith("z_"):
+            return "disparity_" + depth_column[2:]
+        return "disparity_" + depth_column
+
+
+METHOD_COLUMNS = (
+    ("mono", "z_mono"),
+    ("bbox_center", "z_bbox_center"),
+    ("bbox_left_edge", "z_bbox_left_edge"),
+    ("bbox_right_edge", "z_bbox_right_edge"),
+    ("circle_center", "z_circle_center"),
+    ("roi_edge_centroid", "z_roi_edge_centroid"),
+    ("roi_radial_center", "z_roi_radial_center"),
+    ("roi_edge_pair_center", "z_roi_edge_pair_center"),
+    ("roi_corner_points", "z_roi_corner_points"),
+    ("roi_texture_points", "z_roi_texture_points"),
+    ("roi_binary_points", "z_roi_binary_points"),
+    ("roi_orb_points", "z_roi_orb_points"),
+    ("roi_brisk_points", "z_roi_brisk_points"),
+    ("roi_akaze_points", "z_roi_akaze_points"),
+    ("roi_sift_points", "z_roi_sift_points"),
+    ("roi_iou_region_color_patch", "z_roi_iou_region_color_patch"),
+    ("roi_patch_iou_color_edge", "z_roi_patch_iou_color_edge"),
+    ("roi_cuda_template_match", "z_roi_cuda_template_match"),
+    ("roi_cuda_stereo_bm", "z_roi_cuda_stereo_bm"),
+    ("roi_cuda_stereo_sgm", "z_roi_cuda_stereo_sgm"),
+    ("roi_vpi_template_match", "z_roi_vpi_template_match"),
+    ("roi_vpi_orb", "z_roi_vpi_orb"),
+    ("roi_opencv_cuda_gftt_lk", "z_roi_opencv_cuda_gftt_lk"),
+    ("roi_ring_edge_profile", "z_roi_ring_edge_profile"),
+    ("roi_neural_feature", "z_roi_neural_feature"),
+    ("roi_neural_xfeat", "z_roi_neural_xfeat"),
+    ("roi_neural_superpoint", "z_roi_neural_superpoint"),
+    ("roi_neural_aliked", "z_roi_neural_aliked"),
+    ("roi_center_patch", "z_roi_center_patch"),
+    ("roi_multi_point", "z_roi_multi_point"),
+    ("epipolar_fallback", "z_fallback_epipolar"),
+    ("fallback_template", "z_fallback_template"),
+    ("fallback_feature_points", "z_fallback_feature_points"),
+)
+METHOD_NAMES = tuple(name for name, _ in METHOD_COLUMNS)
+P0_METHODS = (
+    "bbox_center",
+    "circle_center",
+    "roi_edge_centroid",
+    "roi_radial_center",
+    "roi_edge_pair_center",
+)
+P1_METHODS = (
+    "roi_center_patch",
+    "roi_multi_point",
+)
+NCC_METHODS = ("roi_cuda_template_match",)
+XFEAT_METHODS = ("roi_neural_xfeat",)
+METHOD_SET_PRESETS = {
+    "all": METHOD_NAMES,
+    "mono": ("mono",),
+    "p0": P0_METHODS,
+    "p1": P1_METHODS,
+    "p0p1": (*P0_METHODS, *P1_METHODS),
+    "ncc": NCC_METHODS,
+    "xfeat": XFEAT_METHODS,
+    "p0p1_ncc": (*P0_METHODS, *P1_METHODS, *NCC_METHODS),
+    "p0p1_xfeat": (*P0_METHODS, *P1_METHODS, *XFEAT_METHODS),
+    "p0p1_ncc_xfeat": (*P0_METHODS, *P1_METHODS, *NCC_METHODS, *XFEAT_METHODS),
+    "p0p1_xfeat_ncc": (*P0_METHODS, *P1_METHODS, *NCC_METHODS, *XFEAT_METHODS),
+}
+NEURAL_TOP_BACKENDS = (
+    "roi_neural_xfeat",
+    "roi_neural_superpoint",
+    "roi_neural_aliked",
+)
+NEURAL_TOP_FIELDS = (
+    "left_x",
+    "left_y",
+    "right_x",
+    "right_y",
+    "z",
+    "disparity",
+    "score",
+    "y_delta",
+    "rank_score",
+)
+NEURAL_TOP_K = 5
+P0P1_UNTRUSTED_BITS = (
+    ("bbox_center", 0),
+    ("circle_center", 1),
+    ("roi_edge_centroid", 2),
+    ("roi_radial_center", 3),
+    ("roi_edge_pair_center", 4),
+    ("roi_center_patch", 5),
+    ("roi_multi_point", 6),
+    ("roi_cuda_template_match", 7),
+    ("roi_neural_xfeat", 8),
+)
+P0P1_TRUST_FIELDS = (
+    "p0p1_bbox_center_trust",
+    "p0p1_circle_center_trust",
+    "p0p1_edge_centroid_trust",
+    "p0p1_radial_center_trust",
+    "p0p1_edge_pair_center_trust",
+    "p0p1_center_patch_trust",
+    "p0p1_multi_point_trust",
+    "p0p1_cuda_template_match_trust",
+    "p0p1_neural_xfeat_trust",
+)
+P0P1_TRUST_FIELD_METHODS = {
+    "p0p1_bbox_center_trust": "bbox_center",
+    "p0p1_circle_center_trust": "circle_center",
+    "p0p1_edge_centroid_trust": "roi_edge_centroid",
+    "p0p1_radial_center_trust": "roi_radial_center",
+    "p0p1_edge_pair_center_trust": "roi_edge_pair_center",
+    "p0p1_center_patch_trust": "roi_center_patch",
+    "p0p1_multi_point_trust": "roi_multi_point",
+    "p0p1_cuda_template_match_trust": "roi_cuda_template_match",
+    "p0p1_neural_xfeat_trust": "roi_neural_xfeat",
+}
+
+
+def resolve_method_allowlist(methods: Sequence[str] | str | None) -> Tuple[str, ...] | None:
+    """Resolve method names/presets into METHOD_NAMES order.
+
+    ``None`` and ``all`` mean no masking. Comma-separated strings are accepted
+    for CLI/config usage, and preset tokens can be mixed with explicit method
+    names.
+    """
+
+    if methods is None:
+        return None
+    if isinstance(methods, str):
+        raw_items = [item.strip() for item in methods.split(",")]
+    else:
+        raw_items = [str(item).strip() for item in methods]
+    items = [item for item in raw_items if item]
+    if not items or items == ["all"]:
+        return None
+
+    requested: List[str] = []
+    valid_names = set(METHOD_NAMES)
+    for item in items:
+        if item == "all":
+            return None
+        if item in METHOD_SET_PRESETS:
+            requested.extend(METHOD_SET_PRESETS[item])
+            continue
+        if item not in valid_names:
+            raise ValueError(f"unknown depth method or method preset: {item}")
+        requested.append(item)
+
+    requested_set = set(requested)
+    return tuple(name for name in METHOD_NAMES if name in requested_set)
+
+
+def method_allowlist_set(methods: Sequence[str] | str | None) -> set[str] | None:
+    resolved = resolve_method_allowlist(methods)
+    return set(resolved) if resolved is not None else None
+
+
+def neural_top_feature_names() -> List[str]:
+    names: List[str] = []
+    for backend in NEURAL_TOP_BACKENDS:
+        names.append(f"{backend}_top_count")
+        for idx in range(1, NEURAL_TOP_K + 1):
+            for field in NEURAL_TOP_FIELDS:
+                names.append(f"{backend}_top{idx}_{field}")
+    return names
+
+
+def p0p1_quality_feature_names() -> List[str]:
+    return [
+        "p0p1_dy_center",
+        "p0p1_dy_mad",
+        "p0p1_dy_sample_count",
+        "p0p1_untrusted_mask",
+        *P0P1_TRUST_FIELDS,
+        *[f"p0p1_{name}_untrusted" for name, _ in P0P1_UNTRUSTED_BITS],
+    ]
+
+
+def _method_specific_feature_owners() -> Dict[str, str]:
+    owners: Dict[str, str] = {}
+    for method_name, column in METHOD_COLUMNS:
+        owners[column] = method_name
+        if column.startswith("z_"):
+            owners[f"disparity_{column[2:]}"] = method_name
+        for suffix in ("support", "std_px", "confidence"):
+            owners[f"{method_name}_{suffix}"] = method_name
+
+    owners["z_fallback"] = "epipolar_fallback"
+    for suffix in ("valid", "attempted", "support", "std_px", "confidence", "gate_px"):
+        owners[f"subpixel_{suffix}"] = "roi_multi_point"
+    for field, method_name in P0P1_TRUST_FIELD_METHODS.items():
+        owners[field] = method_name
+    for method_name, _bit in P0P1_UNTRUSTED_BITS:
+        owners[f"p0p1_{method_name}_untrusted"] = method_name
+    for backend in NEURAL_TOP_BACKENDS:
+        owners[f"{backend}_top_count"] = backend
+        for idx in range(1, NEURAL_TOP_K + 1):
+            for field in NEURAL_TOP_FIELDS:
+                owners[f"{backend}_top{idx}_{field}"] = backend
+    return owners
+
+
+def _disabled_method_feature_indices(
+    enabled_methods: set[str] | None,
+    feature_names: Sequence[str],
+) -> List[int]:
+    if enabled_methods is None:
+        return []
+    owners = _method_specific_feature_owners()
+    indices: List[int] = []
+    for idx, feature_name in enumerate(feature_names):
+        owner = owners.get(feature_name)
+        if owner is not None and owner not in enabled_methods:
+            indices.append(idx)
+    return indices
+
+
+def _mask_p0p1_untrusted_bits(mask_value: float, enabled_methods: set[str] | None) -> float:
+    if enabled_methods is None:
+        return mask_value
+    raw_mask = int(mask_value)
+    masked = 0
+    for method_name, bit in P0P1_UNTRUSTED_BITS:
+        if method_name in enabled_methods and raw_mask & (1 << bit):
+            masked |= 1 << bit
+    return float(masked)
+
+P2_DIAGNOSTIC_MODE_COLUMNS = {
+    "cuda_template": {
+        "z": "z_roi_cuda_template_match",
+        "disparity": "disparity_roi_cuda_template_match",
+        "support": "roi_cuda_template_match_support",
+        "std": "roi_cuda_template_match_std_px",
+        "confidence": "roi_cuda_template_match_confidence",
+    },
+    "cuda_stereo_bm": {
+        "z": "z_roi_cuda_stereo_bm",
+        "disparity": "disparity_roi_cuda_stereo_bm",
+        "support": "roi_cuda_stereo_bm_support",
+        "std": "roi_cuda_stereo_bm_std_px",
+        "confidence": "roi_cuda_stereo_bm_confidence",
+    },
+    "cuda_stereo_sgm": {
+        "z": "z_roi_cuda_stereo_sgm",
+        "disparity": "disparity_roi_cuda_stereo_sgm",
+        "support": "roi_cuda_stereo_sgm_support",
+        "std": "roi_cuda_stereo_sgm_std_px",
+        "confidence": "roi_cuda_stereo_sgm_confidence",
+    },
+    "vpi_template_match": {
+        "z": "z_roi_vpi_template_match",
+        "disparity": "disparity_roi_vpi_template_match",
+        "support": "roi_vpi_template_match_support",
+        "std": "roi_vpi_template_match_std_px",
+        "confidence": "roi_vpi_template_match_confidence",
+    },
+    "vpi_orb": {
+        "z": "z_roi_vpi_orb",
+        "disparity": "disparity_roi_vpi_orb",
+        "support": "roi_vpi_orb_support",
+        "std": "roi_vpi_orb_std_px",
+        "confidence": "roi_vpi_orb_confidence",
+    },
+    "opencv_cuda_gftt_lk": {
+        "z": "z_roi_opencv_cuda_gftt_lk",
+        "disparity": "disparity_roi_opencv_cuda_gftt_lk",
+        "support": "roi_opencv_cuda_gftt_lk_support",
+        "std": "roi_opencv_cuda_gftt_lk_std_px",
+        "confidence": "roi_opencv_cuda_gftt_lk_confidence",
+    },
+    "cuda_ring_edge_profile": {
+        "z": "z_roi_ring_edge_profile",
+        "disparity": "disparity_roi_ring_edge_profile",
+        "support": "roi_ring_edge_profile_support",
+        "std": "roi_ring_edge_profile_std_px",
+        "confidence": "roi_ring_edge_profile_confidence",
+    },
+    "neural_feature": {
+        "z": "z_roi_neural_feature",
+        "disparity": "disparity_roi_neural_feature",
+        "support": "roi_neural_feature_support",
+        "std": "roi_neural_feature_std_px",
+        "confidence": "roi_neural_feature_confidence",
+    },
+    "neural_xfeat": {
+        "z": "z_roi_neural_xfeat",
+        "disparity": "disparity_roi_neural_xfeat",
+        "support": "roi_neural_xfeat_support",
+        "std": "roi_neural_xfeat_std_px",
+        "confidence": "roi_neural_xfeat_confidence",
+    },
+    "neural_superpoint": {
+        "z": "z_roi_neural_superpoint",
+        "disparity": "disparity_roi_neural_superpoint",
+        "support": "roi_neural_superpoint_support",
+        "std": "roi_neural_superpoint_std_px",
+        "confidence": "roi_neural_superpoint_confidence",
+    },
+    "neural_aliked": {
+        "z": "z_roi_neural_aliked",
+        "disparity": "disparity_roi_neural_aliked",
+        "support": "roi_neural_aliked_support",
+        "std": "roi_neural_aliked_std_px",
+        "confidence": "roi_neural_aliked_confidence",
+    },
+}
+
+
+@dataclass
+class LegacySequence:
+    """One track from the current TrajectoryRecorder CSV."""
+
+    track_id: int
+    rows: List[Dict[str, float]]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def length(self) -> int:
+        return len(self.rows)
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_metadata_value(value: str) -> Any:
+    value = value.strip()
+    if value == "" or value.lower() in {"null", "none", "~"}:
+        return None
+    if value.lower() in {"true", "yes", "on"}:
+        return True
+    if value.lower() in {"false", "no", "off"}:
+        return False
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    try:
+        if any(ch in value for ch in (".", "e", "E")):
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def read_metadata(path: str | Path | None) -> Dict[str, Any]:
+    """Read optional weak-label metadata.
+
+    PyYAML is used when present. A minimal key/value parser is kept as a
+    dependency-free fallback for the flat metadata files recommended in the
+    wiki.
+    """
+
+    if path is None:
+        return {}
+    meta_path = Path(path)
+    if not meta_path.exists():
+        return {}
+    text = meta_path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(text)
+        return dict(loaded or {}) if isinstance(loaded, dict) else {}
+    except ImportError:
+        pass
+
+    metadata: Dict[str, Any] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = _parse_metadata_value(value)
+    return metadata
+
+
+def find_metadata_for_csv(path: str | Path) -> Path | None:
+    """Find a sidecar metadata file for a trajectory CSV."""
+
+    csv_path = Path(path)
+    candidates = (
+        csv_path.with_suffix(".metadata.yaml"),
+        csv_path.with_suffix(".metadata.yml"),
+        csv_path.parent / "metadata.yaml",
+        csv_path.parent / "metadata.yml",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def derive_frame_summary_path(path: str | Path) -> Path:
+    """Derive the recorder sidecar path matching the C++ recorder."""
+
+    csv_path = Path(path)
+    if csv_path.name.endswith(".csv"):
+        return csv_path.with_name(csv_path.name[:-4] + ".frames.csv")
+    return Path(str(csv_path) + ".frames.csv")
+
+
+def derive_p2_diagnostic_path(path: str | Path) -> Path:
+    """Derive the P2 diagnostic sidecar path used by the runtime recorder."""
+
+    csv_path = Path(path)
+    if csv_path.name.endswith(".csv"):
+        return csv_path.with_name(csv_path.name[:-4] + ".p2_diagnostic.csv")
+    return Path(str(csv_path) + ".p2_diagnostic.csv")
+
+
+def read_csv_rows(path: str | Path) -> List[Dict[str, str]]:
+    """Read CSV rows while tolerating accidental NUL bytes in log files."""
+
+    data = Path(path).read_bytes().replace(b"\x00", b"")
+    text = data.decode("utf-8", "replace")
+    return list(csv.DictReader(io.StringIO(text)))
+
+
+def _diagnostic_candidate_rank(row: Dict[str, str]) -> Tuple[int, float, float]:
+    return (
+        _safe_int(row.get("valid"), 0),
+        _safe_float(row.get("confidence"), 0.0),
+        _safe_float(row.get("support"), 0.0),
+    )
+
+
+def read_p2_diagnostic_candidates(
+    path: str | Path,
+) -> Dict[int, Dict[str, Dict[str, str]]]:
+    """Read optional P2 diagnostic sidecar rows keyed by frame and mode."""
+
+    sidecar_path = derive_p2_diagnostic_path(path)
+    if not sidecar_path.exists():
+        return {}
+
+    by_frame: Dict[int, Dict[str, Dict[str, str]]] = {}
+    for row in read_csv_rows(sidecar_path):
+        mode = (row.get("mode") or "").strip()
+        if mode not in P2_DIAGNOSTIC_MODE_COLUMNS:
+            continue
+        frame_id = _safe_int(row.get("frame_id"), -1)
+        if frame_id < 0:
+            continue
+        frame_modes = by_frame.setdefault(frame_id, {})
+        previous = frame_modes.get(mode)
+        if (
+            previous is None
+            or _diagnostic_candidate_rank(row) > _diagnostic_candidate_rank(previous)
+        ):
+            frame_modes[mode] = row
+    return by_frame
+
+
+def _set_if_missing(row: Dict[str, str], key: str, value: object) -> None:
+    if key not in row or row[key] == "":
+        row[key] = str(value)
+
+
+def merge_p2_diagnostic_candidates(
+    row: Dict[str, str],
+    frame_candidates: Dict[str, Dict[str, str]] | None,
+) -> None:
+    """Expose selected diagnostic sidecar rows as optional training columns."""
+
+    for mode, columns in P2_DIAGNOSTIC_MODE_COLUMNS.items():
+        candidate = frame_candidates.get(mode) if frame_candidates else None
+        if candidate is None or _safe_int(candidate.get("valid"), 0) != 1:
+            _set_if_missing(row, columns["z"], "-1")
+            _set_if_missing(row, columns["disparity"], "-1")
+            _set_if_missing(row, columns["support"], "0")
+            _set_if_missing(row, columns["std"], "-1")
+            _set_if_missing(row, columns["confidence"], "0")
+            continue
+        row[columns["z"]] = candidate.get("z_m", "-1")
+        row[columns["disparity"]] = candidate.get("disparity", "-1")
+        row[columns["support"]] = candidate.get("support", "0")
+        row[columns["std"]] = candidate.get("stddev", "-1")
+        row[columns["confidence"]] = candidate.get("confidence", "0")
+
+
+def load_legacy_sequences(
+    path: str | Path,
+    min_track_len: int = 3,
+    metadata_path: str | Path | None = None,
+) -> List[LegacySequence]:
+    """Load current trajectory recorder CSV and group rows by track_id."""
+
+    metadata = read_metadata(metadata_path or find_metadata_for_csv(path))
+    p2_diagnostic_by_frame = read_p2_diagnostic_candidates(path)
+    grouped: Dict[int, List[Dict[str, float]]] = {}
+    for raw_row in read_csv_rows(path):
+        row = dict(raw_row)
+        frame_id_int = _safe_int(row.get("frame_id"), -1)
+        merge_p2_diagnostic_candidates(
+            row,
+            p2_diagnostic_by_frame.get(frame_id_int),
+        )
+        track_id = _safe_int(row.get("track_id"), -1)
+        if track_id < 0:
+            continue
+        p0p1_untrusted_mask = _safe_int(row.get("p0p1_untrusted_mask"), 0)
+        parsed = {
+            "frame_id": _safe_float(row.get("frame_id")),
+            "timestamp": _safe_float(row.get("timestamp")),
+            "x": _safe_float(row.get("x")),
+            "y": _safe_float(row.get("y")),
+            "z": _safe_float(row.get("z")),
+            "vx": _safe_float(row.get("vx")),
+            "vy": _safe_float(row.get("vy")),
+            "vz": _safe_float(row.get("vz")),
+            "ax": _safe_float(row.get("ax")),
+            "ay": _safe_float(row.get("ay")),
+            "az": _safe_float(row.get("az")),
+            "z_mono": _safe_float(row.get("z_mono"), -1.0),
+            "z_bbox_center": _safe_float(row.get("z_bbox_center", row.get("z_yolo_bbox_pair")), -1.0),
+            "z_bbox_left_edge": _safe_float(row.get("z_bbox_left_edge"), -1.0),
+            "z_bbox_right_edge": _safe_float(row.get("z_bbox_right_edge"), -1.0),
+            "z_circle_center": _safe_float(row.get("z_circle_center", row.get("z_circle")), -1.0),
+            "z_circle_left_edge": _safe_float(row.get("z_circle_left_edge"), -1.0),
+            "z_circle_right_edge": _safe_float(row.get("z_circle_right_edge"), -1.0),
+            "z_roi_edge_centroid": _safe_float(row.get("z_roi_edge_centroid"), -1.0),
+            "z_roi_radial_center": _safe_float(row.get("z_roi_radial_center"), -1.0),
+            "z_roi_edge_pair_center": _safe_float(row.get("z_roi_edge_pair_center"), -1.0),
+            "z_roi_corner_points": _safe_float(row.get("z_roi_corner_points"), -1.0),
+            "z_roi_texture_points": _safe_float(row.get("z_roi_texture_points"), -1.0),
+            "z_roi_binary_points": _safe_float(row.get("z_roi_binary_points"), -1.0),
+            "z_roi_orb_points": _safe_float(row.get("z_roi_orb_points"), -1.0),
+            "z_roi_brisk_points": _safe_float(row.get("z_roi_brisk_points"), -1.0),
+            "z_roi_akaze_points": _safe_float(row.get("z_roi_akaze_points"), -1.0),
+            "z_roi_sift_points": _safe_float(row.get("z_roi_sift_points"), -1.0),
+            "z_roi_iou_region_color_patch": _safe_float(row.get("z_roi_iou_region_color_patch"), -1.0),
+            "z_roi_patch_iou_color_edge": _safe_float(row.get("z_roi_patch_iou_color_edge"), -1.0),
+            "z_roi_cuda_template_match": _safe_float(row.get("z_roi_cuda_template_match"), -1.0),
+            "z_roi_cuda_stereo_bm": _safe_float(row.get("z_roi_cuda_stereo_bm"), -1.0),
+            "z_roi_cuda_stereo_sgm": _safe_float(row.get("z_roi_cuda_stereo_sgm"), -1.0),
+            "z_roi_vpi_template_match": _safe_float(row.get("z_roi_vpi_template_match"), -1.0),
+            "z_roi_vpi_orb": _safe_float(row.get("z_roi_vpi_orb"), -1.0),
+            "z_roi_opencv_cuda_gftt_lk": _safe_float(row.get("z_roi_opencv_cuda_gftt_lk"), -1.0),
+            "z_roi_ring_edge_profile": _safe_float(row.get("z_roi_ring_edge_profile"), -1.0),
+            "z_roi_neural_feature": _safe_float(row.get("z_roi_neural_feature"), -1.0),
+            "z_roi_neural_xfeat": _safe_float(row.get("z_roi_neural_xfeat"), -1.0),
+            "z_roi_neural_superpoint": _safe_float(row.get("z_roi_neural_superpoint"), -1.0),
+            "z_roi_neural_aliked": _safe_float(row.get("z_roi_neural_aliked"), -1.0),
+            "z_roi_center_patch": _safe_float(row.get("z_roi_center_patch"), -1.0),
+            "z_roi_multi_point": _safe_float(row.get("z_roi_multi_point", row.get("z_subpixel")), -1.0),
+            "z_yolo_bbox_pair": _safe_float(row.get("z_yolo_bbox_pair"), -1.0),
+            "z_circle": _safe_float(row.get("z_circle"), -1.0),
+            "z_subpixel": _safe_float(row.get("z_subpixel"), -1.0),
+            "z_fallback": _safe_float(row.get("z_fallback"), -1.0),
+            "z_fallback_epipolar": _safe_float(row.get("z_fallback_epipolar", row.get("z_fallback")), -1.0),
+            "z_fallback_template": _safe_float(row.get("z_fallback_template"), -1.0),
+            "z_fallback_feature_points": _safe_float(row.get("z_fallback_feature_points"), -1.0),
+            "z_stereo": _safe_float(row.get("z_stereo"), -1.0),
+            "z": _safe_float(row.get("z"), -1.0),
+            "depth_method": _safe_float(row.get("depth_method")),
+            "confidence": _safe_float(row.get("confidence"), 1.0),
+            "class_id": _safe_float(row.get("class_id"), 0.0),
+            "disparity_bbox_center": _safe_float(row.get("disparity_bbox_center", row.get("disparity_yolo")), -1.0),
+            "disparity_bbox_left_edge": _safe_float(row.get("disparity_bbox_left_edge"), -1.0),
+            "disparity_bbox_right_edge": _safe_float(row.get("disparity_bbox_right_edge"), -1.0),
+            "disparity_circle_center": _safe_float(row.get("disparity_circle_center", row.get("disparity_circle")), -1.0),
+            "disparity_circle_left_edge": _safe_float(row.get("disparity_circle_left_edge"), -1.0),
+            "disparity_circle_right_edge": _safe_float(row.get("disparity_circle_right_edge"), -1.0),
+            "disparity_roi_edge_centroid": _safe_float(row.get("disparity_roi_edge_centroid"), -1.0),
+            "disparity_roi_radial_center": _safe_float(row.get("disparity_roi_radial_center"), -1.0),
+            "disparity_roi_edge_pair_center": _safe_float(row.get("disparity_roi_edge_pair_center"), -1.0),
+            "disparity_roi_corner_points": _safe_float(row.get("disparity_roi_corner_points"), -1.0),
+            "disparity_roi_texture_points": _safe_float(row.get("disparity_roi_texture_points"), -1.0),
+            "disparity_roi_binary_points": _safe_float(row.get("disparity_roi_binary_points"), -1.0),
+            "disparity_roi_orb_points": _safe_float(row.get("disparity_roi_orb_points"), -1.0),
+            "disparity_roi_brisk_points": _safe_float(row.get("disparity_roi_brisk_points"), -1.0),
+            "disparity_roi_akaze_points": _safe_float(row.get("disparity_roi_akaze_points"), -1.0),
+            "disparity_roi_sift_points": _safe_float(row.get("disparity_roi_sift_points"), -1.0),
+            "disparity_roi_iou_region_color_patch": _safe_float(row.get("disparity_roi_iou_region_color_patch"), -1.0),
+            "disparity_roi_patch_iou_color_edge": _safe_float(row.get("disparity_roi_patch_iou_color_edge"), -1.0),
+            "disparity_roi_cuda_template_match": _safe_float(row.get("disparity_roi_cuda_template_match"), -1.0),
+            "disparity_roi_cuda_stereo_bm": _safe_float(row.get("disparity_roi_cuda_stereo_bm"), -1.0),
+            "disparity_roi_cuda_stereo_sgm": _safe_float(row.get("disparity_roi_cuda_stereo_sgm"), -1.0),
+            "disparity_roi_vpi_template_match": _safe_float(row.get("disparity_roi_vpi_template_match"), -1.0),
+            "disparity_roi_vpi_orb": _safe_float(row.get("disparity_roi_vpi_orb"), -1.0),
+            "disparity_roi_opencv_cuda_gftt_lk": _safe_float(row.get("disparity_roi_opencv_cuda_gftt_lk"), -1.0),
+            "disparity_roi_ring_edge_profile": _safe_float(row.get("disparity_roi_ring_edge_profile"), -1.0),
+            "disparity_roi_neural_feature": _safe_float(row.get("disparity_roi_neural_feature"), -1.0),
+            "disparity_roi_neural_xfeat": _safe_float(row.get("disparity_roi_neural_xfeat"), -1.0),
+            "disparity_roi_neural_superpoint": _safe_float(row.get("disparity_roi_neural_superpoint"), -1.0),
+            "disparity_roi_neural_aliked": _safe_float(row.get("disparity_roi_neural_aliked"), -1.0),
+            "disparity_roi_center_patch": _safe_float(row.get("disparity_roi_center_patch"), -1.0),
+            "disparity_roi_multi_point": _safe_float(row.get("disparity_roi_multi_point", row.get("disparity_subpixel")), -1.0),
+            "disparity_fallback_epipolar": _safe_float(row.get("disparity_fallback_epipolar"), -1.0),
+            "disparity_fallback_template": _safe_float(row.get("disparity_fallback_template"), -1.0),
+            "disparity_fallback_feature_points": _safe_float(row.get("disparity_fallback_feature_points"), -1.0),
+            "disparity_yolo": _safe_float(row.get("disparity_yolo"), -1.0),
+            "disparity_circle": _safe_float(row.get("disparity_circle"), -1.0),
+            "disparity_subpixel": _safe_float(row.get("disparity_subpixel"), -1.0),
+            "epipolar_dy": _safe_float(row.get("epipolar_dy"), -1.0),
+            "size_ratio": _safe_float(row.get("size_ratio"), -1.0),
+            "pair_initial_disparity": _safe_float(row.get("pair_initial_disparity"), -1.0),
+            "pair_epipolar_dy": _safe_float(row.get("pair_epipolar_dy"), -1.0),
+            "pair_y_tolerance": _safe_float(row.get("pair_y_tolerance"), -1.0),
+            "pair_size_ratio": _safe_float(row.get("pair_size_ratio"), -1.0),
+            "pair_shifted_iou": _safe_float(row.get("pair_shifted_iou"), -1.0),
+            "pair_score": _safe_float(row.get("pair_score"), 0.0),
+            "pair_bbox_prior_penalty": _safe_float(row.get("pair_bbox_prior_penalty"), 0.0),
+            "pair_positive_disparity": _safe_float(row.get("pair_positive_disparity"), 0.0),
+            "left_circle_conf": _safe_float(row.get("left_circle_conf"), 0.0),
+            "right_circle_conf": _safe_float(row.get("right_circle_conf"), 0.0),
+            "p0p1_dy_center": _safe_float(row.get("p0p1_dy_center"), 0.0),
+            "p0p1_dy_mad": _safe_float(row.get("p0p1_dy_mad"), 0.0),
+            "p0p1_dy_sample_count": _safe_float(row.get("p0p1_dy_sample_count"), 0.0),
+            "p0p1_untrusted_mask": float(p0p1_untrusted_mask),
+            "p0p1_bbox_center_trust": _safe_float(row.get("p0p1_bbox_center_trust"), 0.0),
+            "p0p1_circle_center_trust": _safe_float(row.get("p0p1_circle_center_trust"), 0.0),
+            "p0p1_edge_centroid_trust": _safe_float(row.get("p0p1_edge_centroid_trust"), 0.0),
+            "p0p1_radial_center_trust": _safe_float(row.get("p0p1_radial_center_trust"), 0.0),
+            "p0p1_edge_pair_center_trust": _safe_float(row.get("p0p1_edge_pair_center_trust"), 0.0),
+            "p0p1_center_patch_trust": _safe_float(row.get("p0p1_center_patch_trust"), 0.0),
+            "p0p1_multi_point_trust": _safe_float(row.get("p0p1_multi_point_trust"), 0.0),
+            "p0p1_cuda_template_match_trust": _safe_float(row.get("p0p1_cuda_template_match_trust"), 0.0),
+            "p0p1_neural_xfeat_trust": _safe_float(row.get("p0p1_neural_xfeat_trust"), 0.0),
+            "subpixel_valid": _safe_float(row.get("subpixel_valid"), 0.0),
+            "subpixel_attempted": _safe_float(row.get("subpixel_attempted"), 0.0),
+            "subpixel_support": _safe_float(row.get("subpixel_support"), 0.0),
+            "subpixel_std_px": _safe_float(row.get("subpixel_std_px"), -1.0),
+            "subpixel_confidence": _safe_float(row.get("subpixel_confidence"), 0.0),
+            "subpixel_gate_px": _safe_float(row.get("subpixel_gate_px"), 0.0),
+            "roi_corner_points_support": _safe_float(row.get("roi_corner_points_support"), 0.0),
+            "roi_corner_points_std_px": _safe_float(row.get("roi_corner_points_std_px"), -1.0),
+            "roi_corner_points_confidence": _safe_float(row.get("roi_corner_points_confidence"), 0.0),
+            "roi_texture_points_support": _safe_float(row.get("roi_texture_points_support"), 0.0),
+            "roi_texture_points_std_px": _safe_float(row.get("roi_texture_points_std_px"), -1.0),
+            "roi_texture_points_confidence": _safe_float(row.get("roi_texture_points_confidence"), 0.0),
+            "roi_binary_points_support": _safe_float(row.get("roi_binary_points_support"), 0.0),
+            "roi_binary_points_std_px": _safe_float(row.get("roi_binary_points_std_px"), -1.0),
+            "roi_binary_points_confidence": _safe_float(row.get("roi_binary_points_confidence"), 0.0),
+            "roi_orb_points_support": _safe_float(row.get("roi_orb_points_support"), 0.0),
+            "roi_orb_points_std_px": _safe_float(row.get("roi_orb_points_std_px"), -1.0),
+            "roi_orb_points_confidence": _safe_float(row.get("roi_orb_points_confidence"), 0.0),
+            "roi_brisk_points_support": _safe_float(row.get("roi_brisk_points_support"), 0.0),
+            "roi_brisk_points_std_px": _safe_float(row.get("roi_brisk_points_std_px"), -1.0),
+            "roi_brisk_points_confidence": _safe_float(row.get("roi_brisk_points_confidence"), 0.0),
+            "roi_akaze_points_support": _safe_float(row.get("roi_akaze_points_support"), 0.0),
+            "roi_akaze_points_std_px": _safe_float(row.get("roi_akaze_points_std_px"), -1.0),
+            "roi_akaze_points_confidence": _safe_float(row.get("roi_akaze_points_confidence"), 0.0),
+            "roi_sift_points_support": _safe_float(row.get("roi_sift_points_support"), 0.0),
+            "roi_sift_points_std_px": _safe_float(row.get("roi_sift_points_std_px"), -1.0),
+            "roi_sift_points_confidence": _safe_float(row.get("roi_sift_points_confidence"), 0.0),
+            "roi_iou_region_color_patch_support": _safe_float(row.get("roi_iou_region_color_patch_support"), 0.0),
+            "roi_iou_region_color_patch_std_px": _safe_float(row.get("roi_iou_region_color_patch_std_px"), -1.0),
+            "roi_iou_region_color_patch_confidence": _safe_float(row.get("roi_iou_region_color_patch_confidence"), 0.0),
+            "roi_patch_iou_color_edge_support": _safe_float(row.get("roi_patch_iou_color_edge_support"), 0.0),
+            "roi_patch_iou_color_edge_std_px": _safe_float(row.get("roi_patch_iou_color_edge_std_px"), -1.0),
+            "roi_patch_iou_color_edge_confidence": _safe_float(row.get("roi_patch_iou_color_edge_confidence"), 0.0),
+            "roi_cuda_template_match_support": _safe_float(row.get("roi_cuda_template_match_support"), 0.0),
+            "roi_cuda_template_match_std_px": _safe_float(row.get("roi_cuda_template_match_std_px"), -1.0),
+            "roi_cuda_template_match_confidence": _safe_float(row.get("roi_cuda_template_match_confidence"), 0.0),
+            "roi_cuda_stereo_bm_support": _safe_float(row.get("roi_cuda_stereo_bm_support"), 0.0),
+            "roi_cuda_stereo_bm_std_px": _safe_float(row.get("roi_cuda_stereo_bm_std_px"), -1.0),
+            "roi_cuda_stereo_bm_confidence": _safe_float(row.get("roi_cuda_stereo_bm_confidence"), 0.0),
+            "roi_cuda_stereo_sgm_support": _safe_float(row.get("roi_cuda_stereo_sgm_support"), 0.0),
+            "roi_cuda_stereo_sgm_std_px": _safe_float(row.get("roi_cuda_stereo_sgm_std_px"), -1.0),
+            "roi_cuda_stereo_sgm_confidence": _safe_float(row.get("roi_cuda_stereo_sgm_confidence"), 0.0),
+            "roi_vpi_template_match_support": _safe_float(row.get("roi_vpi_template_match_support"), 0.0),
+            "roi_vpi_template_match_std_px": _safe_float(row.get("roi_vpi_template_match_std_px"), -1.0),
+            "roi_vpi_template_match_confidence": _safe_float(row.get("roi_vpi_template_match_confidence"), 0.0),
+            "roi_vpi_orb_support": _safe_float(row.get("roi_vpi_orb_support"), 0.0),
+            "roi_vpi_orb_std_px": _safe_float(row.get("roi_vpi_orb_std_px"), -1.0),
+            "roi_vpi_orb_confidence": _safe_float(row.get("roi_vpi_orb_confidence"), 0.0),
+            "roi_opencv_cuda_gftt_lk_support": _safe_float(row.get("roi_opencv_cuda_gftt_lk_support"), 0.0),
+            "roi_opencv_cuda_gftt_lk_std_px": _safe_float(row.get("roi_opencv_cuda_gftt_lk_std_px"), -1.0),
+            "roi_opencv_cuda_gftt_lk_confidence": _safe_float(row.get("roi_opencv_cuda_gftt_lk_confidence"), 0.0),
+            "roi_ring_edge_profile_support": _safe_float(row.get("roi_ring_edge_profile_support"), 0.0),
+            "roi_ring_edge_profile_std_px": _safe_float(row.get("roi_ring_edge_profile_std_px"), -1.0),
+            "roi_ring_edge_profile_confidence": _safe_float(row.get("roi_ring_edge_profile_confidence"), 0.0),
+            "roi_neural_feature_support": _safe_float(row.get("roi_neural_feature_support"), 0.0),
+            "roi_neural_feature_std_px": _safe_float(row.get("roi_neural_feature_std_px"), -1.0),
+            "roi_neural_feature_confidence": _safe_float(row.get("roi_neural_feature_confidence"), 0.0),
+            "roi_neural_xfeat_support": _safe_float(row.get("roi_neural_xfeat_support"), 0.0),
+            "roi_neural_xfeat_std_px": _safe_float(row.get("roi_neural_xfeat_std_px"), -1.0),
+            "roi_neural_xfeat_confidence": _safe_float(row.get("roi_neural_xfeat_confidence"), 0.0),
+            "roi_neural_superpoint_support": _safe_float(row.get("roi_neural_superpoint_support"), 0.0),
+            "roi_neural_superpoint_std_px": _safe_float(row.get("roi_neural_superpoint_std_px"), -1.0),
+            "roi_neural_superpoint_confidence": _safe_float(row.get("roi_neural_superpoint_confidence"), 0.0),
+            "roi_neural_aliked_support": _safe_float(row.get("roi_neural_aliked_support"), 0.0),
+            "roi_neural_aliked_std_px": _safe_float(row.get("roi_neural_aliked_std_px"), -1.0),
+            "roi_neural_aliked_confidence": _safe_float(row.get("roi_neural_aliked_confidence"), 0.0),
+            "fallback_feature_points_support": _safe_float(row.get("fallback_feature_points_support"), 0.0),
+            "fallback_feature_points_std_px": _safe_float(row.get("fallback_feature_points_std_px"), -1.0),
+            "fallback_feature_points_confidence": _safe_float(row.get("fallback_feature_points_confidence"), 0.0),
+            "raw_observation_valid": _safe_float(row.get("raw_observation_valid"), 1.0),
+            "predicted_z": _safe_float(row.get("predicted_z"), -1.0),
+            "innovation_z": _safe_float(row.get("innovation_z"), 0.0),
+            "innovation_norm": _safe_float(row.get("innovation_norm"), 0.0),
+            "kalman_sigma_z": _safe_float(row.get("kalman_sigma_z"), -1.0),
+            "left_circle_source": _safe_float(row.get("left_circle_source"), 0.0),
+            "right_circle_source": _safe_float(row.get("right_circle_source"), 0.0),
+            "stereo_match_source": _safe_float(row.get("stereo_match_source"), 0.0),
+            "stereo_depth_source": _safe_float(row.get("stereo_depth_source"), 0.0),
+            "frame_counter_delta": _safe_float(row.get("frame_counter_delta"), 0.0),
+            "frame_number_delta": _safe_float(row.get("frame_number_delta"), 0.0),
+            "timestamp_delta_us": _safe_float(row.get("timestamp_delta_us"), 0.0),
+            "left_bbox_cx": _safe_float(row.get("left_bbox_cx"), -1.0),
+            "left_bbox_cy": _safe_float(row.get("left_bbox_cy"), -1.0),
+            "left_bbox_w": _safe_float(row.get("left_bbox_w"), -1.0),
+            "left_bbox_h": _safe_float(row.get("left_bbox_h"), -1.0),
+            "left_bbox_conf": _safe_float(row.get("left_bbox_conf"), 0.0),
+            "right_bbox_cx": _safe_float(row.get("right_bbox_cx"), -1.0),
+            "right_bbox_cy": _safe_float(row.get("right_bbox_cy"), -1.0),
+            "right_bbox_w": _safe_float(row.get("right_bbox_w"), -1.0),
+            "right_bbox_h": _safe_float(row.get("right_bbox_h"), -1.0),
+            "right_bbox_conf": _safe_float(row.get("right_bbox_conf"), 0.0),
+            "left_circle_cx": _safe_float(row.get("left_circle_cx"), -1.0),
+            "left_circle_cy": _safe_float(row.get("left_circle_cy"), -1.0),
+            "left_circle_r": _safe_float(row.get("left_circle_r"), -1.0),
+            "right_circle_cx": _safe_float(row.get("right_circle_cx"), -1.0),
+            "right_circle_cy": _safe_float(row.get("right_circle_cy"), -1.0),
+            "right_circle_r": _safe_float(row.get("right_circle_r"), -1.0),
+        }
+        for name, bit in P0P1_UNTRUSTED_BITS:
+            parsed[f"p0p1_{name}_untrusted"] = (
+                1.0 if p0p1_untrusted_mask & (1 << bit) else 0.0
+            )
+        for name in neural_top_feature_names():
+            parsed[name] = _safe_float(row.get(name), 0.0)
+        grouped.setdefault(track_id, []).append(parsed)
+
+    sequences: List[LegacySequence] = []
+    for track_id, rows in grouped.items():
+        rows.sort(key=lambda r: (r["timestamp"], r["frame_id"]))
+        if len(rows) >= min_track_len:
+            sequences.append(LegacySequence(track_id=track_id, rows=rows, metadata=metadata))
+    sequences.sort(key=lambda seq: seq.track_id)
+    return sequences
+
+
+def legacy_feature_names() -> List[str]:
+    """Feature order used by build_legacy_arrays()."""
+
+    return [
+        "dt",
+        "candidate_median_z",
+        "candidate_mad_z",
+        "candidate_valid_count",
+        "candidate_dz",
+        "candidate_ddz",
+        "z_mono",
+        "z_bbox_center",
+        "z_bbox_left_edge",
+        "z_bbox_right_edge",
+        "z_circle_center",
+        "z_roi_edge_centroid",
+        "z_roi_radial_center",
+        "z_roi_edge_pair_center",
+        "z_roi_corner_points",
+        "z_roi_texture_points",
+        "z_roi_binary_points",
+        "z_roi_orb_points",
+        "z_roi_brisk_points",
+        "z_roi_akaze_points",
+        "z_roi_sift_points",
+        "z_roi_iou_region_color_patch",
+        "z_roi_patch_iou_color_edge",
+        "z_roi_cuda_template_match",
+        "z_roi_cuda_stereo_bm",
+        "z_roi_cuda_stereo_sgm",
+        "z_roi_vpi_template_match",
+        "z_roi_vpi_orb",
+        "z_roi_opencv_cuda_gftt_lk",
+        "z_roi_ring_edge_profile",
+        "z_roi_neural_feature",
+        "z_roi_neural_xfeat",
+        "z_roi_neural_superpoint",
+        "z_roi_neural_aliked",
+        "z_roi_center_patch",
+        "z_roi_multi_point",
+        "z_fallback",
+        "z_fallback_epipolar",
+        "z_fallback_template",
+        "z_fallback_feature_points",
+        "confidence",
+        "class_id",
+        "disparity_bbox_center",
+        "disparity_bbox_left_edge",
+        "disparity_bbox_right_edge",
+        "disparity_circle_center",
+        "disparity_roi_edge_centroid",
+        "disparity_roi_radial_center",
+        "disparity_roi_edge_pair_center",
+        "disparity_roi_corner_points",
+        "disparity_roi_texture_points",
+        "disparity_roi_binary_points",
+        "disparity_roi_orb_points",
+        "disparity_roi_brisk_points",
+        "disparity_roi_akaze_points",
+        "disparity_roi_sift_points",
+        "disparity_roi_iou_region_color_patch",
+        "disparity_roi_patch_iou_color_edge",
+        "disparity_roi_cuda_template_match",
+        "disparity_roi_cuda_stereo_bm",
+        "disparity_roi_cuda_stereo_sgm",
+        "disparity_roi_vpi_template_match",
+        "disparity_roi_vpi_orb",
+        "disparity_roi_opencv_cuda_gftt_lk",
+        "disparity_roi_ring_edge_profile",
+        "disparity_roi_neural_feature",
+        "disparity_roi_neural_xfeat",
+        "disparity_roi_neural_superpoint",
+        "disparity_roi_neural_aliked",
+        "disparity_roi_center_patch",
+        "disparity_roi_multi_point",
+        "disparity_fallback_epipolar",
+        "disparity_fallback_template",
+        "disparity_fallback_feature_points",
+        "epipolar_dy",
+        "size_ratio",
+        "pair_initial_disparity",
+        "pair_epipolar_dy",
+        "pair_y_tolerance",
+        "pair_size_ratio",
+        "pair_shifted_iou",
+        "pair_score",
+        "pair_bbox_prior_penalty",
+        "pair_positive_disparity",
+        *p0p1_quality_feature_names(),
+        "left_circle_conf",
+        "right_circle_conf",
+        "subpixel_valid",
+        "subpixel_attempted",
+        "subpixel_support",
+        "subpixel_std_px",
+        "subpixel_confidence",
+        "subpixel_gate_px",
+        "roi_corner_points_support",
+        "roi_corner_points_std_px",
+        "roi_corner_points_confidence",
+        "roi_texture_points_support",
+        "roi_texture_points_std_px",
+        "roi_texture_points_confidence",
+        "roi_binary_points_support",
+        "roi_binary_points_std_px",
+        "roi_binary_points_confidence",
+        "roi_orb_points_support",
+        "roi_orb_points_std_px",
+        "roi_orb_points_confidence",
+        "roi_brisk_points_support",
+        "roi_brisk_points_std_px",
+        "roi_brisk_points_confidence",
+        "roi_akaze_points_support",
+        "roi_akaze_points_std_px",
+        "roi_akaze_points_confidence",
+        "roi_sift_points_support",
+        "roi_sift_points_std_px",
+        "roi_sift_points_confidence",
+        "roi_iou_region_color_patch_support",
+        "roi_iou_region_color_patch_std_px",
+        "roi_iou_region_color_patch_confidence",
+        "roi_patch_iou_color_edge_support",
+        "roi_patch_iou_color_edge_std_px",
+        "roi_patch_iou_color_edge_confidence",
+        "roi_cuda_template_match_support",
+        "roi_cuda_template_match_std_px",
+        "roi_cuda_template_match_confidence",
+        "roi_cuda_stereo_bm_support",
+        "roi_cuda_stereo_bm_std_px",
+        "roi_cuda_stereo_bm_confidence",
+        "roi_cuda_stereo_sgm_support",
+        "roi_cuda_stereo_sgm_std_px",
+        "roi_cuda_stereo_sgm_confidence",
+        "roi_vpi_template_match_support",
+        "roi_vpi_template_match_std_px",
+        "roi_vpi_template_match_confidence",
+        "roi_vpi_orb_support",
+        "roi_vpi_orb_std_px",
+        "roi_vpi_orb_confidence",
+        "roi_opencv_cuda_gftt_lk_support",
+        "roi_opencv_cuda_gftt_lk_std_px",
+        "roi_opencv_cuda_gftt_lk_confidence",
+        "roi_ring_edge_profile_support",
+        "roi_ring_edge_profile_std_px",
+        "roi_ring_edge_profile_confidence",
+        "roi_neural_feature_support",
+        "roi_neural_feature_std_px",
+        "roi_neural_feature_confidence",
+        "roi_neural_xfeat_support",
+        "roi_neural_xfeat_std_px",
+        "roi_neural_xfeat_confidence",
+        "roi_neural_superpoint_support",
+        "roi_neural_superpoint_std_px",
+        "roi_neural_superpoint_confidence",
+        "roi_neural_aliked_support",
+        "roi_neural_aliked_std_px",
+        "roi_neural_aliked_confidence",
+        *neural_top_feature_names(),
+        "fallback_feature_points_support",
+        "fallback_feature_points_std_px",
+        "fallback_feature_points_confidence",
+        "raw_observation_valid",
+        "left_circle_source",
+        "right_circle_source",
+        "stereo_match_source",
+        "frame_counter_delta",
+        "frame_number_delta",
+        "timestamp_delta_us",
+        "left_bbox_cx",
+        "left_bbox_cy",
+        "left_bbox_w",
+        "left_bbox_h",
+        "left_bbox_conf",
+        "right_bbox_cx",
+        "right_bbox_cy",
+        "right_bbox_w",
+        "right_bbox_h",
+        "right_bbox_conf",
+        "left_circle_cx",
+        "left_circle_cy",
+        "left_circle_r",
+        "right_circle_cx",
+        "right_circle_cy",
+        "right_circle_r",
+        *[f"{name}_valid" for name in METHOD_NAMES],
+    ]
+
+
+def _metadata_float(metadata: Dict[str, Any], keys: Sequence[str], default: float = 0.0) -> float:
+    for key in keys:
+        value = metadata.get(key)
+        if value is not None:
+            return _safe_float(value, default)
+    return default
+
+
+def _metadata_bool(metadata: Dict[str, Any], keys: Sequence[str], default: bool = False) -> bool:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return value
+        if value is not None:
+            return str(value).strip().lower() in {"1", "true", "yes", "on", "static"}
+    return default
+
+
+def _median(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return 0.5 * (ordered[mid - 1] + ordered[mid])
+
+
+def _mad(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    med = _median(values)
+    return _median([abs(value - med) for value in values])
+
+
+def weak_label_names() -> List[str]:
+    """Weak-label tensor order used by build_legacy_arrays()."""
+
+    return [
+        "known_z",
+        "known_z_valid",
+        "known_z_min",
+        "known_z_max",
+        "known_z_range_valid",
+        "static",
+        "landing_frame",
+        "landing_frame_valid",
+    ]
+
+
+def build_legacy_arrays(
+    sequence: LegacySequence,
+    *,
+    method_names: Sequence[str] | str | None = None,
+    reprojection_model = None,
+) -> Dict[str, List[List[float]]]:
+    """Build feature, measurement and validity arrays from a recorder sequence.
+
+    measurements order: METHOD_NAMES.
+    """
+
+    enabled_methods = method_allowlist_set(method_names)
+    feature_names = legacy_feature_names()
+    disabled_feature_indices = _disabled_method_feature_indices(enabled_methods, feature_names)
+    untrusted_mask_feature_index = (
+        feature_names.index("p0p1_untrusted_mask")
+        if "p0p1_untrusted_mask" in feature_names
+        else -1
+    )
+    dt_values: List[List[float]] = []
+    features: List[List[float]] = []
+    measurements: List[List[float]] = []
+    valid: List[List[float]] = []
+    labels: List[List[float]] = []
+    prev_ts = None
+    prev_valid_ts = None
+    prev_median_z = 0.0
+    prev_candidate_dz = 0.0
+    have_prev_median = False
+    metadata = sequence.metadata
+    known_z = _metadata_float(metadata, ("known_z_m", "known_z", "known_distance_m"), 0.0)
+    known_z_tol = _metadata_float(metadata, ("known_z_tolerance_m", "known_z_tolerance"), 0.0)
+    known_z_min = _metadata_float(metadata, ("known_z_min_m", "known_z_min"), 0.0)
+    known_z_max = _metadata_float(metadata, ("known_z_max_m", "known_z_max"), 0.0)
+    if known_z > 0.0 and known_z_tol > 0.0 and (known_z_min <= 0.0 or known_z_max <= 0.0):
+        known_z_min = known_z - known_z_tol
+        known_z_max = known_z + known_z_tol
+    static_flag = 1.0 if _metadata_bool(metadata, ("static", "is_static"), False) else 0.0
+    known_z_training = static_flag > 0.0 or _metadata_bool(
+        metadata,
+        ("known_z_training", "known_z_supervision", "use_known_z_for_training"),
+        False,
+    )
+    known_z_valid = 1.0 if known_z > 0.0 and known_z_training else 0.0
+    known_z_range_valid = 1.0 if known_z_training and known_z_min > 0.0 and known_z_max > known_z_min else 0.0
+    landing_frame = _metadata_float(metadata, ("landing_frame",), -1.0)
+    landing_frame_valid = 1.0 if landing_frame >= 0.0 else 0.0
+
+    for row in sequence.rows:
+        ts = row["timestamp"]
+        if prev_ts is None:
+            dt = 0.01
+        else:
+            dt = max(1e-4, min(0.2, ts - prev_ts))
+        prev_ts = ts
+        dt_values.append([dt])
+
+        measurements_row = []
+        valid_row = []
+        for method_name, key in METHOD_COLUMNS:
+            if reprojection_model is not None:
+                disp_col = method_disparity_column(key)
+                disparity = row.get(disp_col, -1.0)
+                if disparity > 0.1:
+                    corrected = reprojection_model.depth_from_disparity(disparity)
+                else:
+                    corrected = None
+                if corrected is not None and corrected > 0.1:
+                    value = corrected
+                else:
+                    value = row.get(key, -1.0)
+            else:
+                value = row.get(key, -1.0)
+            method_enabled = enabled_methods is None or method_name in enabled_methods
+            is_valid = 1.0 if method_enabled and value > 0.1 else 0.0
+            measurements_row.append(value if is_valid else 0.0)
+            valid_row.append(is_valid)
+        valid_by_key = {
+            key: valid_row[idx] for idx, (_, key) in enumerate(METHOD_COLUMNS)
+        }
+        candidate_values = [value for value, is_valid in zip(measurements_row, valid_row) if is_valid > 0.0]
+        candidate_median_z = _median(candidate_values)
+        candidate_mad_z = _mad(candidate_values)
+        candidate_valid_count = float(len(candidate_values))
+        if candidate_valid_count <= 0.0:
+            candidate_dz = 0.0
+            candidate_ddz = 0.0
+        elif have_prev_median and prev_valid_ts is not None:
+            raw_valid_dt = ts - prev_valid_ts
+            valid_dt = max(1e-4, min(0.5, raw_valid_dt))
+            candidate_dz = (candidate_median_z - prev_median_z) / valid_dt
+            if raw_valid_dt > dt * 1.5:
+                candidate_ddz = 0.0
+            else:
+                candidate_ddz = (candidate_dz - prev_candidate_dz) / dt
+        else:
+            candidate_dz = 0.0
+            candidate_ddz = 0.0
+        if candidate_valid_count > 0.0:
+            prev_median_z = candidate_median_z
+            prev_candidate_dz = candidate_dz
+            prev_valid_ts = ts
+            have_prev_median = True
+
+        feature_row = [
+            dt,
+            candidate_median_z,
+            candidate_mad_z,
+            candidate_valid_count,
+            candidate_dz,
+            candidate_ddz,
+            row["z_mono"] if valid_by_key["z_mono"] else 0.0,
+            row["z_bbox_center"] if valid_by_key["z_bbox_center"] else 0.0,
+            row["z_bbox_left_edge"] if valid_by_key["z_bbox_left_edge"] else 0.0,
+            row["z_bbox_right_edge"] if valid_by_key["z_bbox_right_edge"] else 0.0,
+            row["z_circle_center"] if valid_by_key["z_circle_center"] else 0.0,
+            row["z_roi_edge_centroid"] if valid_by_key["z_roi_edge_centroid"] else 0.0,
+            row["z_roi_radial_center"] if valid_by_key["z_roi_radial_center"] else 0.0,
+            row["z_roi_edge_pair_center"] if valid_by_key["z_roi_edge_pair_center"] else 0.0,
+            row["z_roi_corner_points"] if valid_by_key["z_roi_corner_points"] else 0.0,
+            row["z_roi_texture_points"] if valid_by_key["z_roi_texture_points"] else 0.0,
+            row["z_roi_binary_points"] if valid_by_key["z_roi_binary_points"] else 0.0,
+            row["z_roi_orb_points"] if valid_by_key["z_roi_orb_points"] else 0.0,
+            row["z_roi_brisk_points"] if valid_by_key["z_roi_brisk_points"] else 0.0,
+            row["z_roi_akaze_points"] if valid_by_key["z_roi_akaze_points"] else 0.0,
+            row["z_roi_sift_points"] if valid_by_key["z_roi_sift_points"] else 0.0,
+            row["z_roi_iou_region_color_patch"] if valid_by_key["z_roi_iou_region_color_patch"] else 0.0,
+            row["z_roi_patch_iou_color_edge"] if valid_by_key["z_roi_patch_iou_color_edge"] else 0.0,
+            row["z_roi_cuda_template_match"] if valid_by_key["z_roi_cuda_template_match"] else 0.0,
+            row["z_roi_cuda_stereo_bm"] if valid_by_key["z_roi_cuda_stereo_bm"] else 0.0,
+            row["z_roi_cuda_stereo_sgm"] if valid_by_key["z_roi_cuda_stereo_sgm"] else 0.0,
+            row["z_roi_vpi_template_match"] if valid_by_key["z_roi_vpi_template_match"] else 0.0,
+            row["z_roi_vpi_orb"] if valid_by_key["z_roi_vpi_orb"] else 0.0,
+            row["z_roi_opencv_cuda_gftt_lk"] if valid_by_key["z_roi_opencv_cuda_gftt_lk"] else 0.0,
+            row["z_roi_ring_edge_profile"] if valid_by_key["z_roi_ring_edge_profile"] else 0.0,
+            row["z_roi_neural_feature"] if valid_by_key["z_roi_neural_feature"] else 0.0,
+            row["z_roi_neural_xfeat"] if valid_by_key["z_roi_neural_xfeat"] else 0.0,
+            row["z_roi_neural_superpoint"] if valid_by_key["z_roi_neural_superpoint"] else 0.0,
+            row["z_roi_neural_aliked"] if valid_by_key["z_roi_neural_aliked"] else 0.0,
+            row["z_roi_center_patch"] if valid_by_key["z_roi_center_patch"] else 0.0,
+            row["z_roi_multi_point"] if valid_by_key["z_roi_multi_point"] else 0.0,
+            row["z_fallback"] if row["z_fallback"] > 0.1 else 0.0,
+            row["z_fallback_epipolar"] if valid_by_key["z_fallback_epipolar"] else 0.0,
+            row["z_fallback_template"] if valid_by_key["z_fallback_template"] else 0.0,
+            row["z_fallback_feature_points"] if valid_by_key["z_fallback_feature_points"] else 0.0,
+            row["confidence"],
+            row["class_id"],
+            row["disparity_bbox_center"],
+            row["disparity_bbox_left_edge"],
+            row["disparity_bbox_right_edge"],
+            row["disparity_circle_center"],
+            row["disparity_roi_edge_centroid"],
+            row["disparity_roi_radial_center"],
+            row["disparity_roi_edge_pair_center"],
+            row["disparity_roi_corner_points"],
+            row["disparity_roi_texture_points"],
+            row["disparity_roi_binary_points"],
+            row["disparity_roi_orb_points"],
+            row["disparity_roi_brisk_points"],
+            row["disparity_roi_akaze_points"],
+            row["disparity_roi_sift_points"],
+            row["disparity_roi_iou_region_color_patch"],
+            row["disparity_roi_patch_iou_color_edge"],
+            row["disparity_roi_cuda_template_match"],
+            row["disparity_roi_cuda_stereo_bm"],
+            row["disparity_roi_cuda_stereo_sgm"],
+            row["disparity_roi_vpi_template_match"],
+            row["disparity_roi_vpi_orb"],
+            row["disparity_roi_opencv_cuda_gftt_lk"],
+            row["disparity_roi_ring_edge_profile"],
+            row["disparity_roi_neural_feature"],
+            row["disparity_roi_neural_xfeat"],
+            row["disparity_roi_neural_superpoint"],
+            row["disparity_roi_neural_aliked"],
+            row["disparity_roi_center_patch"],
+            row["disparity_roi_multi_point"],
+            row["disparity_fallback_epipolar"],
+            row["disparity_fallback_template"],
+            row["disparity_fallback_feature_points"],
+            row["epipolar_dy"],
+            row["size_ratio"],
+            row["pair_initial_disparity"],
+            row["pair_epipolar_dy"],
+            row["pair_y_tolerance"],
+            row["pair_size_ratio"],
+            row["pair_shifted_iou"],
+            row["pair_score"],
+            row["pair_bbox_prior_penalty"],
+            row["pair_positive_disparity"],
+            *[row[name] for name in p0p1_quality_feature_names()],
+            row["left_circle_conf"],
+            row["right_circle_conf"],
+            row["subpixel_valid"],
+            row["subpixel_attempted"],
+            row["subpixel_support"],
+            row["subpixel_std_px"],
+            row["subpixel_confidence"],
+            row["subpixel_gate_px"],
+            row["roi_corner_points_support"],
+            row["roi_corner_points_std_px"],
+            row["roi_corner_points_confidence"],
+            row["roi_texture_points_support"],
+            row["roi_texture_points_std_px"],
+            row["roi_texture_points_confidence"],
+            row["roi_binary_points_support"],
+            row["roi_binary_points_std_px"],
+            row["roi_binary_points_confidence"],
+            row["roi_orb_points_support"],
+            row["roi_orb_points_std_px"],
+            row["roi_orb_points_confidence"],
+            row["roi_brisk_points_support"],
+            row["roi_brisk_points_std_px"],
+            row["roi_brisk_points_confidence"],
+            row["roi_akaze_points_support"],
+            row["roi_akaze_points_std_px"],
+            row["roi_akaze_points_confidence"],
+            row["roi_sift_points_support"],
+            row["roi_sift_points_std_px"],
+            row["roi_sift_points_confidence"],
+            row["roi_iou_region_color_patch_support"],
+            row["roi_iou_region_color_patch_std_px"],
+            row["roi_iou_region_color_patch_confidence"],
+            row["roi_patch_iou_color_edge_support"],
+            row["roi_patch_iou_color_edge_std_px"],
+            row["roi_patch_iou_color_edge_confidence"],
+            row["roi_cuda_template_match_support"],
+            row["roi_cuda_template_match_std_px"],
+            row["roi_cuda_template_match_confidence"],
+            row["roi_cuda_stereo_bm_support"],
+            row["roi_cuda_stereo_bm_std_px"],
+            row["roi_cuda_stereo_bm_confidence"],
+            row["roi_cuda_stereo_sgm_support"],
+            row["roi_cuda_stereo_sgm_std_px"],
+            row["roi_cuda_stereo_sgm_confidence"],
+            row["roi_vpi_template_match_support"],
+            row["roi_vpi_template_match_std_px"],
+            row["roi_vpi_template_match_confidence"],
+            row["roi_vpi_orb_support"],
+            row["roi_vpi_orb_std_px"],
+            row["roi_vpi_orb_confidence"],
+            row["roi_opencv_cuda_gftt_lk_support"],
+            row["roi_opencv_cuda_gftt_lk_std_px"],
+            row["roi_opencv_cuda_gftt_lk_confidence"],
+            row["roi_ring_edge_profile_support"],
+            row["roi_ring_edge_profile_std_px"],
+            row["roi_ring_edge_profile_confidence"],
+            row["roi_neural_feature_support"],
+            row["roi_neural_feature_std_px"],
+            row["roi_neural_feature_confidence"],
+            row["roi_neural_xfeat_support"],
+            row["roi_neural_xfeat_std_px"],
+            row["roi_neural_xfeat_confidence"],
+            row["roi_neural_superpoint_support"],
+            row["roi_neural_superpoint_std_px"],
+            row["roi_neural_superpoint_confidence"],
+            row["roi_neural_aliked_support"],
+            row["roi_neural_aliked_std_px"],
+            row["roi_neural_aliked_confidence"],
+            *[row[name] for name in neural_top_feature_names()],
+            row["fallback_feature_points_support"],
+            row["fallback_feature_points_std_px"],
+            row["fallback_feature_points_confidence"],
+            row["raw_observation_valid"],
+            row["left_circle_source"],
+            row["right_circle_source"],
+            row["stereo_match_source"],
+            row["frame_counter_delta"],
+            row["frame_number_delta"],
+            row["timestamp_delta_us"],
+            row["left_bbox_cx"],
+            row["left_bbox_cy"],
+            row["left_bbox_w"],
+            row["left_bbox_h"],
+            row["left_bbox_conf"],
+            row["right_bbox_cx"],
+            row["right_bbox_cy"],
+            row["right_bbox_w"],
+            row["right_bbox_h"],
+            row["right_bbox_conf"],
+            row["left_circle_cx"],
+            row["left_circle_cy"],
+            row["left_circle_r"],
+            row["right_circle_cx"],
+            row["right_circle_cy"],
+            row["right_circle_r"],
+            *valid_row,
+        ]
+        for feature_index in disabled_feature_indices:
+            feature_row[feature_index] = 0.0
+        if untrusted_mask_feature_index >= 0:
+            feature_row[untrusted_mask_feature_index] = _mask_p0p1_untrusted_bits(
+                feature_row[untrusted_mask_feature_index],
+                enabled_methods,
+            )
+        features.append(feature_row)
+        measurements.append(measurements_row)
+        valid.append(valid_row)
+        labels.append(
+            [
+                known_z,
+                known_z_valid,
+                known_z_min,
+                known_z_max,
+                known_z_range_valid,
+                static_flag,
+                landing_frame,
+                landing_frame_valid,
+            ]
+        )
+
+    return {
+        "features": features,
+        "measurements": measurements,
+        "valid": valid,
+        "labels": labels,
+        "dt": dt_values,
+    }
+
+
+def iter_extended_rows(path: str | Path) -> Iterable[Dict[str, str]]:
+    """Yield rows from a future schema.md-compatible CSV file."""
+
+    yield from read_csv_rows(path)
+
+
+def compute_feature_normalizer(features: Sequence[Sequence[float]]) -> Tuple[List[float], List[float]]:
+    """Compute a fixed feature normalizer for training/deployment."""
+
+    if not features:
+        return [], []
+    cols = len(features[0])
+    means = [0.0] * cols
+    for row in features:
+        for i, value in enumerate(row):
+            means[i] += value
+    means = [value / len(features) for value in means]
+
+    stds = [1e-6] * cols
+    for row in features:
+        for i, value in enumerate(row):
+            diff = value - means[i]
+            stds[i] += diff * diff
+    stds = [(value / len(features)) ** 0.5 for value in stds]
+    stds = [max(value, 1e-6) for value in stds]
+    return means, stds
+
+
+def apply_feature_normalizer(
+    features: Sequence[Sequence[float]],
+    means: Sequence[float],
+    stds: Sequence[float],
+) -> List[List[float]]:
+    """Apply a fixed feature normalizer."""
+
+    if not features:
+        return []
+    if len(means) != len(features[0]) or len(stds) != len(features[0]):
+        raise ValueError("feature normalizer dimension mismatch")
+    return [[(value - means[i]) / max(stds[i], 1e-6) for i, value in enumerate(row)] for row in features]
+
+
+def normalize_features(features: Sequence[Sequence[float]]) -> List[List[float]]:
+    """Backward-compatible helper using a normalizer fit on the input."""
+
+    means, stds = compute_feature_normalizer(features)
+    return apply_feature_normalizer(features, means, stds)
+
+
+# ---------------------------------------------------------------------------
+# Stage-2: metric 3D state arrays for the causal trajectory state estimator.
+#
+# Unlike build_legacy_arrays (which fuses scalar depth z only), this builder
+# reprojects every candidate's disparity into a metric [X, Y, Z] point using the
+# d0-corrected stereo model. The state estimator consumes per-method 3D points
+# plus their quality so it can fuse XYZ jointly and learn that XY jitter is
+# driven by Z jitter (shared pixel anchor, see reproject.py).
+#
+# It deliberately does NOT read legacy online x/y/z/v/a. Metric XY comes only
+# from each candidate's own disparity + pixel, never from the old fused state.
+# ---------------------------------------------------------------------------
+
+# Per-method quality columns fed alongside the metric point. Kept compact and
+# method-owned so a method allowlist can zero them without cross-leakage.
+_METRIC_QUALITY_SUFFIXES = ("support", "std_px", "confidence")
+
+
+def metric_state_method_names(
+    method_names: Sequence[str] | str | None = None,
+) -> Tuple[str, ...]:
+    """Depth methods used by the metric-state builder, in METHOD_NAMES order.
+
+    Only methods that carry a companion ``disparity_*`` column can be
+    reprojected; ``mono`` and the fused ``z_stereo/z`` are never included.
+    """
+
+    enabled = method_allowlist_set(method_names)
+    names: List[str] = []
+    for name, _column in METHOD_COLUMNS:
+        if name == "mono":
+            continue
+        if enabled is not None and name not in enabled:
+            continue
+        names.append(name)
+    return tuple(names)
+
+
+def metric_feature_names(method_names: Sequence[str] | str | None = None) -> List[str]:
+    """Per-frame feature vector order for build_metric_state_arrays().
+
+    Layout: global temporal/consistency features, then per-method
+    [X, Y, Z, disparity, support, std_px, confidence, trust].
+    """
+
+    names = [
+        "dt",
+        "metric_valid_count",
+        "metric_median_z",
+        "metric_mad_z",
+        "metric_dz",
+        "metric_ddz",
+    ]
+    for method in metric_state_method_names(method_names):
+        names.extend(
+            [
+                f"{method}_X",
+                f"{method}_Y",
+                f"{method}_Z",
+                f"{method}_disparity",
+                f"{method}_support",
+                f"{method}_std_px",
+                f"{method}_confidence",
+                f"{method}_trust",
+            ]
+        )
+    return names
+
+
+def _method_trust_column(method: str) -> str | None:
+    for column, owner in P0P1_TRUST_FIELD_METHODS.items():
+        if owner == method:
+            return column
+    return None
+
+
+def build_metric_state_arrays(
+    sequence: LegacySequence,
+    reprojection_model,
+    *,
+    method_names: Sequence[str] | str | None = None,
+    min_disparity: float = 0.1,
+) -> Dict[str, List]:
+    """Reproject candidate disparities into per-method metric 3D observations.
+
+    Returns a dict with:
+      - ``features``:      [T, feature_dim]   per metric_feature_names()
+      - ``points``:        [T, M, 3]          per-method [X, Y, Z] (0 if invalid)
+      - ``point_valid``:   [T, M]             1.0 where the method reprojected
+      - ``dt``:            [T, 1]             causal frame delta seconds
+      - ``labels``:        [T, L]             weak_label_names() order
+      - ``method_names``:  tuple[str]         column order of M
+
+    ``reprojection_model`` is a reproject.ReprojectionModel (or any object with a
+    compatible ``reproject``). The metric arrays share the known_z / static label
+    semantics of build_legacy_arrays so both paths agree on supervision.
+    """
+
+    try:
+        from .reproject import reproject_row
+    except ImportError:  # pragma: no cover - direct script execution
+        from reproject import reproject_row
+
+    methods = metric_state_method_names(method_names)
+    method_columns = [(name, dict(METHOD_COLUMNS)[name]) for name in methods]
+    trust_columns = {name: _method_trust_column(name) for name in methods}
+
+    metadata = sequence.metadata
+    known_z = _metadata_float(metadata, ("known_z_m", "known_z", "known_distance_m"), 0.0)
+    known_z_tol = _metadata_float(metadata, ("known_z_tolerance_m", "known_z_tolerance"), 0.0)
+    known_z_min = _metadata_float(metadata, ("known_z_min_m", "known_z_min"), 0.0)
+    known_z_max = _metadata_float(metadata, ("known_z_max_m", "known_z_max"), 0.0)
+    if known_z > 0.0 and known_z_tol > 0.0 and (known_z_min <= 0.0 or known_z_max <= 0.0):
+        known_z_min = known_z - known_z_tol
+        known_z_max = known_z + known_z_tol
+    static_flag = 1.0 if _metadata_bool(metadata, ("static", "is_static"), False) else 0.0
+    known_z_training = static_flag > 0.0 or _metadata_bool(
+        metadata,
+        ("known_z_training", "known_z_supervision", "use_known_z_for_training"),
+        False,
+    )
+    known_z_valid = 1.0 if known_z > 0.0 and known_z_training else 0.0
+    known_z_range_valid = 1.0 if known_z_training and known_z_min > 0.0 and known_z_max > known_z_min else 0.0
+    landing_frame = _metadata_float(metadata, ("landing_frame",), -1.0)
+    landing_frame_valid = 1.0 if landing_frame >= 0.0 else 0.0
+
+    features: List[List[float]] = []
+    points: List[List[List[float]]] = []
+    point_valid: List[List[float]] = []
+    dt_values: List[List[float]] = []
+    labels: List[List[float]] = []
+
+    prev_ts = None
+    prev_valid_ts = None
+    prev_median_z = 0.0
+    prev_metric_dz = 0.0
+    have_prev_median = False
+
+    for row in sequence.rows:
+        ts = row["timestamp"]
+        if prev_ts is None:
+            dt = 0.01
+        else:
+            dt = max(1e-4, min(0.2, ts - prev_ts))
+        prev_ts = ts
+
+        reprojected = reproject_row(row, reprojection_model, method_columns, min_disparity=min_disparity)
+
+        method_points: List[List[float]] = []
+        valid_row: List[float] = []
+        per_method_feats: List[float] = []
+        valid_z: List[float] = []
+        for name, _column in method_columns:
+            pt = reprojected[name]
+            is_valid = 1.0 if pt.valid else 0.0
+            method_points.append([pt.x, pt.y, pt.z] if pt.valid else [0.0, 0.0, 0.0])
+            valid_row.append(is_valid)
+            if pt.valid:
+                valid_z.append(pt.z)
+            support = row.get(f"{name}_support", 0.0)
+            std_px = row.get(f"{name}_std_px", 0.0)
+            confidence = row.get(f"{name}_confidence", 0.0)
+            if name == "roi_multi_point":
+                support = row.get("subpixel_support", support)
+                std_px = row.get("subpixel_std_px", std_px)
+                confidence = row.get("subpixel_confidence", confidence)
+            trust_col = trust_columns.get(name)
+            trust = row.get(trust_col, 0.0) if trust_col else 0.0
+            per_method_feats.extend(
+                [
+                    pt.x if pt.valid else 0.0,
+                    pt.y if pt.valid else 0.0,
+                    pt.z if pt.valid else 0.0,
+                    pt.disparity if pt.valid else 0.0,
+                    float(support) * is_valid,
+                    float(std_px) * is_valid,
+                    float(confidence) * is_valid,
+                    float(trust) * is_valid,
+                ]
+            )
+
+        valid_count = float(len(valid_z))
+        median_z = _median(valid_z)
+        mad_z = _mad(valid_z)
+        if valid_count <= 0.0:
+            metric_dz = 0.0
+            metric_ddz = 0.0
+        elif have_prev_median and prev_valid_ts is not None:
+            raw_valid_dt = ts - prev_valid_ts
+            valid_dt = max(1e-4, min(0.5, raw_valid_dt))
+            metric_dz = (median_z - prev_median_z) / valid_dt
+            if raw_valid_dt > dt * 1.5:
+                metric_ddz = 0.0
+            else:
+                metric_ddz = (metric_dz - prev_metric_dz) / dt
+        else:
+            metric_dz = 0.0
+            metric_ddz = 0.0
+        if valid_count > 0.0:
+            prev_median_z = median_z
+            prev_metric_dz = metric_dz
+            prev_valid_ts = ts
+            have_prev_median = True
+
+        feature_row = [dt, valid_count, median_z, mad_z, metric_dz, metric_ddz, *per_method_feats]
+
+        features.append(feature_row)
+        points.append(method_points)
+        point_valid.append(valid_row)
+        dt_values.append([dt])
+        labels.append(
+            [
+                known_z,
+                known_z_valid,
+                known_z_min,
+                known_z_max,
+                known_z_range_valid,
+                static_flag,
+                landing_frame,
+                landing_frame_valid,
+            ]
+        )
+
+    return {
+        "features": features,
+        "points": points,
+        "point_valid": point_valid,
+        "dt": dt_values,
+        "labels": labels,
+        "method_names": methods,
+    }

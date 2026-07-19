@@ -1,93 +1,75 @@
-# 双目相机标定工具
+# 双目标定离线目录
 
-海康双目相机标定流水线，适用于 Jetson NX + MVS SDK 环境。
+本目录只保留离线标定、深度验证和算法对比脚本。棋盘图像采集统一使用
+`stereo_3d_pipeline` 的 C++ 工具 `capture_chessboard`，Python 采集脚本已删除。
 
-## 流程概览
+## 标准流程
 
-```
-采集棋盘格图像 → 立体标定 → 深度测试验证
-capture_chessboard.py → stereo_calibration.py → stereo_depth_test.py
-```
+### 1. 在 NX 上采集
 
-## 快速开始
-
-### 1. 采集标定图像
+在 NX 的 `~/NX_volleyball/stereo_3d_pipeline/build_standalone` 下执行：
 
 ```bash
-# PWM硬件触发模式(默认)
-python3 capture_chessboard.py
-
-# 自由运行模式(无PWM)
-python3 capture_chessboard.py --free-run
+./capture_chessboard \
+  -o calibration_images \
+  -g 17.0 \
+  --serial-left 00D39342665 \
+  --serial-right 00219471413
 ```
 
-操作: **空格**=采集 | **q/ESC**=退出 | **c**=清空
+GUI 模式下按空格保存当前同步帧，`q` 或 `ESC` 退出。正式标定只使用硬触发采集，
+不要用 `--free-run`。
 
-图像保存到 `calibration_images/left/` 和 `calibration_images/right/`。
-
-> **采集建议:**
-> - 采集 15~25 对，尽量覆盖画面四个象限
-> - 棋盘格尽量铺满画面，包含倾斜角度
-> - 保持棋盘格平整，避免弯曲
-> - 图像自动保存为无损 PNG
-
-### 2. 运行标定
+### 2. 直接在 NX 上用 C++ 求解
 
 ```bash
-# -s 方格边长(mm)，必须准确测量
-python3 stereo_calibration.py -s 24.5
+./stereo_calibrate -s 26.0 --board-w 5 --board-h 8
 ```
 
-输出:
-- `stereo_calib.yaml` — OpenCV FileStorage 格式 (C++/Python 通用)
-- `stereo_calib.npz` — NumPy 格式 (Python 快速加载)
+默认读取 `calibration_images/left` 和 `calibration_images/right`，默认输出
+`stereo_calib.yaml`。
 
-**标定质量判断:**
-- 单目 RMS < 0.5 px → 优秀
-- 立体 RMS < 1.0 px → 合格
-- 焦距 fx/fy 不应超过 ~4000
+### 3. 拷贝到本机用 Python 求解
 
-### 3. 验证深度
+在仓库根目录执行：
 
 ```bash
-# 交互浏览所有图像对，鼠标点击测距
-python3 stereo_depth_test.py -c stereo_calib.yaml
-
-# 指定单对图像
-python3 stereo_depth_test.py -c stereo_calib.yaml --left l.png --right r.png
+scp -r nvidia@10.42.0.148:~/NX_volleyball/stereo_3d_pipeline/build_standalone/calibration_images ./NX_volleyball/calibration
+cd NX_volleyball/calibration
+python3 stereo_calibration.py -s 26.0
 ```
 
-## 文件说明
+Python 脚本只做离线求解，不负责相机采集。它按左右同名文件配对，默认使用与 C++
+工具一致的 `CALIB_FIX_INTRINSIC`，报告最差重投影误差，不自动剔除图像对；如果 RMS
+或校正 ROI 明显异常，会拒绝保存标定文件。需要联合优化内参时显式加
+`--optimize-intrinsics`。
+
+## 输出文件
+
+| 文件 | 说明 |
+|------|------|
+| `stereo_calib.yaml` | OpenCV FileStorage 格式，C++ pipeline 直接读取 |
+| `stereo_calib.npz` | Python 快速加载格式 |
+| `calibration_images/` | 从 NX 下载的原始左右图像 |
+| `calibration_images/capture_metadata.csv` | C++ 采集工具保存的同步水印记录 |
+
+## 质量门槛
+
+| 指标 | 要求 |
+|------|------|
+| 单目 RMS | 目标 `< 0.5 px`，良好 `< 0.3 px` |
+| 立体 RMS | 必须 `< 1.0 px`，良好 `< 0.5 px` |
+| 有效图像对 | 正式长基线标定建议 `>= 20` |
+| 校正 ROI | 左右 ROI 不能为空 |
+| 同步水印 | `capture_metadata.csv` 中 `frame_counter_delta` 应稳定为 `0` |
+
+如果质量不达标，重新采集，优先改善棋盘覆盖、姿态分布、清晰度、曝光和棋盘刚性。
+不要靠求解阶段选择性忽略坏图来掩盖采集问题。
+
+## 辅助脚本
 
 | 文件 | 功能 |
 |------|------|
-| `capture_chessboard.py` | 双目图像采集 (PWM触发/自由运行) |
-| `stereo_calibration.py` | 标定流水线 (单目→剔除→立体→校正) |
-| `stereo_depth_test.py` | 深度验证 (视差图/深度图/点击测距) |
-
-## 默认参数
-
-在各脚本顶部可修改:
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `BOARD_WIDTH` | 9 | 棋盘格内角点列数 |
-| `BOARD_HEIGHT` | 6 | 棋盘格内角点行数 |
-| `SQUARE_SIZE` | 30.0 | 方格边长 (mm) |
-| `EXPOSURE_TIME` | 2000 | 曝光时间 (μs) |
-| `GPIOCHIP` | gpiochip2 | GPIO芯片 (libgpiod) |
-| `LINE_OFFSET` | 7 | GPIO引脚 (gpiochip2 line 7) |
-
-## 关键修正 (参考知乎教程)
-
-1. **`CALIB_CB_FILTER_QUADS`** — 角点检测时过滤假四边形
-2. **`CALIB_USE_INTRINSIC_GUESS`** — 立体标定以单目结果为初值 (非 `flags=0`)
-3. **异常剔除** — 按重投影误差自动移除异常图像对 (mean + 2σ)
-4. **PNG无损** — 避免JPEG压缩伪影影响亚像素精度
-5. **视差÷16** — StereoSGBM返回定点数，需除以16再算深度
-
-## 部署到 ROS2
-
-```bash
-cp stereo_calib.yaml ~/NX_volleyball/ros2_ws/src/volleyball_stereo_driver/calibration/
-```
+| `stereo_calibration.py` | 本机离线双目标定求解 |
+| `stereo_depth_test.py` | 加载标定文件做校正、视差和点击测距验证 |
+| `depth_algo_compare.py` | 对比多种深度算法输出 |

@@ -1,0 +1,428 @@
+# ============================================================
+# Formal NX -> RDK joint runtime config.
+# Publishes stable HybridDepth observations; RDK owns ballistic filtering and control.
+# Runtime baseline comes from calibration.file, not fusion.baseline_mm.
+# ============================================================
+
+camera:
+  left_index: 0
+  right_index: 1
+  serial_left: "00D39342665"
+  serial_right: "00219471413"
+  exposure_us: 9867.0
+  gain_db: 11.9906
+  use_trigger: true
+  trigger_source: "Line0"
+  trigger_activation: "RisingEdge"
+  image_node_num: 3               # SDK OneByOne FIFO depth, absorbs USB arrival jitter
+  embedded_info_clear_rows: 2     # FrameSpecInfo watermark rows cleared before debayer/YOLO
+  trigger_chip: "gpiochip2"
+  trigger_line: 7
+  width: 1440
+  height: 1080
+
+calibration:
+  file: "../calibration/stereo_calib.yaml"
+
+disparity_offset:
+  # Disabled after the 853.154 mm stereo recalibration. Re-enable only after
+  # fitting a new d0 with images rectified by the current calibration file.
+  enabled: false
+  file: "config/disparity_offset_fit_20260709.json"
+
+rectify:
+  backend: "CUDA"
+  output_width: 1440
+  output_height: 1080
+
+tnr:
+  enabled: false
+  preset: "outdoor_medium"
+  strength: 0.6
+  version: "default"
+
+detector:
+  engine_path: "/home/nvidia/NX_volleyball/model/yolo26_gpu_fp16.engine"
+  input_size: 640
+  input_format: "bgr"
+  use_dla: false
+  dla_core: 0
+  confidence_threshold: 0.30
+  nms_threshold: 0.4
+  max_detections: 10
+  dual_yolo:
+    enabled: true
+    right_engine_path: ""      # empty means reuse detector.engine_path
+    right_input_format: "bgr"
+    right_use_dla: false
+    right_dla_core: 1
+    use_for_depth: true
+    depth_modes:
+      bbox_pair: true          # cheap left/right YOLO bbox-center disparity candidate
+      bbox_edges: true         # bbox left/right edge disparity candidates
+      circle_center: true      # actual ROI circle-fit triangulation candidate (needs center_refine)
+      circle_edges: false      # legacy left/right silhouette depth off; circle_center uses top/bottom contour check
+      roi_edge_centroid: true  # gradient-weighted ROI edge centroid disparity candidate
+      roi_radial_center: true  # radial-gradient center disparity candidate
+      roi_edge_pair_center: true # paired left/right ROI edge center disparity candidate
+      roi_corner_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
+      roi_texture_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
+      roi_binary_points: false  # heavier sparse feature A/B mode; enable offline or after profiling budget is available
+      roi_orb_points: false    # true OpenCV CUDA ORB path when GPU image is available; slower A/B mode, not default 100fps
+      roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
+      roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
+      roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
+      roi_iou_region_color_patch: false # disabled: 2026-07-04 artifacts showed systematic stripe-region mismatch
+      roi_patch_iou_color_edge: false # disabled: 2026-07-04 artifacts showed systematic wrong color-edge match
+      roi_cuda_template_match: false # formal path: P2 NCC is not used by HybridDepth output
+      roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
+      roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 100fps
+      roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
+      roi_vpi_template_match: false # disabled: current stable config removes VPI tail latency
+      roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
+      roi_vpi_harris_lk: false # P2 VPI Harris + Pyramidal LK candidate
+      roi_vpi_orb: false # disabled: current stable config removes VPI tail latency
+      roi_cuda_gftt_lk: false # P2 sidecar A/B candidate; disabled in P0/P1+XFeat+SuperPoint+NCC collection config
+      roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
+      roi_libsgm: false # P2 Fixstars libSGM candidate
+      roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
+      roi_center_patch: true   # auxiliary P1 candidate; record z_roi_center_patch
+      roi_subpixel: true       # production-preferred CUDA multi-point candidate
+      epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
+      fallback_template: false # CPU fallback; keep off in 100fps realtime config
+      fallback_feature_points: false # CPU fallback; keep off in 100fps realtime config
+    fallback_to_roi_match: false       # legacy full ROI texture match, keep off for dual-YOLO test
+    gpu_candidate_refine: true         # direct dual-YOLO ROI candidates run in one CUDA batch
+    fallback_epipolar_search: true     # left/right single-side miss -> bounded epipolar search
+    center_refine: true                # circle fit inside bbox/search ROI; GPU for direct pairs, CPU for fallback
+    roi_denoise: true                  # local 3x3 denoise only inside ROI
+    log_matches: false
+    depth_solver: "roi_subpixel_match" # circle_center | roi_subpixel_match
+    subpixel_enabled: true             # enables preferred z_roi_multi_point output
+    subpixel_patch_radius: 5
+    subpixel_search_radius_px: 8
+    subpixel_max_points: 12
+    subpixel_min_points: 4
+    subpixel_min_confidence: 0.25
+    subpixel_max_disp_delta_px: 2.0
+    subpixel_max_disp_delta_ratio: 0.03
+    subpixel_max_depth_delta_m: 0.5
+    subpixel_max_stddev_px: 1.0
+    subpixel_time_budget_ms: 1.5
+    epipolar_y_tolerance: 12.0       # bbox/circle semantic pair gate, not sparse feature y gate
+    feature_y_tolerance_px: 2.0      # sparse keypoint y residual gate after rectification
+    feature_y_slope: 0.0             # optional fixed epipolar tilt compensation dy = slope*(x-cx)+offset
+    feature_y_offset_px: 0.0
+    feature_reverse_check_px: 1.0    # left-right mutual check error
+    feature_overlap_scale: 0.55      # keypoint must lie in projected L/R ball overlap ellipses
+    feature_mad_scale: 2.5           # MAD outlier gate scale
+    feature_ransac_gate_px: 0.75     # 1D disparity RANSAC minimum gate
+    feature_sphere_radius_scale: 1.8 # triangulated point must stay near physical ball volume
+    feature_sphere_margin_m: 0.02
+    feature_normalize_large_roi: true      # downsample large ball ROIs before CPU feature matching
+    feature_normalized_diameter_px: 96     # target ball diameter after normalization
+    feature_normalize_min_diameter_px: 128 # keep small/far balls at native resolution
+    feature_normalize_margin_scale: 0.62   # crop half-size as bbox size scale
+    feature_precompute_roi_maps: true      # precompute gray label/edge maps inside normalized ROI
+    max_size_ratio: 2.0
+    min_shifted_iou: 0.05                  # shifted left/right bbox must still overlap after x-disparity compensation
+    bbox_disparity_consistency_ratio: 0.30 # compare bbox-size depth prior with left/right center disparity
+    bbox_disparity_consistency_min_px: 45.0
+    bbox_disparity_penalty_scale: 0.75     # ranking penalty for physically inconsistent YOLO pairs
+    fallback_search_margin_px: 48
+    fallback_max_width_px: 220
+    circle_max_roi_pixels: 18000
+
+stereo:
+  strategy: "roi_only"
+  max_disparity: 2048          # 1m baseline: near range can exceed 1024 px
+  window_size: 5
+  quality: 6
+
+neural_feature_matching:
+  enabled: false # legacy single-backend alias disabled; split blocks below write independent fields
+
+neural_feature_matching_xfeat:
+  enabled: false # formal path: XFeat is diagnostic-only and does not select HybridDepth output
+  backend: "xfeat"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/xfeat_extractor_160_b2.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  roi_size: 160
+  top_k: 64
+  descriptor_dim: 64
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
+  min_score: 0.0
+  use_lightglue: false
+  gpu_postprocess: true # required for the stable 100fps XFeat sidecar path
+  soft_topk_scoring: true
+  match_margin: 0.0
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 4.0
+  final_overlap_scale: 0.85
+  final_sphere_radius_scale: 3.5
+  final_sphere_margin_m: 0.04
+
+neural_feature_matching_superpoint:
+  enabled: false # keep the independent SuperPoint slot, but exclude it from the NCC+XFeat+ALIKED realtime test
+  backend: "superpoint_lightglue"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/superpoint_extractor_160_top64_b2.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  roi_size: 160
+  top_k: 64
+  descriptor_dim: 256
+  realtime_stride: 2
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
+  min_score: 0.0
+  use_lightglue: false
+  gpu_postprocess: true
+  match_margin: 0.0
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 5.0
+  final_overlap_scale: 0.90
+  final_sphere_radius_scale: 4.0
+  final_sphere_margin_m: 0.06
+
+neural_feature_matching_aliked:
+  enabled: false # diagnostic only for now: current ALIKED support/latency is not stable enough for 90Hz capture
+  backend: "aliked"
+  extractor_engine_path: "/home/nvidia/NX_volleyball/stereo_3d_pipeline/models/neural/aliked_t16_nodcn_extractor_128_top64_b2.engine"
+  matcher_engine_path: ""
+  fused_engine_path: ""
+  plugin_library_path: ""
+  roi_size: 128
+  top_k: 64
+  descriptor_dim: 64
+  realtime_stride: 1
+  min_matches: 1
+  max_y_error_px: 999.0
+  max_disp_delta_px: 999.0
+  final_disp_gate_px: 999.0
+  min_score: 0.0
+  use_lightglue: false
+  gpu_postprocess: true
+  match_margin: 0.0
+  min_spatial_quadrants: 0
+  min_spatial_spread_ratio: 0.0
+  final_geometry_gate_enabled: false
+  final_min_support: 1
+  final_max_stddev_px: 6.0
+  final_y_tolerance_px: 5.0
+  final_overlap_scale: 0.90
+  final_sphere_radius_scale: 4.0
+  final_sphere_margin_m: 0.06
+
+fusion:
+  min_depth: 0.8
+  max_depth: 15.0
+  baseline_mm: 853.154         # reference only; calibration file is authoritative
+  object_diameter: 0.210
+  stereo_min_z: 0.8            # accept dual-YOLO stereo from the near test range
+  mono_max_z: 1.2              # above this range, prefer stereo observations
+  min_confidence: 0.1
+  R_mono: 0.003
+  R_stereo: 0.020
+  ivw_R_mono: 0.004
+  ivw_R_stereo: 0.025
+  # Current 853.154 mm calibration is authoritative. Do not rescale stereo
+  # depth toward the monocular bbox estimate used by historical configs.
+  stereo_bias_correction_enabled: false
+  stereo_bias_initial: 1.0
+  innovation_gate_sigma: 6.0
+  innovation_gate_min_age: 3
+  match_iou_threshold: 0.10
+  match_center_gate: 2.5
+  track_confidence_alpha: 0.25
+  max_tracks: 64
+
+performance:
+  pwm_frequency: 90.0
+  target_fps: 90
+  log_interval: 900
+  enable_profiling: false
+  drop_stale_roi_frames: true  # 若后一帧 YOLO 已完成，跳过旧帧 IoU/特征/深度后处理以控制实时延迟
+  async_roi_stage2: true        # 检测帧 ROI/IoU/特征候选异步执行；tracker detect_interval>1 时自动禁用，避免倒序更新深度
+  async_roi_buffers: 3          # running + pending + free，避免持有 FrameSlot 被 ring buffer 覆盖
+  async_roi_deadline_ms: 11.1   # 90Hz 下给 ROI 后处理的软预算
+  p2_feature_job_scaffold_enabled: false      # formal path has no P2 feature lane
+  p2_realtime_lane_decision_enabled: false    # XFeat/NCC disabled for joint deployment
+  p2_diagnostic_lane_decision_enabled: false  # no async sidecar sampling; write candidates to main CSV fields
+  p2_selective_trigger: false         # true 时只在 fallback/质量条件触发 P2
+  p2_trigger_on_fallback: true
+  p2_trigger_on_direct_pair: false
+  p2_trigger_on_host_gray: false
+  p2_trigger_on_bgr: false
+  p2_trigger_on_pair_quality: false          # true 时 direct pair 低质量触发 P2；阈值见下方
+  p2_trigger_on_no_valid_direct_pair: false  # true 时左右均有检测但没有通过 gate 的 direct pair 触发 P2
+  p2_pair_quality_min_shifted_iou: 0.0       # >0 时低于该 shifted IoU 触发 P2
+  p2_pair_quality_max_epipolar_dy: 0.0       # >0 时超过该 y 偏差触发 P2
+  p2_pair_quality_min_confidence: 0.0        # >0 时低于该 direct pair 语义置信度触发 P2
+  p2_diagnostic_stride: 1                    # unused while diagnostic lane is disabled; keep unsampled semantics
+  p2_diagnostic_stride_cuda_template: 1
+  p2_diagnostic_stride_neural_xfeat: 1
+  p2_diagnostic_stride_neural_superpoint: 1
+  p2_diagnostic_stride_neural_aliked: 1
+  p2_diagnostic_max_in_flight: 1
+  p2_realtime_deadline_ms: 11.1
+  p2_diagnostic_deadline_ms: 50.0
+  p2_diagnostic_use_source_snapshot: false   # diagnostic lane disabled for synchronized 90Hz capture
+  p2_diagnostic_results_enabled: false
+  p2_diagnostic_results_path: ""           # empty = derive from recording.output_path or --recording-out
+  p2_diagnostic_point_debug_enabled: false # true 时写 *.points_debug.csv，记录 raw/match/reject/inlier 点
+  p2_diagnostic_point_debug_path: ""       # empty = derive from p2_diagnostic_results_path
+  p2_diagnostic_artifacts_enabled: false   # true 时额外输出 P2 点对/采样点 PNG；正式测速必须保持 false
+  p2_diagnostic_artifacts_dir: ""          # 空则从 p2_diagnostic_results_path 派生 .artifacts 目录
+  p2_diagnostic_artifacts_max: 20
+
+tracker:
+  enabled: false
+  type: "nanotrack"
+  engine_path: ""
+  search_engine_path: ""
+  head_engine_path: ""
+  detect_interval: 3
+  lost_threshold: 5
+  min_confidence: 0.3
+
+prediction:
+  enable: false               # RDK owns Student-t filtering and landing prediction
+  # Realtime landing path:
+  #   bbox_center disparity + d0 -> Student-t EKF -> RK4 rollout
+  #   circle is fallback/consistency only; polynomial remains backup.
+  gravity: 9.81
+  air_density: 1.225
+  ball_mass: 0.270
+  ball_radius: 0.105
+  drag_coeff: 0.10          # tuned on 2026-07-09 throw set (old 0.47 over-dragged)
+  # Test setup: camera optical center is 0.50 m above the floor.
+  # g_hat keeps the measured camera tilt; ground_h is the signed plane offset,
+  # so height(camera_origin) = -ground_h = 0.50 m.
+  use_g_hat: true
+  g_hat: [0.0018134, 0.9701361, 0.2425544]
+  ground_h: -0.50
+  ground_y: 0.50            # legacy Y-down fallback if use_g_hat=false
+  max_predict_time: 3.0
+  rk4_dt: 0.008
+  min_speed: 0.5
+  use_student_t_ekf: true
+  student_t_nu: 12.0
+  sigma_d_px: 0.4
+  q_pos: 0.0001
+  q_vel: 1.5
+  prefer_bbox: true
+  enable_circle_fallback: true
+  circle_consistency_m: 0.35
+  allow_raw_fallback: true
+  allow_filtered_fallback: true
+
+display:
+  enable: false
+
+ros2:
+  enable: true
+  world_frame_id: "vision_world"
+  base_frame_id: "base_link"
+  odom_topic: "/odom"
+  odom_timeout_sec: 0.5
+  topics:
+    ball_realtime: "/nx/debug/ball/realtime"
+    ball_landing: "/nx/debug/ball/landing"
+    predicted_path: "/nx/debug/ball/predicted_path"
+    actual_path: "/nx/debug/ball/actual_path"
+    ball_realtime_base: "/nx/debug/ball/realtime_base"
+    ball_landing_base: "/nx/debug/ball/landing_base"
+  nx_observation:
+    enable: true
+    topic: "/nx/ball/observation"
+    frame_id: "nx_left_rectified_optical_frame"
+    source_epoch_file: "/run/volleyball/nx_source_epoch"
+    class_id: 0
+    min_depth_m: 0.8
+    max_depth_m: 15.0
+    max_speed_mps: 35.0
+    reacquire_timeout_s: 0.3
+    reacquire_base_gate_m: 0.75
+    allow_fallback: false
+    # Map the left camera device clock (current camera reports ns ticks) to
+    # NX CLOCK_REALTIME using the low-latency edge of a rolling host/device
+    # offset window. RDK rejects observations until the mapping is stable.
+    timestamp_warmup_frames: 30
+    timestamp_window_frames: 180
+    # Device timestamp exposure reference has not been verified yet. Keep zero
+    # instead of guessing start/end exposure; calibrate this to exposure midpoint.
+    timestamp_offset_us: 0.0
+    max_timestamp_uncertainty_s: 0.002
+  vision_to_world:
+    swap_xy: false
+    invert_x: false
+    invert_y: false
+    rotation_deg: 0.0
+    translation_x: 0.0
+    translation_y: 0.0
+  control_goal:
+    enable: false
+    topic: "/nx/debug/auto_goal_pose"
+    # 落点先在相机平面范围内检查：X 为左右，depth 为前方距离。
+    min_depth_m: 0.0
+    max_depth_m: 14.0
+    max_abs_x_m: 3.6
+    # 控制质量门控；多项式 fallback 仅保留给 RViz。
+    min_confidence: 0.70
+    min_time_to_land_s: 0.25
+    max_time_to_land_s: 2.20
+    min_speed_mps: 0.80
+    min_student_w: 0.15
+    stable_frames: 3
+    max_stable_jump_m: 0.35
+    allow_polynomial: false
+    allow_fallback_observation: false
+  diagnostic:
+    enable: false
+    depth_full_divisor: 6
+
+recording:
+  enabled: false
+  output_path: "dual_yolo_observation_data.csv"
+  # legacy: old CSV columns only; depth_candidates: add depth candidates;
+  # extended: add sync watermark + bbox/circle geometry for model training.
+  detail_level: "extended"
+  raw_mode: true
+  frame_summary_enabled: true       # writes dual_yolo_observation_data.frames.csv for frame-level miss/pair metrics
+  max_queue_frames: 1000           # CSV 写入落后时丢记录，不阻塞 100fps 实时线程
+
+baseline_recording:
+  enabled: false
+  output_dir: "baseline_clips"
+  duration_sec: 3.0
+  frame_limit: 0
+  clip_count: 1
+  clip_gap_sec: 0.0
+  clip_gap_frames: 0
+  require_left_detection: true
+  require_right_detection: true
+  require_pair_gate: false
+  min_confidence: 0.0
+  pair_y_tolerance_px: 30.0
+  pair_max_size_ratio: 2.5
+  pair_min_disparity_px: 0.0
+  image_format: "png"
+  image_mode: "gray"                  # gray|bgr; both 仅用于调试兼容，会额外写 left_bgr/right_bgr
+  png_compression: 1
+  write_after_capture: true           # 先快速缓存到内存，clip 结束后再写盘
+  max_queue_frames: 0                 # 0=不限; write_after_capture=true 时建议不限或至少 >= frame_limit*clip_count
+  stop_after_clip: true

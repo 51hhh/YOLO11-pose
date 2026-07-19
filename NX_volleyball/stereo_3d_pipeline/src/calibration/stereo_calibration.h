@@ -10,6 +10,7 @@
 #define STEREO_3D_PIPELINE_STEREO_CALIBRATION_H_
 
 #include <opencv2/opencv.hpp>
+#include <cstdint>
 #include <string>
 
 namespace stereo3d {
@@ -49,6 +50,14 @@ public:
     float getBaseline() const { return baseline_; }
     float getFocalLength() const;  ///< 从 P1 提取 fx
     cv::Point2f getPrincipalPoint() const;  ///< 从 P1 提取 (cx, cy)
+    int imageWidth() const { return image_width_; }
+    int imageHeight() const { return image_height_; }
+    bool isOutputAspectCompatible(int width, int height) const {
+        return image_width_ <= 0 || image_height_ <= 0 ||
+               (width > 0 && height > 0 &&
+                static_cast<int64_t>(width) * image_height_ ==
+                    static_cast<int64_t>(height) * image_width_);
+    }
 
     // P1 作为 3x4 矩阵的引用 (供 fusion 使用)
     // 若已调用 buildRemapMaps 且输出分辨率与标定分辨率不同, 返回缩放后的 P1
@@ -61,8 +70,9 @@ public:
      * @param[out] map1L, map2L 左目映射表
      * @param[out] map1R, map2R 右目映射表
      * @param width, height 图像尺寸
+     * @return true 生成成功；false 表示尺寸非法或输出比例与标定不一致
      */
-    void buildRemapMaps(cv::Mat& map1L, cv::Mat& map2L,
+    bool buildRemapMaps(cv::Mat& map1L, cv::Mat& map2L,
                         cv::Mat& map1R, cv::Mat& map2R,
                         int width, int height) const;
 

@@ -5,14 +5,47 @@
 
 #include "trajectory_recorder.h"
 #include "logger.h"
-#include <iomanip>
+#include <filesystem>
 
 namespace stereo3d {
+
+namespace {
+
+std::string deriveFrameSummaryPath(const std::string& output_path) {
+    const std::string suffix = ".csv";
+    if (output_path.size() >= suffix.size() &&
+        output_path.compare(output_path.size() - suffix.size(),
+                            suffix.size(),
+                            suffix) == 0) {
+        return output_path.substr(0, output_path.size() - suffix.size()) +
+               ".frames.csv";
+    }
+    return output_path + ".frames.csv";
+}
+
+bool ensureParentDirectory(const std::string& output_path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path parent = fs::path(output_path).parent_path();
+    if (parent.empty()) {
+        return true;
+    }
+    fs::create_directories(parent, ec);
+    if (ec) {
+        LOG_WARN("TrajectoryRecorder: failed to create directory %s: %s",
+                 parent.string().c_str(), ec.message().c_str());
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
 
 void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
     cfg_ = config;
     if (!cfg_.enabled) return;
 
+    ensureParentDirectory(cfg_.output_path);
     file_.open(cfg_.output_path, std::ios::out | std::ios::trunc);
     if (!file_.is_open()) {
         LOG_WARN("TrajectoryRecorder: failed to open %s", cfg_.output_path.c_str());
@@ -21,76 +54,59 @@ void TrajectoryRecorder::init(const TrajectoryRecorderConfig& config) {
     }
 
     writeHeader();
+    if (cfg_.frame_summary_enabled) {
+        const std::string frame_path = cfg_.frame_summary_path.empty()
+            ? deriveFrameSummaryPath(cfg_.output_path)
+            : cfg_.frame_summary_path;
+        ensureParentDirectory(frame_path);
+        frame_file_.open(frame_path, std::ios::out | std::ios::trunc);
+        if (!frame_file_.is_open()) {
+            LOG_WARN("TrajectoryRecorder: failed to open frame summary %s",
+                     frame_path.c_str());
+        } else {
+            writeFrameSummaryHeader();
+            LOG_INFO("TrajectoryRecorder: frame summary to %s",
+                     frame_path.c_str());
+        }
+    }
     frame_count_ = 0;
+    dropped_frame_count_ = 0;
     running_ = true;
     writer_thread_ = std::thread(&TrajectoryRecorder::writerLoop, this);
-    LOG_INFO("TrajectoryRecorder: recording to %s", cfg_.output_path.c_str());
-}
-
-void TrajectoryRecorder::writeHeader() {
-    file_ << "frame_id,timestamp,track_id,"
-          << "x,y,z,vx,vy,vz,ax,ay,az,"
-          << "z_mono,z_stereo,depth_method,"
-          << "confidence,"
-          << "landing_x,landing_y,landing_t\n";
-    header_written_ = true;
+    LOG_INFO("TrajectoryRecorder: recording to %s (max_queue_frames=%zu)",
+             cfg_.output_path.c_str(), cfg_.max_queue_frames);
 }
 
 void TrajectoryRecorder::record(
     int frame_id, double timestamp,
     const std::vector<Object3D>& results,
     const std::vector<LandingPrediction>& preds) {
+    record(frame_id, timestamp, results, preds, FrameMetadata{});
+}
+
+void TrajectoryRecorder::record(
+    int frame_id, double timestamp,
+    const std::vector<Object3D>& results,
+    const std::vector<LandingPrediction>& preds,
+    const FrameMetadata& metadata) {
 
     if (!cfg_.enabled || !running_) return;
 
     {
         std::lock_guard<std::mutex> lock(queue_mtx_);
-        queue_.push_back({frame_id, timestamp, results, preds});
+        if (cfg_.max_queue_frames > 0 &&
+            queue_.size() >= cfg_.max_queue_frames) {
+            const int dropped = ++dropped_frame_count_;
+            if (dropped <= 3 || dropped % 100 == 0) {
+                LOG_WARN("TrajectoryRecorder: queue full, dropping frame=%d dropped=%d",
+                         frame_id, dropped);
+            }
+            return;
+        }
+        queue_.push_back({frame_id, timestamp, results, preds, metadata});
     }
     queue_cv_.notify_one();
     frame_count_++;
-}
-
-void TrajectoryRecorder::writerLoop() {
-    std::deque<RecordEntry> batch;
-    while (true) {
-        {
-            std::unique_lock<std::mutex> lock(queue_mtx_);
-            queue_cv_.wait(lock, [this] { return !queue_.empty() || !running_; });
-            if (!running_ && queue_.empty()) break;
-            batch.swap(queue_);
-        }
-        for (const auto& entry : batch) {
-            writeEntry(entry);
-        }
-        batch.clear();
-        file_.flush();
-    }
-}
-
-void TrajectoryRecorder::writeEntry(const RecordEntry& entry) {
-    for (size_t i = 0; i < entry.results.size(); ++i) {
-        const auto& r = entry.results[i];
-        if (r.track_id < 0) continue;
-
-        file_ << entry.frame_id << ","
-              << std::fixed << std::setprecision(6) << entry.timestamp << ","
-              << r.track_id << ","
-              << std::setprecision(4)
-              << r.x << "," << r.y << "," << r.z << ","
-              << r.vx << "," << r.vy << "," << r.vz << ","
-              << r.ax << "," << r.ay << "," << r.az << ","
-              << r.z_mono << "," << r.z_stereo << "," << r.depth_method << ","
-              << r.confidence << ",";
-
-        if (i < entry.preds.size() && entry.preds[i].valid) {
-            file_ << entry.preds[i].x << "," << entry.preds[i].y << ","
-                  << entry.preds[i].time_to_land;
-        } else {
-            file_ << "0,0,0";
-        }
-        file_ << "\n";
-    }
 }
 
 void TrajectoryRecorder::close() {
@@ -105,8 +121,13 @@ void TrajectoryRecorder::close() {
         file_.flush();
         file_.close();
         if (frame_count_.load() > 0) {
-            LOG_INFO("TrajectoryRecorder: saved %d frames", frame_count_.load());
+            LOG_INFO("TrajectoryRecorder: saved %d frames (dropped=%d)",
+                     frame_count_.load(), dropped_frame_count_.load());
         }
+    }
+    if (frame_file_.is_open()) {
+        frame_file_.flush();
+        frame_file_.close();
     }
 }
 

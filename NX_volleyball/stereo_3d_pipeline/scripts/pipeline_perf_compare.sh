@@ -1,14 +1,14 @@
 #!/bin/bash
 # ============================================================
 # pipeline_perf_compare.sh
-# 在 NX 上对比 GPU engine 与 DLA engine 的流水线性能
+# 在 NX 上运行主配置性能测试；可通过 COMPARE_CFG 追加外部对照配置
 # ============================================================
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$HOME/NX_volleyball/stereo_3d_pipeline}"
 BUILD_BIN="${BUILD_BIN:-$PROJECT_DIR/build/stereo_pipeline}"
-GPU_CFG="${GPU_CFG:-$PROJECT_DIR/config/pipeline.yaml}"
-DLA_CFG="${DLA_CFG:-$PROJECT_DIR/config/pipeline_dla.yaml}"
+GPU_CFG="${GPU_CFG:-$PROJECT_DIR/config/pipeline_dual_yolo_roi.yaml}"
+COMPARE_CFG="${COMPARE_CFG:-}"
 OUT_DIR="${OUT_DIR:-$PROJECT_DIR/benchmark_results}"
 DURATION_SEC="${DURATION_SEC:-20}"
 
@@ -64,15 +64,15 @@ cat > "$SUMMARY" <<EOF
 EOF
 
 run_case "GPU" "$GPU_CFG"
-if [ -f "$DLA_CFG" ]; then
-  run_case "DLA" "$DLA_CFG"
+if [ -n "$COMPARE_CFG" ] && [ -f "$COMPARE_CFG" ]; then
+  run_case "COMPARE" "$COMPARE_CFG"
 fi
 
 echo "" >> "$SUMMARY"
 echo "## 原始日志" >> "$SUMMARY"
 echo "- GPU log: $(basename "$OUT_DIR/GPU_${TS}.log")" >> "$SUMMARY"
-if [ -f "$OUT_DIR/DLA_${TS}.log" ]; then
-  echo "- DLA log: $(basename "$OUT_DIR/DLA_${TS}.log")" >> "$SUMMARY"
+if [ -f "$OUT_DIR/COMPARE_${TS}.log" ]; then
+  echo "- Compare log: $(basename "$OUT_DIR/COMPARE_${TS}.log")" >> "$SUMMARY"
 fi
 
 echo "[OK] summary: $SUMMARY"

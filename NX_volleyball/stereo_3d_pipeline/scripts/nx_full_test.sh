@@ -172,10 +172,10 @@ except Exception as e:
     print(f"  [FAIL] Camera test error: {e}")
 CAMTEST
 
-# Quick grab test using the C++ binary (capture_chessboard with --test)
+# CLI smoke test for the C++ capture binary.
 if [ -x "$BUILD_DIR/capture_chessboard" ]; then
-    log_info "Testing camera grab (5 second timeout)..."
-    timeout 5 "$BUILD_DIR/capture_chessboard" --test 2>&1 | tail -5 | tee -a "$REPORT" || log_warn "capture_chessboard --test timed out or failed"
+    log_info "Testing capture_chessboard CLI..."
+    "$BUILD_DIR/capture_chessboard" --help >/dev/null || log_warn "capture_chessboard --help failed"
 fi
 
 # ============================================================
@@ -200,18 +200,18 @@ if [ -n "$ENGINE_FILE" ]; then
     if [[ "$ENGINE_FILE" == *"dla"* ]]; then
         USE_DLA_FLAG="true"
     fi
-    
+
     # GPU benchmark
     log_info "--- GPU Only ---"
     trtexec --loadEngine="$ENGINE_FILE" \
         --iterations=200 --warmUp=3000 --avgRuns=50 \
         --percentile=50,90,95,99 2>&1 | grep -E "mean|median|Throughput|GPU Compute|percentile" | tee -a "$REPORT"
-    
+
     # DLA benchmark (if engine supports it)
     log_info "--- DLA Core 0 (if available) ---"
     trtexec --loadEngine="$ENGINE_FILE" --useDLACore=0 \
         --iterations=100 --warmUp=2000 --avgRuns=50 2>&1 | grep -E "mean|median|Throughput|percentile" | tee -a "$REPORT" || log_warn "DLA benchmark failed (engine may not support DLA)"
-    
+
 elif [ -f "$MODEL_DIR/yolo26.onnx" ]; then
     log_warn "No engine file found, benchmarking from ONNX directly"
     trtexec --onnx="$MODEL_DIR/yolo26.onnx" --fp16 \
@@ -231,17 +231,17 @@ import time
 try:
     import vpi
     import numpy as np
-    
+
     print(f"  [INFO] VPI version: {vpi.__version__ if hasattr(vpi, '__version__') else 'unknown'}")
-    
+
     # Test Stereo Disparity
-    W, H = 1280, 720
+    W, H = 1440, 1080
     left = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint16), format=vpi.Format.U16)
     right = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint16), format=vpi.Format.U16)
-    
+
     # Warm up
     disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=256, backends=vpi.Backend.CUDA)
-    
+
     # Benchmark
     N = 50
     t0 = time.monotonic()
@@ -249,21 +249,21 @@ try:
         disparity = vpi.stereo_disparity(left, right, window=5, maxdisp=256, backends=vpi.Backend.CUDA)
     t1 = time.monotonic()
     avg_ms = (t1 - t0) / N * 1000
-    print(f"  [INFO] VPI Stereo Disparity (CUDA, 1280x720, maxdisp=128): {avg_ms:.2f} ms/frame")
-    
+    print(f"  [INFO] VPI Stereo Disparity (CUDA, 1440x1080, maxdisp=128): {avg_ms:.2f} ms/frame")
+
     # Half-res test
-    left_half = vpi.asimage(np.random.randint(0, 255, (360, 640), dtype=np.uint16), format=vpi.Format.U16)
-    right_half = vpi.asimage(np.random.randint(0, 255, (360, 640), dtype=np.uint16), format=vpi.Format.U16)
-    
+    left_half = vpi.asimage(np.random.randint(0, 255, (540, 720), dtype=np.uint16), format=vpi.Format.U16)
+    right_half = vpi.asimage(np.random.randint(0, 255, (540, 720), dtype=np.uint16), format=vpi.Format.U16)
+
     disparity_half = vpi.stereo_disparity(left_half, right_half, window=5, maxdisp=64, backends=vpi.Backend.CUDA)
     t0 = time.monotonic()
     for _ in range(N):
         disparity_half = vpi.stereo_disparity(left_half, right_half, window=5, maxdisp=64, backends=vpi.Backend.CUDA)
     t1 = time.monotonic()
     avg_half = (t1 - t0) / N * 1000
-    print(f"  [INFO] VPI Stereo Disparity (CUDA, 640x360, maxdisp=64):   {avg_half:.2f} ms/frame")
+    print(f"  [INFO] VPI Stereo Disparity (CUDA, 720x540, maxdisp=64):   {avg_half:.2f} ms/frame")
     print(f"  [INFO] Half-res speedup: {avg_ms/avg_half:.1f}x")
-    
+
     # PVA Remap test (if available)
     try:
         import cv2
@@ -271,16 +271,16 @@ try:
         map_y = np.random.rand(H, W).astype(np.float32) * (H - 1)
         src = vpi.asimage(np.random.randint(0, 255, (H, W), dtype=np.uint8))
         warp = vpi.WarpMap(vpi.WarpGrid((W, H)))
-        
+
         t0 = time.monotonic()
         for _ in range(N):
             out = vpi.remap(src, warp, backends=vpi.Backend.CUDA)
         t1 = time.monotonic()
         avg_remap = (t1 - t0) / N * 1000
-        print(f"  [INFO] VPI Remap (CUDA, 1280x720): {avg_remap:.2f} ms/frame")
+        print(f"  [INFO] VPI Remap (CUDA, 1440x1080): {avg_remap:.2f} ms/frame")
     except Exception as e:
         print(f"  [WARN] VPI Remap test failed: {e}")
-        
+
 except ImportError:
     print("  [WARN] VPI Python bindings not available, skipping")
 except Exception as e:
@@ -343,8 +343,8 @@ calibration:
   file: "calibration/stereo_calib.yaml"
 
 rectify:
-  output_width: 1280
-  output_height: 720
+  output_width: 1440
+  output_height: 1080
 
 detector:
   engine_path: "$ENGINE_FILE"

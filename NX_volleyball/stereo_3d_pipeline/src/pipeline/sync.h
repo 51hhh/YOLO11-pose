@@ -4,7 +4,8 @@
  *
  * 管理 Pipeline 使用的所有 CUDA Streams:
  *   - streamPVA : Stage 0 校正 (PVA backend)
- *   - streamDLA : Stage 1 检测 (DLA 推理)
+ *   - streamDLA : Stage 1 左目检测 (DLA/GPU 推理)
+ *   - streamDLA_R : Stage 1 右目检测 (双路 YOLO 测试)
  *   - streamGPU : Stage 2 视差 (GPU CUDA)
  *   - streamFuse: Stage 3 融合
  */
@@ -30,12 +31,15 @@ struct PipelineStreams {
     VPIStream vpiStreamGPU  = nullptr;   ///< CUDA backend (Stage 2 视差)
 
     // ===== CUDA Streams =====
-    cudaStream_t cudaStreamDLA  = nullptr;   ///< DLA0 推理 CUDA Stream
-    cudaStream_t cudaStreamDLA1 = nullptr;   ///< DLA1 推理 CUDA Stream (dual DLA)
-    cudaStream_t cudaStreamDetGPU = nullptr; ///< GPU 检测 CUDA Stream (triple 模式)
+    cudaStream_t cudaStreamDLA  = nullptr;   ///< 左目检测推理 CUDA Stream
+    cudaStream_t cudaStreamDLA_R = nullptr;  ///< 右目检测推理 CUDA Stream
     cudaStream_t cudaStreamGPU  = nullptr;   ///< GPU 视差 CUDA Stream
     cudaStream_t cudaStreamFuse = nullptr;   ///< 融合 Stage CUDA Stream
     cudaStream_t cudaStreamBGR  = nullptr;   ///< Bayer→BGR CUDA kernel Stream
+    cudaStream_t cudaStreamP2Ncc = nullptr;  ///< P2 inline NCC/Template Stream
+    cudaStream_t cudaStreamP2XFeat = nullptr; ///< P2 inline XFeat Stream
+    cudaStream_t cudaStreamP2SuperPoint = nullptr; ///< P2 inline SuperPoint Stream
+    cudaStream_t cudaStreamP2Aliked = nullptr; ///< P2 inline ALIKED Stream
 
     /**
      * @brief 初始化所有 Streams
@@ -67,16 +71,9 @@ struct PipelineStreams {
             return false;
         }
 
-        err = cudaStreamCreateWithFlags(&cudaStreamDLA1, cudaStreamNonBlocking);
+        err = cudaStreamCreateWithFlags(&cudaStreamDLA_R, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[Sync] Failed to create DLA1 stream: %s\n", cudaGetErrorString(err));
-            destroy();
-            return false;
-        }
-
-        err = cudaStreamCreateWithFlags(&cudaStreamDetGPU, cudaStreamNonBlocking);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "[Sync] Failed to create DetGPU stream: %s\n", cudaGetErrorString(err));
+            fprintf(stderr, "[Sync] Failed to create right DLA stream: %s\n", cudaGetErrorString(err));
             destroy();
             return false;
         }
@@ -102,6 +99,42 @@ struct PipelineStreams {
             return false;
         }
 
+        err = cudaStreamCreateWithFlags(&cudaStreamP2Ncc, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create P2 NCC stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamP2XFeat, cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[Sync] Failed to create P2 XFeat stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamP2SuperPoint,
+                                        cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr,
+                    "[Sync] Failed to create P2 SuperPoint stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
+        err = cudaStreamCreateWithFlags(&cudaStreamP2Aliked,
+                                        cudaStreamNonBlocking);
+        if (err != cudaSuccess) {
+            fprintf(stderr,
+                    "[Sync] Failed to create P2 ALIKED stream: %s\n",
+                    cudaGetErrorString(err));
+            destroy();
+            return false;
+        }
+
         return true;
     }
 
@@ -112,11 +145,16 @@ struct PipelineStreams {
         if (vpiStreamPVA) vpiStreamSync(vpiStreamPVA);
         if (vpiStreamGPU) vpiStreamSync(vpiStreamGPU);
         if (cudaStreamDLA) cudaStreamSynchronize(cudaStreamDLA);
-        if (cudaStreamDLA1) cudaStreamSynchronize(cudaStreamDLA1);
-        if (cudaStreamDetGPU) cudaStreamSynchronize(cudaStreamDetGPU);
+        if (cudaStreamDLA_R) cudaStreamSynchronize(cudaStreamDLA_R);
         if (cudaStreamGPU) cudaStreamSynchronize(cudaStreamGPU);
         if (cudaStreamFuse) cudaStreamSynchronize(cudaStreamFuse);
         if (cudaStreamBGR)  cudaStreamSynchronize(cudaStreamBGR);
+        if (cudaStreamP2Ncc) cudaStreamSynchronize(cudaStreamP2Ncc);
+        if (cudaStreamP2XFeat) cudaStreamSynchronize(cudaStreamP2XFeat);
+        if (cudaStreamP2SuperPoint) {
+            cudaStreamSynchronize(cudaStreamP2SuperPoint);
+        }
+        if (cudaStreamP2Aliked) cudaStreamSynchronize(cudaStreamP2Aliked);
     }
 
     /**
@@ -126,11 +164,26 @@ struct PipelineStreams {
         if (vpiStreamPVA)  { vpiStreamDestroy(vpiStreamPVA);  vpiStreamPVA = nullptr;  }
         if (vpiStreamGPU)  { vpiStreamDestroy(vpiStreamGPU);  vpiStreamGPU = nullptr;  }
         if (cudaStreamDLA) { cudaStreamDestroy(cudaStreamDLA); cudaStreamDLA = nullptr; }
-        if (cudaStreamDLA1){ cudaStreamDestroy(cudaStreamDLA1); cudaStreamDLA1 = nullptr; }
-        if (cudaStreamDetGPU){ cudaStreamDestroy(cudaStreamDetGPU); cudaStreamDetGPU = nullptr; }
+        if (cudaStreamDLA_R) { cudaStreamDestroy(cudaStreamDLA_R); cudaStreamDLA_R = nullptr; }
         if (cudaStreamGPU) { cudaStreamDestroy(cudaStreamGPU); cudaStreamGPU = nullptr; }
         if (cudaStreamFuse){ cudaStreamDestroy(cudaStreamFuse); cudaStreamFuse = nullptr; }
         if (cudaStreamBGR) { cudaStreamDestroy(cudaStreamBGR);  cudaStreamBGR = nullptr; }
+        if (cudaStreamP2Ncc) {
+            cudaStreamDestroy(cudaStreamP2Ncc);
+            cudaStreamP2Ncc = nullptr;
+        }
+        if (cudaStreamP2XFeat) {
+            cudaStreamDestroy(cudaStreamP2XFeat);
+            cudaStreamP2XFeat = nullptr;
+        }
+        if (cudaStreamP2SuperPoint) {
+            cudaStreamDestroy(cudaStreamP2SuperPoint);
+            cudaStreamP2SuperPoint = nullptr;
+        }
+        if (cudaStreamP2Aliked) {
+            cudaStreamDestroy(cudaStreamP2Aliked);
+            cudaStreamP2Aliked = nullptr;
+        }
     }
 };
 

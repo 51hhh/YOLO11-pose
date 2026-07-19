@@ -20,6 +20,9 @@
 #define STEREO_3D_PIPELINE_PIPELINE_H_
 
 #include "frame_slot.h"
+#include "pipeline_callbacks.h"
+#include "pipeline_config.h"
+#include "pipeline_feature_jobs.h"
 #include "sync.h"
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
 #ifndef HIK_CAMERA_ENABLED
@@ -31,8 +34,12 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include "../detect/trt_detector.h"
 #include "../stereo/vpi_stereo.h"
 #include "../stereo/roi_stereo_matcher.h"
+#include "../stereo/dual_yolo_depth_gpu.h"
+#include "../stereo/roi_feature_result.h"
+#include "../stereo/neural_feature_config.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
+#include "../track/sot_tracker.h"
 #include "../utils/profiler.h"
 
 #include <vpi/algo/TemporalNoiseReduction.h>
@@ -41,9 +48,15 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstddef>
+#include <deque>
+#include <fstream>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -51,83 +64,7 @@ namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 
 namespace stereo3d {
 
-/**
- * @brief 视差策略
- */
-enum class DisparityStrategy {
-    FULL_FRAME,        ///< 全帧视差 (默认, 1280x720)
-    HALF_RESOLUTION,   ///< 半分辨率 (640x360)
-    ROI_ONLY           ///< 仅计算 ROI 区域
-};
-
-/**
- * @brief Pipeline 运行时参数
- */
-struct PipelineConfig {
-    // 相机配置 (内嵌, 避免重复定义)
-    CameraConfig camera;
-
-    // 校正后分辨率
-    int rect_width  = 1280;
-    int rect_height = 720;
-    std::string rect_backend = "VIC"; ///< 校正后端: "VIC" (推荐,不占GPU) 或 "CUDA"
-
-    // PWM 触发器 (Pipeline 级, 非相机级)
-    std::string trigger_chip = "gpiochip2";  ///< GPIO 芯片名 (Orin NX: gpiochip2)
-    int trigger_line = 7;                     ///< GPIO 线路号 (Orin NX: line 7)
-    int trigger_freq_hz = 100;
-
-    // 标定
-    std::string calibration_file = "config/intrinsics.yaml";
-
-    // 检测
-    std::string engine_file = "models/yolov8n_int8.engine";
-    int  input_size      = 320;    ///< 模型输入尺寸
-    float conf_threshold = 0.5f;
-    float nms_threshold  = 0.4f;
-    int  max_detections  = 10;
-    std::string detector_input_format = "gray"; ///< gray|bayer|bgr
-    bool use_dla = true;           ///< 使用 NVDLA (否则 GPU)
-    int  dla_core = 0;             ///< DLA 核心 ID (0 或 1)
-    bool dual_dla = false;         ///< 双 DLA 并行 (DLA0 + DLA1 交替)
-    std::string engine_file_dla1;  ///< DLA1 引擎路径 (dual_dla 模式)
-    bool triple_backend = false;   ///< 三路轮转 (DLA0+DLA1+GPU 循环)
-    std::string engine_file_gpu;   ///< GPU 引擎路径 (triple 模式)
-
-    // 视差
-    int max_disparity = 128;
-    int window_size   = 5;
-    int stereo_quality = 6;
-    DisparityStrategy disparity_strategy = DisparityStrategy::FULL_FRAME;
-
-    // 深度 (内嵌 HybridDepthConfig, 避免重复)
-    HybridDepthConfig depth;
-
-    // 性能
-    int stats_interval = 100;      ///< 每 N 帧打印统计
-
-    // VPI TNR (时域降噪)
-    bool tnr_enabled = false;              ///< 是否启用 VPI TNR
-    VPITNRPreset tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
-    float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
-    VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
-};
-
-/**
- * @brief 结果回调
- */
-using ResultCallback = std::function<void(int frame_id, const std::vector<Object3D>& results)>;
-
-/**
- * @brief 帧回调 (可视化用: 校正后左图 + 原始左图 + 检测 + 3D结果)
- * rectL: 校正后左图 (VPIImage U8, 灰度)
- * rawL:  原始左图 (VPIImage U8, BayerRG8 原始数据) — 用于彩色可视化
- */
-using FrameCallback = std::function<void(
-     int frame_id, VPIImage rectL, VPIImage rawL,
-    const std::vector<Detection>& detections,
-    const std::vector<Object3D>& results,
-    float fps)>;
+class NeuralFeatureMatcher;
 
 /**
  * @brief 四级流水线主类
@@ -167,6 +104,11 @@ public:
     void setFrameCallback(FrameCallback cb) { frame_callback_ = std::move(cb); }
 
     /**
+     * @brief 设置诊断回调 (ROS2 录制用)
+     */
+    void setDiagnosticCallback(DiagnosticCallback cb) { diagnostic_callback_ = std::move(cb); }
+
+    /**
      * @brief 获取当前帧率 (吞吐量)
      */
     float getCurrentFPS() const { return current_fps_.load(); }
@@ -175,6 +117,11 @@ public:
      * @brief 打印性能报告
      */
     void printPerfReport() const;
+
+    /**
+     * @brief 抓取一对校正图并输出 ROI 特征匹配调试图
+     */
+    bool debugFeatureMatchesOnce(const std::string& output_dir);
 
 private:
     // ===== Pipeline 主循环 =====
@@ -189,10 +136,286 @@ private:
 
     // ROI 模式专用 Stage
     void stage2_roi_match_fuse(FrameSlot& slot, int slot_index);
+    void stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index); ///< tracker bbox → ROI match + depth
+
+    // SOT Tracker 辅助
+    void tracker_handle_detect_result(FrameSlot& slot);  ///< 检测帧: 用 YOLO bbox 刷新 tracker template
+    void tracker_infill(FrameSlot& slot);                ///< 非检测帧: 运行 SOT 推理填充 bbox
 
     // Dual DLA 帧分配: 偶数帧→DLA0, 奇数帧→DLA1
     TRTDetector* getDetector(int frame_id) const;
     cudaStream_t getDLAStream(int frame_id) const;
+    TRTDetector* getRightDetector() const;
+    cudaStream_t getRightDLAStream(int frame_id) const;
+    bool dualYoloEnabled() const;
+    bool leftDetectorUsesBGR() const;
+    bool rightDetectorUsesBGR() const;
+    bool colorPipelineEnabled() const;
+    void recordDetectDoneEvents(FrameSlot& slot) const;
+    void waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const;
+    bool detectEventsReady(const FrameSlot& slot) const;
+    float activeDisparityOffset() const;
+    void collectRightDetections(FrameSlot& slot, int slot_index);
+    struct DualYoloMatchStats {
+        int left_count = 0;
+        int right_count = 0;
+        int matched = 0;
+        int left_missing = 0;
+        int right_missing = 0;
+        int fallback_attempted = 0;
+        int fallback_matched = 0;
+        int fallback_left_to_right = 0;
+        int fallback_right_to_left = 0;
+        int fallback_failed = 0;
+        int fallback_prior_depth = 0;
+        int class_mismatch = 0;
+        int invalid_box = 0;
+        int no_candidate = 0;
+        int nonpositive_disparity = 0;
+        int over_max_disparity = 0;
+        int epipolar_reject = 0;
+        int size_reject = 0;
+        int low_iou = 0;
+        int circle_fit_fail = 0;
+        int circle_axis_reject = 0;
+        int subpixel_attempted = 0;
+        int subpixel_refined = 0;
+        int subpixel_rejected = 0;
+        int subpixel_low_conf = 0;
+        int subpixel_budget_skip = 0;
+        int subpixel_support_sum = 0;
+        int subpixel_support_max = 0;
+        double subpixel_time_ms = 0.0;
+        double subpixel_max_time_ms = 0.0;
+        float subpixel_gate_min_px = 0.0f;
+        float subpixel_gate_max_px = 0.0f;
+        int depth_reject = 0;
+        int image_lock_fail = 0;
+        int iou_color_support_max = 0;
+        int iou_color_attempted_max = 0;
+        int iou_edge_support_max = 0;
+        int iou_edge_attempted_max = 0;
+    };
+    struct P2FeatureDiagnosticResultRow {
+        int frame_id = -1;
+        FrameMetadata metadata;
+        std::string lane = "diagnostic";
+        std::string mode;
+        std::string status;
+        bool valid = false;
+        bool low_confidence = false;
+        float disparity = std::numeric_limits<float>::quiet_NaN();
+        float z_m = std::numeric_limits<float>::quiet_NaN();
+        float confidence = std::numeric_limits<float>::quiet_NaN();
+        float stddev = std::numeric_limits<float>::quiet_NaN();
+        int support = 0;
+        int attempted = 0;
+        float initial_disparity = std::numeric_limits<float>::quiet_NaN();
+        float fb = std::numeric_limits<float>::quiet_NaN();
+        Detection left_det;
+        Detection right_det;
+        float anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cx = std::numeric_limits<float>::quiet_NaN();
+        float right_anchor_cy = std::numeric_limits<float>::quiet_NaN();
+        int debug_match_count = 0;
+        std::array<SparseFeatureDebugMatch, kMaxSparseFeatureDebugMatches> debug_matches{};
+        int debug_point_count = 0;
+        std::array<SparseFeatureDebugPoint, kMaxSparseFeatureDebugPoints> debug_points{};
+        SparseFeatureDebugPatch debug_patch;
+        std::string artifact_path;
+        double algo_ms = 0.0;
+        double queue_wait_ms = 0.0;
+        double worker_elapsed_ms = 0.0;
+        float deadline_ms = 0.0f;
+        bool over_deadline = false;
+        uint32_t depth_mode_mask = 0u;
+        uint32_t triggers = 0u;
+    };
+    struct DualYoloMatchOutput {
+        std::vector<Detection> detections;
+        std::vector<Object3D> results;
+        std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
+    };
+    struct RoiStage2Input {
+        int frame_id = -1;
+        std::vector<Detection> left_detections;
+        std::vector<Detection> right_detections;
+        const uint8_t* left_cpu = nullptr;
+        int left_cpu_pitch = 0;
+        const uint8_t* right_cpu = nullptr;
+        int right_cpu_pitch = 0;
+        const uint8_t* left_gray_gpu = nullptr;
+        int left_gray_pitch = 0;
+        const uint8_t* right_gray_gpu = nullptr;
+        int right_gray_pitch = 0;
+        const uint8_t* left_bgr_gpu = nullptr;
+        int left_bgr_pitch = 0;
+        const uint8_t* right_bgr_gpu = nullptr;
+        int right_bgr_pitch = 0;
+        int width = 0;
+        int height = 0;
+        cudaStream_t stream = nullptr;
+        bool p2_inline_feature_jobs_enabled = true;
+    };
+    struct RoiStage2Output {
+        std::vector<Detection> detections;
+        std::vector<Object3D> roi_results;
+        std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
+        bool predict_only = false;
+        bool detection_only = false;
+    };
+    DualYoloMatchOutput matchDualYoloDetections(
+        const std::vector<Detection>& left_detections,
+        const std::vector<Detection>& right_detections,
+        const uint8_t* left_cpu, int left_pitch,
+        const uint8_t* right_cpu, int right_pitch,
+        const uint8_t* left_gpu, int left_gpu_pitch,
+        const uint8_t* right_gpu, int right_gpu_pitch,
+        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
+        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
+        int img_width, int img_height,
+        cudaStream_t stream,
+        bool p2_inline_feature_jobs_enabled,
+        int frame_id,
+        DualYoloMatchStats* stats);
+    void collectRoiDetections(FrameSlot& slot, int slot_index);
+    bool roiStage2NeedsHostImages(const std::vector<Detection>& left_detections,
+                                  const std::vector<Detection>& right_detections) const;
+    bool roiStage2FallbackMayNeedHostImages(
+        const std::vector<Detection>& left_detections,
+        const std::vector<Detection>& right_detections) const;
+    RoiStage2Output runRoiStage2Core(const RoiStage2Input& input);
+    void applyRoiStage2Output(FrameSlot& slot, RoiStage2Output&& output);
+    void publishRoiResultCallback(FrameSlot& slot);
+    void publishRoiFrameCallbacks(FrameSlot& slot);
+    double fusionDtForFrame(const FrameSlot& slot);
+
+    struct AsyncRoiBuffer {
+        uint8_t* left_gray_gpu = nullptr;
+        size_t left_gray_pitch = 0;
+        uint8_t* right_gray_gpu = nullptr;
+        size_t right_gray_pitch = 0;
+        uint8_t* left_bgr_gpu = nullptr;
+        size_t left_bgr_pitch = 0;
+        uint8_t* right_bgr_gpu = nullptr;
+        size_t right_bgr_pitch = 0;
+        uint8_t* left_gray_host = nullptr;
+        size_t left_gray_host_pitch = 0;
+        uint8_t* right_gray_host = nullptr;
+        size_t right_gray_host_pitch = 0;
+        cudaEvent_t copy_done = nullptr;
+        bool copy_event_recorded = false;
+        cudaEvent_t p2_diag_copy_done = nullptr;
+        bool p2_diag_copy_event_recorded = false;
+        int p2_diag_refs = 0;
+        bool release_after_p2_diag = false;
+    };
+    struct AsyncRoiTask {
+        int frame_id = -1;
+        int slot_index = -1;
+        int buffer_index = -1;
+        bool host_gray_valid = false;
+        bool bgr_valid = false;
+        bool copy_event_recorded = false;
+        FrameMetadata metadata;
+        RoiStage2Input input;
+        P2FeatureJobDecision p2_feature_decision;
+        std::vector<P2FeatureJobDescriptor> p2_feature_jobs;
+    };
+    struct AsyncRoiResult {
+        int frame_id = -1;
+        int slot_index = -1;
+        double elapsed_ms = 0.0;
+        FrameMetadata metadata;
+        std::vector<Detection> right_detections;
+        RoiStage2Output output;
+    };
+    struct P2FeatureDiagnosticTask {
+        P2FeatureJobDescriptor job;
+        FrameMetadata metadata;
+        int buffer_index = -1;
+        int source_async_buffer_index = -1;
+        bool use_source_snapshot = false;
+        std::vector<Detection> left_detections;
+        std::vector<Detection> right_detections;
+        int width = 0;
+        int height = 0;
+        bool copy_event_recorded = false;
+        std::chrono::steady_clock::time_point enqueue_time{};
+    };
+    struct P2FeatureDiagnosticBuffer {
+        uint8_t* left_gray_gpu = nullptr;
+        size_t left_gray_pitch = 0;
+        uint8_t* right_gray_gpu = nullptr;
+        size_t right_gray_pitch = 0;
+        cudaEvent_t copy_done = nullptr;
+        bool copy_event_recorded = false;
+    };
+    bool asyncRoiStage2Configured() const;
+    bool initAsyncRoiStage2();
+    bool startAsyncRoiStage2();
+    void shutdownAsyncRoiStage2();
+    void destroyAsyncRoiStage2();
+    void asyncRoiWorkerLoop();
+    bool submitAsyncRoiStage2(FrameSlot& slot, int slot_index);
+    bool snapshotAsyncRoiImages(FrameSlot& slot,
+                                AsyncRoiBuffer& buffer,
+                                bool need_host_gray,
+                                bool need_bgr);
+    std::vector<int> drainCompletedAsyncRoiStage2();
+    void expireAsyncRoiBefore(int frame_id);
+    void releaseAsyncRoiBuffer(int buffer_index, const char* reason);
+    void releaseAsyncRoiBufferLocked(int buffer_index);
+    bool waitAsyncRoiBufferCopy(int buffer_index, const char* reason);
+    void markAsyncRoiSlotCopyPendingLocked(int slot_index);
+    void waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
+    bool p2FeatureDiagnosticLaneConfigured() const;
+    bool startP2FeatureDiagnosticLane();
+    void shutdownP2FeatureDiagnosticLane();
+    bool initP2FeatureDiagnosticBuffers();
+    void destroyP2FeatureDiagnosticBuffers();
+    void releaseP2FeatureDiagnosticBuffer(int buffer_index);
+    void releaseP2FeatureDiagnosticSourceRef(int buffer_index);
+    void p2FeatureDiagnosticWorkerLoop();
+    void enqueueP2FeatureDiagnosticJobs(
+        const FrameMetadata& metadata,
+        const std::vector<P2FeatureJobDescriptor>& jobs);
+    void enqueueP2FeatureDiagnosticJobs(
+        const FrameMetadata& metadata,
+        const std::vector<P2FeatureJobDescriptor>& jobs,
+        const RoiStage2Input& input,
+        cudaEvent_t source_copy_done,
+        bool source_copy_event_recorded,
+        int source_buffer_index,
+        AsyncRoiBuffer& source_buffer);
+    bool openP2FeatureDiagnosticResults();
+    void closeP2FeatureDiagnosticResults();
+    void writeP2FeatureDiagnosticResults(
+        const std::vector<P2FeatureDiagnosticResultRow>& rows);
+    void writeP2FeatureDiagnosticPointDebug(
+        const std::vector<P2FeatureDiagnosticResultRow>& rows);
+    void writeP2FeatureDiagnosticArtifacts(
+        std::vector<P2FeatureDiagnosticResultRow>& rows,
+        const P2FeatureDiagnosticBuffer& buffer,
+        int width,
+        int height);
+    struct P2InlineFeatureWorker {
+        std::thread thread;
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::function<void()> task;
+        bool stop = false;
+        bool has_task = false;
+        bool done = true;
+    };
+    bool startP2InlineFeatureWorkers();
+    void shutdownP2InlineFeatureWorkers();
+    void p2InlineFeatureWorkerLoop(P2InlineFeatureWorker* worker,
+                                   const char* label);
+    bool submitP2InlineFeatureTask(P2InlineFeatureWorker& worker,
+                                   std::function<void()> task);
+    void waitP2InlineFeatureTask(P2InlineFeatureWorker& worker);
 
     // ===== 组件 =====
     PipelineConfig config_;
@@ -203,8 +426,8 @@ private:
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
     std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
 
-    // ===== 异步采集线程 (零拷贝) =====
-    // 按需模式: pipeline 请求 → 采集线程直接写入 VPI Image → 通知完成
+    // ===== 异步采集线程 =====
+    // 按需模式: pipeline 请求 → 采集线程写入 VPI host-mapped Image → 通知完成
     // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
     std::thread grab_thread_;
     void grabLoop();
@@ -222,12 +445,66 @@ private:
     std::unique_ptr<StereoCalibration> calibration_;
     std::unique_ptr<VPIRectifier> rectifier_;
     std::unique_ptr<TRTDetector> detector_;
-    std::unique_ptr<TRTDetector> detector1_;   ///< DLA1 检测器 (dual_dla 模式)
-    std::unique_ptr<TRTDetector> detector2_;   ///< GPU 检测器 (triple 模式)
+    std::unique_ptr<TRTDetector> detector_right_;
     std::unique_ptr<VPIStereo> stereo_;            ///< 全帧/半分辨率视差 (FULL_FRAME/HALF_RES)
     std::unique_ptr<ROIStereoMatcher> roi_matcher_; ///< ROI 多点匹配 (ROI_ONLY)
+    std::unique_ptr<DualYoloDepthGpuMatcher> dual_yolo_depth_gpu_; ///< 双 YOLO 多候选 GPU 批处理
+    std::unique_ptr<NeuralFeatureMatcher> neural_feature_matcher_; ///< Learned ROI feature matching (legacy single-backend)
+    std::unique_ptr<NeuralFeatureMatcher> neural_xfeat_matcher_; ///< XFeat 独立实例, 写 z_roi_neural_xfeat
+    std::unique_ptr<NeuralFeatureMatcher> neural_superpoint_matcher_; ///< SuperPoint 独立实例, 写 z_roi_neural_superpoint
+    std::unique_ptr<NeuralFeatureMatcher> neural_aliked_matcher_; ///< ALIKED 独立实例, 写 z_roi_neural_aliked
     std::unique_ptr<Coordinate3D> fusion_;         ///< 全帧模式的 3D 融合
     std::unique_ptr<HybridDepthEstimator> hybrid_depth_; ///< 混合深度估计 (单目+双目+Kalman)
+
+    // ===== ROI Stage2 异步后处理 =====
+    bool async_roi_ready_ = false;
+    bool async_roi_thread_stop_ = false;
+    cudaStream_t async_roi_stream_ = nullptr;
+    cudaStream_t async_roi_copy_stream_ = nullptr;
+    std::thread async_roi_thread_;
+    std::mutex async_roi_mutex_;
+    std::condition_variable async_roi_cv_;
+    std::deque<int> async_roi_free_buffers_;
+    std::deque<AsyncRoiTask> async_roi_pending_;
+    std::deque<AsyncRoiResult> async_roi_completed_;
+    std::vector<AsyncRoiBuffer> async_roi_buffers_;
+    std::array<cudaEvent_t, RING_BUFFER_SIZE> async_roi_slot_copy_done_{};
+    std::array<bool, RING_BUFFER_SIZE> async_roi_slot_copy_pending_{};
+    int async_roi_expire_before_frame_ = -1;
+    bool async_roi_worker_busy_ = false;
+    std::mutex roi_postprocess_mutex_;
+    std::mutex hybrid_depth_mutex_;
+
+    // ===== P2 diagnostic lane =====
+    bool p2_feature_diag_thread_stop_ = false;
+    bool p2_feature_diag_worker_busy_ = false;
+    cudaStream_t p2_feature_diag_stream_ = nullptr;
+    cudaStream_t p2_feature_diag_copy_stream_ = nullptr;
+    std::thread p2_feature_diag_thread_;
+    std::mutex p2_feature_diag_mutex_;
+    std::condition_variable p2_feature_diag_cv_;
+    std::deque<P2FeatureDiagnosticTask> p2_feature_diag_pending_;
+    std::deque<int> p2_feature_diag_free_buffers_;
+    std::vector<P2FeatureDiagnosticBuffer> p2_feature_diag_buffers_;
+    std::mutex p2_feature_diag_results_mutex_;
+    std::ofstream p2_feature_diag_results_file_;
+    std::ofstream p2_feature_diag_points_file_;
+    size_t p2_feature_diag_results_rows_since_flush_ = 0;
+    size_t p2_feature_diag_points_rows_since_flush_ = 0;
+    int p2_feature_diag_artifacts_saved_ = 0;
+
+    // ===== P2 inline feature workers =====
+    std::atomic<bool> p2_inline_feature_workers_ready_{false};
+    P2InlineFeatureWorker p2_inline_ncc_worker_;
+    P2InlineFeatureWorker p2_inline_xfeat_worker_;
+    P2InlineFeatureWorker p2_inline_superpoint_worker_;
+    P2InlineFeatureWorker p2_inline_aliked_worker_;
+
+    // ===== SOT Tracker =====
+    std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器
+    TrackerState tracker_state_ = TrackerState::IDLE;
+    int tracker_lost_count_ = 0;                    ///< 连续丢失帧数
+    int effective_detect_interval_ = 3;             ///< 运行时检测间隔 (LOST 时=1)
 
     // ===== VPI TNR 资源 =====
     VPIPayload tnrPayloadL_ = nullptr;     ///< 左目 TNR payload
@@ -240,6 +517,7 @@ private:
 
     // ===== Kalman dt 实测时间间隔 =====
     std::chrono::steady_clock::time_point last_fuse_time_{};
+    uint64_t last_fuse_capture_timestamp_ns_ = 0;
 
     // ===== 状态 =====
     std::atomic<bool> running_{false};
@@ -248,6 +526,7 @@ private:
 
     ResultCallback result_callback_;
     FrameCallback frame_callback_;
+    DiagnosticCallback diagnostic_callback_;
 };
 
 }  // namespace stereo3d

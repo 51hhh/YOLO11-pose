@@ -1,0 +1,16 @@
+{
+  "configs": [
+    {
+      "name": "p0p1_ncc_xfeat_smoke_h8_e1",
+      "methods": "p0p1_ncc_xfeat",
+      "epochs": 1,
+      "hidden": 8,
+      "static_jitter_weight": 0.1,
+      "bias_reg_weight": 1.0,
+      "known_z_weight": 1.0,
+      "known_z_range_weight": 0.5,
+      "leave_one_weight": 0.0,
+      "seed": 7
+    }
+  ]
+}

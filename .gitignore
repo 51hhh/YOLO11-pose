@@ -22,6 +22,8 @@ NX_volleyball/model/*.pt
 NX_volleyball/model/*.engine
 
 # NX 本地测试输出
+NX_volleyball/stereo_3d_pipeline/test_logs/
+NX_volleyball/stereo_3d_pipeline/baseline_clips/
 NX_volleyball/stereo_3d_pipeline/benchmark_results/
 NX_volleyball/stereo_3d_pipeline/diagnose_output/*.png
 NX_volleyball/stereo_3d_pipeline/diagnose_output/*.npy
@@ -49,3 +51,15 @@ nx_check.txt
 # Copilot / IDE 配置
 .github/
 .vscode/
+# Python cache
+__pycache__/
+*.pyc
+.venv-stereo-neural/
+
+# Local model artifacts
+NX_volleyball/stereo_3d_pipeline/models/
+
+# Calibration runtime data
+NX_volleyball/calibration/calibration_images*/
+NX_volleyball/calibration/stereo_calib.npz
+NX_volleyball/stereo_3d_pipeline/raw_observation_data.csv

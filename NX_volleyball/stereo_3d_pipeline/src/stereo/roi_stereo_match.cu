@@ -61,7 +61,7 @@ __global__ void roiMultiPointMatchKernel(
     float* __restrict__ results,   // 5 floats per detection
     int maxDisparity,
     int patchRadius,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth)
 {
@@ -277,7 +277,7 @@ __global__ void roiMultiPointMatchKernel(
         float conf = 0.0f;
 
         if (medianDisp > 0.5f) {
-            Z = (focal * baseline) / medianDisp;
+            Z = (focal * baseline) / (medianDisp - d0);
 
             if (Z >= minDepth && Z <= maxDepth) {
                 float center_x = detCx[boxIdx];
@@ -313,7 +313,7 @@ extern "C" void launchROIMultiPointMatch(
     int numBoxes,
     float* results,
     int maxDisparity, int patchRadius,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth,
     cudaStream_t stream)
@@ -325,6 +325,6 @@ extern "C" void launchROIMultiPointMatch(
         imgWidth, imgHeight,
         bboxes, detCx, detCy, numBoxes,
         results, maxDisparity, patchRadius,
-        focal, baseline, cx0, cy0,
+        focal, baseline, d0, cx0, cy0,
         minDepth, maxDepth);
 }

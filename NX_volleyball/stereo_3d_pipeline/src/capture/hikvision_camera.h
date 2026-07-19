@@ -1,10 +1,10 @@
 /**
  * @file hikvision_camera.h
- * @brief 海康工业相机零拷贝采集封装
+ * @brief 海康工业相机采集封装
  *
  * 针对 Pipeline 架构设计:
  *   - grabFramePair(): 同步抓取左右图像
- *   - 直接写入调用方提供的 buffer (零拷贝路径)
+ *   - 从 SDK buffer 拷贝到调用方提供的 VPI host-mapped buffer
  *   - 支持外触发 (Line0/Line1) + 软触发
  *   - BayerRG8 原始格式输出 (后续由 CUDA/VPI 处理)
  */
@@ -42,6 +42,9 @@ struct CameraConfig {
     bool use_trigger = true;               // 外触发模式
     std::string trigger_source = "Line0";  // 触发源
     std::string trigger_activation = "RisingEdge";
+    int trigger_frequency_hz = 100;         // 外触发频率, 用于帧计数追帧超时
+    int image_node_num = 3;                 // SDK 取流 FIFO 深度, 吸收 USB 到达抖动
+    int embedded_info_clear_rows = 2;       // FrameSpecInfo 写入图像首部后清除的行数
 
     int width = 1440;                      // 图像宽度
     int height = 1080;                     // 图像高度
@@ -53,8 +56,12 @@ struct CameraConfig {
  */
 struct GrabResult {
     bool success = false;
-    uint64_t timestamp_us = 0;    // 设备时间戳
-    uint32_t frame_number = 0;    // 帧号
+    uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
+    int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
+    int64_t stereo_timestamp_residual_ns = 0; // 去除左右设备固定偏移后的配对残差
+    uint32_t frame_number = 0;    // SDK 帧号
+    uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
+    uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断
 };
 
 /**
@@ -100,7 +107,7 @@ public:
      * 输出格式: BayerRG8 (H × W, uint8_t)
      * 缓冲区大小: width * height bytes
      *
-     * @param dst_left  左图写入地址 (调用方分配, 可以是零拷贝内存)
+     * @param dst_left  左图写入地址 (调用方分配, 可以是 VPI host-mapped 内存)
      * @param dst_right 右图写入地址
      * @param left_pitch  左图行跨度 (bytes), 0 = width
      * @param right_pitch 右图行跨度 (bytes), 0 = width
@@ -133,9 +140,10 @@ public:
 
 private:
     bool openCamera(void*& handle, int index, const std::string& serial);
-    void configureCamera(void* handle, const CameraConfig& cfg);
+    bool configureCamera(void* handle, const CameraConfig& cfg, const char* tag);
     bool grabOneFrame(void* handle, uint8_t* dst, int pitch,
                       unsigned int timeout_ms, GrabResult& result);
+    void resetSyncState();
 
     void* handle_left_  = nullptr;
     void* handle_right_ = nullptr;
@@ -152,6 +160,16 @@ private:
     static constexpr int MAX_RECONNECT_RETRIES = 3;
     int consecutive_failures_ = 0;
     bool reconnect();
+
+    // --- 双目配对状态 ---
+    bool sync_initialized_ = false;
+    int sync_baseline_samples_ = 0;
+    int64_t candidate_timestamp_offset_ns_ = 0;
+    int64_t expected_timestamp_offset_ns_ = 0;
+    int64_t expected_frame_counter_delta_ = 0;
+    int64_t expected_frame_number_delta_ = 0;
+    int64_t expected_trigger_delta_ = 0;
+    int consecutive_sync_mismatches_ = 0;
 };
 
 }  // namespace stereo3d

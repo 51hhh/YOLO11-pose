@@ -48,6 +48,7 @@ __device__ double blockReduceSum(double val) {
         val = (lane < 4) ? warpSums[lane] : 0.0;
         val = warpReduceSum(val);
     }
+    __syncthreads();
     return val;
 }
 
@@ -93,7 +94,7 @@ __global__ void roiCircleFitMatchKernel(
     int numBoxes,
     float* __restrict__ results,           // [X, Y, Z, disp, conf] * numBoxes
     int maxDisparity,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth,
     float objectDiameter)                  // known ball diameter (m)
@@ -430,7 +431,7 @@ __global__ void roiCircleFitMatchKernel(
                     disp = cxL - cxR;
 
                     if (disp > 0.5f && disp < (float)maxDisparity) {
-                        Z = focal * baseline / disp;
+                        Z = focal * baseline / (disp - d0);
 
                         if (Z >= minDepth && Z <= maxDepth) {
                             float center_x = detCx[boxIdx];
@@ -472,7 +473,7 @@ extern "C" void launchROICircleFitMatch(
     int numBoxes,
     float* results,
     int maxDisparity,
-    float focal, float baseline,
+    float focal, float baseline, float d0,
     float cx0, float cy0,
     float minDepth, float maxDepth,
     float objectDiameter,
@@ -486,7 +487,7 @@ extern "C" void launchROICircleFitMatch(
         bboxes, detCx, detCy, numBoxes,
         results,
         maxDisparity,
-        focal, baseline, cx0, cy0,
+        focal, baseline, d0, cx0, cy0,
         minDepth, maxDepth,
         objectDiameter);
 }

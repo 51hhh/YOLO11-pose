@@ -1,0 +1,150 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Value: false
+    - Class: rviz_default_plugins/Marker
+      Name: Ground
+      Enabled: true
+      Topic:
+        Value: /ball/ground_plane
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Name: BallMarker
+      Enabled: true
+      Topic:
+        Value: /ball/ball_marker
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Name: LandingMarker
+      Enabled: true
+      Topic:
+        Value: /ball/landing_marker
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Value: true
+    - Class: rviz_default_plugins/PointStamped
+      Name: Realtime
+      Enabled: true
+      Topic:
+        Value: /ball/realtime
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Color: 255; 220; 0
+      Radius: 0.08
+      Value: true
+    - Class: rviz_default_plugins/PointStamped
+      Name: Landing
+      Enabled: true
+      Topic:
+        Value: /ball/landing
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Color: 255; 40; 40
+      Radius: 0.12
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: ActualPath
+      Enabled: true
+      Topic:
+        Value: /ball/actual_path
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Color: 0; 180; 255
+      Line Style: Lines
+      Line Width: 0.03
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: PredictedPath
+      Enabled: true
+      Topic:
+        Value: /ball/predicted_path
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Color: 255; 80; 40
+      Line Style: Lines
+      Line Width: 0.04
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: FilteredPath
+      Enabled: true
+      Topic:
+        Value: /ball/filtered_path
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Color: 80; 255; 120
+      Line Style: Lines
+      Line Width: 0.025
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: vision_world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 12
+      Enable Stereo Rendering:
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 5
+        Z: 0
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.6
+      Target Frame: <Fixed Frame>
+      Yaw: 0.8
+Window Geometry:
+  Height: 900
+  Width: 1400

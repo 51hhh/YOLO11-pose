@@ -4,7 +4,7 @@
  *
  * 对每个检测框:
  *   1. CUDA kernel 提取框内视差值的直方图峰值 (鲁棒中值)
- *   2. Z = focal * baseline / d_peak
+ *   2. Z = focal * baseline / (d_peak - d0)
  *   3. X = (cx - cx0) * Z / focal
  *   4. Y = (cy - cy0) * Z / focal
  */
@@ -33,7 +33,7 @@ public:
      * @param minDepth 最小有效深度 (m)
      * @param maxDepth 最大有效深度 (m)
      */
-    void init(const cv::Mat& P1, float baseline, float minDepth, float maxDepth);
+    void init(const cv::Mat& P1, float baseline, float minDepth, float maxDepth, float d0 = 0.0f);
 
     /**
      * @brief 对单个检测框计算 3D 坐标
@@ -63,6 +63,7 @@ public:
 
 private:
     float focal_    = 0.0f;    ///< 焦距 (pixels)
+    float d0_       = 0.0f;    ///< disparity zero-point offset (pixels)
     float baseline_ = 0.0f;    ///< 基线 (m)
     float cx_       = 0.0f;    ///< 主点 x
     float cy_       = 0.0f;    ///< 主点 y
@@ -74,6 +75,7 @@ private:
     float* depthResults_host_   = nullptr;  ///< CPU 上的深度输出 (pinned)
     int*   bboxes_device_       = nullptr;  ///< GPU 上的 BBox 数据
     int maxBoxes_ = 32;                     ///< 最大检测框数
+    bool ready_ = false;
 
     bool allocateGPUBuffers();
     void freeGPUBuffers();

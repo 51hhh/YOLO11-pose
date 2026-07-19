@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 3.18)
 project(stereo_3d_pipeline LANGUAGES CXX CUDA)
 
+# ==================== ROS2 ament_cmake ====================
+option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
+find_package(ament_cmake QUIET)
+if(ament_cmake_FOUND)
+  set(USE_ROS2 ON)
+  find_package(rclcpp REQUIRED)
+  find_package(geometry_msgs REQUIRED)
+  find_package(nav_msgs REQUIRED)
+  find_package(sensor_msgs REQUIRED)
+  find_package(volleyball_interfaces REQUIRED)
+  message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
+else()
+  if(REQUIRE_ROS2)
+    message(FATAL_ERROR
+      "REQUIRE_ROS2=ON but ament_cmake was not found. Source ROS2 and the "
+      "volleyball_interfaces workspace before configuring.")
+  endif()
+  set(USE_ROS2 OFF)
+  message(STATUS "ROS2: not found, standalone build")
+endif()
+
 # ==================== 编译标准 ====================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,8 +52,72 @@ find_package(vpi REQUIRED)
 message(STATUS "VPI found")
 
 # OpenCV (标定加载 + 可视化 + 标定工具 + CUDA 立体匹配)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d highgui imgcodecs cudastereo cudaimgproc cudafilters)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d highgui imgcodecs cudastereo cudaimgproc cudafilters)
+set(STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+set(STEREO_OPENCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
+
+# OpenCV CUDA ORB 是可选后端。缺少 cudafeatures2d 时禁用 ORB 候选，
+# 但不阻塞默认 100fps 实时管线构建。
+find_package(OpenCV QUIET COMPONENTS cudafeatures2d)
+if(OpenCV_cudafeatures2d_FOUND)
+  set(HAS_OPENCV_CUDAFEATURES2D ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
+  message(STATUS "OpenCV cudafeatures2d: found (CUDA ORB enabled)")
+else()
+  set(HAS_OPENCV_CUDAFEATURES2D OFF)
+  message(STATUS "OpenCV cudafeatures2d not found, CUDA ORB disabled")
+endif()
+
+find_package(OpenCV QUIET COMPONENTS cudaoptflow)
+if(OpenCV_cudaoptflow_FOUND)
+  set(HAS_OPENCV_CUDAOPTFLOW ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
+  message(STATUS "OpenCV cudaoptflow: found (CUDA LK enabled)")
+else()
+  set(HAS_OPENCV_CUDAOPTFLOW OFF)
+  message(STATUS "OpenCV cudaoptflow not found, CUDA LK disabled")
+endif()
+
+# Fixstars libSGM 是可选 P2 diagnostic 后端。未安装时保持
+# roi_libsgm=unsupported，不阻塞默认实时管线构建。
+set(LIBSGM_ROOT "" CACHE PATH "Fixstars libSGM install or source root")
+find_path(LIBSGM_INCLUDE_DIR libsgm.h
+  HINTS
+    ${LIBSGM_ROOT}/include
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/include
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/include
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/include
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/include
+    /usr/local/include
+    /usr/include)
+find_library(LIBSGM_LIBRARY
+  NAMES sgm libsgm
+  HINTS
+    ${LIBSGM_ROOT}/lib
+    ${LIBSGM_ROOT}/lib64
+    ${LIBSGM_ROOT}/build
+    ${LIBSGM_ROOT}/build/src
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/lib
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/install/lib64
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/build
+    ${CMAKE_SOURCE_DIR}/third_party/libSGM/build/src
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/lib
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/install/lib64
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/build
+    ${CMAKE_SOURCE_DIR}/third_party/libsgm/build/src
+    /usr/local/lib
+    /usr/lib
+    /usr/lib/aarch64-linux-gnu)
+if(LIBSGM_INCLUDE_DIR AND LIBSGM_LIBRARY)
+  set(HAS_FIXSTARS_LIBSGM ON)
+  message(STATUS "Fixstars libSGM: ${LIBSGM_LIBRARY}")
+else()
+  set(HAS_FIXSTARS_LIBSGM OFF)
+  message(STATUS "Fixstars libSGM not found, roi_libsgm will report unsupported")
+endif()
 
 # TensorRT
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
@@ -105,6 +190,8 @@ endif()
 find_package(OpenCV QUIET COMPONENTS ximgproc)
 if(OpenCV_ximgproc_FOUND)
   set(XIMGPROC_FOUND ON)
+  list(APPEND STEREO_OPENCV_LIBS ${OpenCV_LIBS})
+  list(REMOVE_DUPLICATES STEREO_OPENCV_LIBS)
   message(STATUS "OpenCV ximgproc: found (WLS filter enabled)")
 else()
   set(XIMGPROC_FOUND OFF)
@@ -114,7 +201,7 @@ endif()
 # ==================== 包含目录 ====================
 include_directories(
   ${CMAKE_SOURCE_DIR}/src
-  ${OpenCV_INCLUDE_DIRS}
+  ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}
 )
@@ -127,16 +214,69 @@ endif()
 # ==================== 源文件 ====================
 set(PIPELINE_SOURCES
   src/main.cpp
+  src/main_cli_options.cpp
+  src/main_config_loaders.cpp
+  src/main_dual_yolo_config.cpp
+  src/main_realtime_debug_dump.cpp
+  src/main_realtime_debug_dump_writer.cpp
+  src/main_recording_config_loaders.cpp
+  src/main_runtime_overrides.cpp
   src/pipeline/pipeline.cpp
+  src/pipeline/pipeline_async_roi.cpp
+  src/pipeline/pipeline_debug.cpp
+  src/pipeline/pipeline_debug_utils.cpp
+  src/pipeline/pipeline_detection.cpp
+  src/pipeline/pipeline_depth_modes.cpp
+  src/pipeline/pipeline_dual_yolo_match.cpp
+  src/pipeline/pipeline_dual_yolo_host.cpp
+  src/pipeline/pipeline_feature_jobs.cpp
+  src/pipeline/pipeline_lifecycle.cpp
+  src/pipeline/pipeline_loops.cpp
+  src/pipeline/pipeline_roi_match_helpers.cpp
+  src/pipeline/pipeline_roi_stage2.cpp
+  src/pipeline/pipeline_stages.cpp
+  src/pipeline/pipeline_tracker.cpp
   src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
+  src/stereo/depth_candidate_contract.cpp
+  src/stereo/depth_candidate_builder.cpp
+  src/stereo/depth_candidate_builder_feature.cpp
+  src/stereo/depth_match_contract.cpp
+  src/stereo/p0p1_soft_gate.cpp
+  src/stereo/dual_yolo_depth_gpu.cpp
+  src/stereo/roi_feature_validation.cpp
+  src/stereo/roi_feature_match_common.cpp
+  src/stereo/roi_patch_match_cpu.cpp
+  src/stereo/roi_geometry_cpu.cpp
+  src/stereo/roi_geometry_circle_cpu.cpp
+  src/stereo/roi_feature_match_cpu.cpp
+  src/stereo/roi_feature_match_cpu_sparse.cpp
+  src/stereo/roi_feature_match_cpu_opencv.cpp
+  src/stereo/roi_feature_match_cpu_debug.cpp
+  src/stereo/roi_feature_match_gpu.cpp
+  src/stereo/roi_feature_match_experimental.cpp
+  src/stereo/neural_feature_matcher.cpp
+  src/stereo/neural_feature_matcher_xfeat.cpp
+  src/stereo/neural_feature_matcher_direct.cpp
+  src/stereo/neural_feature_matcher_fused.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
+  src/fusion/hybrid_depth_candidate_copy.cpp
   src/fusion/hybrid_depth.cpp
+  src/fusion/hybrid_depth_track.cpp
   src/fusion/trajectory_predictor.cpp
+  src/fusion/trajectory_predictor_fit.cpp
+  src/fusion/trajectory_predictor_history.cpp
   src/utils/trajectory_recorder.cpp
+  src/utils/trajectory_recorder_summary.cpp
+  src/utils/trajectory_recorder_writer.cpp
+  src/utils/baseline_clip_recorder.cpp
+  src/utils/baseline_clip_recorder_io.cpp
+  src/utils/baseline_clip_recorder_writer.cpp
+  src/track/nanotrack_trt.cpp
+  src/track/mixformer_trt.cpp
 )
 
 # CUDA 源文件
@@ -146,12 +286,29 @@ set(CUDA_SOURCES
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
+  src/stereo/dual_yolo_depth_gpu.cu
+  src/stereo/roi_feature_match_gpu_reduce.cu
+  src/stereo/roi_feature_match_gpu_profile.cu
+  src/stereo/neural_feature_xfeat_gpu_postprocess.cu
+  src/stereo/neural_feature_direct_gpu_postprocess.cu
+  src/track/crop_resize.cu
 )
 
 # 相机源文件 (可选)
 if(HIK_FOUND)
   list(APPEND PIPELINE_SOURCES src/capture/hikvision_camera.cpp)
   add_definitions(-DHIK_CAMERA_ENABLED)
+endif()
+
+# ROS2 源文件 (条件编译)
+if(USE_ROS2)
+  list(APPEND PIPELINE_SOURCES
+    src/ros/goal_pose_bridge.cpp
+    src/ros/diagnostic_publisher.cpp
+    src/ros/nx_ball_observation_publisher.cpp
+    src/ros/nx_observation_quality.cpp
+    src/ros/source_epoch.cpp
+  )
 endif()
 
 # ==================== 目标 ====================
@@ -176,12 +333,26 @@ target_link_libraries(stereo_pipeline
   CUDA::cudart
   CUDA::cuda_driver
   # OpenCV
-  ${OpenCV_LIBS}
+  ${STEREO_OPENCV_LIBS}
   # yaml-cpp
   yaml-cpp
   # 系统
+  ${CMAKE_DL_LIBS}
   pthread
+  stdc++fs
 )
+
+if(HAS_OPENCV_CUDAFEATURES2D)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAFEATURES2D)
+endif()
+if(HAS_OPENCV_CUDAOPTFLOW)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_OPENCV_CUDAOPTFLOW)
+endif()
+if(HAS_FIXSTARS_LIBSGM)
+  target_include_directories(stereo_pipeline PRIVATE ${LIBSGM_INCLUDE_DIR})
+  target_link_libraries(stereo_pipeline ${LIBSGM_LIBRARY})
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_FIXSTARS_LIBSGM)
+endif()
 
 if(HIK_FOUND)
   target_link_libraries(stereo_pipeline MvCameraControl)
@@ -194,25 +365,69 @@ else()
   target_compile_definitions(stereo_pipeline PRIVATE NO_GPIOD)
 endif()
 
+# ROS2 链接
+if(USE_ROS2)
+  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs volleyball_interfaces)
+  target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(source_epoch_test
+    tests/source_epoch_test.cpp
+    src/ros/source_epoch.cpp)
+  add_test(NAME source_epoch_test COMMAND source_epoch_test)
+
+  add_executable(nx_observation_quality_test
+    tests/nx_observation_quality_test.cpp
+    src/ros/nx_observation_quality.cpp)
+  target_include_directories(nx_observation_quality_test PRIVATE src)
+  add_test(NAME nx_observation_quality_test COMMAND nx_observation_quality_test)
+
+  add_executable(depth_candidate_selection_test
+    tests/depth_candidate_selection_test.cpp
+    src/stereo/depth_candidate_builder.cpp
+    src/stereo/depth_candidate_builder_feature.cpp
+    src/stereo/depth_candidate_contract.cpp)
+  target_include_directories(depth_candidate_selection_test PRIVATE src)
+  add_test(NAME depth_candidate_selection_test
+           COMMAND depth_candidate_selection_test)
+
+  add_executable(hybrid_depth_test
+    tests/hybrid_depth_test.cpp
+    src/fusion/hybrid_depth.cpp
+    src/fusion/hybrid_depth_track.cpp
+    src/fusion/hybrid_depth_candidate_copy.cpp)
+  target_include_directories(hybrid_depth_test PRIVATE src)
+  add_test(NAME hybrid_depth_test COMMAND hybrid_depth_test)
+
+  add_executable(fusion_timing_test tests/fusion_timing_test.cpp)
+  target_include_directories(fusion_timing_test PRIVATE src)
+  add_test(NAME fusion_timing_test COMMAND fusion_timing_test)
+endif()
+
 # ==================== 标定工具 ====================
 
 # stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
 add_executable(stereo_calibrate
   src/calibration/stereo_calibrate.cpp
+  src/calibration/stereo_calibrate_args.cpp
+  src/calibration/stereo_calibrate_images.cpp
 )
 set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
-target_link_libraries(stereo_calibrate ${OpenCV_LIBS} pthread stdc++fs)
+target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
 
 # capture_chessboard (需要海康 SDK; libgpiod 可选)
 if(HIK_FOUND)
   add_executable(capture_chessboard
     src/calibration/capture_chessboard.cpp
+    src/calibration/capture_chessboard_args.cpp
     src/capture/hikvision_camera.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_link_libraries(capture_chessboard
-    ${OpenCV_LIBS}
+    ${STEREO_OPENCV_LIBS}
     MvCameraControl
     pthread
     stdc++fs
@@ -224,6 +439,25 @@ if(HIK_FOUND)
     target_compile_definitions(capture_chessboard PRIVATE NO_GPIOD)
   endif()
   message(STATUS "Calibration tools: capture_chessboard + stereo_calibrate")
+
+  add_executable(hik_frame_metadata_probe
+    tools/hik_frame_metadata_probe.cpp
+    tools/hik_frame_metadata_probe_args.cpp
+    tools/hik_frame_metadata_probe_stats.cpp
+  )
+  set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
+  target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  target_link_libraries(hik_frame_metadata_probe
+    MvCameraControl
+    pthread
+  )
+  if(GPIOD_FOUND)
+    target_include_directories(hik_frame_metadata_probe PRIVATE ${GPIOD_INCLUDE})
+    target_link_libraries(hik_frame_metadata_probe ${GPIOD_LIB})
+  else()
+    target_compile_definitions(hik_frame_metadata_probe PRIVATE NO_GPIOD)
+  endif()
+  message(STATUS "Hikvision tools: hik_frame_metadata_probe")
 else()
   message(STATUS "Calibration tools: stereo_calibrate only (no HIK SDK)")
 endif()
@@ -235,6 +469,10 @@ install(TARGETS stereo_pipeline DESTINATION bin)
 if(HIK_FOUND)
   set(VIEWER_SOURCES
     src/stereo_depth_viewer.cpp
+    src/stereo_depth_viewer_args.cpp
+    src/stereo_depth_viewer_benchmark.cpp
+    src/stereo_depth_viewer_models.cpp
+    src/stereo_depth_viewer_ui.cpp
     src/calibration/stereo_calibration.cpp
     src/capture/hikvision_camera.cpp
   )
@@ -250,7 +488,7 @@ if(HIK_FOUND)
   target_link_libraries(stereo_depth_viewer
     vpi
     CUDA::cudart
-    ${OpenCV_LIBS}
+    ${STEREO_OPENCV_LIBS}
     MvCameraControl
     pthread
   )
@@ -293,5 +531,11 @@ message(STATUS "  OpenCV:         ${OpenCV_VERSION}")
 message(STATUS "  ONNX Runtime:   ${ONNXRUNTIME_FOUND}")
 message(STATUS "  ximgproc (WLS): ${XIMGPROC_FOUND}")
 message(STATUS "  Hikvision SDK:  ${HIK_FOUND}")
+message(STATUS "  ROS2:           ${USE_ROS2}")
 message(STATUS "  yaml-cpp:       YES")
 message(STATUS "========================================")
+
+# ==================== ament 收尾 ====================
+if(USE_ROS2)
+  ament_package()
+endif()

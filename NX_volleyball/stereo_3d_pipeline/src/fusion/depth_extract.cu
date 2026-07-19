@@ -13,9 +13,9 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-// 直方图 bin 数量 (视差范围 0~511, 支持 maxdisp=256+)
-#define HIST_BINS 512
-// 每个 block 的线程数 (必须 >= HIST_BINS)
+// 直方图 bin 数量 (长基线近距离可到 1024+ px)
+#define HIST_BINS 2048
+// 每个 block 的线程数，线程分段扫描 HIST_BINS。
 #define THREADS_PER_BLOCK 512
 
 /**
@@ -56,8 +56,8 @@ __global__ void depthExtractKernel(
     __shared__ int histogram[HIST_BINS];
 
     // 1. 清零直方图
-    if (threadIdx.x < HIST_BINS) {
-        histogram[threadIdx.x] = 0;
+    for (int bin = threadIdx.x; bin < HIST_BINS; bin += blockDim.x) {
+        histogram[bin] = 0;
     }
     __syncthreads();
 
@@ -96,9 +96,9 @@ __global__ void depthExtractKernel(
     }
     __syncthreads();
 
-    // 简单方法: 每个线程检查一个 bin
-    if (threadIdx.x < HIST_BINS) {
-        int count = histogram[threadIdx.x];
+    // 简单方法: 每个线程分段检查 bin
+    for (int bin = threadIdx.x; bin < HIST_BINS; bin += blockDim.x) {
+        int count = histogram[bin];
         if (count > 0) {
             atomicMax(&maxCount, count);
         }
@@ -106,9 +106,9 @@ __global__ void depthExtractKernel(
     __syncthreads();
 
     // 找到具有最大 count 的 bin
-    if (threadIdx.x < HIST_BINS) {
-        if (histogram[threadIdx.x] == maxCount && maxCount > 0) {
-            atomicMax(&maxBin, threadIdx.x);  // 取最大视差 (保守估计, 近处)
+    for (int bin = threadIdx.x; bin < HIST_BINS; bin += blockDim.x) {
+        if (histogram[bin] == maxCount && maxCount > 0) {
+            atomicMax(&maxBin, bin);  // 取最大视差 (保守估计, 近处)
         }
     }
     __syncthreads();

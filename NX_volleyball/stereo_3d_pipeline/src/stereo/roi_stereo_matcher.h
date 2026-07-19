@@ -24,6 +24,7 @@ struct ROIMatchConfig {
     int   patchRadius  = 5;       ///< 匹配块半径 (patch = 11x11)
     float minDepth     = 0.3f;    ///< 最小有效深度 (m)
     float maxDepth     = 15.0f;   ///< 最大有效深度 (m)
+    float disparityZeroOffset = 0.0f; ///< d0 in z=fB/(disparity-d0)
     float objectDiameter = 0.215f; ///< 目标直径 (m), 用于圆拟合搜索范围估计
     bool  useCircleFit = true;    ///< 启用圆拟合匹配 (适合光滑球体)
 };
@@ -69,6 +70,7 @@ public:
 
     float getFocal()    const { return focal_; }
     float getBaseline() const { return baseline_; }
+    bool ready() const { return ready_; }
 
 private:
     float focal_    = 0.0f;
@@ -84,6 +86,7 @@ private:
     float* detCy_device_   = nullptr;   ///< 检测中心 y
     float* results_device_ = nullptr;   ///< [X,Y,Z,disp,conf] * N
     float* results_host_   = nullptr;   ///< pinned host mirror
+    bool ready_ = false;
 
     bool allocateBuffers();
     void freeBuffers();

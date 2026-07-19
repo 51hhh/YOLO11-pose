@@ -1,0 +1,41 @@
+{
+  "fx": 1613.873447565926,
+  "fy": 1613.873447565926,
+  "cx": 681.58988952636719,
+  "cy": 620.79562759399414,
+  "fB": 1497.079,
+  "baseline_m": 0.92763108240240683,
+  "d0": -5.324,
+  "prefer_bbox": true,
+  "enable_circle_fallback": true,
+  "circle_consistency_m": 0.35,
+  "g_hat": [
+    0.0018133971960385172,
+    0.9701361127202714,
+    0.24255439469655052
+  ],
+  "ground_h": -1.2592940759920357,
+  "rk4_dt": 0.008,
+  "max_predict_time": 3.0,
+  "ekf": {
+    "cd": 0.10,
+    "nu": 12.0,
+    "sigma_d_px": 0.4,
+    "fB": 1497.079,
+    "q_pos": 0.0001,
+    "q_vel": 1.5,
+    "max_dt": 0.5,
+    "xy_sigma_scale": 0.0012,
+    "xy_sigma_floor": 0.004,
+    "consistency_inflate": 3.0
+  },
+  "residual": {
+    "enabled": true,
+    "hidden": 16,
+    "max_abs_m": 1.0,
+    "fade_start_s": 0.15,
+    "fade_full_s": 0.5,
+    "gap_reset_s": 0.5
+  },
+  "residual_checkpoint": "trajectory_fusion/landing_eval/gru_final.pt"
+}
