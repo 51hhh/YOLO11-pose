@@ -101,6 +101,7 @@ def build_legacy_pipeline_config(
     # 主线从不启用旧版 CSV 录制器；原始层只能通过 capture_v21 发布。
     result.setdefault("recording", {})["enabled"] = False
     result.setdefault("baseline_recording", {})["enabled"] = False
+    result.setdefault("capture_v21", {})["enabled"] = False
     prediction = config.data["prediction"]
     result.setdefault("prediction", {})["enable"] = bool(
         prediction["enabled"] and prediction["owner"] == "nx"

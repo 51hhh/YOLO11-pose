@@ -17,6 +17,7 @@ from .dataset import DatasetError, validate_dataset, validate_trial
 from .doctor import checks_as_dicts, run_doctor
 from .legacy_config import build_legacy_pipeline_config
 from .replay import run_replay
+from .runtime import run_runtime
 
 
 def _add_profile_arguments(parser: argparse.ArgumentParser) -> None:
@@ -90,6 +91,27 @@ def _doctor(args: argparse.Namespace) -> int:
         for check in checks:
             print(f"{check.status.upper():7s} {check.name}: {check.message}")
     return 0 if all(check.ok for check in checks) else 3
+
+
+def _run(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    checks = run_doctor(config)
+    errors = [check for check in checks if not check.ok]
+    if errors:
+        details = "\n".join(f"  - {check.name}: {check.message}" for check in errors)
+        raise DatasetError(f"启动前 doctor 未通过:\n{details}")
+    result = run_runtime(
+        config,
+        generated_config=args.generated_config,
+        extra_arguments=args.legacy_arg,
+        dry_run=args.dry_run,
+    )
+    if args.dry_run:
+        print(f"DRY_RUN config={result.generated_config}")
+        print(result.command_text)
+    else:
+        print(f"OK runtime returncode={result.returncode}")
+    return 0
 
 
 def _load_conditions(path: str | None) -> dict[str, object]:
@@ -250,6 +272,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_arguments(doctor)
     doctor.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     doctor.set_defaults(handler=_doctor)
+
+    runtime = subparsers.add_parser("run", help="自检后启动 NX 实时管线")
+    _add_profile_arguments(runtime)
+    runtime.add_argument(
+        "--generated-config",
+        help="保留投影后的旧 NX YAML；为防误覆盖，路径必须不存在",
+    )
+    runtime.add_argument(
+        "--legacy-arg",
+        action="append",
+        default=[],
+        help="传给旧 NX 可执行文件的单个参数，可重复",
+    )
+    runtime.add_argument("--dry-run", action="store_true", help="只生成配置并显示命令")
+    runtime.set_defaults(handler=_run)
 
     capture = subparsers.add_parser("capture", help="执行无丢帧 v2.1 双目采集")
     _add_profile_arguments(capture)
