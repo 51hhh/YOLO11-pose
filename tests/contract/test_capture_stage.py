@@ -453,6 +453,38 @@ class CaptureStageTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "帧缺口"):
                 finalize_capture_stage(stage, root / "dataset", profile, project_root=ROOT)
 
+    def test_stage_with_extra_csv_field_is_not_publishable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            frames_path = stage / "frames.csv"
+            lines = frames_path.read_text(encoding="utf-8").splitlines()
+            lines[1] += ",unexpected"
+            frames_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(DatasetError, "第 2 行列数不匹配"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
+
+    def test_stage_with_missing_csv_field_is_not_publishable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            frames_path = stage / "frames.csv"
+            lines = frames_path.read_text(encoding="utf-8").splitlines()
+            lines[1] = lines[1].rsplit(",", maxsplit=1)[0]
+            frames_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(DatasetError, "第 2 行列数不匹配"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
+
     def test_status_frame_count_mismatch_is_not_publishable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

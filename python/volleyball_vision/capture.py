@@ -101,7 +101,15 @@ def _read_csv_exact(path: Path, columns: list[str]) -> list[dict[str, str]]:
                     f"staging 表头不匹配 {path.name}: "
                     f"expected={columns}, actual={reader.fieldnames}"
                 )
-            return list(reader)
+            rows = list(reader)
+            for line_number, row in enumerate(rows, start=2):
+                # DictReader 会把多余字段放入 None 键，把缺失字段填为 None。
+                # 两种情况都会造成列错位，必须在解释字段含义前拒绝。
+                if None in row or any(value is None for value in row.values()):
+                    raise DatasetError(
+                        f"staging {path.name} 第 {line_number} 行列数不匹配"
+                    )
+            return rows
     except FileNotFoundError as error:
         raise DatasetError(f"staging 缺少文件: {path}") from error
 
