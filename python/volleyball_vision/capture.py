@@ -125,6 +125,14 @@ def _bool(row: Mapping[str, str], key: str) -> bool:
     raise DatasetError(f"staging 字段 {key} 必须是布尔值")
 
 
+def _uint32_is_next(previous: int, current: int) -> bool:
+    """按相机 uint32 计数器语义判断连续性，允许自然回绕。"""
+
+    if not 0 <= previous <= 0xFFFFFFFF or not 0 <= current <= 0xFFFFFFFF:
+        return False
+    return ((current - previous) & 0xFFFFFFFF) == 1
+
+
 def _load_json_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -296,6 +304,16 @@ def finalize_capture_stage(
     pairs = _read_csv_exact(directory / "pairs.csv", STAGE_PAIR_COLUMNS)
     if not frames:
         raise DatasetError("采集没有任何完整双目帧")
+    try:
+        frames_captured = int(status["frames_captured"])
+        frames_written = int(status["frames_written"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise DatasetError("capture status 缺少有效帧计数") from error
+    if frames_captured != len(frames) or frames_written != len(frames):
+        raise DatasetError(
+            "capture status 帧计数与 frames.csv 不一致: "
+            f"captured={frames_captured}, written={frames_written}, rows={len(frames)}"
+        )
     frame_ids = [_int(row, "frame_id") for row in frames]
     if any(right <= left for left, right in zip(frame_ids, frame_ids[1:])):
         raise DatasetError("staging frame_id 必须严格递增")
@@ -305,8 +323,43 @@ def finalize_capture_stage(
     right_counters = [_int(row, "right_frame_counter") for row in frames]
     if any(left != right for left, right in zip(left_counters, right_counters)):
         raise DatasetError("左右 FrameCounter 不一致")
-    if any(right != left + 1 for left, right in zip(left_counters, left_counters[1:])):
+    if any(
+        not _uint32_is_next(left, right)
+        for left, right in zip(left_counters, left_counters[1:])
+    ):
         raise DatasetError("硬件 FrameCounter 出现缺口，fail_trial 禁止发布")
+
+    host_times = [_int(row, "host_capture_timestamp_ns") for row in frames]
+    callback_times = [_int(row, "callback_timestamp_ns") for row in frames]
+    left_device_times = [_int(row, "left_device_timestamp_ns") for row in frames]
+    right_device_times = [_int(row, "right_device_timestamp_ns") for row in frames]
+    timestamp_series = (
+        host_times,
+        callback_times,
+        left_device_times,
+        right_device_times,
+    )
+    if any(value <= 0 for values in timestamp_series for value in values):
+        raise DatasetError("采集时间戳必须是正整数纳秒")
+    for name, values in (
+        ("host_capture_timestamp_ns", host_times),
+        ("callback_timestamp_ns", callback_times),
+        ("left_device_timestamp_ns", left_device_times),
+        ("right_device_timestamp_ns", right_device_times),
+    ):
+        if any(right <= left for left, right in zip(values, values[1:])):
+            raise DatasetError(f"{name} 必须严格递增")
+    if any(callback < capture for capture, callback in zip(host_times, callback_times)):
+        raise DatasetError("callback_timestamp_ns 不得早于 host_capture_timestamp_ns")
+
+    configured_sync_error = config.data["cameras"]["sync"]["estimated_error_ns"]
+    if configured_sync_error is not None:
+        residuals = [abs(_int(row, "stereo_timestamp_residual_ns")) for row in frames]
+        if any(value > configured_sync_error for value in residuals):
+            raise DatasetError(
+                "双目同步残差超过 cameras.sync.estimated_error_ns: "
+                f"max={max(residuals)}, limit={configured_sync_error}"
+            )
 
     root = Path(dataset_root).resolve()
     ensure_dataset_calibration(root, config, project_root=project_root)

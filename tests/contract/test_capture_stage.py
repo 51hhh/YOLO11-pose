@@ -140,6 +140,7 @@ class CaptureStageTests(unittest.TestCase):
                     "stage_schema_version": STAGE_SCHEMA_VERSION,
                     "complete": True,
                     "fatal_error": "",
+                    "frames_captured": 2,
                     "frames_written": 2,
                     "dropped_frames": 0,
                     "copy_failures": 0,
@@ -182,6 +183,48 @@ class CaptureStageTests(unittest.TestCase):
             _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
             with self.assertRaisesRegex(Exception, "帧缺口"):
                 finalize_capture_stage(stage, root / "dataset", profile, project_root=ROOT)
+
+    def test_status_frame_count_mismatch_is_not_publishable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            status_path = stage / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            status["frames_written"] = 1
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            with self.assertRaisesRegex(Exception, "帧计数"):
+                finalize_capture_stage(stage, root / "dataset", profile, project_root=ROOT)
+
+    def test_sync_residual_over_configured_limit_is_not_publishable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            with (stage / "frames.csv").open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            rows[1]["stereo_timestamp_residual_ns"] = "100001"
+            (stage / "frames.csv").unlink()
+            _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
+            with self.assertRaisesRegex(Exception, "同步残差"):
+                finalize_capture_stage(stage, root / "dataset", profile, project_root=ROOT)
+
+    def test_uint32_frame_counter_wrap_is_continuous(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            with (stage / "frames.csv").open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            for role in ("left", "right"):
+                rows[0][f"{role}_frame_counter"] = str(0xFFFFFFFF)
+                rows[1][f"{role}_frame_counter"] = "0"
+            (stage / "frames.csv").unlink()
+            _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
+            trial = finalize_capture_stage(
+                stage,
+                root / "dataset",
+                profile,
+                project_root=ROOT,
+            )
+            self.assertTrue((trial / "metadata.json").is_file())
 
 
 if __name__ == "__main__":
