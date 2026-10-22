@@ -1,4 +1,4 @@
-#include "dual_yolo_depth_gpu.h"
+#include "volleyball/adapters/cuda_depth/roi_matcher.hpp"
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
@@ -14,8 +14,8 @@ constexpr int kMaxFeaturePoints = 64;
 constexpr int kThreadsPerPoint = 4;
 constexpr int kMaxParallelFeaturePoints = kThreads / kThreadsPerPoint;
 
-#include "dual_yolo_depth_gpu_device_helpers.cuh"
-#include "dual_yolo_depth_gpu_roi_match.cuh"
+#include "roi_matcher_device_helpers.cuh"
+#include "roi_matcher_kernels.cuh"
 
 __global__ void dualYoloDepthCandidatesKernel(
     const uint8_t* left_img, int left_pitch,

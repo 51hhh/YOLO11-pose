@@ -1,4 +1,4 @@
-// ROI geometry and sparse patch matching helpers for dual_yolo_depth_gpu.cu.
+// ROI 几何拟合与稀疏 patch 匹配设备端实现。
 // Included inside the .cu anonymous namespace after device helpers.
 
 __device__ void fitGeometryInBBox(

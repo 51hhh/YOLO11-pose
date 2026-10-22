@@ -41,6 +41,14 @@ if(NOT EXISTS
     "Mainline CUDA preprocess adapter not found next to legacy_nx: "
     "${VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../cuda_depth")
+if(NOT EXISTS
+   "${VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR}/include/volleyball/adapters/cuda_depth/roi_matcher.hpp")
+  message(FATAL_ERROR
+    "Mainline CUDA depth adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR}")
+endif()
 set(VOLLEYBALL_ROS2_ADAPTER_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../ros2")
 if(NOT EXISTS
@@ -143,6 +151,11 @@ message(STATUS "OpenCV: ${OpenCV_VERSION}")
 add_subdirectory(
   "${VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/mainline_cuda_preprocess"
+  EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+  "${VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_cuda_depth"
   EXCLUDE_FROM_ALL
 )
 
@@ -333,7 +346,6 @@ set(PIPELINE_SOURCES
   src/stereo/depth_candidate_builder_feature.cpp
   src/stereo/depth_match_contract.cpp
   src/stereo/p0p1_soft_gate.cpp
-  src/stereo/dual_yolo_depth_gpu.cpp
   src/stereo/roi_feature_validation.cpp
   src/stereo/roi_feature_match_common.cpp
   src/stereo/roi_patch_match_cpu.cpp
@@ -363,7 +375,6 @@ set(CUDA_SOURCES
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
-  src/stereo/dual_yolo_depth_gpu.cu
   src/stereo/roi_feature_match_gpu_reduce.cu
   src/stereo/roi_feature_match_gpu_profile.cu
   src/stereo/neural_feature_xfeat_gpu_postprocess.cu
@@ -400,6 +411,7 @@ target_link_libraries(stereo_pipeline
   volleyball::stereo_calibration
   volleyball::cuda_preprocess_kernels
   volleyball::cuda_stereo_preprocessor
+  volleyball::cuda_roi_matcher
   volleyball::tensorrt_runtime
   # VPI
   vpi

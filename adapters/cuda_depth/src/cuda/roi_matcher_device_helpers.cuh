@@ -1,4 +1,4 @@
-// Device math, patch scoring, and robust aggregation helpers for dual_yolo_depth_gpu.cu.
+// ROI 多点匹配的设备端数学、patch 评分与稳健聚合辅助函数。
 // Included inside the .cu anonymous namespace.
 
 __device__ __forceinline__ int clampInt(int v, int lo, int hi) {

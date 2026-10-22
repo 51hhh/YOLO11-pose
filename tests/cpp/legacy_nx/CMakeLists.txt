@@ -1,6 +1,8 @@
 set(LEGACY_NX_SOURCE_DIR "${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src")
 set(VOLLEYBALL_LOGGING_INCLUDE_DIR
   "${PROJECT_SOURCE_DIR}/libs/logging/include")
+set(VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR
+  "${PROJECT_SOURCE_DIR}/adapters/cuda_depth")
 
 function(add_legacy_nx_test target)
   add_executable(${target} ${ARGN})
@@ -66,9 +68,12 @@ target_link_libraries(depth_match_contract_tests PRIVATE
 add_legacy_nx_test(
   dual_yolo_depth_gpu_tests
   stereo/dual_yolo_depth_gpu_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/stereo/dual_yolo_depth_gpu.cpp"
+  "${VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR}/src/roi_matcher.cpp"
 )
-target_include_directories(dual_yolo_depth_gpu_tests BEFORE PRIVATE fakes/gpu)
+target_include_directories(dual_yolo_depth_gpu_tests BEFORE PRIVATE
+  fakes/gpu
+  "${VOLLEYBALL_CUDA_DEPTH_ADAPTER_DIR}/include"
+)
 target_link_libraries(dual_yolo_depth_gpu_tests PRIVATE
   volleyball::tensorrt_types
 )
