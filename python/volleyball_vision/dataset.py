@@ -38,6 +38,29 @@ class DatasetValidationSummary:
     partial_directories: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class _AcceptedPair:
+    position_m: tuple[float, float, float]
+    covariance_m2: tuple[float, float, float, float, float, float] | None
+    epipolar_error_px: float | None
+
+
+_COVARIANCE_3D_FIELDS = (
+    "cov_xx_m2",
+    "cov_xy_m2",
+    "cov_xz_m2",
+    "cov_yy_m2",
+    "cov_yz_m2",
+    "cov_zz_m2",
+)
+_CAMERA_TIMESTAMP_SEMANTICS = {
+    "stereo_midpoint_capture",
+    "left_capture",
+    "right_capture",
+    "hardware_trigger",
+}
+
+
 def _contract_root(project_root: str | Path | None = None) -> Path:
     root = find_project_root(project_root)
     return root / "contracts" / "capture" / "v2.1.0"
@@ -126,6 +149,73 @@ def _boolean(value: str, *, field_name: str) -> bool:
     if value in {"0", "false", "False"}:
         return False
     raise DatasetError(f"{field_name} 必须是布尔值，实际为 {value!r}")
+
+
+def _optional_finite_group(
+    row: Mapping[str, str],
+    fields: tuple[str, ...],
+    *,
+    prefix: str,
+) -> tuple[float, ...] | None:
+    values = [row[field] for field in fields]
+    if all(value == "" for value in values):
+        return None
+    if any(value == "" for value in values):
+        raise DatasetError(f"{prefix}: {fields[0]}..{fields[-1]} 必须整组填写或留空")
+    parsed = tuple(
+        _finite(value, field_name=f"{prefix}.{field}")
+        for field, value in zip(fields, values)
+    )
+    assert all(value is not None for value in parsed)
+    return tuple(float(value) for value in parsed)
+
+
+def _covariance3(
+    row: Mapping[str, str],
+    *,
+    prefix: str,
+) -> tuple[float, float, float, float, float, float] | None:
+    values = _optional_finite_group(
+        row,
+        _COVARIANCE_3D_FIELDS,
+        prefix=prefix,
+    )
+    if values is None:
+        return None
+    xx, xy, xz, yy, yz, zz = values
+    scale = max(max(abs(value) for value in values), 1.0e-12)
+    if min(xx, yy, zz) < 0.0:
+        raise DatasetError(f"{prefix}: 3D 协方差对角线不得为负")
+    tolerance_2 = 1.0e-9 * scale**2
+    second_order_minors = (
+        xx * yy - xy * xy,
+        xx * zz - xz * xz,
+        yy * zz - yz * yz,
+    )
+    if min(second_order_minors) < -tolerance_2:
+        raise DatasetError(f"{prefix}: 3D 协方差不是半正定矩阵")
+    determinant = (
+        xx * yy * zz
+        + 2.0 * xy * xz * yz
+        - xx * yz * yz
+        - yy * xz * xz
+        - zz * xy * xy
+    )
+    if determinant < -(1.0e-9 * scale**3):
+        raise DatasetError(f"{prefix}: 3D 协方差不是半正定矩阵")
+    return (xx, xy, xz, yy, yz, zz)
+
+
+def _same_measurement(
+    actual: tuple[float, ...] | None,
+    expected: tuple[float, ...] | None,
+) -> bool:
+    if actual is None or expected is None:
+        return actual is expected
+    return len(actual) == len(expected) and all(
+        math.isclose(lhs, rhs, rel_tol=1.0e-12, abs_tol=1.0e-12)
+        for lhs, rhs in zip(actual, expected)
+    )
 
 
 def _read_table(path: Path, expected_columns: list[str]) -> list[dict[str, str]]:
@@ -366,7 +456,7 @@ def _validate_trial_tables(
             selected_candidates.add(key)
         candidates[key] = row
 
-    accepted_pairs: dict[tuple[int, int], list[dict[str, str]]] = defaultdict(list)
+    accepted_pairs: dict[tuple[int, int], _AcceptedPair] = {}
     accepted_candidates: set[tuple[str, int, int]] = set()
     pair_ids: set[int] = set()
     for line, row in enumerate(tables["stereo_pairs"], start=2):
@@ -384,8 +474,15 @@ def _validate_trial_tables(
         right_key = (roles["right"], right_frame, right_candidate)
         if left_key not in candidates or right_key not in candidates:
             raise DatasetError(f"{prefix}: 候选引用不存在或左右角色错误")
-        left_capture = int(row["left_capture_ns"])
-        right_capture = int(row["right_capture_ns"])
+        left_capture = _integer(
+            row["left_capture_ns"],
+            field_name=f"{prefix}.left_capture_ns",
+        )
+        right_capture = _integer(
+            row["right_capture_ns"],
+            field_name=f"{prefix}.right_capture_ns",
+        )
+        assert left_capture is not None and right_capture is not None
         if left_capture != int(frames[(roles["left"], left_frame)]["capture_timestamp_ns"]):
             raise DatasetError(f"{prefix}: left_capture_ns 与左帧不一致")
         if right_capture != int(frames[(roles["right"], right_frame)]["capture_timestamp_ns"]):
@@ -393,12 +490,40 @@ def _validate_trial_tables(
         delta = _finite(row["delta_t_lr_ns"], field_name=f"{prefix}.delta_t_lr_ns")
         if not math.isclose(float(delta), right_capture - left_capture, abs_tol=0.5):
             raise DatasetError(f"{prefix}: delta_t_lr_ns 不等于右减左曝光时间")
+        disparity = _finite(
+            row["disparity_px"],
+            field_name=f"{prefix}.disparity_px",
+            allow_blank=True,
+        )
+        epipolar_error = _finite(
+            row["epipolar_error_px"],
+            field_name=f"{prefix}.epipolar_error_px",
+            allow_blank=True,
+        )
+        if epipolar_error is not None and epipolar_error < 0.0:
+            raise DatasetError(f"{prefix}: epipolar_error_px 不得为负")
+        position = _optional_finite_group(
+            row,
+            ("x_rig_m", "y_rig_m", "z_rig_m"),
+            prefix=prefix,
+        )
+        covariance = _covariance3(row, prefix=prefix)
         accepted = _boolean(row["accepted"], field_name=f"{prefix}.accepted")
-        position = [row["x_rig_m"], row["y_rig_m"], row["z_rig_m"]]
         if accepted:
-            if any(value == "" for value in position) or row["reject_reason"]:
+            if position is None or row["reject_reason"]:
                 raise DatasetError(f"{prefix}: 接受配对必须有 3D 且不得有拒绝理由")
-            accepted_pairs[(left_frame, right_frame)].append(row)
+            if position[2] <= 0.0:
+                raise DatasetError(f"{prefix}: 接受配对的 z_rig_m 必须大于 0")
+            if disparity is None or disparity <= 0.0:
+                raise DatasetError(f"{prefix}: 接受配对必须有正视差")
+            frame_pair = (left_frame, right_frame)
+            if frame_pair in accepted_pairs:
+                raise DatasetError(f"{prefix}: 同一左右帧只能有一个 accepted 配对")
+            accepted_pairs[frame_pair] = _AcceptedPair(
+                position_m=(position[0], position[1], position[2]),
+                covariance_m2=covariance,
+                epipolar_error_px=epipolar_error,
+            )
             accepted_candidates.update((left_key, right_key))
         elif not row["reject_reason"]:
             raise DatasetError(f"{prefix}: 拒绝配对必须有 reject_reason")
@@ -437,28 +562,90 @@ def _validate_trial_tables(
     semantics = metadata["capture"]["trajectory_timebase"]["timestamp_semantics"]
     previous_sample = -1
     previous_time_ns = -1
+    referenced_pairs: set[tuple[int, int]] = set()
     for line, row in enumerate(tables["trajectory"], start=2):
         prefix = f"trajectory.csv:{line}"
         sample = _integer(row["sample_index"], field_name=f"{prefix}.sample_index")
         assert sample is not None
-        timestamp_ns = round(float(row["timestamp_s"]) * 1.0e9)
+        timestamp_s = _finite(
+            row["timestamp_s"],
+            field_name=f"{prefix}.timestamp_s",
+        )
+        assert timestamp_s is not None
+        timestamp_ns = round(timestamp_s * 1.0e9)
         if sample <= previous_sample or timestamp_ns <= previous_time_ns:
             raise DatasetError(f"{prefix}: sample_index 和 timestamp_s 必须严格递增")
         previous_sample = sample
         previous_time_ns = timestamp_ns
+        position = tuple(
+            _finite(row[field], field_name=f"{prefix}.{field}")
+            for field in ("x_m", "y_m", "z_m")
+        )
+        assert all(value is not None for value in position)
+        trajectory_position = tuple(float(value) for value in position)
+        if trajectory_position[2] <= 0.0:
+            raise DatasetError(f"{prefix}: z_m 必须大于 0")
+        confidence = _finite(
+            row["confidence"],
+            field_name=f"{prefix}.confidence",
+            allow_blank=True,
+        )
+        if confidence is not None and not 0.0 <= confidence <= 1.0:
+            raise DatasetError(f"{prefix}: confidence 必须在 [0,1]")
+        reprojection_error = _finite(
+            row["reprojection_error_px"],
+            field_name=f"{prefix}.reprojection_error_px",
+            allow_blank=True,
+        )
+        if reprojection_error is not None and reprojection_error < 0.0:
+            raise DatasetError(f"{prefix}: reprojection_error_px 不得为负")
+        trajectory_covariance = _covariance3(row, prefix=prefix)
         left_text = row["left_frame_index"]
         right_text = row["right_frame_index"]
         if (left_text == "") != (right_text == ""):
             raise DatasetError(f"{prefix}: 左右帧引用必须同时存在或同时留空")
+        if semantics in _CAMERA_TIMESTAMP_SEMANTICS and not left_text:
+            raise DatasetError(f"{prefix}: 相机时基轨迹必须引用左右帧")
         if left_text:
-            left_index = int(left_text)
-            right_index = int(right_text)
+            left_index = _integer(
+                left_text,
+                field_name=f"{prefix}.left_frame_index",
+            )
+            right_index = _integer(
+                right_text,
+                field_name=f"{prefix}.right_frame_index",
+            )
+            assert left_index is not None and right_index is not None
             left_frame_row = frames.get((roles["left"], left_index))
             right_frame_row = frames.get((roles["right"], right_index))
             if left_frame_row is None or right_frame_row is None:
                 raise DatasetError(f"{prefix}: 引用不存在的左右帧")
-            if (left_index, right_index) not in accepted_pairs:
+            frame_pair = (left_index, right_index)
+            accepted_pair = accepted_pairs.get(frame_pair)
+            if accepted_pair is None:
                 raise DatasetError(f"{prefix}: 轨迹样本必须引用已接受的直接配对")
+            if frame_pair in referenced_pairs:
+                raise DatasetError(f"{prefix}: accepted 配对只能生成一个轨迹样本")
+            referenced_pairs.add(frame_pair)
+            if not _same_measurement(
+                trajectory_position,
+                accepted_pair.position_m,
+            ):
+                raise DatasetError(f"{prefix}: 3D 位置与 accepted 配对不一致")
+            if not _same_measurement(
+                trajectory_covariance,
+                accepted_pair.covariance_m2,
+            ):
+                raise DatasetError(f"{prefix}: 协方差与 accepted 配对不一致")
+            if not _same_measurement(
+                None if reprojection_error is None else (reprojection_error,),
+                None
+                if accepted_pair.epipolar_error_px is None
+                else (accepted_pair.epipolar_error_px,),
+            ):
+                raise DatasetError(
+                    f"{prefix}: 重投影误差与 accepted 配对极线误差不一致"
+                )
             left_ns = _mapped_timestamp_ns(
                 int(left_frame_row["capture_timestamp_ns"]),
                 left_frame_row["clock_domain"],
@@ -487,6 +674,14 @@ def _validate_trial_tables(
                 expected = timestamp_ns
             if abs(timestamp_ns - expected) > 1:
                 raise DatasetError(f"{prefix}: timestamp_s 与宣布的轨迹时基不一致")
+
+    if semantics in _CAMERA_TIMESTAMP_SEMANTICS:
+        missing_trajectory = sorted(set(accepted_pairs) - referenced_pairs)
+        if missing_trajectory:
+            raise DatasetError(
+                "accepted 配对必须各自生成一个直接轨迹样本: "
+                f"missing={missing_trajectory}"
+            )
 
     for line, row in enumerate(tables["processing_timings"], start=2):
         prefix = f"processing_timing.csv:{line}"

@@ -221,6 +221,34 @@ def _write_valid_trial(root: Path, trial_id: str = "flight-000001") -> Path:
         return writer.finalize()
 
 
+def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open(newline="", encoding="utf-8") as source:
+        reader = csv.DictReader(source)
+        assert reader.fieldnames is not None
+        return list(reader.fieldnames), list(reader)
+
+
+def _write_csv(
+    path: Path,
+    fieldnames: list[str],
+    rows: list[dict[str, str]],
+) -> None:
+    with path.open("w", newline="", encoding="utf-8") as output:
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _set_declared_rows(trial: Path, table: str, count: int) -> None:
+    metadata_path = trial / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if table == "trajectory":
+        metadata["trajectory"]["sample_count"] = count
+    else:
+        metadata["sidecars"][table]["row_count"] = count
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+
 class DatasetContractTests(unittest.TestCase):
     def test_writer_atomically_publishes_valid_trial(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -271,6 +299,50 @@ class DatasetContractTests(unittest.TestCase):
                 writer.writerows(rows)
 
             with self.assertRaisesRegex(DatasetError, "selected.*accepted"):
+                validate_trial(trial, project_root=ROOT)
+
+    def test_validator_binds_trajectory_values_to_accepted_pair(self) -> None:
+        cases = (
+            ("x_m", "0.2", "3D 位置"),
+            ("cov_zz_m2", "0.02", "协方差"),
+            ("reprojection_error_px", "0.2", "重投影误差"),
+        )
+        for field, replacement, message in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                trial = _write_valid_trial(Path(directory))
+                path = trial / "trajectory.csv"
+                fieldnames, rows = _read_csv(path)
+                rows[0][field] = replacement
+                _write_csv(path, fieldnames, rows)
+                with self.assertRaisesRegex(DatasetError, message):
+                    validate_trial(trial, project_root=ROOT)
+
+    def test_validator_rejects_multiple_accepted_pairs_for_one_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            path = trial / "stereo_pairs.csv"
+            fieldnames, rows = _read_csv(path)
+            duplicate = dict(rows[0])
+            duplicate["pair_id"] = "1"
+            rows.append(duplicate)
+            _write_csv(path, fieldnames, rows)
+            _set_declared_rows(trial, "stereo_pairs", len(rows))
+
+            with self.assertRaisesRegex(DatasetError, "只能有一个 accepted"):
+                validate_trial(trial, project_root=ROOT)
+
+    def test_validator_rejects_accepted_pair_without_trajectory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            path = trial / "trajectory.csv"
+            fieldnames, _ = _read_csv(path)
+            _write_csv(path, fieldnames, [])
+            _set_declared_rows(trial, "trajectory", 0)
+
+            with self.assertRaisesRegex(DatasetError, "必须各自生成一个"):
                 validate_trial(trial, project_root=ROOT)
 
     def test_writer_rejects_contract_extra_column(self) -> None:
