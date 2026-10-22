@@ -127,3 +127,16 @@ add_adapter_test(
 target_link_libraries(
   ros2_source_epoch_tests PRIVATE volleyball::ros2_epoch
 )
+
+if(TARGET volleyball::stereo_calibration)
+  add_adapter_test(
+    stereo_calibration_tests
+    stereo_calibration_tests.cpp
+  )
+  target_compile_definitions(stereo_calibration_tests PRIVATE
+    VOLLEYBALL_TEST_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+  )
+  target_link_libraries(
+    stereo_calibration_tests PRIVATE volleyball::stereo_calibration
+  )
+endif()

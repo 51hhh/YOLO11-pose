@@ -33,6 +33,14 @@ if(NOT EXISTS
     "Mainline tensorrt adapter not found next to legacy_nx: "
     "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../cuda_preprocess")
+if(NOT EXISTS
+   "${VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR}/include/volleyball/adapters/cuda_preprocess/stereo_calibration.hpp")
+  message(FATAL_ERROR
+    "Mainline CUDA preprocess adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR}")
+endif()
 set(VOLLEYBALL_ROS2_ADAPTER_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../ros2")
 if(NOT EXISTS
@@ -131,6 +139,12 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d highgui 
 set(STEREO_OPENCV_LIBS ${OpenCV_LIBS})
 set(STEREO_OPENCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
+
+add_subdirectory(
+  "${VOLLEYBALL_CUDA_PREPROCESS_ADAPTER_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_cuda_preprocess"
+  EXCLUDE_FROM_ALL
+)
 
 # OpenCV CUDA ORB 是可选后端。缺少 cudafeatures2d 时禁用 ORB 候选，
 # 但不阻塞默认 90 Hz 实时管线构建。
@@ -311,7 +325,6 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_roi_match_helpers.cpp
   src/pipeline/pipeline_roi_stage2.cpp
   src/pipeline/pipeline_stages.cpp
-  src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
   src/stereo/roi_stereo_matcher.cpp
@@ -385,6 +398,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 
 # ==================== 链接 ====================
 target_link_libraries(stereo_pipeline
+  volleyball::stereo_calibration
   volleyball::tensorrt_runtime
   # VPI
   vpi

@@ -3,11 +3,12 @@
  * @brief 双目标定参数加载实现
  */
 
-#include "stereo_calibration.h"
+#include "volleyball/adapters/cuda_preprocess/stereo_calibration.hpp"
 #include "volleyball/logging/log.hpp"
-#include <fstream>
 
-namespace stereo3d {
+#include <cstddef>
+
+namespace volleyball::adapters::cuda_preprocess {
 
 bool StereoCalibration::load(const std::string& filepath) {
     cv::FileStorage fs(filepath, cv::FileStorage::READ);
@@ -66,9 +67,11 @@ bool StereoCalibration::load(const std::string& filepath) {
             LOG_ERROR("Invalid %s: empty", name);
             ok = false;
         } else {
-            int n = m.total();  // 元素总数
+            const std::size_t n = m.total();  // 元素总数
             if (n != 4 && n != 5 && n != 8 && n != 12 && n != 14) {
-                LOG_ERROR("Invalid %s: expected 4/5/8/12/14 coefficients, got %d", name, n);
+                LOG_ERROR(
+                    "Invalid %s: expected 4/5/8/12/14 coefficients, got %zu",
+                    name, n);
                 ok = false;
             }
         }
@@ -161,4 +164,4 @@ bool StereoCalibration::buildRemapMaps(
     return true;
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::cuda_preprocess
