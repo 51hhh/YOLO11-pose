@@ -165,12 +165,12 @@ inline StaticStereoPreprocessor& passingPreprocessor() {
 class CollectingPublisher final : public ports::ObservationPublisher {
 public:
     [[nodiscard]] ports::PublishResult publish(
-        const core::ValidatedObservation& observation) override {
-        observations.push_back(observation);
+        const ports::ObservationPublication& publication) override {
+        publications.push_back(publication);
         return {true, {}};
     }
 
-    std::vector<core::ValidatedObservation> observations;
+    std::vector<ports::ObservationPublication> publications;
 };
 
 inline core::CameraFrameRecord frame(

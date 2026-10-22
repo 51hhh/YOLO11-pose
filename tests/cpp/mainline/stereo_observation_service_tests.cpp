@@ -81,7 +81,29 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
             }) == 1,
         "exactly one pair may be accepted for one direct observation");
     check(writer.observations().size() == 1, "one direct observation must be written");
-    check(publisher.observations.size() == 1, "accepted direct observation must publish");
+    check(publisher.publications.size() == 1,
+          "accepted direct observation must publish");
+    const auto& publication = publisher.publications.front();
+    check(
+        publication.observation.measurement.observation_id ==
+                writer.observations().front().observation_id &&
+            publication.association.pair_id ==
+                publication.observation.measurement.source_pair_id &&
+            std::any_of(
+                writer.associations().begin(),
+                writer.associations().end(),
+                [&](const core::StereoAssociationAttempt& attempt) {
+                    return attempt.pair_id == publication.association.pair_id &&
+                           attempt.decision ==
+                               core::AssociationDecision::accepted;
+                }),
+        "publication must preserve the written observation and pair identity");
+    check(
+        publication.left_frame.camera_id == core::CameraId{"left"} &&
+            publication.right_frame.camera_id == core::CameraId{"right"} &&
+            publication.left_detection.selected &&
+            publication.right_detection.selected,
+        "publication must retain both source frames and selected detections");
     check(result.observation &&
               std::abs(result.observation->position_m.z - 16.0) < 1.0e-9,
           "rectified triangulation must use z=fx*baseline/disparity");

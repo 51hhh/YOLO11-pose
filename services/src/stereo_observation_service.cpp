@@ -400,10 +400,15 @@ StereoProcessResult StereoObservationService::process(
     }
     ++next_observation_id_;
     if (publisher_) {
-        core::ValidatedObservation validated;
-        validated.measurement = observation;
-        validated.status = core::ValidationStatus::accepted;
-        const auto published = publisher_->publish(validated);
+        ports::ObservationPublication publication;
+        publication.observation.measurement = observation;
+        publication.observation.status = core::ValidationStatus::accepted;
+        publication.left_frame = frame.left.metadata;
+        publication.right_frame = frame.right.metadata;
+        publication.left_detection = *left_candidate;
+        publication.right_detection = *right_candidate;
+        publication.association = selected;
+        const auto published = publisher_->publish(publication);
         if (!published.success) {
             return fail(
                 ProcessStatus::publish_error,
