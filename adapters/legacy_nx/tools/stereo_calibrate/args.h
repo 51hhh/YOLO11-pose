@@ -6,6 +6,7 @@
 #ifndef STEREO_3D_PIPELINE_STEREO_CALIBRATE_ARGS_H_
 #define STEREO_3D_PIPELINE_STEREO_CALIBRATE_ARGS_H_
 
+#include <cstdio>
 #include <string>
 
 struct StereoCalibrateArgs {
@@ -20,8 +21,15 @@ struct StereoCalibrateArgs {
     bool use_sb = false;
     bool use_exhaustive = false;
     int jobs = 0;
+    bool help_requested = false;
 };
 
-StereoCalibrateArgs parseStereoCalibrateArgs(int argc, char* argv[]);
+bool parseStereoCalibrateArgs(int argc,
+                              char* argv[],
+                              StereoCalibrateArgs& args);
+bool validateStereoCalibrateArgs(const StereoCalibrateArgs& args);
+bool validateStereoCalibrateOutputPath(const std::string& output);
+void printStereoCalibrateUsage(const char* argv0,
+                               std::FILE* stream = stdout);
 
 #endif  // STEREO_3D_PIPELINE_STEREO_CALIBRATE_ARGS_H_

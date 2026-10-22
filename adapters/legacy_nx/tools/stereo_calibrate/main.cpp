@@ -80,7 +80,11 @@ static void printWorstPerImageErrors(const std::vector<std::string>& stems,
 // ======================== Main ========================
 
 int main(int argc, char* argv[]) {
-    StereoCalibrateArgs args = parseStereoCalibrateArgs(argc, argv);
+    StereoCalibrateArgs args;
+    if (!parseStereoCalibrateArgs(argc, argv, args)) return 1;
+    if (args.help_requested) return 0;
+    if (!validateStereoCalibrateArgs(args)) return 1;
+    if (!validateStereoCalibrateOutputPath(args.output)) return 1;
     const cv::Size boardSize(args.board_w, args.board_h);
     const auto objTemplate = makeObjectPoints(boardSize, args.square_size);
 
@@ -283,6 +287,9 @@ int main(int argc, char* argv[]) {
     // ---- Save calibration ----
     // Output format compatible with StereoCalibration::load()
     {
+        // Calibration can take minutes. Refuse a target that appeared after
+        // argument validation rather than truncating it through FileStorage.
+        if (!validateStereoCalibrateOutputPath(args.output)) return 1;
         const fs::path output_path(args.output);
         const fs::path parent = output_path.parent_path();
         if (!parent.empty()) {

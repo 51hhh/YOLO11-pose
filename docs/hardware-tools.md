@@ -41,10 +41,10 @@ adapters/legacy_nx/build/stereo_calibrate --help
 adapters/legacy_nx/build/stereo_calibrate \
   --images-dir /path/to/calibration_images \
   --square-size <方格边长毫米> \
-  --output /tmp/stereo_calib.yaml
+  --output /tmp/new_stereo_calib.yaml
 ```
 
-不要直接覆盖仓库中的权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
+输出文件必须不存在，工具不会覆盖已有候选或权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
 
 ## 主流水线
 

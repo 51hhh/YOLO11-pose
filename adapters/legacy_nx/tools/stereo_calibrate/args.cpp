@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 namespace {
@@ -39,42 +40,69 @@ bool parseFloatValue(const char* text, float& out) {
     return true;
 }
 
-const char* requireValue(int& i, int argc, char* argv[],
-                         const std::string& arg) {
+bool requireValue(int& i, int argc, char* argv[],
+                  const std::string& arg, const char*& value) {
     if (i + 1 >= argc) {
         fprintf(stderr, "[ERROR] %s requires a value\n", arg.c_str());
-        std::exit(1);
+        return false;
     }
-    return argv[++i];
+    value = argv[++i];
+    return true;
 }
 
 }  // namespace
 
-StereoCalibrateArgs parseStereoCalibrateArgs(int argc, char* argv[]) {
-    StereoCalibrateArgs a;
+void printStereoCalibrateUsage(const char* argv0, std::FILE* stream) {
+    std::fprintf(
+        stream,
+        "Usage: %s -s SQUARE_SIZE [options]\n"
+        "  -s, --square-size MM   Square size in mm (required)\n"
+        "  -d, --images-dir DIR   Image directory [calibration_images]\n"
+        "  -o, --output FILE      New output YAML [stereo_calib.yaml]\n"
+        "  --board-w N            Inner corners width [5]\n"
+        "  --board-h N            Inner corners height [8]\n"
+        "  --no-vis               Skip visualization\n"
+        "  --gpu-preprocess       Use CUDA for image-to-gray preprocessing when available\n"
+        "  --optimize-intrinsics  Refine intrinsics during stereo calibration\n"
+        "  --sb                   Enable SB chessboard fallback\n"
+        "  --exhaustive           Enable slow exhaustive SB fallback\n"
+        "  --jobs N               Detection workers [CPU cores; 1 with GPU preprocessing]\n"
+        "  -h, --help             Show this help\n",
+        argv0);
+}
+
+bool parseStereoCalibrateArgs(int argc,
+                              char* argv[],
+                              StereoCalibrateArgs& a) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        const char* value = nullptr;
         if (arg == "-s" || arg == "--square-size") {
-            const char* value = requireValue(i, argc, argv, arg);
-            if (!parseFloatValue(value, a.square_size)) {
-                fprintf(stderr, "[ERROR] Invalid square size: %s\n", value);
-                std::exit(1);
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseFloatValue(value, a.square_size)) {
+                fprintf(stderr, "[ERROR] Invalid square size: %s\n",
+                        value ? value : "");
+                return false;
             }
         } else if (arg == "-d" || arg == "--images-dir") {
-            a.images_dir = requireValue(i, argc, argv, arg);
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.images_dir = value;
         } else if (arg == "-o" || arg == "--output") {
-            a.output = requireValue(i, argc, argv, arg);
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.output = value;
         } else if (arg == "--board-w") {
-            const char* value = requireValue(i, argc, argv, arg);
-            if (!parseIntValue(value, a.board_w)) {
-                fprintf(stderr, "[ERROR] Invalid --board-w value: %s\n", value);
-                std::exit(1);
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.board_w)) {
+                fprintf(stderr, "[ERROR] Invalid --board-w value: %s\n",
+                        value ? value : "");
+                return false;
             }
         } else if (arg == "--board-h") {
-            const char* value = requireValue(i, argc, argv, arg);
-            if (!parseIntValue(value, a.board_h)) {
-                fprintf(stderr, "[ERROR] Invalid --board-h value: %s\n", value);
-                std::exit(1);
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.board_h)) {
+                fprintf(stderr, "[ERROR] Invalid --board-h value: %s\n",
+                        value ? value : "");
+                return false;
             }
         } else if (arg == "--no-vis") {
             a.no_vis = true;
@@ -87,48 +115,86 @@ StereoCalibrateArgs parseStereoCalibrateArgs(int argc, char* argv[]) {
         } else if (arg == "--exhaustive") {
             a.use_exhaustive = true;
         } else if (arg == "--jobs") {
-            const char* value = requireValue(i, argc, argv, arg);
-            if (!parseIntValue(value, a.jobs)) {
-                fprintf(stderr, "[ERROR] Invalid --jobs value: %s\n", value);
-                std::exit(1);
+            if (!requireValue(i, argc, argv, arg, value) ||
+                !parseIntValue(value, a.jobs)) {
+                fprintf(stderr, "[ERROR] Invalid --jobs value: %s\n",
+                        value ? value : "");
+                return false;
             }
         } else if (arg == "-h" || arg == "--help") {
-            printf("Usage: %s -s SQUARE_SIZE [options]\n"
-                   "  -s, --square-size MM   Square size in mm (required)\n"
-                   "  -d, --images-dir DIR   Image directory (default: calibration_images)\n"
-                   "  -o, --output FILE      Output YAML (default: stereo_calib.yaml)\n"
-                   "  --board-w N            Inner corners width (default: 5)\n"
-                   "  --board-h N            Inner corners height (default: 8)\n"
-                   "  --no-vis               Skip visualization\n"
-                   "  --gpu-preprocess       Use CUDA for Bayer/BGR to gray preprocessing when available\n"
-                   "  --optimize-intrinsics  Let stereoCalibrate refine intrinsics (default: fix monocular intrinsics)\n"
-                   "  --sb                   Enable SB chessboard fallback after classic detectors\n"
-                   "  --exhaustive           Enable slow SB exhaustive fallback for difficult boards\n"
-                   "  --jobs N               Parallel image-pair detection jobs (default: CPU cores; 1 with --gpu-preprocess)\n"
-                   "  -h, --help             Show help\n",
-                   argv[0]);
-            std::exit(0);
+            printStereoCalibrateUsage(argv[0]);
+            a.help_requested = true;
+            return true;
         } else {
             fprintf(stderr, "[ERROR] Unknown or incomplete argument: %s\n",
                     arg.c_str());
-            std::exit(1);
+            printStereoCalibrateUsage(argv[0], stderr);
+            return false;
         }
     }
+    if (a.use_exhaustive) a.use_sb = true;
+    return true;
+}
+
+bool validateStereoCalibrateArgs(const StereoCalibrateArgs& a) {
+    if (a.help_requested) return true;
     if (a.square_size <= 0.0f) {
         fprintf(stderr, "[ERROR] Square size required: -s <mm>\n");
-        std::exit(1);
+        return false;
+    }
+    if (a.images_dir.empty()) {
+        fprintf(stderr, "[ERROR] Image directory must not be empty\n");
+        return false;
+    }
+    if (a.output.empty()) {
+        fprintf(stderr, "[ERROR] Output path must not be empty\n");
+        return false;
     }
     if (a.board_w < 2 || a.board_h < 2) {
         fprintf(stderr, "[ERROR] Invalid chessboard inner corners: %dx%d\n",
                 a.board_w, a.board_h);
-        std::exit(1);
+        return false;
     }
     if (a.jobs < 0) {
         fprintf(stderr, "[ERROR] --jobs must be >= 0, got %d\n", a.jobs);
-        std::exit(1);
+        return false;
     }
-    if (a.use_exhaustive) {
-        a.use_sb = true;
+    return true;
+}
+
+bool validateStereoCalibrateOutputPath(const std::string& output) {
+    namespace fs = std::filesystem;
+    const fs::path output_path(output);
+    if (output_path.empty() || output_path.filename().empty()) {
+        fprintf(stderr, "[ERROR] Output must name a calibration file\n");
+        return false;
     }
-    return a;
+
+    std::error_code error;
+    if (fs::exists(output_path, error)) {
+        fprintf(stderr,
+                "[ERROR] Refusing to overwrite existing calibration: %s\n"
+                "        Choose a new -o/--output path.\n",
+                output.c_str());
+        return false;
+    }
+    if (error) {
+        fprintf(stderr, "[ERROR] Cannot inspect output path %s: %s\n",
+                output.c_str(), error.message().c_str());
+        return false;
+    }
+
+    const fs::path parent = output_path.parent_path();
+    if (!parent.empty() && fs::exists(parent, error)) {
+        if (error || !fs::is_directory(parent, error) || error) {
+            fprintf(stderr, "[ERROR] Output parent is not a directory: %s\n",
+                    parent.string().c_str());
+            return false;
+        }
+    } else if (error) {
+        fprintf(stderr, "[ERROR] Cannot inspect output parent %s: %s\n",
+                parent.string().c_str(), error.message().c_str());
+        return false;
+    }
+    return true;
 }
