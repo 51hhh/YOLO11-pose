@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 from pathlib import Path
 import tempfile
@@ -254,6 +255,22 @@ class DatasetContractTests(unittest.TestCase):
             metadata["perception_pipelines"][0]["score_threshold"] = 0.99
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(DatasetError, "指纹不匹配"):
+                validate_trial(trial, project_root=ROOT)
+
+    def test_validator_rejects_accepted_pair_without_selected_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            detections_path = trial / "detections_2d.csv"
+            with detections_path.open(newline="", encoding="utf-8") as source:
+                rows = list(csv.DictReader(source))
+                fieldnames = list(rows[0])
+            rows[0]["selected"] = "false"
+            with detections_path.open("w", newline="", encoding="utf-8") as output:
+                writer = csv.DictWriter(output, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            with self.assertRaisesRegex(DatasetError, "selected.*accepted"):
                 validate_trial(trial, project_root=ROOT)
 
     def test_writer_rejects_contract_extra_column(self) -> None:

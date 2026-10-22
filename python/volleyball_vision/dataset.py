@@ -345,6 +345,7 @@ def _validate_trial_tables(
         pipeline_ids.add(pipeline_id)
 
     candidates: dict[tuple[str, int, int], dict[str, str]] = {}
+    selected_candidates: set[tuple[str, int, int]] = set()
     for line, row in enumerate(tables["detections_2d"], start=2):
         prefix = f"detections_2d.csv:{line}"
         camera_id = row["camera_id"]
@@ -361,9 +362,12 @@ def _validate_trial_tables(
         score = _finite(row["score"], field_name=f"{prefix}.score", allow_blank=True)
         if score is not None and not 0.0 <= score <= 1.0:
             raise DatasetError(f"{prefix}: score 必须在 [0,1]")
+        if _boolean(row["selected"], field_name=f"{prefix}.selected"):
+            selected_candidates.add(key)
         candidates[key] = row
 
     accepted_pairs: dict[tuple[int, int], list[dict[str, str]]] = defaultdict(list)
+    accepted_candidates: set[tuple[str, int, int]] = set()
     pair_ids: set[int] = set()
     for line, row in enumerate(tables["stereo_pairs"], start=2):
         prefix = f"stereo_pairs.csv:{line}"
@@ -395,8 +399,17 @@ def _validate_trial_tables(
             if any(value == "" for value in position) or row["reject_reason"]:
                 raise DatasetError(f"{prefix}: 接受配对必须有 3D 且不得有拒绝理由")
             accepted_pairs[(left_frame, right_frame)].append(row)
+            accepted_candidates.update((left_key, right_key))
         elif not row["reject_reason"]:
             raise DatasetError(f"{prefix}: 拒绝配对必须有 reject_reason")
+
+    if selected_candidates != accepted_candidates:
+        missing = sorted(accepted_candidates - selected_candidates)
+        unexpected = sorted(selected_candidates - accepted_candidates)
+        raise DatasetError(
+            "detections_2d.selected 必须与 accepted 配对引用完全一致: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
 
     mappings_by_source: dict[str, list[dict[str, str]]] = defaultdict(list)
     mapping_intervals: dict[str, list[tuple[float, float]]] = defaultdict(list)
