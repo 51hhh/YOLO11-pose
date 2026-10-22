@@ -117,7 +117,6 @@ def _run(args: argparse.Namespace) -> int:
     result = run_runtime(
         config,
         generated_config=args.generated_config,
-        extra_arguments=args.legacy_arg,
         dry_run=args.dry_run,
     )
     if args.dry_run:
@@ -307,12 +306,6 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument(
         "--generated-config",
         help="保留投影后的旧 NX YAML；为防误覆盖，路径必须不存在",
-    )
-    runtime.add_argument(
-        "--legacy-arg",
-        action="append",
-        default=[],
-        help="传给旧 NX 可执行文件的单个参数，可重复",
     )
     runtime.add_argument("--dry-run", action="store_true", help="只生成配置并显示命令")
     runtime.set_defaults(handler=_run)

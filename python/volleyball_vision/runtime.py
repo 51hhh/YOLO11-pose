@@ -10,7 +10,6 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
-from typing import Sequence
 
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError
@@ -56,7 +55,6 @@ def _command(
     root: Path,
     config: ResolvedConfig,
     generated_config: Path,
-    extra_arguments: Sequence[str],
 ) -> tuple[str, ...]:
     executable = (
         root / config.data["adapters"]["legacy_pipeline"]["executable"]
@@ -65,7 +63,6 @@ def _command(
         str(executable),
         "--config",
         str(generated_config),
-        *tuple(extra_arguments),
     )
 
 
@@ -73,7 +70,6 @@ def run_runtime(
     config: ResolvedConfig,
     *,
     generated_config: str | Path | None = None,
-    extra_arguments: Sequence[str] = (),
     dry_run: bool = False,
     project_root: str | Path | None = None,
 ) -> RuntimeLaunchResult:
@@ -83,7 +79,7 @@ def run_runtime(
     if generated_config is not None:
         output = Path(generated_config).resolve()
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, extra_arguments)
+        command = _command(root, config, written)
         if dry_run:
             return RuntimeLaunchResult(command, written, True, None)
         completed = subprocess.run(command, cwd=root, check=False)
@@ -98,13 +94,13 @@ def run_runtime(
         directory = Path(tempfile.mkdtemp(prefix="volleyball-runtime-"))
         output = directory / f"{config.profile}-{config.fingerprint_sha256[:12]}.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, extra_arguments)
+        command = _command(root, config, written)
         return RuntimeLaunchResult(command, written, True, None)
 
     with tempfile.TemporaryDirectory(prefix="volleyball-runtime-") as directory:
         output = Path(directory) / "pipeline.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, extra_arguments)
+        command = _command(root, config, written)
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
             raise DatasetError(f"NX 实时管线退出码为 {completed.returncode}")

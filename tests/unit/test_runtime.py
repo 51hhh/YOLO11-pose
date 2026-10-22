@@ -44,15 +44,15 @@ class RuntimeTests(unittest.TestCase):
             result = run_runtime(
                 profile,
                 generated_config=destination,
-                extra_arguments=("--no-display",),
                 dry_run=True,
                 project_root=ROOT,
             )
             self.assertTrue(result.dry_run)
             self.assertIsNone(result.returncode)
             self.assertEqual(result.generated_config, destination)
-            self.assertEqual(result.command[1:3], ("--config", str(destination)))
-            self.assertEqual(result.command[-1], "--no-display")
+            self.assertEqual(
+                result.command[1:], ("--config", str(destination))
+            )
             rendered = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertFalse(rendered["recording"]["enabled"])
             self.assertFalse(rendered["capture_v21"]["enabled"])
