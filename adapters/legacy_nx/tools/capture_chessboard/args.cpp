@@ -1,9 +1,9 @@
 /**
- * @file capture_chessboard_args.cpp
+ * @file args.cpp
  * @brief Command-line options for capture_chessboard.
  */
 
-#include "capture_chessboard_args.h"
+#include "args.h"
 
 #include <cerrno>
 #include <climits>

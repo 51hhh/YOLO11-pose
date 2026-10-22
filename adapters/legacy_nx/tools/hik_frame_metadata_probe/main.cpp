@@ -1,7 +1,7 @@
 #include "MvCameraControl.h"
-#include "hik_frame_metadata_probe_args.h"
-#include "hik_frame_metadata_probe_stats.h"
-#include "../src/calibration/pwm_trigger.h"
+#include "args.h"
+#include "calibration/pwm_trigger.h"
+#include "stats.h"
 
 #include <algorithm>
 #include <atomic>

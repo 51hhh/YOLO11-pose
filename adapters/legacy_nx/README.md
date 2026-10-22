@@ -32,6 +32,7 @@ cmake --build --preset nx-legacy-release --parallel
 
 ```text
 config/       旧 C++ 字段的唯一兼容模板
+src/calibration/ 运行时标定加载与 GPIO 触发共享实现
 src/capture/  海康取流、帧身份与 GPIO 触发
 src/detect/   TensorRT 检测
 src/rectify/  VPI 校正
@@ -41,7 +42,7 @@ src/pipeline/ 实时流水线编排
 src/ros/      ROS2 发布适配
 src/utils/    v2.1 staging 记录与底层工具
 tests/        仅本适配器内部的 C++ 测试
-tools/        必须直接接触相机 SDK 的诊断程序
+tools/        按可执行程序分目录的标定与硬件诊断入口
 ```
 
 平台无关的时间、坐标、配对和数据语义应放在根目录 `libs/`、`algorithms/`、`services/` 或 `python/volleyball_vision/`，不得继续堆入本目录。一次性实验脚本、生成结果和历史报告不进入仓库。

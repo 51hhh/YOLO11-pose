@@ -1,5 +1,5 @@
 /**
- * @file stereo_calibrate_images.h
+ * @file images.h
  * @brief Image pairing and chessboard detection helpers for stereo calibration.
  */
 

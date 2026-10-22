@@ -1,5 +1,5 @@
 /**
- * @file capture_chessboard_args.h
+ * @file args.h
  * @brief Command-line options for capture_chessboard.
  */
 

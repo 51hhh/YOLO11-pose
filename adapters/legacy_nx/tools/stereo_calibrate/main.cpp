@@ -1,5 +1,5 @@
 /**
- * @file stereo_calibrate.cpp
+ * @file main.cpp
  * @brief Stereo calibration tool using chessboard pattern
  *
  * Detects chessboard corners in left/right image pairs, performs
@@ -11,8 +11,8 @@
  *   ./stereo_calibrate -s 26.0 --board-w 5 --board-h 8 -d images/ -o calib.yaml
  */
 
-#include "stereo_calibrate_args.h"
-#include "stereo_calibrate_images.h"
+#include "args.h"
+#include "images.h"
 
 #include <opencv2/opencv.hpp>
 #include <cstdio>

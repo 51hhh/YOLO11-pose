@@ -1,4 +1,4 @@
-#include "hik_frame_metadata_probe_stats.h"
+#include "stats.h"
 
 #include <algorithm>
 #include <cmath>

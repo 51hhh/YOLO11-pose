@@ -1,5 +1,5 @@
 /**
- * @file capture_chessboard.cpp
+ * @file main.cpp
  * @brief Stereo image pair capture tool for calibration
  *
  * Hardware-synchronized acquisition with lightweight preview for manual
@@ -15,9 +15,9 @@
  *   c      - clear all saved images
  */
 
-#include "../capture/hikvision_camera.h"
-#include "capture_chessboard_args.h"
-#include "pwm_trigger.h"
+#include "args.h"
+#include "calibration/pwm_trigger.h"
+#include "capture/hikvision_camera.h"
 
 #include <opencv2/opencv.hpp>
 #include <csignal>

@@ -1,9 +1,9 @@
 /**
- * @file stereo_calibrate_images.cpp
+ * @file images.cpp
  * @brief Image pairing and chessboard detection helpers for stereo calibration.
  */
 
-#include "stereo_calibrate_images.h"
+#include "images.h"
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/cuda.hpp>

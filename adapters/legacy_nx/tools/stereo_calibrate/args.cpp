@@ -1,9 +1,9 @@
 /**
- * @file stereo_calibrate_args.cpp
+ * @file args.cpp
  * @brief Command-line options for the stereo_calibrate tool.
  */
 
-#include "stereo_calibrate_args.h"
+#include "args.h"
 
 #include <cerrno>
 #include <climits>

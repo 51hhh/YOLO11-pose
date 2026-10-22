@@ -1,5 +1,5 @@
 /**
- * @file stereo_calibrate_args.h
+ * @file args.h
  * @brief Command-line options for the stereo_calibrate tool.
  */
 

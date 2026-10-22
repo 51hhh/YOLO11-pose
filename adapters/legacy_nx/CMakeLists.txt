@@ -387,9 +387,9 @@ endif()
 
 # stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
 add_executable(stereo_calibrate
-  src/calibration/stereo_calibrate.cpp
-  src/calibration/stereo_calibrate_args.cpp
-  src/calibration/stereo_calibrate_images.cpp
+  tools/stereo_calibrate/main.cpp
+  tools/stereo_calibrate/args.cpp
+  tools/stereo_calibrate/images.cpp
 )
 set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
 target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
@@ -397,8 +397,8 @@ target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
 # capture_chessboard (需要海康 SDK; libgpiod 可选)
 if(HIK_FOUND)
   add_executable(capture_chessboard
-    src/calibration/capture_chessboard.cpp
-    src/calibration/capture_chessboard_args.cpp
+    tools/capture_chessboard/main.cpp
+    tools/capture_chessboard/args.cpp
     src/capture/hikvision_camera.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
@@ -418,9 +418,9 @@ if(HIK_FOUND)
   message(STATUS "Calibration tools: capture_chessboard + stereo_calibrate")
 
   add_executable(hik_frame_metadata_probe
-    tools/hik_frame_metadata_probe.cpp
-    tools/hik_frame_metadata_probe_args.cpp
-    tools/hik_frame_metadata_probe_stats.cpp
+    tools/hik_frame_metadata_probe/main.cpp
+    tools/hik_frame_metadata_probe/args.cpp
+    tools/hik_frame_metadata_probe/stats.cpp
   )
   set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
   target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
