@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -60,12 +61,44 @@ void testPwmTriggerExposesEmptySessionBeforeStart() {
         "unstarted PWM session must report sequence zero");
 }
 
+void testPwmTimingRejectsNonFiniteAndUnrepresentableValues() {
+    using stereo3d::PWMTrigger;
+    check(PWMTrigger::isTimingValid(90.0, 50.0),
+          "normal camera trigger timing must be valid");
+    check(PWMTrigger::isTimingValid(1.0, 0.000001),
+          "a duty cycle with non-zero nanosecond phases must be valid");
+
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    check(!PWMTrigger::isTimingValid(0.0, 50.0),
+          "zero frequency must be rejected");
+    check(!PWMTrigger::isTimingValid(-1.0, 50.0),
+          "negative frequency must be rejected");
+    check(!PWMTrigger::isTimingValid(infinity, 50.0),
+          "infinite frequency must be rejected");
+    check(!PWMTrigger::isTimingValid(nan, 50.0),
+          "NaN frequency must be rejected");
+    check(!PWMTrigger::isTimingValid(90.0, infinity),
+          "infinite duty cycle must be rejected");
+    check(!PWMTrigger::isTimingValid(90.0, nan),
+          "NaN duty cycle must be rejected");
+    check(!PWMTrigger::isTimingValid(90.0, 0.0),
+          "zero duty cycle has no observable rising pulse");
+    check(!PWMTrigger::isTimingValid(90.0, 100.0),
+          "full duty cycle has no repeated rising pulse");
+    check(!PWMTrigger::isTimingValid(1e9, 50.0),
+          "one-nanosecond period cannot represent both phases");
+    check(!PWMTrigger::isTimingValid(1e-20, 50.0),
+          "period outside long nanosecond range must be rejected");
+}
+
 }  // namespace
 
 int main() {
     testLookupIsStableAndBounded();
     testNonMonotonicEventsAreRejected();
     testPwmTriggerExposesEmptySessionBeforeStart();
+    testPwmTimingRejectsNonFiniteAndUnrepresentableValues();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

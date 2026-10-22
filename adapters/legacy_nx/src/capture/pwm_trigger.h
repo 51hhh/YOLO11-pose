@@ -44,6 +44,10 @@ public:
     bool start();
     void stop();
 
+    /** 返回频率和占空比能否表示为非零的整数纳秒高、低电平。 */
+    [[nodiscard]] static bool isTimingValid(
+        double frequency,
+        double duty_cycle) noexcept;
     [[nodiscard]] bool isRunning() const;
     [[nodiscard]] bool eventForSequence(
         std::uint64_t sequence,
@@ -51,6 +55,11 @@ public:
     [[nodiscard]] std::uint64_t latestEventSequence() const;
 
 private:
+    static bool calculateTimingNs(
+        double frequency,
+        double duty_cycle,
+        long& high_ns,
+        long& low_ns) noexcept;
     static std::uint64_t timespecNs(const struct timespec& value);
     static std::uint64_t midpoint(std::uint64_t first, std::uint64_t second);
     void recordRisingEdge(
@@ -66,16 +75,18 @@ private:
     static void sleepUntil(const struct timespec& target);
     int computeSysfsGpioNum() const;
     bool startSysfs();
-    void loopSysfs();
+    void loopSysfs() noexcept;
 #ifndef NO_GPIOD
     bool startGpiod();
-    void loopGpiod();
+    void loopGpiod() noexcept;
 #endif
 
     std::string chip_name_;
     unsigned int line_offset_;
     double frequency_;
     double duty_cycle_;
+    long high_ns_ = 0;
+    long low_ns_ = 0;
 #ifndef NO_GPIOD
     struct gpiod_chip* chip_;
     struct gpiod_line* line_;

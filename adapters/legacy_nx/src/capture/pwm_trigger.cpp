@@ -1,8 +1,11 @@
 #include "pwm_trigger.h"
 
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <exception>
+#include <limits>
 
 #include <fcntl.h>
 #ifndef NO_GPIOD
@@ -41,10 +44,12 @@ bool PWMTrigger::start() {
     // 上一次工作线程可能因 GPIO 写入失败而自行退出；先 join 并释放
     // 旧 line/chip，避免给 joinable std::thread 重新赋值导致终止进程。
     stop();
-    if (frequency_ <= 0 || duty_cycle_ < 0 || duty_cycle_ > 100) {
+    if (!calculateTimingNs(
+            frequency_, duty_cycle_, high_ns_, low_ns_)) {
         std::fprintf(
             stderr,
-            "[PWM] Invalid params: freq=%.1f duty=%.1f\n",
+            "[PWM] Invalid or unrepresentable timing: "
+            "freq=%.17g duty=%.17g\n",
             frequency_,
             duty_cycle_);
         return false;
@@ -86,6 +91,48 @@ void PWMTrigger::stop() {
 
 bool PWMTrigger::isRunning() const {
     return running_.load();
+}
+
+bool PWMTrigger::isTimingValid(
+    double frequency,
+    double duty_cycle) noexcept {
+    long high_ns = 0;
+    long low_ns = 0;
+    return calculateTimingNs(
+        frequency, duty_cycle, high_ns, low_ns);
+}
+
+bool PWMTrigger::calculateTimingNs(
+    double frequency,
+    double duty_cycle,
+    long& high_ns,
+    long& low_ns) noexcept {
+    high_ns = 0;
+    low_ns = 0;
+    if (!std::isfinite(frequency) || frequency <= 0.0 ||
+        !std::isfinite(duty_cycle) || duty_cycle <= 0.0 ||
+        duty_cycle >= 100.0) {
+        return false;
+    }
+
+    const double period_ns_value = 1e9 / frequency;
+    const double max_long =
+        static_cast<double>(std::numeric_limits<long>::max());
+    if (!std::isfinite(period_ns_value) ||
+        period_ns_value < 2.0 || period_ns_value >= max_long) {
+        return false;
+    }
+
+    const long period_ns = static_cast<long>(period_ns_value);
+    const double high_ns_value =
+        period_ns_value * (duty_cycle / 100.0);
+    if (!std::isfinite(high_ns_value) || high_ns_value < 1.0 ||
+        high_ns_value >= static_cast<double>(period_ns)) {
+        return false;
+    }
+    high_ns = static_cast<long>(high_ns_value);
+    low_ns = period_ns - high_ns;
+    return high_ns > 0 && low_ns > 0;
 }
 
 bool PWMTrigger::eventForSequence(
@@ -180,12 +227,13 @@ void PWMTrigger::setupRealtimeThread() {
         cpu_set_t cpuset;
         CPU_ZERO(&cpuset);
         CPU_SET(ncpus - 1, &cpuset);
-        if (pthread_setaffinity_np(
-                pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
+        const int affinity_status = pthread_setaffinity_np(
+            pthread_self(), sizeof(cpu_set_t), &cpuset);
+        if (affinity_status != 0) {
             std::fprintf(
                 stderr,
                 "[PWM] CPU affinity failed: %s\n",
-                std::strerror(errno));
+                std::strerror(affinity_status));
         }
     }
 }
@@ -321,7 +369,26 @@ bool PWMTrigger::startSysfs() {
     }
 
     running_.store(true);
-    thread_ = std::thread(&PWMTrigger::loopSysfs, this);
+    try {
+        thread_ = std::thread(&PWMTrigger::loopSysfs, this);
+    } catch (const std::exception& error) {
+        std::fprintf(
+            stderr,
+            "[PWM] Cannot start sysfs worker: %s\n",
+            error.what());
+        running_.store(false);
+        ::close(sysfs_fd_);
+        sysfs_fd_ = -1;
+        unexportGpio();
+        return false;
+    } catch (...) {
+        std::fprintf(stderr, "[PWM] Cannot start sysfs worker: unknown error\n");
+        running_.store(false);
+        ::close(sysfs_fd_);
+        sysfs_fd_ = -1;
+        unexportGpio();
+        return false;
+    }
 
     std::fprintf(
         stderr,
@@ -331,50 +398,52 @@ bool PWMTrigger::startSysfs() {
     return true;
 }
 
-void PWMTrigger::loopSysfs() {
-    setupRealtimeThread();
+void PWMTrigger::loopSysfs() noexcept {
+    try {
+        setupRealtimeThread();
+        struct timespec next {};
+        clock_gettime(CLOCK_MONOTONIC, &next);
 
-    const long high_ns = static_cast<long>(
-        1e9 / frequency_ * (duty_cycle_ / 100.0));
-    const long low_ns = static_cast<long>(1e9 / frequency_) - high_ns;
+        while (running_.load(std::memory_order_relaxed)) {
+            struct timespec monotonic_before {};
+            struct timespec monotonic_after {};
+            struct timespec realtime_before {};
+            struct timespec realtime_after {};
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
+            clock_gettime(CLOCK_REALTIME, &realtime_before);
+            const bool edge_ok = writeExact(sysfs_fd_, "1", 1);
+            clock_gettime(CLOCK_REALTIME, &realtime_after);
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
+            if (!edge_ok) {
+                std::fprintf(
+                    stderr,
+                    "[PWM] GPIO rising-edge write failed: %s\n",
+                    std::strerror(errno));
+                running_.store(false);
+                break;
+            }
+            recordRisingEdge(
+                next,
+                monotonic_before,
+                monotonic_after,
+                realtime_before,
+                realtime_after);
+            lseek(sysfs_fd_, 0, SEEK_SET);
+            timespecAdd(next, high_ns_);
+            sleepUntil(next);
 
-    struct timespec next {};
-    clock_gettime(CLOCK_MONOTONIC, &next);
-
-    while (running_.load(std::memory_order_relaxed)) {
-        struct timespec monotonic_before {};
-        struct timespec monotonic_after {};
-        struct timespec realtime_before {};
-        struct timespec realtime_after {};
-        clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
-        clock_gettime(CLOCK_REALTIME, &realtime_before);
-        const bool edge_ok = writeExact(sysfs_fd_, "1", 1);
-        clock_gettime(CLOCK_REALTIME, &realtime_after);
-        clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
-        if (!edge_ok) {
-            std::fprintf(
-                stderr,
-                "[PWM] GPIO rising-edge write failed: %s\n",
-                std::strerror(errno));
-            running_.store(false);
-            break;
+            (void)writeExact(sysfs_fd_, "0", 1);
+            lseek(sysfs_fd_, 0, SEEK_SET);
+            timespecAdd(next, low_ns_);
+            sleepUntil(next);
         }
-        recordRisingEdge(
-            next,
-            monotonic_before,
-            monotonic_after,
-            realtime_before,
-            realtime_after);
-        lseek(sysfs_fd_, 0, SEEK_SET);
-        timespecAdd(next, high_ns);
-        sleepUntil(next);
-
-        (void)writeExact(sysfs_fd_, "0", 1);
-        lseek(sysfs_fd_, 0, SEEK_SET);
-        timespecAdd(next, low_ns);
-        sleepUntil(next);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[PWM] sysfs worker failed: %s\n", error.what());
+        running_.store(false);
+    } catch (...) {
+        std::fprintf(stderr, "[PWM] sysfs worker failed: unknown error\n");
+        running_.store(false);
     }
-
     munlockall();
 }
 
@@ -411,7 +480,32 @@ bool PWMTrigger::startGpiod() {
     }
 
     running_.store(true);
-    thread_ = std::thread(&PWMTrigger::loopGpiod, this);
+    try {
+        thread_ = std::thread(&PWMTrigger::loopGpiod, this);
+    } catch (const std::exception& error) {
+        std::fprintf(
+            stderr,
+            "[PWM] Cannot start libgpiod worker: %s\n",
+            error.what());
+        running_.store(false);
+        gpiod_line_set_value(line_, 0);
+        gpiod_line_release(line_);
+        line_ = nullptr;
+        gpiod_chip_close(chip_);
+        chip_ = nullptr;
+        return false;
+    } catch (...) {
+        std::fprintf(
+            stderr,
+            "[PWM] Cannot start libgpiod worker: unknown error\n");
+        running_.store(false);
+        gpiod_line_set_value(line_, 0);
+        gpiod_line_release(line_);
+        line_ = nullptr;
+        gpiod_chip_close(chip_);
+        chip_ = nullptr;
+        return false;
+    }
 
     std::fprintf(
         stderr,
@@ -422,48 +516,50 @@ bool PWMTrigger::startGpiod() {
     return true;
 }
 
-void PWMTrigger::loopGpiod() {
-    setupRealtimeThread();
+void PWMTrigger::loopGpiod() noexcept {
+    try {
+        setupRealtimeThread();
+        struct timespec next {};
+        clock_gettime(CLOCK_MONOTONIC, &next);
 
-    const long high_ns = static_cast<long>(
-        1e9 / frequency_ * (duty_cycle_ / 100.0));
-    const long low_ns = static_cast<long>(1e9 / frequency_) - high_ns;
+        while (running_.load(std::memory_order_relaxed)) {
+            struct timespec monotonic_before {};
+            struct timespec monotonic_after {};
+            struct timespec realtime_before {};
+            struct timespec realtime_after {};
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
+            clock_gettime(CLOCK_REALTIME, &realtime_before);
+            const int edge_status = gpiod_line_set_value(line_, 1);
+            clock_gettime(CLOCK_REALTIME, &realtime_after);
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
+            if (edge_status < 0) {
+                std::fprintf(
+                    stderr,
+                    "[PWM] GPIO rising-edge write failed: %s\n",
+                    std::strerror(errno));
+                running_.store(false);
+                break;
+            }
+            recordRisingEdge(
+                next,
+                monotonic_before,
+                monotonic_after,
+                realtime_before,
+                realtime_after);
+            timespecAdd(next, high_ns_);
+            sleepUntil(next);
 
-    struct timespec next {};
-    clock_gettime(CLOCK_MONOTONIC, &next);
-
-    while (running_.load(std::memory_order_relaxed)) {
-        struct timespec monotonic_before {};
-        struct timespec monotonic_after {};
-        struct timespec realtime_before {};
-        struct timespec realtime_after {};
-        clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
-        clock_gettime(CLOCK_REALTIME, &realtime_before);
-        const int edge_status = gpiod_line_set_value(line_, 1);
-        clock_gettime(CLOCK_REALTIME, &realtime_after);
-        clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
-        if (edge_status < 0) {
-            std::fprintf(
-                stderr,
-                "[PWM] GPIO rising-edge write failed: %s\n",
-                std::strerror(errno));
-            running_.store(false);
-            break;
+            gpiod_line_set_value(line_, 0);
+            timespecAdd(next, low_ns_);
+            sleepUntil(next);
         }
-        recordRisingEdge(
-            next,
-            monotonic_before,
-            monotonic_after,
-            realtime_before,
-            realtime_after);
-        timespecAdd(next, high_ns);
-        sleepUntil(next);
-
-        gpiod_line_set_value(line_, 0);
-        timespecAdd(next, low_ns);
-        sleepUntil(next);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[PWM] libgpiod worker failed: %s\n", error.what());
+        running_.store(false);
+    } catch (...) {
+        std::fprintf(stderr, "[PWM] libgpiod worker failed: unknown error\n");
+        running_.store(false);
     }
-
     munlockall();
 }
 #endif
