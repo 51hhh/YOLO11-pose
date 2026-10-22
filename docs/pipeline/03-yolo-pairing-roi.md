@@ -4,6 +4,10 @@
 
 当前左右相机各有一个 `TensorRtRuntime`（旧管线仍以 `TRTDetector` 别名引用），共享同一 TensorRT engine 文件，但各自使用独立 CUDA stream。每个 runtime 又按三缓冲槽创建独立 execution context、输入、输出和 pinned host 缓冲，防止异步帧互相覆盖；旧帧环槽数与 runtime 槽数在编译期强制一致。
 
+主线 `TensorRtDetector` 已实现平台无关 `Detector` 端口。它只接受 CUDA-device BGR8 校正图，验证输入尺寸和容量后调用 checked runtime API；合法的零候选会返回成功，CUDA、enqueue 或解码错误会保留失败语义。映射层再冻结 pipeline ID，过滤非目标类别、非有限或越界几何，稳定按置信度排序并生成单帧唯一候选 ID。主机 SDK 桩会真实编译和运行这条端口边界，但底层 runtime 和 kernel 仍必须在 Orin NX 的 CUDA/TensorRT SDK 上构建验证。
+
+每个 detector 实例拥有独立非阻塞 CUDA stream，但当前 `StereoObservationService` 使用同步端口并顺序调用左右实例。因此资源已经隔离，不代表主线已经实现左右推理重叠；若目标机时序证明需要并发，应在服务/端口契约层显式引入异步批次，而不是在 adapter 内隐藏线程或改变候选语义。
+
 当前参数：
 
 | 参数 | 值 |
