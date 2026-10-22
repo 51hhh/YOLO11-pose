@@ -37,6 +37,7 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "Stereo/",
     "volleyball_tracking/",
 )
+ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 
 PURE_CPP_LAYERS = (
     "libs/core",
@@ -104,6 +105,27 @@ def main() -> int:
     ]
     if generated:
         errors.append("禁止跟踪 Python 缓存:\n    " + "\n    ".join(generated))
+
+    unexpected_tools = sorted(
+        path for path in tracked
+        if path.startswith("tools/") and path not in ALLOWED_TOOL_FILES
+    )
+    if unexpected_tools:
+        errors.append(
+            "tools 只保留仓库维护门禁，用户功能应进入统一 CLI:\n    "
+            + "\n    ".join(unexpected_tools)
+        )
+
+    flat_cpp_tests = sorted(
+        path for path in tracked
+        if Path(path).parent == Path("tests/cpp")
+        and Path(path).suffix in {".cc", ".cpp", ".cxx"}
+    )
+    if flat_cpp_tests:
+        errors.append(
+            "C++ 测试必须归入 mainline 或 legacy_nx:\n    "
+            + "\n    ".join(flat_cpp_tests)
+        )
 
     required = [
         "contracts/capture/v2.1.0/tables.json",

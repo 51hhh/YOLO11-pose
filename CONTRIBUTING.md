@@ -27,6 +27,8 @@ chore(ci): 增加 CPU 契约门禁
 - 用户流程统一由 `volleyball_vision.cli` 组装；若未来增加原生 C++ 应用，再建立 `apps/`，且其中不得实现立体匹配算法。
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
 - `legacy` 只允许兼容转换和可删除的过渡代码，不得反向被 core 依赖。
+- `tests/cpp/mainline` 不得包含旧 NX 头文件；旧实现及 SDK 桩测试统一放入 `tests/cpp/legacy_nx`。
+- `tools` 只保留仓库级维护门禁；可复用用户功能必须成为 `volleyball` 子命令。
 
 ## 必跑检查
 
