@@ -28,5 +28,7 @@ if(VOLLEYBALL_GPIO_WITH_GPIOD)
   )
   target_link_libraries(volleyball_gpio PRIVATE ${VOLLEYBALL_GPIOD_LIBRARY})
 else()
-  target_compile_definitions(volleyball_gpio PRIVATE NO_GPIOD=1)
+  # NO_GPIOD 会改变公开头中 PWMTrigger 的成员布局，必须传播给所有调用方，
+  # 否则库与消费者会按不同 ABI 编译同一个类。
+  target_compile_definitions(volleyball_gpio PUBLIC NO_GPIOD=1)
 endif()

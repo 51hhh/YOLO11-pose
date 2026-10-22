@@ -78,6 +78,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("VOLLEYBALL_HIK_MVS_SDK_LIBRARY", hik_cmake)
         self.assertIn("src/hikvision_camera.cpp", hik_cmake)
 
+    def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
+        gpio_cmake = (
+            ROOT / "adapters" / "gpio" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "target_compile_definitions(volleyball_gpio PUBLIC NO_GPIOD=1)",
+            gpio_cmake,
+        )
+        self.assertNotIn(
+            "target_compile_definitions(volleyball_gpio PRIVATE NO_GPIOD=1)",
+            gpio_cmake,
+        )
+
     def test_cpp_and_python_capture_stage_contracts_match(self) -> None:
         header = (
             ROOT
