@@ -21,6 +21,8 @@ pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 sing
 
 异步 ROI worker 的 snapshot completion 也承担所有权转移语义。worker 必须收到有效 buffer 和已记录 event，等待 event 成功后才可读取快照；CUDA event 错误或 worker 异常会产生显式失败结果。失败路径先排空 ROI core/copy stream，再归还 buffer，防止异常发生在 kernel 提交之后时复用仍被 GPU 读取的内存。`roi_postprocess_mutex_` 只包围共享 matcher/core 调用，artifact/CSV 写入不持有该锁，避免诊断 I/O 反向阻塞同步候选。
 
+异步 buffer 只有在对应 copy event 或源 stream 被证明同步成功后才能回到空闲池。event/stream 同步失败时，该 buffer 会进入 `quarantined` 状态并一直保留到管线销毁；它不能被 pending-replace、expire 或下一帧重新取得。快照提交、slot completion event 或复用前等待属于基础设施边界，失败帧必须设置 `grab_failed`，不能降级成正常的 `predict_only` 观测。
+
 ## 实时异步 ROI 数据流
 
 异步 Stage 2 只有同时满足以下条件才可启动：
@@ -40,7 +42,7 @@ pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 sing
 6. worker 只读取自己的快照，等待 copy event 后运行 ROI Stage 2；
 7. 主线程 drain 完成结果并执行融合、ResultCallback/FrameCallback。
 
-缓冲池当前为 3。pending 队列以新代旧，正在运行的任务不被抢占；没有空闲缓冲、结果过期或超过帧截止线时均有独立计数。
+缓冲池当前为 3。pending 队列以新代旧，正在运行的任务不被抢占；没有空闲缓冲、结果过期或超过帧截止线时均有独立计数。被替换的 pending buffer 只有在快照复制完成且 P2 诊断引用为零时才允许原地交给新帧；否则进入 `WAITING_DIAGNOSTIC`，当前新帧按容量不足丢弃，不能覆盖诊断线程正在读取的 source snapshot。
 
 ## 三个 profile 的最终行为
 

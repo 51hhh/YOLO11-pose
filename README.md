@@ -33,7 +33,8 @@ volleyball config validate --profile nx-rdk
 volleyball config validate --profile free-flight
 volleyball config validate --profile replay
 
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONPATH=python PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m unittest discover -s tests -v
 cmake --preset host-core-debug
 cmake --build --preset host-core-debug --parallel 2
 ctest --preset host-core-debug

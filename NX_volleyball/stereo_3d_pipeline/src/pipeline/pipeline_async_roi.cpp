@@ -765,6 +765,7 @@ bool Pipeline::initAsyncRoiStage2() {
                 return false;
             }
         }
+        b.ownership.initializeFree();
         async_roi_free_buffers_.push_back(i);
     }
 
@@ -1728,11 +1729,20 @@ void Pipeline::enqueueP2FeatureDiagnosticJobs(
         }
 
         if (use_source_snapshot) {
+            bool source_ref_added = false;
             {
                 std::lock_guard<std::mutex> lk(async_roi_mutex_);
                 auto& src =
                     async_roi_buffers_[static_cast<size_t>(source_buffer_index)];
-                ++src.p2_diag_refs;
+                source_ref_added = src.ownership.addDiagnosticRef();
+            }
+            if (!source_ref_added) {
+                ++dropped;
+                LOG_ERROR("P2 diagnostic source ref rejected: "
+                          "frame_counter=%u buffer=%d",
+                          static_cast<unsigned>(metadata.left_frame_counter),
+                          source_buffer_index);
+                continue;
             }
             P2FeatureDiagnosticTask task;
             task.job = job;
@@ -2429,14 +2439,22 @@ void Pipeline::p2FeatureDiagnosticWorkerLoop() {
     LOG_INFO("P2 diagnostic FeatureJob worker exited");
 }
 
-void Pipeline::releaseAsyncRoiBuffer(int buffer_index, const char* reason) {
+bool Pipeline::releaseAsyncRoiBuffer(int buffer_index, const char* reason) {
     if (buffer_index < 0 ||
         buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
-        return;
+        return false;
     }
-    waitAsyncRoiBufferCopy(buffer_index, reason);
+    const bool copy_safe = waitAsyncRoiBufferCopy(buffer_index, reason);
     std::lock_guard<std::mutex> lk(async_roi_mutex_);
+    if (!copy_safe) {
+        quarantineAsyncRoiBufferLocked(buffer_index);
+        globalPerf().record("Stage2_AsyncRoiBufferQuarantined", 0.0);
+        LOG_ERROR("[AsyncROI] Quarantine buffer=%d after unsafe release reason=%s",
+                  buffer_index, reason ? reason : "unknown");
+        return false;
+    }
     releaseAsyncRoiBufferLocked(buffer_index);
+    return true;
 }
 
 void Pipeline::releaseAsyncRoiBufferLocked(int buffer_index) {
@@ -2444,13 +2462,42 @@ void Pipeline::releaseAsyncRoiBufferLocked(int buffer_index) {
         buffer_index < static_cast<int>(async_roi_buffers_.size())) {
         auto& buffer =
             async_roi_buffers_[static_cast<size_t>(buffer_index)];
-        if (buffer.p2_diag_refs > 0) {
-            buffer.release_after_p2_diag = true;
-            return;
+        const AsyncRoiBufferTransition transition = buffer.ownership.release();
+        if (transition == AsyncRoiBufferTransition::ENQUEUE_FREE) {
+            async_roi_free_buffers_.push_back(buffer_index);
+        } else if (transition == AsyncRoiBufferTransition::INVALID) {
+            LOG_ERROR("[AsyncROI] Invalid buffer release state buffer=%d",
+                      buffer_index);
         }
-        buffer.release_after_p2_diag = false;
-        async_roi_free_buffers_.push_back(buffer_index);
     }
+}
+
+void Pipeline::quarantineAsyncRoiBuffer(int buffer_index,
+                                        const char* reason) {
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        quarantineAsyncRoiBufferLocked(buffer_index);
+    }
+    globalPerf().record("Stage2_AsyncRoiBufferQuarantined", 0.0);
+    LOG_ERROR("[AsyncROI] Quarantine buffer=%d reason=%s",
+              buffer_index, reason ? reason : "unknown");
+}
+
+void Pipeline::quarantineAsyncRoiBufferLocked(int buffer_index) {
+    if (buffer_index < 0 ||
+        buffer_index >= static_cast<int>(async_roi_buffers_.size())) {
+        return;
+    }
+    auto& buffer = async_roi_buffers_[static_cast<size_t>(buffer_index)];
+    buffer.ownership.quarantine();
+    async_roi_free_buffers_.erase(
+        std::remove(async_roi_free_buffers_.begin(),
+                    async_roi_free_buffers_.end(), buffer_index),
+        async_roi_free_buffers_.end());
 }
 
 void Pipeline::releaseP2FeatureDiagnosticSourceRef(int buffer_index) {
@@ -2460,12 +2507,13 @@ void Pipeline::releaseP2FeatureDiagnosticSourceRef(int buffer_index) {
     }
     std::lock_guard<std::mutex> lk(async_roi_mutex_);
     auto& buffer = async_roi_buffers_[static_cast<size_t>(buffer_index)];
-    if (buffer.p2_diag_refs > 0) {
-        --buffer.p2_diag_refs;
-    }
-    if (buffer.p2_diag_refs == 0 && buffer.release_after_p2_diag) {
-        buffer.release_after_p2_diag = false;
+    const AsyncRoiBufferTransition transition =
+        buffer.ownership.releaseDiagnosticRef();
+    if (transition == AsyncRoiBufferTransition::ENQUEUE_FREE) {
         async_roi_free_buffers_.push_back(buffer_index);
+    } else if (transition == AsyncRoiBufferTransition::INVALID) {
+        LOG_ERROR("[AsyncROI] Invalid diagnostic ref release buffer=%d",
+                  buffer_index);
     }
 }
 
@@ -2550,7 +2598,14 @@ bool Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
                  "slot=%d reason=%s",
                  slot_index, reason ? reason : "unknown");
         if (async_roi_copy_stream_) {
-            cudaStreamSynchronize(async_roi_copy_stream_);
+            const cudaError_t drain_err =
+                cudaStreamSynchronize(async_roi_copy_stream_);
+            if (drain_err != cudaSuccess) {
+                LOG_ERROR("[AsyncROI] Missing slot event drain failed "
+                          "slot=%d reason=%s err=%s",
+                          slot_index, reason ? reason : "unknown",
+                          cudaGetErrorString(drain_err));
+            }
         }
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)] = false;
@@ -2570,7 +2625,14 @@ bool Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
     if (err != cudaSuccess) {
         // event 失败时仍排空 copy stream，调用方随后释放 VPI lock 才安全。
         if (async_roi_copy_stream_) {
-            cudaStreamSynchronize(async_roi_copy_stream_);
+            const cudaError_t drain_err =
+                cudaStreamSynchronize(async_roi_copy_stream_);
+            if (drain_err != cudaSuccess) {
+                LOG_ERROR("[AsyncROI] Failed slot event drain also failed "
+                          "slot=%d reason=%s err=%s",
+                          slot_index, reason ? reason : "unknown",
+                          cudaGetErrorString(drain_err));
+            }
         }
         LOG_WARN("[AsyncROI] Slot snapshot wait failed slot=%d reason=%s err=%s",
                  slot_index,
@@ -2659,8 +2721,7 @@ void Pipeline::destroyAsyncRoiStage2() {
         b.right_bgr_pitch = 0;
         b.left_gray_host_pitch = 0;
         b.right_gray_host_pitch = 0;
-        b.p2_diag_refs = 0;
-        b.release_after_p2_diag = false;
+        b.ownership = AsyncRoiBufferState{};
     }
     async_roi_buffers_.clear();
     async_roi_free_buffers_.clear();
@@ -2726,10 +2787,13 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
     const size_t bgr_width_bytes =
         static_cast<size_t>(config_.rect_width) * 3u;
     const size_t rows = static_cast<size_t>(config_.rect_height);
+    if (!buffer.ownership.isInUse()) {
+        LOG_ERROR("Async ROI: snapshot buffer is not owned by caller frame=%d",
+                  slot.frame_id);
+        return false;
+    }
     buffer.copy_event_recorded = false;
     buffer.p2_diag_copy_event_recorded = false;
-    buffer.p2_diag_refs = 0;
-    buffer.release_after_p2_diag = false;
 
     if (!left_src || !right_src ||
         left_src_pitch <= 0 || right_src_pitch <= 0 ||
@@ -2839,7 +2903,14 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
         }
     }
     if (err != cudaSuccess) {
-        cudaStreamSynchronize(async_roi_copy_stream_);
+        const cudaError_t drain_err =
+            cudaStreamSynchronize(async_roi_copy_stream_);
+        if (drain_err != cudaSuccess) {
+            buffer.ownership.quarantine();
+            globalPerf().record("Stage2_AsyncRoiBufferQuarantined", 0.0);
+            LOG_ERROR("Async ROI: snapshot failure drain failed frame=%d err=%s",
+                      slot.frame_id, cudaGetErrorString(drain_err));
+        }
         LOG_WARN("Async ROI: image snapshot failed frame=%d err=%s",
                  slot.frame_id, cudaGetErrorString(err));
         return false;
@@ -2868,6 +2939,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     bool no_buffer_worker_busy = false;
     int dropped_reuse_buffer = -1;
     int dropped_reuse_frame = -1;
+    bool dropped_reuse_has_diagnostic_refs = false;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         queue_pending_depth = async_roi_pending_.size();
@@ -2877,11 +2949,28 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
             dropped_reuse_frame = async_roi_pending_.front().frame_id;
             dropped_reuse_buffer = async_roi_pending_.front().buffer_index;
             async_roi_pending_.pop_front();
+            if (dropped_reuse_buffer >= 0 &&
+                dropped_reuse_buffer <
+                    static_cast<int>(async_roi_buffers_.size())) {
+                dropped_reuse_has_diagnostic_refs =
+                    async_roi_buffers_[static_cast<size_t>(
+                        dropped_reuse_buffer)].ownership.diagnosticRefs() > 0;
+            }
             globalPerf().record("Stage2_AsyncRoiDropPending", 0.0);
         }
         if (!async_roi_free_buffers_.empty()) {
             buffer_index = async_roi_free_buffers_.front();
             async_roi_free_buffers_.pop_front();
+            auto& acquired =
+                async_roi_buffers_[static_cast<size_t>(buffer_index)];
+            if (!acquired.ownership.acquire()) {
+                quarantineAsyncRoiBufferLocked(buffer_index);
+                globalPerf().record("Stage2_AsyncRoiBufferQuarantined", 0.0);
+                LOG_ERROR("[AsyncROI] Free-pool ownership mismatch buffer=%d",
+                          buffer_index);
+                slot.grab_failed = true;
+                return false;
+            }
         } else if (dropped_reuse_buffer < 0) {
             no_buffer = true;
             no_buffer_pending_depth = async_roi_pending_.size();
@@ -2889,7 +2978,25 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
         }
     }
     if (dropped_reuse_buffer >= 0) {
-        waitAsyncRoiBufferCopy(dropped_reuse_buffer, "replace_pending_reuse");
+        if (dropped_reuse_has_diagnostic_refs) {
+            const bool released = releaseAsyncRoiBuffer(
+                dropped_reuse_buffer, "replace_pending_diagnostic_busy");
+            globalPerf().record("Stage2_AsyncRoiDropDiagnosticBusy", 0.0);
+            LOG_WARN("[AsyncROI] Drop frame=%d: replaced buffer=%d still has "
+                     "diagnostic readers",
+                     slot.frame_id, dropped_reuse_buffer);
+            if (!released) {
+                slot.grab_failed = true;
+            }
+            return false;
+        }
+        if (!waitAsyncRoiBufferCopy(dropped_reuse_buffer,
+                                    "replace_pending_reuse")) {
+            quarantineAsyncRoiBuffer(dropped_reuse_buffer,
+                                     "replace_pending_reuse_failed");
+            slot.grab_failed = true;
+            return false;
+        }
         if (buffer_index < 0) {
             buffer_index = dropped_reuse_buffer;
         } else {
@@ -2917,7 +3024,8 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     AsyncRoiBuffer& buffer =
         async_roi_buffers_[static_cast<size_t>(buffer_index)];
     if (!waitAsyncRoiBufferCopy(buffer_index, "reuse_before_snapshot")) {
-        releaseAsyncRoiBuffer(buffer_index, "reuse_wait_failed");
+        quarantineAsyncRoiBuffer(buffer_index, "reuse_wait_failed");
+        slot.grab_failed = true;
         return false;
     }
     const bool requested_host_gray =
@@ -3030,6 +3138,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
     ScopedTimer tsnap("Stage2_AsyncRoiSnapshot");
     if (!snapshotAsyncRoiImages(slot, buffer, need_host_gray, need_bgr)) {
         releaseAsyncRoiBuffer(buffer_index, "snapshot_failed");
+        slot.grab_failed = true;
         return false;
     }
     if (slot_index >= 0 && slot_index < RING_BUFFER_SIZE) {
@@ -3042,6 +3151,7 @@ bool Pipeline::submitAsyncRoiStage2(FrameSlot& slot, int slot_index) {
                 LOG_WARN("Async ROI: record slot copy event failed frame=%d err=%s",
                          slot.frame_id, cudaGetErrorString(evt_err));
                 releaseAsyncRoiBuffer(buffer_index, "slot_event_failed");
+                slot.grab_failed = true;
                 return false;
             }
             std::lock_guard<std::mutex> lk(async_roi_mutex_);
@@ -3278,6 +3388,8 @@ void Pipeline::asyncRoiWorkerLoop() {
                           task.frame_id,
                           cudaGetErrorString(core_drain),
                           cudaGetErrorString(copy_drain));
+                quarantineAsyncRoiBuffer(task.buffer_index,
+                                         "worker_failure_drain_failed");
             }
         }
 

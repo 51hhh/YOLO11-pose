@@ -20,6 +20,7 @@
 #define STEREO_3D_PIPELINE_PIPELINE_H_
 
 #include "frame_slot.h"
+#include "async_roi_buffer_state.h"
 #include "pipeline_callbacks.h"
 #include "pipeline_config.h"
 #include "pipeline_feature_jobs.h"
@@ -322,8 +323,7 @@ private:
         bool copy_event_recorded = false;
         cudaEvent_t p2_diag_copy_done = nullptr;
         bool p2_diag_copy_event_recorded = false;
-        int p2_diag_refs = 0;
-        bool release_after_p2_diag = false;
+        AsyncRoiBufferState ownership;
     };
     struct AsyncRoiTask {
         int frame_id = -1;
@@ -380,8 +380,10 @@ private:
                                 bool need_bgr);
     std::vector<int> drainCompletedAsyncRoiStage2();
     void expireAsyncRoiBefore(int frame_id);
-    void releaseAsyncRoiBuffer(int buffer_index, const char* reason);
+    bool releaseAsyncRoiBuffer(int buffer_index, const char* reason);
     void releaseAsyncRoiBufferLocked(int buffer_index);
+    void quarantineAsyncRoiBuffer(int buffer_index, const char* reason);
+    void quarantineAsyncRoiBufferLocked(int buffer_index);
     bool waitAsyncRoiBufferCopy(int buffer_index, const char* reason);
     void markAsyncRoiSlotCopyPendingLocked(int slot_index);
     bool waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);

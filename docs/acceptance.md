@@ -9,7 +9,8 @@ python3 -m pip install -e '.[test]'
 volleyball config validate --profile nx-rdk
 volleyball config validate --profile free-flight
 volleyball config validate --profile replay
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONPATH=python PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m unittest discover -s tests -v
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
   -s NX_volleyball/stereo_3d_pipeline/trajectory_fusion/tests -v
 cmake --preset host-core-release

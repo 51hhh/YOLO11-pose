@@ -612,7 +612,9 @@ void Pipeline::pipelineLoopROI() {
                     const bool submitted = submitAsyncRoiStage2(slot, slot_idx);
                     globalPerf().record("Stage2_ROIMatchFuseSubmit", t2.elapsedMs());
                     slot.bbox_source = BboxSource::YOLO;
-                    tracker_handle_detect_result(slot);
+                    if (!slot.grab_failed) {
+                        tracker_handle_detect_result(slot);
+                    }
                     const bool snapshot_ready =
                         waitAsyncRoiSlotSnapshotDone(
                             slot_idx, "roi_async_snapshot_release");
@@ -628,10 +630,14 @@ void Pipeline::pipelineLoopROI() {
                             ++stale_drop_count;
                             globalPerf().record("Stage2_AsyncRoiSubmitDrop", 0.0);
                         }
-                        RoiStage2Output dropped;
-                        dropped.detections = slot.detections;
-                        dropped.predict_only = true;
-                        applyRoiStage2Output(slot, std::move(dropped));
+                        if (slot.grab_failed) {
+                            slot.results.clear();
+                        } else {
+                            RoiStage2Output dropped;
+                            dropped.detections = slot.detections;
+                            dropped.predict_only = true;
+                            applyRoiStage2Output(slot, std::move(dropped));
+                        }
                         publish_now = true;
                     }
                 } else {
