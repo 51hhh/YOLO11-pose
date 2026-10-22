@@ -11,7 +11,9 @@
 #include "main_realtime_debug_dump.h"
 #include "main_cli_options.h"
 #include "main_config_loaders.h"
-#include "main_display_helpers.h"
+#include "main_display_capture.h"
+#include "main_display_render.h"
+#include "main_display_types.h"
 
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
@@ -315,13 +317,6 @@ int main(int argc, char* argv[]) {
         });
 
     LOG_INFO("Pipeline initialized, starting...");
-
-    // 构建彩色校正映射表 (用于可视化: raw Bayer → demosaic → remap → 彩色校正图)
-    cv::Mat vis_map1, vis_map2;
-    bool has_color_remap = false;
-    if (enable_display) {
-        buildVisualizationColorRemap(cfg, vis_map1, vis_map2, has_color_remap);
-    }
 
     const bool use_bgr = (cfg.detector_input_format == "bgr");
 

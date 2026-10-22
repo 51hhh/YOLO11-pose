@@ -51,6 +51,7 @@ int main() {
              "--debug-realtime-dump",
              "--debug-feature-matches",
              "--debug-feature-matches-dir",
+             "--display",
              "--visualizels",
          }) {
         const auto options = parse({"stereo_pipeline", retired});

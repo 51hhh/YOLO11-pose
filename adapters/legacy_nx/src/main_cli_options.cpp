@@ -46,7 +46,7 @@ MainCliOptions parseMainCliOptions(int argc, char* argv[]) {
         } else if (arg == "--config" || arg == "-c") {
             failMissingValue(options, argv[0], arg);
             return options;
-        } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
+        } else if (arg == "--visualize" || arg == "-v") {
             options.enable_display = true;
         } else if (arg == "--help" || arg == "-h") {
             printHelp(argv[0]);
