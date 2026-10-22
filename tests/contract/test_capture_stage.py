@@ -16,6 +16,7 @@ from volleyball_vision.capture import (
 )
 from volleyball_vision.config import load_profile
 from volleyball_vision.dataset import validate_dataset, with_pipeline_fingerprint
+from volleyball_vision.replay import run_replay
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -256,6 +257,26 @@ class CaptureStageTests(unittest.TestCase):
                 {"nx-monotonic", "nx-realtime"},
             )
             self.assertGreaterEqual(len(metadata["raw_manifest"]), 9)
+
+            replay_profile = load_profile("replay", project_root=ROOT)
+            replay = run_replay(
+                trial,
+                replay_profile,
+                output_root=root / "derived-report",
+                project_root=ROOT,
+            )
+            transport = replay.metrics["quality"]["transport_timing"]
+            self.assertEqual(
+                transport["arrival_order"],
+                {
+                    "left_first": 1,
+                    "right_first": 1,
+                    "tie": 0,
+                    "unknown": 0,
+                },
+            )
+            self.assertEqual(transport["pairing_key"], "frame_counter")
+            self.assertFalse(transport["arrival_time_used_for_pairing"])
 
     def test_stage_with_frame_gap_is_not_publishable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
