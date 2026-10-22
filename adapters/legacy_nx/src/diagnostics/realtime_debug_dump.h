@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pipeline/pipeline.h"
+#include "../pipeline/pipeline.h"
 
 #include <vpi/Image.h>
 #include <opencv2/core.hpp>

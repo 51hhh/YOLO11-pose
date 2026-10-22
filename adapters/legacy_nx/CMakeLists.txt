@@ -190,8 +190,8 @@ set(PIPELINE_SOURCES
   src/main_cli_options.cpp
   src/main_config_loaders.cpp
   src/main_dual_yolo_config.cpp
-  src/main_realtime_debug_dump.cpp
-  src/main_realtime_debug_dump_writer.cpp
+  src/diagnostics/realtime_debug_dump.cpp
+  src/diagnostics/realtime_debug_dump_writer.cpp
   src/main_optional_config_loaders.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp

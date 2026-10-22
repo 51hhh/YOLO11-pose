@@ -1,6 +1,6 @@
-#include "main_realtime_debug_dump.h"
+#include "realtime_debug_dump.h"
 
-#include "utils/logger.h"
+#include "../utils/logger.h"
 
 #include <opencv2/opencv.hpp>
 

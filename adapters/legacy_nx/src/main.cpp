@@ -8,12 +8,12 @@
 #include "pipeline/pipeline.h"
 #include "fusion/trajectory_predictor.h"
 #include "utils/logger.h"
-#include "main_realtime_debug_dump.h"
+#include "diagnostics/realtime_debug_dump.h"
 #include "main_cli_options.h"
 #include "main_config_loaders.h"
-#include "main_display_capture.h"
-#include "main_display_render.h"
-#include "main_display_types.h"
+#include "ui/display_capture.h"
+#include "ui/display_render.h"
+#include "ui/display_types.h"
 
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>

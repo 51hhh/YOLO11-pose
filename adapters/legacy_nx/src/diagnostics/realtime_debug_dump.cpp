@@ -1,7 +1,7 @@
-#include "main_realtime_debug_dump.h"
+#include "realtime_debug_dump.h"
 
-#include "utils/logger.h"
-#include "utils/vpi_image_copy.h"
+#include "../utils/logger.h"
+#include "../utils/vpi_image_copy.h"
 
 #include <filesystem>
 #include <utility>

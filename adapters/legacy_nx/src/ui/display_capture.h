@@ -1,8 +1,8 @@
 #pragma once
 
-#include "main_display_types.h"
-#include "utils/logger.h"
-#include "utils/vpi_image_copy.h"
+#include "display_types.h"
+#include "../utils/logger.h"
+#include "../utils/vpi_image_copy.h"
 
 #include <opencv2/opencv.hpp>
 

@@ -4,7 +4,7 @@
 #include "pipeline/pipeline.h"
 #include "fusion/trajectory_predictor.h"
 #include "utils/capture_v21_stage_recorder.h"
-#include "main_realtime_debug_dump.h"
+#include "diagnostics/realtime_debug_dump.h"
 
 #include <string>
 

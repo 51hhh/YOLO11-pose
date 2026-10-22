@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main_display_types.h"
+#include "display_types.h"
 
 #include <opencv2/opencv.hpp>
 
