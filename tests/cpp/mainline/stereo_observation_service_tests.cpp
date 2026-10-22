@@ -248,8 +248,7 @@ void testEstimatorInfrastructureFailureAbortsTrial() {
     FixedEstimator estimator({
         ports::DirectObservationStatus::failed,
         std::nullopt,
-        {core::StereoDepthMethodId{"roi_multi_point"}, std::nullopt,
-         std::nullopt, std::nullopt},
+        core::StereoDepthMethodId{"roi_multi_point"},
         "injected ROI backend failure",
     });
     fake::InMemoryTrialWriter writer;

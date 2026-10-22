@@ -39,7 +39,7 @@ def _write_pgm(path: Path, width: int, height: int) -> None:
 
 
 class MainlineCaptureStageTests(unittest.TestCase):
-    def test_mainline_context_uses_v5_without_duplicating_capture_identity(self) -> None:
+    def test_mainline_context_uses_v6_without_duplicating_capture_identity(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)
         context = build_mainline_capture_context(
             profile,
@@ -225,23 +225,27 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 "cov_zz_m2": 0.01,
                 "confidence": 0.95,
                 "reprojection_error_px": 0.0,
+                "depth_method": "roi_multi_point",
+                "measurement_disparity_px": 49.75,
+                "disparity_stddev_px": 0.2,
+                "support_points": 8,
             }
         ]
-        _write_csv(stage / "frames_v5.csv", MAINLINE_FRAME_COLUMNS, frame_rows)
+        _write_csv(stage / "frames_v6.csv", MAINLINE_FRAME_COLUMNS, frame_rows)
         _write_csv(
-            stage / "detections_v5.csv", MAINLINE_DETECTION_COLUMNS, detection_rows
+            stage / "detections_v6.csv", MAINLINE_DETECTION_COLUMNS, detection_rows
         )
         _write_csv(
-            stage / "associations_v5.csv",
+            stage / "associations_v6.csv",
             MAINLINE_ASSOCIATION_COLUMNS,
             association_rows,
         )
         _write_csv(
-            stage / "observations_v5.csv",
+            stage / "observations_v6.csv",
             MAINLINE_OBSERVATION_COLUMNS,
             observation_rows,
         )
-        (stage / "status_v5.json").write_text(
+        (stage / "status_v6.json").write_text(
             json.dumps(
                 {
                     "stage_schema_version": MAINLINE_STAGE_SCHEMA_VERSION,
@@ -285,6 +289,9 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 {row["capture_timestamp_ns"] for row in camera_frames},
                 {"1000000000"},
             )
+            with (trial / "stereo_pairs.csv").open(encoding="utf-8") as handle:
+                stereo_pairs = list(csv.DictReader(handle))
+            self.assertEqual(stereo_pairs[0]["disparity_px"], "49.75")
             with (trial / "clock_mappings.csv").open(encoding="utf-8") as handle:
                 mappings = list(csv.DictReader(handle))
             self.assertEqual(
@@ -301,7 +308,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stage, profile = self._stage(root)
-            (stage / "frames_v5.csv.partial").write_text("unfinished", encoding="utf-8")
+            (stage / "frames_v6.csv.partial").write_text("unfinished", encoding="utf-8")
 
             with self.assertRaisesRegex(DatasetError, "未完成文件"):
                 finalize_capture_stage(
@@ -312,7 +319,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stage, profile = self._stage(root)
-            path = stage / "observations_v5.csv"
+            path = stage / "observations_v6.csv"
             with path.open(encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             rows[0]["capture_reference_ns"] = "2000000001"
@@ -324,11 +331,27 @@ class MainlineCaptureStageTests(unittest.TestCase):
                     stage, root / "dataset", profile, project_root=ROOT
                 )
 
+    def test_observation_depth_method_must_be_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            path = stage / "observations_v6.csv"
+            with path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            rows[0]["depth_method"] = "unconfigured_method"
+            path.unlink()
+            _write_csv(path, MAINLINE_OBSERVATION_COLUMNS, rows)
+
+            with self.assertRaisesRegex(DatasetError, "配置外"):
+                finalize_capture_stage(
+                    stage, root / "dataset", profile, project_root=ROOT
+                )
+
     def test_selected_candidates_must_equal_accepted_pair(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stage, profile = self._stage(root)
-            path = stage / "detections_v5.csv"
+            path = stage / "detections_v6.csv"
             with path.open(encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             rows[0]["selected"] = "false"

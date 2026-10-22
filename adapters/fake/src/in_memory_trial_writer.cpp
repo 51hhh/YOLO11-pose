@@ -53,8 +53,15 @@ ports::WriteResult InMemoryTrialWriter::append(
 }
 
 ports::WriteResult InMemoryTrialWriter::append(
-    const core::TriangulatedObservation& record) {
-    return appendValidated(record, observations_);
+    const ports::EstimatedDirectObservation& record) {
+    if (!ports::isValid(record.evidence)) {
+        return {ports::WriteStatus::failed, "invalid observation evidence"};
+    }
+    const auto result = appendValidated(record.measurement, observations_);
+    if (result.status == ports::WriteStatus::accepted) {
+        observation_evidence_.push_back(record.evidence);
+    }
+    return result;
 }
 
 ports::WriteResult InMemoryTrialWriter::finalize() {

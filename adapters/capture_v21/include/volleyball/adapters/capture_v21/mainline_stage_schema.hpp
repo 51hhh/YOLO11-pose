@@ -2,6 +2,7 @@
 
 #include "volleyball/core/observation.hpp"
 #include "volleyball/ports/captured_frame.hpp"
+#include "volleyball/ports/direct_observation_estimator.hpp"
 
 #include <array>
 #include <iosfwd>
@@ -9,9 +10,10 @@
 
 namespace volleyball::adapters::capture_v21 {
 
-// v4 是旧 NX 聚合 staging；v5 为主线端口逐事实写入格式。两者均只属于
+// v4 是旧 NX 聚合 staging；v6 为主线端口逐事实写入格式。v6 在 v5
+// 基础上补齐每条直接观测实际使用的深度方法证据。它们均只属于
 // 未发布 staging，不改变对外冻结的 capture v2.1.0 数据包版本。
-inline constexpr int kCaptureV21MainlineStageSchemaVersion = 5;
+inline constexpr int kCaptureV21MainlineStageSchemaVersion = 6;
 
 inline constexpr std::array<std::string_view, 46>
     kCaptureV21MainlineFrameColumns = {
@@ -54,12 +56,14 @@ inline constexpr std::array<std::string_view, 14>
         "epipolar_error_px", "decision", "reject_reason",
     };
 
-inline constexpr std::array<std::string_view, 16>
+inline constexpr std::array<std::string_view, 20>
     kCaptureV21MainlineObservationColumns = {
         "observation_id", "source_pair_id", "capture_reference_ns",
         "capture_reference_clock_domain", "coordinate_frame", "x_m", "y_m",
         "z_m", "cov_xx_m2", "cov_xy_m2", "cov_xz_m2", "cov_yy_m2",
         "cov_yz_m2", "cov_zz_m2", "confidence", "reprojection_error_px",
+        "depth_method", "measurement_disparity_px",
+        "disparity_stddev_px", "support_points",
     };
 
 void writeCaptureV21MainlineFrameHeader(std::ostream& output);
@@ -79,6 +83,6 @@ void writeCaptureV21MainlineObservationHeader(std::ostream& output);
     const core::StereoAssociationAttempt& association);
 [[nodiscard]] bool writeCaptureV21MainlineObservationRow(
     std::ostream& output,
-    const core::TriangulatedObservation& observation);
+    const ports::EstimatedDirectObservation& observation);
 
 }  // namespace volleyball::adapters::capture_v21

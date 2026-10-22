@@ -2,6 +2,7 @@
 
 #include "volleyball/core/observation.hpp"
 #include "volleyball/ports/captured_frame.hpp"
+#include "volleyball/ports/direct_observation_estimator.hpp"
 
 #include <string>
 
@@ -28,7 +29,7 @@ public:
     [[nodiscard]] virtual WriteResult append(
         const volleyball::core::StereoAssociationAttempt& record) = 0;
     [[nodiscard]] virtual WriteResult append(
-        const volleyball::core::TriangulatedObservation& record) = 0;
+        const EstimatedDirectObservation& record) = 0;
     [[nodiscard]] virtual WriteResult finalize() = 0;
     virtual void abort(std::string reason) noexcept = 0;
 };

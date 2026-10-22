@@ -1,4 +1,4 @@
-"""主线 v5 staging 的结构、采集时序和硬件事实校验。"""
+"""主线 v6 staging 的结构、采集时序和硬件事实校验。"""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def _validate_context_and_tables(
     list[dict[str, str]],
 ]:
     context = load_json_object(directory / "context.json")
-    status = load_json_object(directory / "status_v5.json")
+    status = load_json_object(directory / "status_v6.json")
     if context.get("planning_only") is True:
         raise DatasetError("预演 staging 不得发布为真实 trial")
     if context.get("stage_schema_version") != MAINLINE_STAGE_SCHEMA_VERSION:
@@ -157,15 +157,15 @@ def _validate_context_and_tables(
     if partials:
         raise DatasetError(f"mainline staging 仍含未完成文件: {partials}")
 
-    frames = read_csv_exact(directory / "frames_v5.csv", MAINLINE_FRAME_COLUMNS)
+    frames = read_csv_exact(directory / "frames_v6.csv", MAINLINE_FRAME_COLUMNS)
     detections = read_csv_exact(
-        directory / "detections_v5.csv", MAINLINE_DETECTION_COLUMNS
+        directory / "detections_v6.csv", MAINLINE_DETECTION_COLUMNS
     )
     associations = read_csv_exact(
-        directory / "associations_v5.csv", MAINLINE_ASSOCIATION_COLUMNS
+        directory / "associations_v6.csv", MAINLINE_ASSOCIATION_COLUMNS
     )
     observations = read_csv_exact(
-        directory / "observations_v5.csv", MAINLINE_OBSERVATION_COLUMNS
+        directory / "observations_v6.csv", MAINLINE_OBSERVATION_COLUMNS
     )
     if not frames or len(frames) % 2 != 0:
         raise DatasetError("mainline staging 必须至少包含一对完整双目帧")
@@ -337,7 +337,7 @@ def validate_mainline_stage(
     if any(right != left + 1 for left, right in zip(indexes, indexes[1:])):
         raise DatasetError("mainline staging 出现帧索引缺口")
     if set((directory / "raw" / "mainline").rglob("*.pgm")) != referenced_raw:
-        raise DatasetError("mainline staging 原始图像集合与 frames_v5.csv 不一致")
+        raise DatasetError("mainline staging 原始图像集合与 frames_v6.csv 不一致")
 
     paired_rows = tuple(
         (frame_pairs[index]["left"], frame_pairs[index]["right"])

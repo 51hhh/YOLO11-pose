@@ -14,7 +14,7 @@ struct MainlineStageTrialWriterConfig {
     std::filesystem::path stage_directory;
 };
 
-// 主线 v5 staging 写入器。它保存逐相机采集事实、全部视觉证据和原始图像，
+// 主线 v6 staging 写入器。它保存逐相机采集事实、全部视觉证据和原始图像，
 // 但不直接发布最终 v2.1 trial；发布仍由独立 finalizer 校验后完成。
 class MainlineStageTrialWriter final : public ports::TrialWriter {
 public:
@@ -34,7 +34,7 @@ public:
     [[nodiscard]] ports::WriteResult append(
         const core::StereoAssociationAttempt& record) override;
     [[nodiscard]] ports::WriteResult append(
-        const core::TriangulatedObservation& record) override;
+        const ports::EstimatedDirectObservation& record) override;
     [[nodiscard]] ports::WriteResult finalize() override;
     void abort(std::string reason) noexcept override;
 

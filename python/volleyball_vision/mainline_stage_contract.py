@@ -1,6 +1,6 @@
-"""C++ 主线 v5 staging 的 Python 镜像契约。"""
+"""C++ 主线 v6 staging 的 Python 镜像契约。"""
 
-MAINLINE_STAGE_SCHEMA_VERSION = 5
+MAINLINE_STAGE_SCHEMA_VERSION = 6
 MAINLINE_FRAME_COLUMNS = [
     "camera_id",
     "camera_role",
@@ -103,6 +103,10 @@ MAINLINE_OBSERVATION_COLUMNS = [
     "cov_zz_m2",
     "confidence",
     "reprojection_error_px",
+    "depth_method",
+    "measurement_disparity_px",
+    "disparity_stddev_px",
+    "support_points",
 ]
 
 COVARIANCE_3D_FIELDS = (

@@ -3,6 +3,7 @@
 #include "volleyball/core/observation.hpp"
 #include "volleyball/ports/rectified_frame.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -13,9 +14,25 @@ namespace volleyball::ports {
 // 观测的深度方法及其测量证据，避免 ROI 精化结果反向改写原始关联事实。
 struct DirectObservationEvidence {
     volleyball::core::StereoDepthMethodId method;
-    std::optional<double> disparity_px;
+    double disparity_px{0.0};
     std::optional<double> disparity_stddev_px;
     std::optional<std::uint32_t> support_points;
+};
+
+[[nodiscard]] inline bool isValid(
+    const DirectObservationEvidence& evidence) noexcept {
+    return !evidence.method.empty() &&
+           std::isfinite(evidence.disparity_px) &&
+           evidence.disparity_px > 0.0 &&
+           (!evidence.disparity_stddev_px ||
+            (std::isfinite(*evidence.disparity_stddev_px) &&
+             *evidence.disparity_stddev_px >= 0.0)) &&
+           (!evidence.support_points || *evidence.support_points > 0);
+}
+
+struct EstimatedDirectObservation {
+    volleyball::core::TriangulatedObservation measurement;
+    DirectObservationEvidence evidence;
 };
 
 struct DirectObservationRequest {
@@ -34,8 +51,9 @@ enum class DirectObservationStatus {
 
 struct DirectObservationResult {
     DirectObservationStatus status{DirectObservationStatus::failed};
-    std::optional<volleyball::core::TriangulatedObservation> observation;
-    DirectObservationEvidence evidence;
+    std::optional<EstimatedDirectObservation> observation;
+    // rejected/failed 没有观测记录，仍需指出发生拒绝或故障的方法。
+    volleyball::core::StereoDepthMethodId attempted_method;
     std::string message;
 };
 

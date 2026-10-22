@@ -164,9 +164,11 @@ void testCenterEstimatorIsAnExplicitReferenceBackend() {
             result.observation.has_value(),
         "reference estimator must produce an observation for valid centers");
     check(
-        result.evidence.method == core::StereoDepthMethodId{"detection_center"} &&
-            result.evidence.disparity_px == 50.0 &&
-            result.evidence.support_points == 1,
+        result.observation &&
+            result.observation->evidence.method ==
+                core::StereoDepthMethodId{"detection_center"} &&
+            result.observation->evidence.disparity_px == 50.0 &&
+            result.observation->evidence.support_points == 1,
         "reference estimator must identify its center-only evidence");
 
     auto invalid = inputs.config;

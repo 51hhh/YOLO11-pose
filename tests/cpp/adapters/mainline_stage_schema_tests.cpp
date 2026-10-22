@@ -97,7 +97,7 @@ ports::CapturedFrame richFrame() {
 }
 
 void testHeadersAndFrame() {
-    check(capture_v21::kCaptureV21MainlineStageSchemaVersion == 5,
+    check(capture_v21::kCaptureV21MainlineStageSchemaVersion == 6,
           "mainline staging version must be explicit");
     std::ostringstream header;
     capture_v21::writeCaptureV21MainlineFrameHeader(header);
@@ -189,16 +189,21 @@ void testAssociationAndObservation() {
               association_fields[13].empty(),
           "accepted association must have no rejection token");
 
-    core::TriangulatedObservation observation;
-    observation.observation_id = 3;
-    observation.source_pair_id = 9;
-    observation.capture_reference = timestamp(255, "nx-realtime");
-    observation.coordinate_frame = core::CoordinateFrameId{"stereo-rig"};
-    observation.position_m = {1.0, 2.0, 3.0};
-    observation.covariance_m2 =
+    ports::EstimatedDirectObservation observation;
+    observation.measurement.observation_id = 3;
+    observation.measurement.source_pair_id = 9;
+    observation.measurement.capture_reference = timestamp(255, "nx-realtime");
+    observation.measurement.coordinate_frame =
+        core::CoordinateFrameId{"stereo-rig"};
+    observation.measurement.position_m = {1.0, 2.0, 3.0};
+    observation.measurement.covariance_m2 =
         core::Covariance3D{{1.0, 0.1, 0.2, 2.0, 0.3, 3.0}};
-    observation.confidence = 0.9;
-    observation.reprojection_error_px = 0.5;
+    observation.measurement.confidence = 0.9;
+    observation.measurement.reprojection_error_px = 0.5;
+    observation.evidence.method = core::StereoDepthMethodId{"roi_multi_point"};
+    observation.evidence.disparity_px = 30.25;
+    observation.evidence.disparity_stddev_px = 0.2;
+    observation.evidence.support_points = 8;
     std::ostringstream observation_output;
     check(capture_v21::writeCaptureV21MainlineObservationRow(
               observation_output, observation),
@@ -208,8 +213,11 @@ void testAssociationAndObservation() {
               capture_v21::kCaptureV21MainlineObservationColumns.size(),
           "observation row width must match its header");
     check(observation_fields[1] == "9" && observation_fields[4] == "stereo-rig" &&
-              observation_fields[14] == "0.90000000000000002",
-          "observation provenance and full double precision must be retained");
+              observation_fields[14] == "0.90000000000000002" &&
+              observation_fields[16] == "roi_multi_point" &&
+              observation_fields[17] == "30.25" &&
+              observation_fields[19] == "8",
+          "observation provenance, precision, and method evidence must remain");
 }
 
 }  // namespace

@@ -73,7 +73,7 @@ public:
         return accepted();
     }
     [[nodiscard]] ports::WriteResult append(
-        const core::TriangulatedObservation&) override {
+        const ports::EstimatedDirectObservation&) override {
         return accepted();
     }
     [[nodiscard]] ports::WriteResult finalize() override {

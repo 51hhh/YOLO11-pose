@@ -21,11 +21,11 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::string_view kFrameFile = "frames_v5.csv";
-constexpr std::string_view kDetectionFile = "detections_v5.csv";
-constexpr std::string_view kAssociationFile = "associations_v5.csv";
-constexpr std::string_view kObservationFile = "observations_v5.csv";
-constexpr std::string_view kStatusFile = "status_v5.json";
+constexpr std::string_view kFrameFile = "frames_v6.csv";
+constexpr std::string_view kDetectionFile = "detections_v6.csv";
+constexpr std::string_view kAssociationFile = "associations_v6.csv";
+constexpr std::string_view kObservationFile = "observations_v6.csv";
+constexpr std::string_view kStatusFile = "status_v6.json";
 
 struct FrameKey {
     std::string camera_id;
@@ -550,16 +550,18 @@ ports::WriteResult MainlineStageTrialWriter::append(
 }
 
 ports::WriteResult MainlineStageTrialWriter::append(
-    const core::TriangulatedObservation& record) {
+    const ports::EstimatedDirectObservation& record) {
     if (const auto state = impl_->requireOpen();
         state.status != ports::WriteStatus::accepted) {
         return state;
     }
-    const auto pair = impl_->accepted_pairs.find(record.source_pair_id);
-    if (!core::validate(record) || pair == impl_->accepted_pairs.end() ||
-        impl_->observed_pairs.count(record.source_pair_id) != 0 ||
-        impl_->observation_ids.count(record.observation_id) != 0 ||
-        record.capture_reference.clock_domain !=
+    const auto& measurement = record.measurement;
+    const auto pair = impl_->accepted_pairs.find(measurement.source_pair_id);
+    if (!core::validate(measurement) || !ports::isValid(record.evidence) ||
+        pair == impl_->accepted_pairs.end() ||
+        impl_->observed_pairs.count(measurement.source_pair_id) != 0 ||
+        impl_->observation_ids.count(measurement.observation_id) != 0 ||
+        measurement.capture_reference.clock_domain !=
             pair->second.left_capture.clock_domain) {
         return impl_->fail("invalid, duplicate, or orphaned direct observation");
     }
@@ -571,8 +573,8 @@ ports::WriteResult MainlineStageTrialWriter::append(
     if (!impl_->observations) {
         return impl_->fail("cannot append direct observation");
     }
-    impl_->observed_pairs.insert(record.source_pair_id);
-    impl_->observation_ids.insert(record.observation_id);
+    impl_->observed_pairs.insert(measurement.source_pair_id);
+    impl_->observation_ids.insert(measurement.observation_id);
     ++impl_->observations_written;
     return {ports::WriteStatus::accepted, {}};
 }

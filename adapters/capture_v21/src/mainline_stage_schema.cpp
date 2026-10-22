@@ -282,9 +282,12 @@ bool writeCaptureV21MainlineAssociationRow(
 
 bool writeCaptureV21MainlineObservationRow(
     std::ostream& output,
-    const core::TriangulatedObservation& value) {
+    const ports::EstimatedDirectObservation& record) {
+    const auto& value = record.measurement;
+    const auto& evidence = record.evidence;
     if (!isCsvToken(value.capture_reference.clock_domain.value()) ||
-        !isCsvToken(value.coordinate_frame.value())) {
+        !isCsvToken(value.coordinate_frame.value()) ||
+        !isCsvToken(evidence.method.value())) {
         return false;
     }
     output << std::setprecision(17) << value.observation_id << ','
@@ -299,6 +302,11 @@ bool writeCaptureV21MainlineObservationRow(
     writeOptional(output, value.confidence);
     output << ',';
     writeOptional(output, value.reprojection_error_px);
+    output << ',' << evidence.method.value() << ',' << evidence.disparity_px
+           << ',';
+    writeOptional(output, evidence.disparity_stddev_px);
+    output << ',';
+    if (evidence.support_points) output << *evidence.support_points;
     output << '\n';
     return static_cast<bool>(output);
 }

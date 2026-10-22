@@ -1,4 +1,4 @@
-"""旧 NX v4 与主线 v5 staging 共用的严格解析原语。"""
+"""旧 NX v4 与主线 v6 staging 共用的严格解析原语。"""
 
 from __future__ import annotations
 

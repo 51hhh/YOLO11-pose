@@ -38,14 +38,17 @@ ports::DirectObservationResult RectifiedCenterEstimator::estimate(
         return {
             ports::DirectObservationStatus::rejected,
             std::nullopt,
-            std::move(evidence),
+            evidence.method,
             std::move(result.message),
         };
     }
     return {
         ports::DirectObservationStatus::observation,
-        std::move(result.observation),
-        std::move(evidence),
+        ports::EstimatedDirectObservation{
+            std::move(*result.observation),
+            std::move(evidence),
+        },
+        core::StereoDepthMethodId{},
         {},
     };
 }

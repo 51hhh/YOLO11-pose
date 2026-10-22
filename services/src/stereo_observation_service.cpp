@@ -113,36 +113,24 @@ std::int64_t integerMidpoint(
     return left / 2 + right / 2 + (left % 2 + right % 2) / 2;
 }
 
-bool validEstimationEvidence(
-    const ports::DirectObservationEvidence& evidence) noexcept {
-    return !evidence.method.empty() &&
-           (!evidence.disparity_px ||
-            (std::isfinite(*evidence.disparity_px) &&
-             *evidence.disparity_px > 0.0)) &&
-           (!evidence.disparity_stddev_px ||
-            (std::isfinite(*evidence.disparity_stddev_px) &&
-             *evidence.disparity_stddev_px >= 0.0)) &&
-           (!evidence.support_points || *evidence.support_points > 0);
-}
-
 bool validEstimationResult(
     const ports::DirectObservationResult& result,
     const core::StereoAssociationAttempt& association,
     core::ObservationId observation_id) noexcept {
-    if (!validEstimationEvidence(result.evidence)) {
-        return false;
-    }
     if (result.status == ports::DirectObservationStatus::rejected ||
         result.status == ports::DirectObservationStatus::failed) {
-        return !result.observation.has_value();
+        return !result.observation.has_value() &&
+               !result.attempted_method.empty();
     }
     if (result.status != ports::DirectObservationStatus::observation) {
         return false;
     }
-    if (!result.observation || !core::validate(*result.observation)) {
+    if (!result.observation ||
+        !ports::isValid(result.observation->evidence) ||
+        !core::validate(result.observation->measurement)) {
         return false;
     }
-    const auto& observation = *result.observation;
+    const auto& observation = result.observation->measurement;
     const auto expected_capture = integerMidpoint(
         association.left_capture.nanoseconds,
         association.right_capture.nanoseconds);
@@ -434,7 +422,7 @@ StereoProcessResult StereoObservationService::process(
                 : std::move(estimated.message),
         };
     }
-    if (!passesGate(*estimated.observation)) {
+    if (!passesGate(estimated.observation->measurement)) {
         selected.decision = core::AssociationDecision::rejected;
         selected.reject_reason = core::AssociationRejectReason::quality_gate;
         if (!appendEvidence()) {
@@ -452,8 +440,9 @@ StereoProcessResult StereoObservationService::process(
     if (!appendEvidence()) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
-    const auto& observation = *estimated.observation;
-    if (!writeAccepted(writer_.append(observation), error)) {
+    const auto& estimated_observation = *estimated.observation;
+    const auto& observation = estimated_observation.measurement;
+    if (!writeAccepted(writer_.append(estimated_observation), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
     ++next_observation_id_;
@@ -466,7 +455,7 @@ StereoProcessResult StereoObservationService::process(
         publication.left_detection = *left_candidate;
         publication.right_detection = *right_candidate;
         publication.association = selected;
-        publication.estimation = estimated.evidence;
+        publication.estimation = estimated_observation.evidence;
         const auto published = publisher_->publish(publication);
         if (!published.success) {
             return fail(

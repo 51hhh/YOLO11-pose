@@ -1,4 +1,4 @@
-"""主线 C++ v5 staging 到冻结 capture v2.1 数据包的最终化适配。"""
+"""主线 C++ v6 staging 到冻结 capture v2.1 数据包的最终化适配。"""
 
 from __future__ import annotations
 
@@ -78,9 +78,9 @@ def build_mainline_capture_context(
     verify_model: bool = True,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    """复用公共采集身份生成逻辑，并显式选择主线 v5 staging。"""
+    """复用公共采集身份生成逻辑，并显式选择主线 v6 staging。"""
 
-    # 延迟导入避免 capture 的 v5 finalizer 分派形成模块初始化环。
+    # 延迟导入避免 capture 的 mainline finalizer 分派形成模块初始化环。
     from .capture import build_capture_context
 
     context = build_capture_context(
@@ -105,7 +105,7 @@ def finalize_mainline_capture_stage(
     *,
     project_root: str | Path | None = None,
 ) -> Path:
-    """严格校验 v5 逐事实 staging，并原子发布为 capture v2.1 trial。"""
+    """严格校验 v6 逐事实 staging，并原子发布为 capture v2.1 trial。"""
 
     evidence = validate_mainline_stage(stage, config)
     directory = evidence.directory
@@ -297,6 +297,9 @@ def finalize_mainline_capture_stage(
 
     observation_by_pair: dict[int, dict[str, str]] = {}
     observation_ids: set[int] = set()
+    allowed_depth_methods = set(
+        config.data["stereo"]["triangulation"]["candidate_methods"]
+    )
     for row in observations:
         observation_id = parse_int(row, "observation_id")
         pair_id = parse_int(row, "source_pair_id")
@@ -309,6 +312,19 @@ def finalize_mainline_capture_stage(
         if parse_float(row, "z_m") is None or float(row["z_m"]) <= 0.0:
             raise DatasetError("mainline 直接观测 z_m 必须大于零")
         _optional_group(row, COVARIANCE_3D_FIELDS)
+        if row["depth_method"] not in allowed_depth_methods:
+            raise DatasetError("mainline 直接观测使用了配置外的深度方法")
+        measured_disparity = parse_float(row, "measurement_disparity_px")
+        if measured_disparity is None or measured_disparity <= 0.0:
+            raise DatasetError("mainline 直接观测测量视差必须大于零")
+        disparity_stddev = parse_float(
+            row, "disparity_stddev_px", optional=True
+        )
+        if disparity_stddev is not None and disparity_stddev < 0.0:
+            raise DatasetError("mainline 直接观测视差标准差不得为负")
+        support_points = _optional_int(row, "support_points")
+        if support_points is not None and support_points <= 0:
+            raise DatasetError("mainline 直接观测支持点数必须为正整数")
 
     accepted_keys: set[tuple[str, int, int]] = set()
     pair_ids: set[int] = set()
@@ -388,7 +404,13 @@ def finalize_mainline_capture_stage(
             "left_capture_ns": left_capture,
             "right_capture_ns": right_capture,
             "delta_t_lr_ns": right_capture - left_capture,
-            "disparity_px": parse_float(row, "disparity_px", optional=True),
+            # 正式 accepted pair 使用真正产生 3D 的精化视差；检测中心的
+            # 初始门控视差仍完整保存在 raw/audit/associations_v6.csv。
+            "disparity_px": (
+                parse_float(row, "disparity_px", optional=True)
+                if observation is None
+                else parse_float(observation, "measurement_disparity_px")
+            ),
             "epipolar_error_px": parse_float(
                 row, "epipolar_error_px", optional=True
             ),
@@ -602,23 +624,23 @@ def finalize_mainline_capture_stage(
             writer.append("environment", environment)
 
         for label, source, filename in (
-            ("mainline_stage_frames", directory / "frames_v5.csv", "audit/frames_v5.csv"),
+            ("mainline_stage_frames", directory / "frames_v6.csv", "audit/frames_v6.csv"),
             (
                 "mainline_stage_detections",
-                directory / "detections_v5.csv",
-                "audit/detections_v5.csv",
+                directory / "detections_v6.csv",
+                "audit/detections_v6.csv",
             ),
             (
                 "mainline_stage_associations",
-                directory / "associations_v5.csv",
-                "audit/associations_v5.csv",
+                directory / "associations_v6.csv",
+                "audit/associations_v6.csv",
             ),
             (
                 "mainline_stage_observations",
-                directory / "observations_v5.csv",
-                "audit/observations_v5.csv",
+                directory / "observations_v6.csv",
+                "audit/observations_v6.csv",
             ),
-            ("mainline_stage_status", directory / "status_v5.json", "audit/status_v5.json"),
+            ("mainline_stage_status", directory / "status_v6.json", "audit/status_v6.json"),
             ("capture_context", directory / "context.json", "audit/context.json"),
         ):
             writer.add_raw_source(label, source, filename=filename)

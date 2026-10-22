@@ -44,7 +44,7 @@ public:
         }
         if (path_.empty()) throw std::runtime_error("cannot create test stage");
         std::ofstream context(path_ / "context.json");
-        context << "{\"stage_schema_version\":5}\n";
+        context << "{\"stage_schema_version\":6}\n";
     }
 
     ~TempStage() {
@@ -159,15 +159,21 @@ core::StereoAssociationAttempt acceptedAssociation() {
     return output;
 }
 
-core::TriangulatedObservation observation() {
-    core::TriangulatedObservation output;
-    output.observation_id = 3;
-    output.source_pair_id = 7;
-    output.capture_reference = {1005, core::ClockDomainId{"nx-realtime"}};
-    output.coordinate_frame = core::CoordinateFrameId{"stereo-rig"};
-    output.position_m = {1.0, 2.0, 3.0};
-    output.confidence = 0.9;
-    output.reprojection_error_px = 0.0;
+ports::EstimatedDirectObservation observation() {
+    ports::EstimatedDirectObservation output;
+    output.measurement.observation_id = 3;
+    output.measurement.source_pair_id = 7;
+    output.measurement.capture_reference = {
+        1005, core::ClockDomainId{"nx-realtime"}};
+    output.measurement.coordinate_frame =
+        core::CoordinateFrameId{"stereo-rig"};
+    output.measurement.position_m = {1.0, 2.0, 3.0};
+    output.measurement.confidence = 0.9;
+    output.measurement.reprojection_error_px = 0.0;
+    output.evidence.method = core::StereoDepthMethodId{"roi_multi_point"};
+    output.evidence.disparity_px = 2.1;
+    output.evidence.disparity_stddev_px = 0.1;
+    output.evidence.support_points = 8;
     return output;
 }
 
@@ -206,20 +212,25 @@ void testCompleteTransactionPublishesMainlineStage() {
           "consistent evidence must finalize");
     check(!writer.isOpen(), "finalized writer must close its mutation boundary");
 
-    check(fs::is_regular_file(stage.path() / "frames_v5.csv") &&
-              lineCount(stage.path() / "frames_v5.csv") == 3,
+    check(fs::is_regular_file(stage.path() / "frames_v6.csv") &&
+              lineCount(stage.path() / "frames_v6.csv") == 3,
           "published frame table must contain one header and two camera rows");
-    check(fs::is_regular_file(stage.path() / "detections_v5.csv") &&
-              lineCount(stage.path() / "detections_v5.csv") == 3,
+    check(fs::is_regular_file(stage.path() / "detections_v6.csv") &&
+              lineCount(stage.path() / "detections_v6.csv") == 3,
           "published detection table must preserve both candidates");
-    check(fs::is_regular_file(stage.path() / "associations_v5.csv") &&
-              fs::is_regular_file(stage.path() / "observations_v5.csv"),
+    check(fs::is_regular_file(stage.path() / "associations_v6.csv") &&
+              fs::is_regular_file(stage.path() / "observations_v6.csv"),
           "association and observation facts must remain separate tables");
-    const std::string status = readText(stage.path() / "status_v5.json");
+    check(
+        readText(stage.path() / "observations_v6.csv").find(
+            "roi_multi_point,2.1000000000000001,0.10000000000000001,8") !=
+            std::string::npos,
+        "observation table must preserve the selected depth evidence");
+    const std::string status = readText(stage.path() / "status_v6.json");
     check(status.find("\"complete\": true") != std::string::npos &&
               status.find("\"raw_images_written\": 2") != std::string::npos,
           "completion status must be written last with exact counts");
-    check(!fs::exists(stage.path() / "frames_v5.csv.partial"),
+    check(!fs::exists(stage.path() / "frames_v6.csv.partial"),
           "successful finalization must leave no partial table");
 
     const std::string pgm = readText(
@@ -246,7 +257,7 @@ void testWriterRejectsNonHostImageWithoutHalfFrame() {
     check(writer.append(stereoFrame(ports::MemoryKind::cuda_device)).status ==
               ports::WriteStatus::failed,
           "writer must reject device memory without an explicit copy adapter");
-    const std::string status = readText(stage.path() / "status_v5.json");
+    const std::string status = readText(stage.path() / "status_v6.json");
     check(status.find("\"complete\": false") != std::string::npos &&
               status.find("\"camera_frames_written\": 0") != std::string::npos,
           "failure status must prove that no half stereo frame was committed");
@@ -272,7 +283,7 @@ void testAcceptedPairRequiresDirectObservation() {
           "relation test association must be accepted");
     check(writer.finalize().status == ports::WriteStatus::failed,
           "accepted pair without direct observation must not finalize");
-    check(readText(stage.path() / "status_v5.json").find(
+    check(readText(stage.path() / "status_v6.json").find(
               "\"complete\": false") != std::string::npos,
           "failed relation must leave an explicitly incomplete stage");
 }
