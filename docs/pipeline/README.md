@@ -88,6 +88,7 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 | 3D 融合与回调 | `src/pipeline/pipeline_roi_stage2.cpp` |
 | v2.1 采集队列、图像复制与收尾 | `src/capture/capture_v21_stage_recorder.*` |
 | v2.1 staging CSV 序列化合同 | `adapters/capture_v21/` |
+| 主线直接观测 ROS2 映射与 publisher | `adapters/ros2/`（已构建，待原生入口切换） |
 | 可选实时调试落盘 | `src/diagnostics/realtime_debug_dump*` |
 | 本地可视化叠加 | `src/ui/display_*` |
 
