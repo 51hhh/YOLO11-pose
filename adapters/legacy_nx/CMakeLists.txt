@@ -383,6 +383,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 # ==================== 链接 ====================
 target_link_libraries(stereo_pipeline
   volleyball::tensorrt_contract
+  volleyball::tensorrt_postprocess
   # VPI
   vpi
   # TensorRT

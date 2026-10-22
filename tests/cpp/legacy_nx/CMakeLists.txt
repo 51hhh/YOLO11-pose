@@ -19,6 +19,7 @@ function(add_legacy_nx_test target)
   target_compile_options(${target} PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
   )
+  target_link_libraries(${target} PRIVATE volleyball::tensorrt_postprocess)
   add_test(NAME ${target} COMMAND ${target})
 endfunction()
 

@@ -11,6 +11,7 @@
 
 #include "trt_detector.h"
 #include "volleyball/adapters/tensorrt/engine_contract.hpp"
+#include "volleyball/adapters/tensorrt/postprocess.hpp"
 #include "volleyball/logging/log.hpp"
 
 #include <NvInfer.h>
@@ -18,9 +19,9 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
-#include <cstring>
 #include <cmath>
-#include <numeric>
+#include <cstring>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -71,6 +72,12 @@ namespace stereo3d {
 
 using volleyball::adapters::tensorrt::DetectorEngineContract;
 using volleyball::adapters::tensorrt::DetectorTensorSpec;
+using volleyball::adapters::tensorrt::DflScaleView;
+using volleyball::adapters::tensorrt::PostprocessConfig;
+using volleyball::adapters::tensorrt::SingleOutputView;
+using volleyball::adapters::tensorrt::decodeDflOutputs;
+using volleyball::adapters::tensorrt::decodeSingleOutput;
+using volleyball::adapters::tensorrt::nonMaxSuppression;
 using volleyball::adapters::tensorrt::validateDetectorEngineContract;
 
 // TensorRT Logger
@@ -635,159 +642,24 @@ void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
 
 std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
                                                 float scaleX, float scaleY) {
-    // YOLOv8/v11 输出格式自动检测:
-    //
-    // 格式A - Pre-NMS 列优先 (YOLOv8 默认):
-    //   [1, 4+nc, N]  如 [1, 5, 8400] → nc=1, 有 8400 个候选框
-    //
-    // 格式B - Pre-NMS 行优先:
-    //   [1, N, 4+nc]  如 [1, 8400, 5] → cx,cy,w,h + per-class scores
-    //
-    // 格式C - Post-NMS (ultralytics v11 带内置 NMS 的导出):
-    //   [1, N, 6]  如 [1, 300, 6] → x1,y1,x2,y2,conf,class_id
-    //   特征: dim2==6, 已经做完 NMS, 坐标是 xyxy 绝对值
-
-    auto outDims = engine_->getTensorShape(outputTensorName_.c_str());
-    int dim1 = (outDims.nbDims >= 2) ? outDims.d[1] : 0;
-    int dim2 = (outDims.nbDims >= 3) ? outDims.d[2] : 0;
-
-    std::vector<Detection> raw_dets;
-    const float* out = outputBufferHost;
-
-    // 格式C: Post-NMS [1, N, 6] — ultralytics v11 导出 (x1,y1,x2,y2,conf,class_id)
-    if (dim2 == 6 && dim1 > 0 && dim1 <= 1000) {
-        int numDets = dim1;
-        for (int i = 0; i < numDets; ++i) {
-            const float* row = out + i * 6;
-            float x1   = row[0];
-            float y1   = row[1];
-            float x2   = row[2];
-            float y2   = row[3];
-            float conf = row[4];
-            int   cls  = static_cast<int>(row[5]);
-
-            if (conf < confThreshold_) continue;
-
-            Detection det;
-            det.cx         = (x1 + x2) / 2.0f * scaleX;
-            det.cy         = (y1 + y2) / 2.0f * scaleY;
-            det.width      = (x2 - x1) * scaleX;
-            det.height     = (y2 - y1) * scaleY;
-            det.confidence = conf;
-            det.class_id   = cls;
-            raw_dets.push_back(det);
-        }
-        return raw_dets;  // 已经是 NMS 后的结果, 直接返回
+    const auto dimensions = engine_->getTensorShape(outputTensorName_.c_str());
+    const SingleOutputView output{
+        outputBufferHost,
+        static_cast<std::size_t>(std::max(0, outputSize_)),
+        dimensions.nbDims >= 2 ? dimensions.d[1] : 0,
+        dimensions.nbDims >= 3 ? dimensions.d[2] : 0,
+    };
+    const auto result = decodeSingleOutput(
+        output,
+        scaleX,
+        scaleY,
+        PostprocessConfig{confThreshold_, nmsThreshold_});
+    if (!result.success) {
+        LOG_ERROR("[TRT] Single-output postprocess failed: %s",
+                  result.message.c_str());
+        return {};
     }
-
-    // 格式A vs B 判断
-    bool transposed = (dim1 > 0 && dim2 > 0 && dim1 < dim2);
-
-    if (transposed) {
-        // 列优先: [1, 4+nc, N]  dim1=5, dim2=8400
-        int channels = dim1;    // 4 + nc
-        int numDets  = dim2;    // N
-        int nc = channels - 4;
-
-        for (int i = 0; i < numDets; ++i) {
-            // 每列 i: out[row * numDets + i]
-            float cx = out[0 * numDets + i];
-            float cy = out[1 * numDets + i];
-            float w  = out[2 * numDets + i];
-            float h  = out[3 * numDets + i];
-
-            // 找最大类别置信度
-            float maxConf = 0;
-            int maxClass = 0;
-            for (int c = 0; c < nc; ++c) {
-                float score = out[(4 + c) * numDets + i];
-                if (score > maxConf) { maxConf = score; maxClass = c; }
-            }
-
-            if (maxConf < confThreshold_) continue;
-
-            Detection det;
-            det.cx         = cx * scaleX;
-            det.cy         = cy * scaleY;
-            det.width      = w  * scaleX;
-            det.height     = h  * scaleY;
-            det.confidence = maxConf;
-            det.class_id   = maxClass;
-            raw_dets.push_back(det);
-        }
-    } else {
-        // 行优先: [1, N, 4+nc]  dim1=8400, dim2=5
-        int numDets  = dim1;
-        int channels = dim2;    // 4 + nc
-        int nc = channels - 4;
-
-        for (int i = 0; i < numDets; ++i) {
-            const float* row = out + i * channels;
-            float cx = row[0];
-            float cy = row[1];
-            float w  = row[2];
-            float h  = row[3];
-
-            float maxConf = 0;
-            int maxClass = 0;
-            for (int c = 0; c < nc; ++c) {
-                if (row[4 + c] > maxConf) { maxConf = row[4 + c]; maxClass = c; }
-            }
-
-            if (maxConf < confThreshold_) continue;
-
-            Detection det;
-            det.cx         = cx * scaleX;
-            det.cy         = cy * scaleY;
-            det.width      = w  * scaleX;
-            det.height     = h  * scaleY;
-            det.confidence = maxConf;
-            det.class_id   = maxClass;
-            raw_dets.push_back(det);
-        }
-    }
-
-    return nms(raw_dets);
-}
-
-std::vector<Detection> TRTDetector::nms(const std::vector<Detection>& dets) {
-    if (dets.empty()) return {};
-
-    // 按置信度排序
-    std::vector<int> indices(dets.size());
-    std::iota(indices.begin(), indices.end(), 0);
-    std::sort(indices.begin(), indices.end(),
-              [&](int a, int b) { return dets[a].confidence > dets[b].confidence; });
-
-    std::vector<bool> suppressed(dets.size(), false);
-    std::vector<Detection> result;
-
-    for (int idx : indices) {
-        if (suppressed[idx]) continue;
-        result.push_back(dets[idx]);
-        for (int j : indices) {
-            if (j == idx || suppressed[j]) continue;
-            if (computeIoU(dets[idx], dets[j]) > nmsThreshold_) {
-                suppressed[j] = true;
-            }
-        }
-    }
-    return result;
-}
-
-float TRTDetector::computeIoU(const Detection& a, const Detection& b) {
-    float ax1 = a.cx - a.width / 2, ay1 = a.cy - a.height / 2;
-    float ax2 = a.cx + a.width / 2, ay2 = a.cy + a.height / 2;
-    float bx1 = b.cx - b.width / 2, by1 = b.cy - b.height / 2;
-    float bx2 = b.cx + b.width / 2, by2 = b.cy + b.height / 2;
-
-    float ix1 = std::max(ax1, bx1), iy1 = std::max(ay1, by1);
-    float ix2 = std::min(ax2, bx2), iy2 = std::min(ay2, by2);
-
-    float inter = std::max(0.0f, ix2 - ix1) * std::max(0.0f, iy2 - iy1);
-    float areaA = a.width * a.height;
-    float areaB = b.width * b.height;
-    return inter / (areaA + areaB - inter + 1e-6f);
+    return result.detections;
 }
 
 std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
@@ -799,6 +671,17 @@ std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
     raw_dets.reserve(count);
     for (int i = 0; i < count; ++i) {
         const float* row = buf.dflOutHost + i * 6;
+        const bool valid =
+            std::isfinite(row[0]) && std::isfinite(row[1]) &&
+            std::isfinite(row[2]) && std::isfinite(row[3]) &&
+            std::isfinite(row[4]) && std::isfinite(row[5]) &&
+            row[2] > 0.0F && row[3] > 0.0F &&
+            row[4] >= confThreshold_ && row[5] >= 0.0F &&
+            row[5] <= static_cast<float>(std::numeric_limits<int>::max());
+        if (!valid) {
+            LOG_ERROR("[TRT] GPU DFL output contains an invalid detection");
+            return {};
+        }
         Detection det;
         det.cx         = row[0];
         det.cy         = row[1];
@@ -808,30 +691,19 @@ std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
         det.class_id   = static_cast<int>(row[5]);
         raw_dets.push_back(det);
     }
-    return nms(raw_dets);
+    return nonMaxSuppression(raw_dets, nmsThreshold_);
 }
 
 std::vector<Detection> TRTDetector::postprocessMultiScale(
     const BufferSet& buf, float scaleX, float scaleY)
 {
-    // 6-tensor output from yolov11n_dla:
-    //   cls_s8  [1,80,80,nc], bbox_s8  [1,80,80,64]
-    //   cls_s16 [1,40,40,nc], bbox_s16 [1,40,40,64]
-    //   cls_s32 [1,20,20,nc], bbox_s32 [1,20,20,64]
-    //
-    // Output tensors are interleaved: cls, bbox, cls, bbox, cls, bbox
-    // Detect by channels: nc (1-4) = cls, 64 = bbox DFL
-
-    std::vector<Detection> raw_dets;
-
-    // Group outputs by scale: find cls+bbox pairs
-    for (size_t i = 0; i < buf.scaleOutputs.size(); ++i) {
+    std::vector<DflScaleView> scales;
+    for (std::size_t i = 0; i < buf.scaleOutputs.size(); ++i) {
         const auto& so = buf.scaleOutputs[i];
         if (!so.isCls) continue;
 
-        // Find matching bbox tensor for same scale (same H,W)
         const BufferSet::ScaleOutput* bboxOut = nullptr;
-        for (size_t j = 0; j < buf.scaleOutputs.size(); ++j) {
+        for (std::size_t j = 0; j < buf.scaleOutputs.size(); ++j) {
             if (j == i) continue;
             const auto& other = buf.scaleOutputs[j];
             if (!other.isCls && other.h == so.h && other.w == so.w) {
@@ -839,77 +711,36 @@ std::vector<Detection> TRTDetector::postprocessMultiScale(
                 break;
             }
         }
-        if (!bboxOut) continue;
-
-        int H = so.h;
-        int W = so.w;
-        int nc = so.channels;
-        int stride = so.stride;
-        const float* clsData = so.host;
-        const float* bboxData = bboxOut->host;
-
-        // Process each grid cell
-        for (int y = 0; y < H; ++y) {
-            for (int x = 0; x < W; ++x) {
-                int offset = y * W + x;
-
-                // Find max class score (sigmoid)
-                float maxConf = 0;
-                int maxClass = 0;
-                for (int c = 0; c < nc; ++c) {
-                    float logit = clsData[offset * nc + c];
-                    float score = 1.0f / (1.0f + std::exp(-logit));  // sigmoid
-                    if (score > maxConf) {
-                        maxConf = score;
-                        maxClass = c;
-                    }
-                }
-                if (maxConf < confThreshold_) continue;
-
-                // DFL decode: bbox [H*W, 4*reg_max] → 4 offsets
-                // Data layout: [H, W, 4*reg_max] where reg_max=16
-                const float* bboxRow = bboxData + offset * (4 * regMax_);
-                float offsets[4];
-
-                for (int edge = 0; edge < 4; ++edge) {
-                    const float* dfl = bboxRow + edge * regMax_;
-
-                    // Softmax across reg_max bins
-                    float maxVal = dfl[0];
-                    for (int k = 1; k < regMax_; ++k)
-                        maxVal = std::max(maxVal, dfl[k]);
-
-                    float sumExp = 0;
-                    float weighted = 0;
-                    for (int k = 0; k < regMax_; ++k) {
-                        float e = std::exp(dfl[k] - maxVal);
-                        sumExp += e;
-                        weighted += e * k;
-                    }
-                    offsets[edge] = weighted / (sumExp + 1e-9f);
-                }
-
-                // dist2bbox: anchor = (x+0.5, y+0.5), offsets = (left, top, right, bottom)
-                float anchorX = (x + 0.5f) * stride;
-                float anchorY = (y + 0.5f) * stride;
-                float x1 = anchorX - offsets[0] * stride;
-                float y1 = anchorY - offsets[1] * stride;
-                float x2 = anchorX + offsets[2] * stride;
-                float y2 = anchorY + offsets[3] * stride;
-
-                Detection det;
-                det.cx         = (x1 + x2) / 2.0f * scaleX;
-                det.cy         = (y1 + y2) / 2.0f * scaleY;
-                det.width      = (x2 - x1) * scaleX;
-                det.height     = (y2 - y1) * scaleY;
-                det.confidence = maxConf;
-                det.class_id   = maxClass;
-                raw_dets.push_back(det);
-            }
+        if (!bboxOut) {
+            LOG_ERROR("[TRT] DFL classification tensor '%s' has no box pair",
+                      so.name.c_str());
+            return {};
         }
+        const auto cells = static_cast<std::size_t>(so.h) *
+                           static_cast<std::size_t>(so.w);
+        scales.push_back({
+            so.host,
+            cells * static_cast<std::size_t>(so.channels),
+            bboxOut->host,
+            cells * static_cast<std::size_t>(bboxOut->channels),
+            so.h,
+            so.w,
+            so.channels,
+            so.stride,
+        });
     }
 
-    return nms(raw_dets);
+    const auto result = decodeDflOutputs(
+        scales,
+        regMax_,
+        scaleX,
+        scaleY,
+        PostprocessConfig{confThreshold_, nmsThreshold_});
+    if (!result.success) {
+        LOG_ERROR("[TRT] DFL postprocess failed: %s", result.message.c_str());
+        return {};
+    }
+    return result.detections;
 }
 
 }  // namespace stereo3d

@@ -128,7 +128,6 @@ private:
     bool useLetterbox_ = true;  ///< 使用 letterbox 预处理 (保持宽高比)
     InputFormat inputFormat_ = InputFormat::GRAY;  ///< 输入像素格式
     bool multiScaleOutput_ = false;  ///< 6-tensor DFL output mode
-    int  numClasses_ = 1;       ///< Number of classes (volleyball=1)
     int  regMax_ = 16;          ///< DFL regression max bins
 
     // TensorRT 10.x tensor 名称
@@ -169,11 +168,6 @@ private:
     std::vector<Detection> collectGPUDFLResults(const BufferSet& buf);
     bool useGPUPostprocess_ = true;   ///< Use CUDA DFL decode (vs CPU)
 
-    /**
-     * @brief NMS
-     */
-    std::vector<Detection> nms(const std::vector<Detection>& dets);
-    float computeIoU(const Detection& a, const Detection& b);
 };
 
 }  // namespace stereo3d
