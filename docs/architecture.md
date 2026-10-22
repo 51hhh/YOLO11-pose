@@ -37,7 +37,9 @@ NX GPIO 上升沿 ────────┐
 
 ### Ports
 
-`ports` 定义相机、检测器、trial 写入器和发布器的最小接口。用例依赖接口，不依赖某一型号相机或推理后端。
+`ports` 定义相机、双目预处理、检测器、trial 写入器和发布器的最小接口。用例依赖接口，不依赖某一型号相机或推理后端。
+
+原始 `StereoFrame` 与 `RectifiedStereoFrame` 是不同类型。前者携带 Bayer 图像和不可修改的采集事实；后者只用 `FrameReference` 引用来源，并携带同一校正模型下的 BGR8 detector 输入与 Gray8 几何输入。`Detector` 只接受后者，因此不能隐式把 Bayer 当成 BGR，也不能在检测器内部悄悄采用另一套校正坐标。
 
 ### Algorithms
 
@@ -45,7 +47,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Services
 
-`StereoObservationService` 负责一次双目观测用例：读取配对帧、调用两侧检测器、保存全部候选、枚举并保存全部配对尝试、三角化通过门控的配对，然后写入或发布直接观测。任何必需写入失败都会使本次 trial 失败。
+`StereoObservationService` 负责一次双目观测用例：先校验并保存原始配对帧，再调用 `StereoPreprocessor` 生成与来源帧强绑定的校正 BGR/Gray 图，之后调用两侧检测器、保存全部候选、枚举并保存全部配对尝试、三角化通过门控的配对，然后写入或发布直接观测。预处理输出若交换帧身份、改变尺寸、缺少图像或使用错误像素格式，整次 trial 会明确失败；原始 Bayer 事实仍留在未发布 staging 中供排障。任何必需写入失败同样会使本次 trial 失败。
 
 `StereoPipelineRunner` 负责一个 trial 的平台无关生命周期。它从 `CameraSource` 逐项读取配对帧，把帧交给 `StereoObservationService`，并区分正常流结束、可容忍的连续超时、超时越限、数据源错误和源协议错误。只有 `end_of_stream` 能触发 `finalize`；其他终止路径统一 `abort`，同一 runner 不能运行第二次。相机线程、SDK 句柄、GPU 缓冲和 detector 资源仍属于 adapter，runner 不接管硬件所有权，也不是实机可执行入口。
 
@@ -61,7 +63,7 @@ NX GPIO 上升沿 ────────┐
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
 
-现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，但尚未与真实 CUDA/TensorRT detector 组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，平台无关服务也已显式建立 `StereoPreprocessor` 契约，但真实 CUDA/VPI 预处理、TensorRT detector 尚未实现该新端口，更未组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 

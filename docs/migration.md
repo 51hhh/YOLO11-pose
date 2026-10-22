@@ -8,9 +8,9 @@
 
 旧 `HybridDepth` 可以为内部关联使用 bbox 单目深度、双目深度和 Kalman 状态，但其输出中的 `raw_*` 只能原样传递当前帧已验证的直接双目三角化测量。纯单目、单/双目融合、偏差校正和预测结果均不得设置 `raw_observation_valid`，因此 NX 的 ROS2 publisher 不会把派生状态冒充为直接测量。
 
-主线目前已有 `CameraSource → StereoPipelineRunner → StereoObservationService → TrialWriter/ObservationPublisher` 的平台无关编排，并用脚本相机源覆盖结束、超时、错误和中止语义。`HikStereoCameraSource` 已把海康双目帧接入该端口：它按 `FrameCounter` 查询 GPIO 上升沿、分别保留左右设备时钟和主机到达时钟、按每帧实际曝光计算曝光中心，并以有界自有缓冲保证下游持有图像时不会被覆盖。`MainlineStageTrialWriter` 已按四类事实原子写入 v5 staging，独立 finalizer 会重新验证计数、时序、时钟映射、关系和原图后发布 v2.1。上述边界均有主机契约测试。
+主线目前已有 `CameraSource → StereoPipelineRunner → StereoObservationService → StereoPreprocessor/Detector → TrialWriter/ObservationPublisher` 的平台无关编排，并用脚本相机源覆盖结束、超时、错误和中止语义。`StereoPreprocessor` 的输出与原始帧身份强绑定，必须同时提供同尺寸的校正 BGR8 和 Gray8；`Detector` 不再接受原始 Bayer。`HikStereoCameraSource` 已把海康双目帧接入该端口：它按 `FrameCounter` 查询 GPIO 上升沿、分别保留左右设备时钟和主机到达时钟、按每帧实际曝光计算曝光中心，并以有界自有缓冲保证下游持有图像时不会被覆盖。`MainlineStageTrialWriter` 已按四类事实原子写入 v5 staging，独立 finalizer 会重新验证计数、时序、时钟映射、关系和原图后发布 v2.1。上述平台无关边界均有主机契约测试。
 
-这仍不等于新的实机入口已经完成。主线 `TrialWriter` 已完成，但 TensorRT/CUDA `Detector`、ROS2 `ObservationPublisher` 和应用层生命周期尚未全部接入；当前实机仍由旧管线编排，不能仅凭主机测试宣称新入口可采集或达到实时性能。
+这仍不等于新的实机入口已经完成。主线 `TrialWriter` 已完成，但 CUDA/VPI `StereoPreprocessor`、TensorRT/CUDA `Detector`、ROS2 `ObservationPublisher` 和应用层生命周期尚未全部接入；当前实机仍由旧管线编排，不能仅凭主机测试宣称新入口可采集或达到实时性能。
 
 根工程通过 `nx-legacy-release` 预设将旧工程作为 ExternalProject 编译。这样可以复用实机能力，同时防止旧工程的全局 CUDA、VPI、MVS、OpenCV 和 ROS2 依赖进入 `libs/core`、`ports`、`algorithms` 或 `services`。
 
@@ -30,7 +30,7 @@
 1. **冻结契约（已完成）**：v2.1 数据、强类型核心、配置和 CI 已建立；
 2. **包裹旧实现（已完成）**：主线 CLI 负责 doctor、配置生成、采集 staging 和最终发布；
 3. **提取算法与用例编排（已完成主机门禁）**：纯关联/三角化已进入 `algorithms/stereo`，平台无关 runner 已覆盖 trial 的正常与故障终态；仍需逐项用录制数据对比旧实现；
-4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v5 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界；TensorRT/CUDA `Detector` 和 ROS2 `ObservationPublisher` 仍待迁出旧工程；
+4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v5 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界；CUDA/VPI `StereoPreprocessor` 的端口和失败语义已建立，但其真实实现、TensorRT/CUDA `Detector` 和 ROS2 `ObservationPublisher` 仍待迁出旧工程；
 5. **替换可执行入口（未开始）**：新服务能够完整组装后再建立原生应用入口，旧管线只保留回归基准；
 6. **删除兼容层（未开始）**：只有在同一批实机数据、性能和输出契约均通过时执行。
 

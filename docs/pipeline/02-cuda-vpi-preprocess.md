@@ -1,5 +1,11 @@
 # CUDA/VPI 前处理
 
+## 主线边界状态
+
+平台无关主线已经用 `StereoPreprocessor` 明确表达本阶段：输入是带完整采集事实的原始 `StereoFrame`，输出是只引用来源帧身份的 `RectifiedStereoFrame`。服务会检查左右身份没有交换、图像尺寸与原始 ROI 一致，并要求同时得到 BGR8 detector 输入与 Gray8 几何输入；预处理失败不会退化为普通漏检。
+
+本页后续描述的是 `adapters/legacy_nx` 中已经存在的 CUDA/VPI 实现和实机资源生命周期。它尚未迁成新 `StereoPreprocessor` adapter，所以“端口契约已测试”与“新主线已在 Orin NX 执行该实现”是两个不同状态。
+
 ## 当前输入与输出
 
 当前相机输出 1440×1080 `BayerRG8`，90 Hz。Stage 0 同时产生两类校正图像：
