@@ -119,3 +119,11 @@ target_include_directories(
 target_link_libraries(
   ros2_observation_publisher_tests PRIVATE volleyball::ros2_mapping
 )
+
+add_adapter_test(
+  ros2_source_epoch_tests
+  ros2_source_epoch_tests.cpp
+)
+target_link_libraries(
+  ros2_source_epoch_tests PRIVATE volleyball::ros2_epoch
+)

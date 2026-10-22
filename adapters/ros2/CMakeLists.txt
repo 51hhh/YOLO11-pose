@@ -12,6 +12,18 @@ target_compile_options(volleyball_ros2_mapping PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>
 )
 
+add_library(volleyball_ros2_epoch STATIC
+  src/source_epoch.cpp
+)
+add_library(volleyball::ros2_epoch ALIAS volleyball_ros2_epoch)
+target_include_directories(volleyball_ros2_epoch PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_compile_features(volleyball_ros2_epoch PUBLIC cxx_std_17)
+target_compile_options(volleyball_ros2_epoch PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>
+)
+
 option(
   VOLLEYBALL_BUILD_ROS2_ADAPTER
   "构建依赖 rclcpp 和 volleyball_interfaces 的观测发布器"
@@ -35,6 +47,7 @@ target_include_directories(volleyball_ros2_publisher PUBLIC
 )
 target_link_libraries(volleyball_ros2_publisher PUBLIC
   volleyball::ros2_mapping
+  volleyball::ros2_epoch
   volleyball::ports
 )
 target_compile_features(volleyball_ros2_publisher PUBLIC cxx_std_17)

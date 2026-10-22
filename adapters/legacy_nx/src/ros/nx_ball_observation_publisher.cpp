@@ -1,7 +1,7 @@
 #ifdef HAS_ROS2
 #include "nx_ball_observation_publisher.h"
 #include "nx_observation_quality.h"
-#include "source_epoch.h"
+#include "volleyball/adapters/ros2/source_epoch.hpp"
 
 #include <algorithm>
 #include <array>
@@ -109,7 +109,8 @@ NxBallObservationPublisher::NxBallObservationPublisher(
                    .deadline(rclcpp::Duration::from_seconds(0.05));
     pub_ = node_->create_publisher<volleyball_interfaces::msg::NxBallObservation>(
         topic, qos);
-    source_epoch_ = createSourceEpoch(source_epoch_file);
+    source_epoch_ =
+        volleyball::adapters::ros2::createSourceEpoch(source_epoch_file);
     RCLCPP_INFO(
         node_->get_logger(),
         "NX raw observation: %s epoch=%u epoch_file=%s frame=%s depth=[%.2f,%.2f) "

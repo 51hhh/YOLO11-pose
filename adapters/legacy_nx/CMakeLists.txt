@@ -369,7 +369,6 @@ if(USE_ROS2)
   list(APPEND PIPELINE_SOURCES
     src/ros/nx_ball_observation_publisher.cpp
     src/ros/nx_observation_quality.cpp
-    src/ros/source_epoch.cpp
   )
 endif()
 
@@ -430,7 +429,10 @@ endif()
 
 # ROS2 链接
 if(USE_ROS2)
-  target_link_libraries(stereo_pipeline volleyball::ros2_publisher)
+  target_link_libraries(stereo_pipeline
+    volleyball::ros2_publisher
+    volleyball::ros2_epoch
+  )
   ament_target_dependencies(stereo_pipeline rclcpp volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()

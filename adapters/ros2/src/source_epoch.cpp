@@ -1,4 +1,4 @@
-#include "source_epoch.h"
+#include "volleyball/adapters/ros2/source_epoch.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -12,29 +12,30 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-namespace stereo3d {
+namespace volleyball::adapters::ros2 {
 namespace {
 
-uint32_t randomSourceEpoch() {
+std::uint32_t randomSourceEpoch() {
     std::random_device rd;
-    uint32_t epoch = rd() ^ uint32_t(::getpid()) ^
-        uint32_t(std::chrono::system_clock::now().time_since_epoch().count());
+    std::uint32_t epoch = rd() ^ std::uint32_t(::getpid()) ^
+        std::uint32_t(
+            std::chrono::system_clock::now().time_since_epoch().count());
     return epoch == 0 ? 1 : epoch;
 }
 
-uint32_t existingSourceEpoch(const std::filesystem::path& path) {
+std::uint32_t existingSourceEpoch(const std::filesystem::path& path) {
     std::ifstream input(path);
-    uint64_t value = 0;
+    std::uint64_t value = 0;
     if (!(input >> value) || value == 0 ||
-        value > std::numeric_limits<uint32_t>::max()) {
+        value > std::numeric_limits<std::uint32_t>::max()) {
         return 0;
     }
-    return static_cast<uint32_t>(value);
+    return static_cast<std::uint32_t>(value);
 }
 
 }  // namespace
 
-uint32_t createSourceEpoch(const std::string& path) {
+std::uint32_t createSourceEpoch(const std::string& path) {
     if (path.empty()) {
         throw std::runtime_error("NX source_epoch_file must not be empty");
     }
@@ -51,10 +52,12 @@ uint32_t createSourceEpoch(const std::string& path) {
         }
     }
 
-    const uint32_t previous_epoch = existingSourceEpoch(epoch_path);
-    uint32_t epoch = randomSourceEpoch();
+    const std::uint32_t previous_epoch = existingSourceEpoch(epoch_path);
+    std::uint32_t epoch = randomSourceEpoch();
     if (epoch == previous_epoch) {
-        epoch = epoch == std::numeric_limits<uint32_t>::max() ? 1 : epoch + 1;
+        epoch = epoch == std::numeric_limits<std::uint32_t>::max()
+            ? 1
+            : epoch + 1;
     }
 
     const std::filesystem::path temporary_path =
@@ -89,4 +92,4 @@ uint32_t createSourceEpoch(const std::string& path) {
     return epoch;
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::ros2

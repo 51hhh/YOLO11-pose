@@ -107,9 +107,3 @@ add_legacy_nx_test(
   ros/nx_observation_quality_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/ros/nx_observation_quality.cpp"
 )
-
-add_legacy_nx_test(
-  source_epoch_tests
-  ros/source_epoch_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/ros/source_epoch.cpp"
-)
