@@ -393,6 +393,9 @@ void HikvisionCamera::stopGrabbing() {
 bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
                                     unsigned int timeout_ms,
                                     GrabResult& result) {
+    // 调用方允许复用结果对象。任何失败路径都必须先清掉上一帧身份，
+    // 避免把陈旧的 FrameCounter 或到达时间误写进本次采集。
+    result = GrabResult{};
     MV_FRAME_OUT frameOut;
     memset(&frameOut, 0, sizeof(frameOut));
 
@@ -423,8 +426,13 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
         LOG_ERROR(
             "[HikCam] Reject frame geometry=%dx%d pitch=%d, expected=%dx%d",
             srcWidth, srcHeight, dstPitch, width_, height_);
-        MV_CC_FreeImageBuffer(handle, &frameOut);
-        result.success = false;
+        const int free_status = MV_CC_FreeImageBuffer(handle, &frameOut);
+        if (free_status != MV_OK) {
+            LOG_ERROR(
+                "[HikCam] FreeImageBuffer failed after rejecting frame, "
+                "ret=0x%X",
+                free_status);
+        }
         return false;
     }
     if (dstPitch == srcWidth) {
@@ -444,7 +452,6 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
                               config_.embedded_info_clear_rows);
     }
 
-    result.success = true;
     result.timestamp_us = info.nDevTimeStampHigh;
     result.timestamp_us = (result.timestamp_us << 32) | info.nDevTimeStampLow;
     result.host_timestamp = info.nHostTimeStamp;
@@ -452,7 +459,12 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
     result.frame_counter = info.nFrameCounter;
     result.trigger_index = info.nTriggerIndex;
 
-    MV_CC_FreeImageBuffer(handle, &frameOut);
+    const int free_status = MV_CC_FreeImageBuffer(handle, &frameOut);
+    if (free_status != MV_OK) {
+        LOG_ERROR("[HikCam] FreeImageBuffer failed, ret=0x%X", free_status);
+        return false;
+    }
+    result.success = true;
     return true;
 }
 

@@ -21,6 +21,7 @@ struct StubCamera {
     unsigned int height = 2;
     unsigned int offset_x = 0;
     unsigned int offset_y = 0;
+    bool fail_free = false;
     std::array<unsigned char, 16> image{};
 };
 
@@ -155,6 +156,34 @@ void testGrabRejectsGeometryDriftAndShortPitch() {
           "rejected drifted frame must be returned to the MVS SDK");
 }
 
+void testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult() {
+    resetStub(false);
+    stereo3d::HikvisionCamera camera;
+    check(camera.open(config()), "release-failure camera must open");
+    check(camera.startGrabbing(), "release-failure camera must start");
+
+    std::array<std::uint8_t, 4> image{};
+    stereo3d::GrabResult result;
+    result.success = true;
+    result.frame_counter = 999;
+    left_camera.fail_free = true;
+    check(!camera.grabSingle(true, image.data(), 2, 50, result),
+          "SDK buffer release failure must invalidate the frame");
+    check(!result.success,
+          "release failure must not leave a successful frame result");
+    check(result.frame_counter == 1,
+          "failed release may retain current diagnostics, not stale identity");
+
+    left_camera.fail_free = false;
+    left_camera.started = false;
+    result.success = true;
+    result.frame_counter = 999;
+    check(!camera.grabSingle(true, image.data(), 2, 50, result),
+          "SDK acquisition failure must reject the frame");
+    check(!result.success && result.frame_counter == 0,
+          "acquisition failure must clear all stale result fields");
+}
+
 }  // namespace
 
 extern "C" {
@@ -255,8 +284,9 @@ int MV_CC_GetImageBuffer(void* handle, MV_FRAME_OUT* frame, unsigned int) {
 }
 
 int MV_CC_FreeImageBuffer(void* handle, MV_FRAME_OUT*) {
-    ++static_cast<StubCamera*>(handle)->freed_frames;
-    return MV_OK;
+    auto* camera = static_cast<StubCamera*>(handle);
+    ++camera->freed_frames;
+    return camera->fail_free ? -1 : MV_OK;
 }
 
 }  // extern "C"
@@ -266,6 +296,7 @@ int main() {
     testUnstableBaselineFailsWithBoundedReads();
     testOpenRejectsMismatchedCameraGeometry();
     testGrabRejectsGeometryDriftAndShortPitch();
+    testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
