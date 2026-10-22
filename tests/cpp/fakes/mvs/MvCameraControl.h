@@ -1,5 +1,7 @@
 #pragma once
 
+// 主机测试共用的最小海康 MVS SDK 桩；不进入生产构建。
+
 #include <cstdint>
 
 #define MV_OK 0

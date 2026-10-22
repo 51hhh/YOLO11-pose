@@ -107,10 +107,12 @@ CMAKE_SOURCE_GROUPS = (
     ("services/src", "services/CMakeLists.txt"),
     ("adapters/capture_v21/src", "adapters/capture_v21/CMakeLists.txt"),
     ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
+    ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
+    ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
     ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
 )
 
@@ -360,11 +362,13 @@ def main() -> int:
         "models/manifest.yaml",
         "CMakePresets.json",
         "adapters/legacy_nx/CMakeLists.txt",
+        "adapters/hik_mvs/CMakeLists.txt",
         "adapters/legacy_nx/config/base_pipeline.yaml",
         "configs/calibration/stereo_calib.yaml",
         "algorithms/stereo/CMakeLists.txt",
         "services/CMakeLists.txt",
         "docs/hardware-tools.md",
+        "tests/cpp/adapters/CMakeLists.txt",
     ]
     missing = [path for path in required if not (ROOT / path).is_file()]
     if missing:

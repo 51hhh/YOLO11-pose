@@ -45,12 +45,12 @@ std::string readTextFile(const std::filesystem::path& path) {
 }
 
 void testSyncAndMetadataContract() {
-    stereo3d::GrabResult left;
+    volleyball::adapters::hik_mvs::GrabResult left;
     left.frame_number = 20;
     left.frame_counter = 30;
     left.trigger_index = 40;
     left.timestamp_us = 5000;
-    stereo3d::GrabResult right;
+    volleyball::adapters::hik_mvs::GrabResult right;
     right.frame_number = 18;
     right.frame_counter = 29;
     right.trigger_index = 37;

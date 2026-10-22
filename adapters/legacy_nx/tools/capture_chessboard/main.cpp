@@ -17,7 +17,7 @@
 #include "args.h"
 #include "output.h"
 #include "volleyball/adapters/gpio/pwm_trigger.hpp"
-#include "capture/hikvision_camera.h"
+#include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
 
 #include <opencv2/opencv.hpp>
 #include <csignal>
@@ -67,13 +67,13 @@ int main(int argc, char* argv[]) {
 
     // 声明顺序是硬件生命周期约束：局部对象按声明的逆序析构，因此所有
     // 提前返回和异常路径都会先停止 PWM，再停止并关闭相机。
-    stereo3d::HikvisionCamera camera;
+    volleyball::adapters::hik_mvs::HikvisionCamera camera;
     // PWM trigger is started after both cameras enter grabbing state.
     // Starting PWM earlier can give the two USB cameras different local
     // FrameCounter phases, which breaks strict watermarked pair matching.
     std::unique_ptr<volleyball::adapters::gpio::PWMTrigger> pwm;
 
-    stereo3d::CameraConfig cfg;
+    volleyball::adapters::hik_mvs::CameraConfig cfg;
     cfg.exposure_us = static_cast<float>(args.exposure_us);
     cfg.gain_db     = args.gain_db;
     cfg.width       = args.cam_width;
@@ -200,7 +200,7 @@ int main(int argc, char* argv[]) {
     printf("==================================================\n");
 
     while (!g_quit.load()) {
-        stereo3d::GrabResult resL, resR;
+        volleyball::adapters::hik_mvs::GrabResult resL, resR;
         const unsigned int grab_timeout_ms =
             args.headless ? HEADLESS_GRAB_TIMEOUT_MS : GUI_GRAB_TIMEOUT_MS;
         bool ok = camera.grabFramePair(

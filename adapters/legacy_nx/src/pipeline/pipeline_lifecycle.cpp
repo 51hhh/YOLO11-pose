@@ -406,7 +406,7 @@ void Pipeline::grabLoop() {
         VPIStatus stR = vpiImageLockData(
             slot.rawR, VPI_LOCK_WRITE, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgDataR);
 
-        GrabResult resL, resR;
+        volleyball::adapters::hik_mvs::GrabResult resL, resR;
         bool ok = false;
         std::exception_ptr request_error;
         if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {

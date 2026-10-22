@@ -54,16 +54,19 @@ python3 tools/check_repository.py
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
 | `adapters/capture_v21/` | 与硬件无关的 v2.1 staging 序列化适配器 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
-| `adapters/legacy_nx/` | 海康 MVS、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
+| `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、水印清除和帧对齐 |
+| `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
 | `tests/trial_factory.py` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
-| `tests/cpp/legacy_nx/` | 旧 NX 适配器测试及其 SDK/CUDA/VPI 桩 |
+| `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
+| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试 |
+| `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
 | `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
 
-旧 NX 实现仍承载海康 MVS、CUDA、TensorRT 和 ROS2 的实机代码，并复用已提取的 GPIO 与 v2.1 适配器，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
+旧 NX 实现仍承载 CUDA、TensorRT 和 ROS2 的实机代码，并复用已提取的海康 MVS、GPIO 与 v2.1 适配器，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 
 ## 配置与运行
 

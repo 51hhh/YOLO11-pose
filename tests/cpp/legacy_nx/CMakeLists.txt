@@ -1,11 +1,16 @@
 set(LEGACY_NX_SOURCE_DIR "${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src")
 set(VOLLEYBALL_LOGGING_INCLUDE_DIR
   "${PROJECT_SOURCE_DIR}/libs/logging/include")
+set(VOLLEYBALL_HIK_MVS_INCLUDE_DIR
+  "${PROJECT_SOURCE_DIR}/adapters/hik_mvs/include")
+set(VOLLEYBALL_MVS_FAKE_INCLUDE_DIR
+  "${PROJECT_SOURCE_DIR}/tests/cpp/fakes/mvs")
 
 function(add_legacy_nx_test target)
   add_executable(${target} ${ARGN})
   target_include_directories(${target} PRIVATE
     "${LEGACY_NX_SOURCE_DIR}"
+    "${VOLLEYBALL_HIK_MVS_INCLUDE_DIR}"
     "${VOLLEYBALL_LOGGING_INCLUDE_DIR}"
   )
   target_compile_features(${target} PRIVATE cxx_std_17)
@@ -22,14 +27,6 @@ add_legacy_nx_test(
   depth_match_contract_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/stereo/depth_match_contract.cpp"
 )
-
-add_legacy_nx_test(
-  hik_camera_sync_tests
-  hik_camera_sync_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/capture/hikvision_camera.cpp"
-)
-target_include_directories(hik_camera_sync_tests BEFORE PRIVATE fakes/mvs)
-target_link_libraries(hik_camera_sync_tests PRIVATE Threads::Threads)
 
 add_legacy_nx_test(async_grab_state_tests async_grab_state_tests.cpp)
 target_link_libraries(async_grab_state_tests PRIVATE Threads::Threads)
@@ -112,7 +109,7 @@ add_legacy_nx_test(
 )
 target_include_directories(
   hik_metadata_probe_camera_tests BEFORE PRIVATE
-  fakes/mvs
+  "${VOLLEYBALL_MVS_FAKE_INCLUDE_DIR}"
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
 
@@ -123,7 +120,7 @@ add_legacy_nx_test(
 )
 target_include_directories(
   hik_metadata_probe_pair_audit_tests BEFORE PRIVATE
-  fakes/mvs
+  "${VOLLEYBALL_MVS_FAKE_INCLUDE_DIR}"
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
 

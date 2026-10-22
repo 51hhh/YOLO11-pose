@@ -27,10 +27,6 @@
 #include "pipeline_run_state.h"
 #include "sync.h"
 #include "../capture/async_grab_state.h"
-#include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
-#ifndef HIK_CAMERA_ENABLED
-namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
-#endif
 #include "volleyball/adapters/gpio/pwm_trigger.hpp"
 #include "../calibration/stereo_calibration.h"
 #include "../rectify/vpi_rectifier.h"
@@ -447,7 +443,7 @@ private:
     FrameSlot slots_[RING_BUFFER_SIZE];
 
 #ifdef HIK_CAMERA_ENABLED
-    std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
+    std::unique_ptr<volleyball::adapters::hik_mvs::HikvisionCamera> camera_;
     std::unique_ptr<volleyball::adapters::gpio::PWMTrigger> pwm_trigger_;
 
     // ===== 异步采集线程 =====

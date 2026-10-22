@@ -41,6 +41,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("if(REQUIRE_HIK)", adapter_cmake)
         self.assertIn("message(FATAL_ERROR", adapter_cmake)
 
+    def test_legacy_pipeline_consumes_the_standalone_hik_adapter(self) -> None:
+        legacy_cmake = (
+            ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        hik_cmake = (
+            ROOT / "adapters" / "hik_mvs" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("src/capture/hikvision_camera.cpp", legacy_cmake)
+        self.assertIn("volleyball::hik_mvs", legacy_cmake)
+        self.assertIn("VOLLEYBALL_HIK_MVS_SDK_INCLUDE_DIR", hik_cmake)
+        self.assertIn("VOLLEYBALL_HIK_MVS_SDK_LIBRARY", hik_cmake)
+        self.assertIn("src/hikvision_camera.cpp", hik_cmake)
+
     def test_cpp_and_python_capture_stage_contracts_match(self) -> None:
         header = (
             ROOT

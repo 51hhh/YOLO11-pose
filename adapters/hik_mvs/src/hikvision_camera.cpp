@@ -8,8 +8,9 @@
  *   ISP 由后续 CUDA/VPI 在 GPU 上完成
  */
 
-#include "hikvision_camera.h"
-#include "hikvision_camera_helpers.h"
+#include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
+
+#include "mvs_helpers.hpp"
 #include "volleyball/logging/log.hpp"
 #include "MvCameraControl.h"
 
@@ -20,7 +21,7 @@
 #include <cmath>
 #include <limits>
 
-namespace stereo3d {
+namespace volleyball::adapters::hik_mvs {
 
 namespace {
 
@@ -835,4 +836,4 @@ bool HikvisionCamera::reconnect() {
     return false;
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::hik_mvs

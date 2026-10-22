@@ -1,4 +1,4 @@
-#include "capture/hikvision_camera.h"
+#include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
 #include "MvCameraControl.h"
 
 #include <array>
@@ -9,6 +9,8 @@
 #include <string>
 
 namespace {
+
+namespace hik_mvs = volleyball::adapters::hik_mvs;
 
 struct StubCamera {
     bool right = false;
@@ -57,8 +59,8 @@ void resetStub(bool unstable) {
         "right-stub");
 }
 
-stereo3d::CameraConfig config() {
-    stereo3d::CameraConfig cfg;
+hik_mvs::CameraConfig config() {
+    hik_mvs::CameraConfig cfg;
     cfg.serial_left = "left-stub";
     cfg.serial_right = "right-stub";
     cfg.width = 2;
@@ -71,14 +73,14 @@ stereo3d::CameraConfig config() {
 
 void testWarmupIsInternalToFirstGrab() {
     resetStub(false);
-    stereo3d::HikvisionCamera camera;
+    hik_mvs::HikvisionCamera camera;
     check(camera.open(config()), "stub cameras must open");
     check(camera.startGrabbing(), "stub cameras must start");
 
     std::array<std::uint8_t, 4> left{};
     std::array<std::uint8_t, 4> right{};
-    stereo3d::GrabResult left_result;
-    stereo3d::GrabResult right_result;
+    hik_mvs::GrabResult left_result;
+    hik_mvs::GrabResult right_result;
     check(
         camera.grabFramePair(
             left.data(), right.data(), 2, 2, 50,
@@ -102,14 +104,14 @@ void testWarmupIsInternalToFirstGrab() {
 
 void testUnstableBaselineFailsWithBoundedReads() {
     resetStub(true);
-    stereo3d::HikvisionCamera camera;
+    hik_mvs::HikvisionCamera camera;
     check(camera.open(config()), "unstable stub cameras must open");
     check(camera.startGrabbing(), "unstable stub cameras must start");
 
     std::array<std::uint8_t, 4> left{};
     std::array<std::uint8_t, 4> right{};
-    stereo3d::GrabResult left_result;
-    stereo3d::GrabResult right_result;
+    hik_mvs::GrabResult left_result;
+    hik_mvs::GrabResult right_result;
     check(
         !camera.grabFramePair(
             left.data(), right.data(), 2, 2, 50,
@@ -122,7 +124,7 @@ void testUnstableBaselineFailsWithBoundedReads() {
 void testOpenRejectsMismatchedCameraGeometry() {
     resetStub(false);
     right_camera.width = 3;
-    stereo3d::HikvisionCamera camera;
+    hik_mvs::HikvisionCamera camera;
     check(!camera.open(config()),
           "camera open must reject unequal left/right dimensions");
 
@@ -134,20 +136,20 @@ void testOpenRejectsMismatchedCameraGeometry() {
 
 void testGrabRejectsGeometryDriftAndShortPitch() {
     resetStub(false);
-    stereo3d::HikvisionCamera camera;
+    hik_mvs::HikvisionCamera camera;
     check(camera.open(config()), "geometry drift camera must open initially");
     check(camera.startGrabbing(), "geometry drift camera must start");
 
     std::array<std::uint8_t, 4> image{};
-    stereo3d::GrabResult result;
+    hik_mvs::GrabResult result;
     check(!camera.grabSingle(true, image.data(), 1, 50, result),
           "frame copy must reject a destination pitch smaller than its width");
     check(left_camera.freed_frames == 1,
           "rejected short-pitch frame must be returned to the MVS SDK");
 
     right_camera.width = 3;
-    stereo3d::GrabResult left_result;
-    stereo3d::GrabResult right_result;
+    hik_mvs::GrabResult left_result;
+    hik_mvs::GrabResult right_result;
     check(!camera.grabFramePair(
               image.data(), image.data(), 2, 2, 50,
               left_result, right_result),
@@ -158,12 +160,12 @@ void testGrabRejectsGeometryDriftAndShortPitch() {
 
 void testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult() {
     resetStub(false);
-    stereo3d::HikvisionCamera camera;
+    hik_mvs::HikvisionCamera camera;
     check(camera.open(config()), "release-failure camera must open");
     check(camera.startGrabbing(), "release-failure camera must start");
 
     std::array<std::uint8_t, 4> image{};
-    stereo3d::GrabResult result;
+    hik_mvs::GrabResult result;
     result.success = true;
     result.frame_counter = 999;
     left_camera.fail_free = true;

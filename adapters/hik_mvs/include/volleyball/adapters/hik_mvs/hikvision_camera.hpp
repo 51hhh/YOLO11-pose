@@ -1,27 +1,20 @@
 /**
- * @file hikvision_camera.h
+ * @file hikvision_camera.hpp
  * @brief 海康工业相机采集封装
  *
- * 针对 Pipeline 架构设计:
+ * 面向双目采集用例设计:
  *   - grabFramePair(): 同步抓取左右图像
- *   - 从 SDK buffer 拷贝到调用方提供的 VPI host-mapped buffer
+ *   - 从 SDK buffer 拷贝到调用方提供的带 pitch 缓冲
  *   - 支持外触发 (Line0/Line1) + 软触发
  *   - BayerRG8 原始格式输出 (后续由 CUDA/VPI 处理)
  */
 
 #pragma once
 
-#include <string>
 #include <cstdint>
-#include <memory>
-#include <atomic>
-#include <mutex>
-#include <functional>
+#include <string>
 
-// Forward declare Hikvision SDK handle
-// 实际编译时需要 #include "MvCameraControl.h"
-
-namespace stereo3d {
+namespace volleyball::adapters::hik_mvs {
 
 struct CameraConfig {
     int camera_index_left = 0;
@@ -63,14 +56,14 @@ struct CameraConfig {
  */
 struct GrabResult {
     bool success = false;
-    uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
-    int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
-    uint64_t receive_monotonic_ns = 0; // GetImageBuffer 返回后的 NX 单调时钟
-    uint64_t receive_realtime_ns = 0;  // 同一到达事件的 NX 实时时钟
-    int64_t stereo_timestamp_residual_ns = 0; // 去除左右设备固定偏移后的配对残差
-    uint32_t frame_number = 0;    // SDK 帧号
-    uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
-    uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断
+    std::uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
+    std::int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
+    std::uint64_t receive_monotonic_ns = 0; // GetImageBuffer 返回后的 NX 单调时钟
+    std::uint64_t receive_realtime_ns = 0;  // 同一到达事件的 NX 实时时钟
+    std::int64_t stereo_timestamp_residual_ns = 0; // 去除左右设备固定偏移后的配对残差
+    std::uint32_t frame_number = 0;    // SDK 帧号
+    std::uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
+    std::uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断
 };
 
 /**
@@ -113,10 +106,10 @@ public:
     /**
      * @brief 同步抓取一对图像到指定缓冲
      *
-     * 输出格式: BayerRG8 (H × W, uint8_t)
+     * 输出格式: BayerRG8 (H × W, std::uint8_t)
      * 缓冲区大小: width * height bytes
      *
-     * @param dst_left  左图写入地址 (调用方分配, 可以是 VPI host-mapped 内存)
+     * @param dst_left  左图写入地址（调用方分配，可为 host-mapped 内存）
      * @param dst_right 右图写入地址
      * @param left_pitch  左图行跨度 (bytes), 0 = width
      * @param right_pitch 右图行跨度 (bytes), 0 = width
@@ -126,7 +119,7 @@ public:
      * @return true 双目均成功
      */
     bool grabFramePair(
-        uint8_t* dst_left,  uint8_t* dst_right,
+        std::uint8_t* dst_left,  std::uint8_t* dst_right,
         int left_pitch, int right_pitch,
         unsigned int timeout_ms,
         GrabResult& result_left, GrabResult& result_right);
@@ -135,7 +128,7 @@ public:
      * @brief 单相机抓取 (调试用)
      */
     bool grabSingle(bool is_left,
-                    uint8_t* dst, int pitch,
+                    std::uint8_t* dst, int pitch,
                     unsigned int timeout_ms,
                     GrabResult& result);
 
@@ -149,10 +142,10 @@ public:
 
 private:
     bool configureCamera(void* handle, const CameraConfig& cfg, const char* tag);
-    bool grabOneFrame(void* handle, uint8_t* dst, int pitch,
+    bool grabOneFrame(void* handle, std::uint8_t* dst, int pitch,
                       unsigned int timeout_ms, GrabResult& result);
     bool grabFramePairAttempt(
-        uint8_t* dst_left, uint8_t* dst_right,
+        std::uint8_t* dst_left, std::uint8_t* dst_right,
         int left_pitch, int right_pitch,
         unsigned int timeout_ms,
         GrabResult& result_left, GrabResult& result_right,
@@ -178,12 +171,12 @@ private:
     // --- 双目配对状态 ---
     bool sync_initialized_ = false;
     int sync_baseline_samples_ = 0;
-    int64_t candidate_timestamp_offset_ns_ = 0;
-    int64_t expected_timestamp_offset_ns_ = 0;
-    int64_t expected_frame_counter_delta_ = 0;
-    int64_t expected_frame_number_delta_ = 0;
-    int64_t expected_trigger_delta_ = 0;
+    std::int64_t candidate_timestamp_offset_ns_ = 0;
+    std::int64_t expected_timestamp_offset_ns_ = 0;
+    std::int64_t expected_frame_counter_delta_ = 0;
+    std::int64_t expected_frame_number_delta_ = 0;
+    std::int64_t expected_trigger_delta_ = 0;
     int consecutive_sync_mismatches_ = 0;
 };
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::hik_mvs

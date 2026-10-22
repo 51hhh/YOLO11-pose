@@ -17,6 +17,14 @@ if(NOT EXISTS
     "Mainline GPIO adapter not found next to legacy_nx: "
     "${VOLLEYBALL_GPIO_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_HIK_MVS_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../hik_mvs")
+if(NOT EXISTS
+   "${VOLLEYBALL_HIK_MVS_ADAPTER_DIR}/include/volleyball/adapters/hik_mvs/hikvision_camera.hpp")
+  message(FATAL_ERROR
+    "Mainline hik_mvs adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_HIK_MVS_ADAPTER_DIR}")
+endif()
 set(VOLLEYBALL_LOGGING_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/logging")
 if(NOT EXISTS
@@ -24,6 +32,11 @@ if(NOT EXISTS
   message(FATAL_ERROR
     "Mainline logging component not found: ${VOLLEYBALL_LOGGING_DIR}")
 endif()
+add_subdirectory(
+  "${VOLLEYBALL_LOGGING_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_logging"
+  EXCLUDE_FROM_ALL
+)
 
 # ==================== ROS2 ament_cmake ====================
 option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
@@ -173,6 +186,23 @@ else()
     "MVS_SDK_ROOT=${MVS_SDK_ROOT}; camera module disabled")
 endif()
 
+if(HIK_FOUND)
+  set(VOLLEYBALL_BUILD_HIK_MVS ON CACHE BOOL "" FORCE)
+  set(
+    VOLLEYBALL_HIK_MVS_SDK_INCLUDE_DIR "${MVS_INCLUDE_DIR}"
+    CACHE PATH "" FORCE
+  )
+  set(
+    VOLLEYBALL_HIK_MVS_SDK_LIBRARY "${MVS_LIBRARY}"
+    CACHE FILEPATH "" FORCE
+  )
+  add_subdirectory(
+    "${VOLLEYBALL_HIK_MVS_ADAPTER_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/mainline_hik_mvs"
+    EXCLUDE_FROM_ALL
+  )
+endif()
+
 # yaml-cpp
 find_package(yaml-cpp QUIET)
 if(NOT yaml-cpp_FOUND)
@@ -201,6 +231,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/src
   ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/include
   ${VOLLEYBALL_GPIO_ADAPTER_DIR}/include
+  ${VOLLEYBALL_HIK_MVS_ADAPTER_DIR}/include
   ${VOLLEYBALL_LOGGING_DIR}/include
   ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
@@ -292,7 +323,6 @@ set(CUDA_SOURCES
 
 # 相机源文件 (可选)
 if(HIK_FOUND)
-  list(APPEND PIPELINE_SOURCES src/capture/hikvision_camera.cpp)
   add_definitions(-DHIK_CAMERA_ENABLED)
 endif()
 
@@ -351,7 +381,7 @@ if(HAS_FIXSTARS_LIBSGM)
 endif()
 
 if(HIK_FOUND)
-  target_link_libraries(stereo_pipeline ${MVS_LIBRARY})
+  target_link_libraries(stereo_pipeline volleyball::hik_mvs)
 endif()
 
 # PWM trigger: libgpiod 或 sysfs fallback
@@ -387,14 +417,13 @@ if(HIK_FOUND)
     tools/capture_chessboard/args.cpp
     tools/capture_chessboard/output.cpp
     tools/common/atomic_file.cpp
-    src/capture/hikvision_camera.cpp
     ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_link_libraries(capture_chessboard
     ${STEREO_OPENCV_LIBS}
-    ${MVS_LIBRARY}
+    volleyball::hik_mvs
     pthread
     stdc++fs
   )

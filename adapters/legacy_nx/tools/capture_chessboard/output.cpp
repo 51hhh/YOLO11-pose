@@ -48,8 +48,8 @@ void appendCleanupError(
 }  // namespace
 
 SyncInfo makeSyncInfo(
-    const stereo3d::GrabResult& left,
-    const stereo3d::GrabResult& right) {
+    const volleyball::adapters::hik_mvs::GrabResult& left,
+    const volleyball::adapters::hik_mvs::GrabResult& right) {
     SyncInfo sync;
     sync.frame_number_delta =
         static_cast<std::int64_t>(left.frame_number) -
@@ -81,8 +81,8 @@ bool writeMetadataRow(
     std::ostream& metadata,
     int pair_index,
     const std::string& file_name,
-    const stereo3d::GrabResult& left,
-    const stereo3d::GrabResult& right,
+    const volleyball::adapters::hik_mvs::GrabResult& left,
+    const volleyball::adapters::hik_mvs::GrabResult& right,
     const SyncInfo& sync) {
     metadata << pair_index << ',' << file_name << ','
              << left.frame_number << ',' << right.frame_number << ','

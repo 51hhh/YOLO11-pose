@@ -9,7 +9,7 @@
 #include <cstring>
 #include <string>
 
-namespace stereo3d {
+namespace volleyball::adapters::hik_mvs {
 namespace {
 
 bool setEnumChecked(void* handle, const char* node, unsigned int value, const char* tag) {
@@ -282,4 +282,4 @@ void clearEmbeddedInfoRows(uint8_t* dst, int pitch, int width, int height,
 }
 
 }  // namespace
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::hik_mvs

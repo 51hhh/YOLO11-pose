@@ -6,7 +6,7 @@
 #ifndef STEREO_3D_PIPELINE_PIPELINE_CONFIG_H_
 #define STEREO_3D_PIPELINE_PIPELINE_CONFIG_H_
 
-#include "../capture/hikvision_camera.h"
+#include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
 #include "../fusion/hybrid_depth.h"
 #include "../stereo/neural_feature_config.h"
 #ifdef HAS_ROS2
@@ -33,7 +33,7 @@ enum class DisparityStrategy {
  */
 struct PipelineConfig {
     // 相机配置 (内嵌, 避免重复定义)
-    CameraConfig camera;
+    volleyball::adapters::hik_mvs::CameraConfig camera;
 
     // 校正后分辨率。默认使用标定/相机全分辨率，避免非等比校正破坏圆形几何。
     int rect_width  = 1440;

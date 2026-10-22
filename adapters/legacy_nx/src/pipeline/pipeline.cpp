@@ -199,7 +199,8 @@ bool Pipeline::init(const PipelineConfig& config) {
     // 7. 初始化海康双目相机
 #ifdef HIK_CAMERA_ENABLED
     LOG_INFO("Opening dual cameras...");
-    camera_ = std::make_unique<HikvisionCamera>();
+    camera_ = std::make_unique<
+        volleyball::adapters::hik_mvs::HikvisionCamera>();
     if (!camera_->open(config_.camera)) {
         LOG_ERROR("Failed to open stereo cameras. Both Hikvision cameras are required; "
                   "check USB connection, serial/index config, and whether MVS holds a device.");

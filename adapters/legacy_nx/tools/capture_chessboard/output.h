@@ -1,7 +1,7 @@
 #ifndef VOLLEYBALL_CAPTURE_CHESSBOARD_OUTPUT_H_
 #define VOLLEYBALL_CAPTURE_CHESSBOARD_OUTPUT_H_
 
-#include "capture/hikvision_camera.h"
+#include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -19,8 +19,8 @@ struct SyncInfo {
 };
 
 [[nodiscard]] SyncInfo makeSyncInfo(
-    const stereo3d::GrabResult& left,
-    const stereo3d::GrabResult& right);
+    const volleyball::adapters::hik_mvs::GrabResult& left,
+    const volleyball::adapters::hik_mvs::GrabResult& right);
 
 [[nodiscard]] bool writeMetadataHeader(std::ostream& metadata);
 
@@ -28,8 +28,8 @@ struct SyncInfo {
     std::ostream& metadata,
     int pair_index,
     const std::string& file_name,
-    const stereo3d::GrabResult& left,
-    const stereo3d::GrabResult& right,
+    const volleyball::adapters::hik_mvs::GrabResult& left,
+    const volleyball::adapters::hik_mvs::GrabResult& right,
     const SyncInfo& sync);
 
 using PairFileWriter =
