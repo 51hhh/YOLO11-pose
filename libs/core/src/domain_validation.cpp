@@ -1,6 +1,7 @@
 #include "volleyball/core/observation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace volleyball::core {
@@ -20,6 +21,24 @@ bool sameClock(
 
 bool nonnegative(const std::optional<Timestamp>& timestamp) noexcept {
     return !timestamp || timestamp->nanoseconds >= 0;
+}
+
+bool hasClock(const std::optional<Timestamp>& timestamp) noexcept {
+    return !timestamp || !timestamp->clock_domain.empty();
+}
+
+bool triggerEvidenceIsComplete(
+    const FrameAcquisitionEvidence& evidence) noexcept {
+    const std::array<bool, 5> fields = {
+        evidence.trigger_sequence.has_value(),
+        evidence.trigger_scheduled_monotonic.has_value(),
+        evidence.trigger_edge_monotonic.has_value(),
+        evidence.trigger_edge_realtime.has_value(),
+        evidence.trigger_write_uncertainty_ns.has_value(),
+    };
+    const auto present = std::count(fields.begin(), fields.end(), true);
+    return present == 0 ||
+           static_cast<std::size_t>(present) == fields.size();
 }
 
 bool finite(const Covariance2D& covariance) noexcept {
@@ -90,30 +109,87 @@ bool positiveSemidefinite(const Covariance3D& covariance) noexcept {
 }  // namespace
 
 DomainValidationResult validate(const CameraFrameRecord& frame) noexcept {
-    if (frame.camera_id.empty() || frame.capture_timestamp.clock_domain.empty()) {
+    if (frame.camera_id.empty() ||
+        frame.hardware_timestamp.clock_domain.empty() ||
+        frame.capture_timestamp.clock_domain.empty()) {
         return failure(DomainError::missing_identifier, "frame identifiers are required");
     }
-    const auto& clock = frame.capture_timestamp.clock_domain;
-    if (frame.hardware_timestamp.clock_domain != clock ||
-        !sameClock(clock, frame.exposure_start) ||
-        !sameClock(clock, frame.receive_timestamp) ||
-        !sameClock(clock, frame.inference_done_timestamp)) {
+    const auto& reference_clock = frame.capture_timestamp.clock_domain;
+    if (!sameClock(reference_clock, frame.exposure_start) ||
+        !sameClock(reference_clock, frame.receive_timestamp) ||
+        !sameClock(reference_clock, frame.inference_done_timestamp)) {
         return failure(
             DomainError::clock_domain_mismatch,
-            "all camera frame timestamps must use one declared clock domain");
+            "exposure, capture, realtime receive, and inference timestamps "
+            "must use one reference clock domain");
     }
     if (frame.hardware_timestamp.nanoseconds < 0 ||
         frame.capture_timestamp.nanoseconds < 0 ||
         !nonnegative(frame.exposure_start) ||
         !nonnegative(frame.receive_timestamp) ||
-        !nonnegative(frame.inference_done_timestamp)) {
+        !nonnegative(frame.inference_done_timestamp) ||
+        !nonnegative(frame.acquisition.receive_monotonic_timestamp) ||
+        !nonnegative(frame.acquisition.trigger_scheduled_monotonic) ||
+        !nonnegative(frame.acquisition.trigger_edge_monotonic) ||
+        !nonnegative(frame.acquisition.trigger_edge_realtime)) {
         return failure(
             DomainError::invalid_numeric_value,
             "camera frame timestamps must be non-negative");
     }
+    if (!hasClock(frame.acquisition.receive_monotonic_timestamp) ||
+        !hasClock(frame.acquisition.trigger_scheduled_monotonic) ||
+        !hasClock(frame.acquisition.trigger_edge_monotonic) ||
+        !hasClock(frame.acquisition.trigger_edge_realtime)) {
+        return failure(
+            DomainError::missing_identifier,
+            "acquisition evidence timestamps require clock domains");
+    }
+    if (!triggerEvidenceIsComplete(frame.acquisition)) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "trigger evidence must be entirely present or entirely absent");
+    }
+    if (frame.acquisition.trigger_sequence &&
+        *frame.acquisition.trigger_sequence == 0) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "trigger sequence must be positive");
+    }
+    if (frame.acquisition.trigger_scheduled_monotonic) {
+        const auto& monotonic_clock =
+            frame.acquisition.trigger_scheduled_monotonic->clock_domain;
+        if (frame.acquisition.trigger_edge_monotonic->clock_domain !=
+                monotonic_clock ||
+            (frame.acquisition.receive_monotonic_timestamp &&
+             frame.acquisition.receive_monotonic_timestamp->clock_domain !=
+                 monotonic_clock) ||
+            frame.acquisition.trigger_edge_realtime->clock_domain !=
+                reference_clock) {
+            return failure(
+                DomainError::clock_domain_mismatch,
+                "trigger monotonic and realtime evidence use invalid clock domains");
+        }
+        if (!frame.exposure_start ||
+            frame.acquisition.trigger_edge_realtime->nanoseconds >
+                frame.exposure_start->nanoseconds ||
+            (frame.acquisition.receive_monotonic_timestamp &&
+             frame.acquisition.receive_monotonic_timestamp->nanoseconds <
+                 frame.acquisition.trigger_edge_monotonic->nanoseconds)) {
+            return failure(
+                DomainError::timestamp_order,
+                "trigger edge must precede exposure and frame arrival");
+        }
+    }
+    if (frame.acquisition.capture_timestamp_mapping_valid &&
+        !frame.acquisition.capture_timestamp_uncertainty_ns) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "valid capture mapping requires a stated uncertainty");
+    }
+
     std::int64_t previous = frame.exposure_start
         ? frame.exposure_start->nanoseconds
-        : frame.hardware_timestamp.nanoseconds;
+        : frame.capture_timestamp.nanoseconds;
     const std::optional<Timestamp> ordered[] = {
         frame.capture_timestamp,
         frame.receive_timestamp,

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -114,13 +115,20 @@ inline core::CameraFrameRecord frame(
     output.camera_id = core::CameraId{id};
     output.role = role;
     output.frame_index = 7;
-    output.hardware_timestamp = time(900);
+    output.hardware_timestamp = {
+        900,
+        core::ClockDomainId{std::string{id} + "-device-clock"},
+    };
     output.exposure_start = time(1000);
     output.capture_timestamp = time(1000);
     output.receive_timestamp = time(receive_ns);
     output.inference_done_timestamp = time(1400);
     output.roi = {0, 0, 1440, 1080};
     output.pixel_format = core::PixelFormat::gray8;
+    output.acquisition.receive_monotonic_timestamp = {
+        receive_ns - 700,
+        core::ClockDomainId{"nx-monotonic"},
+    };
     return output;
 }
 

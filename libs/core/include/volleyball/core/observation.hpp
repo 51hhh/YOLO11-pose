@@ -21,6 +21,26 @@ struct RegionOfInterest {
     std::uint32_t height{0};
 };
 
+// 采集链的原始身份和多时钟证据。设备时钟、NX 单调时钟与 NX 实时时钟
+// 彼此独立，不能为了方便写入一列而伪装成同一 clock domain。
+struct FrameAcquisitionEvidence {
+    std::optional<Timestamp> receive_monotonic_timestamp;
+    std::optional<std::int64_t> sdk_host_timestamp_raw;
+    std::optional<std::uint64_t> sensor_frame_number;
+    std::optional<std::uint64_t> sensor_frame_counter;
+    std::optional<std::uint64_t> sensor_trigger_index;
+    std::optional<std::int64_t> stereo_hardware_timestamp_residual_ns;
+
+    std::optional<std::uint64_t> trigger_sequence;
+    std::optional<Timestamp> trigger_scheduled_monotonic;
+    std::optional<Timestamp> trigger_edge_monotonic;
+    std::optional<Timestamp> trigger_edge_realtime;
+    std::optional<std::uint64_t> trigger_write_uncertainty_ns;
+
+    std::optional<std::uint64_t> capture_timestamp_uncertainty_ns;
+    bool capture_timestamp_mapping_valid{false};
+};
+
 // 该类型只表达一帧的采集事实，不携带检测、深度或滤波结果。
 struct CameraFrameRecord {
     CameraId camera_id;
@@ -35,6 +55,7 @@ struct CameraFrameRecord {
     std::optional<double> gain_db;
     RegionOfInterest roi;
     PixelFormat pixel_format{PixelFormat::bayer8};
+    FrameAcquisitionEvidence acquisition;
     bool dropped{false};
     std::optional<std::string> drop_reason;
 };

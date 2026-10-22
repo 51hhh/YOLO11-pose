@@ -32,14 +32,30 @@ core::CameraFrameRecord validFrame() {
     frame.camera_id = core::CameraId{"left-serial"};
     frame.role = core::CameraRole::left;
     frame.frame_index = 42;
-    frame.hardware_timestamp = timestamp(999, "camera");
-    frame.exposure_start = timestamp(1000, "camera");
-    frame.capture_timestamp = timestamp(1100, "camera");
-    frame.receive_timestamp = timestamp(1200, "camera");
-    frame.inference_done_timestamp = timestamp(1300, "camera");
+    frame.hardware_timestamp = timestamp(999, "left-device-clock");
+    frame.exposure_start = timestamp(1000, "nx-realtime");
+    frame.capture_timestamp = timestamp(1100, "nx-realtime");
+    frame.receive_timestamp = timestamp(1200, "nx-realtime");
+    frame.inference_done_timestamp = timestamp(1300, "nx-realtime");
     frame.exposure_us = 100.0;
     frame.gain_db = 2.0;
     frame.roi = {0, 0, 1440, 1080};
+    frame.acquisition.receive_monotonic_timestamp =
+        timestamp(500, "nx-monotonic");
+    frame.acquisition.sdk_host_timestamp_raw = 777;
+    frame.acquisition.sensor_frame_number = 41;
+    frame.acquisition.sensor_frame_counter = 42;
+    frame.acquisition.sensor_trigger_index = 84;
+    frame.acquisition.stereo_hardware_timestamp_residual_ns = -50;
+    frame.acquisition.trigger_sequence = 42;
+    frame.acquisition.trigger_scheduled_monotonic =
+        timestamp(400, "nx-monotonic");
+    frame.acquisition.trigger_edge_monotonic =
+        timestamp(450, "nx-monotonic");
+    frame.acquisition.trigger_edge_realtime = timestamp(900, "nx-realtime");
+    frame.acquisition.trigger_write_uncertainty_ns = 10;
+    frame.acquisition.capture_timestamp_uncertainty_ns = 15;
+    frame.acquisition.capture_timestamp_mapping_valid = true;
     return frame;
 }
 
@@ -120,6 +136,37 @@ void testFrameValidation() {
     check(
         core::validate(frame).error == core::DomainError::invalid_numeric_value,
         "camera timestamps must not be negative");
+
+    frame = validFrame();
+    frame.acquisition.trigger_edge_realtime.reset();
+    check(
+        core::validate(frame).error == core::DomainError::invalid_numeric_value,
+        "partial GPIO trigger evidence must be rejected");
+
+    frame = validFrame();
+    frame.acquisition.trigger_edge_realtime = timestamp(900, "other-realtime");
+    check(
+        core::validate(frame).error == core::DomainError::clock_domain_mismatch,
+        "GPIO realtime edge must use the mapped capture clock domain");
+
+    frame = validFrame();
+    frame.acquisition.capture_timestamp_uncertainty_ns.reset();
+    check(
+        core::validate(frame).error == core::DomainError::invalid_numeric_value,
+        "a valid capture mapping must state its uncertainty");
+
+    frame = validFrame();
+    frame.exposure_start.reset();
+    check(
+        core::validate(frame).error == core::DomainError::timestamp_order,
+        "GPIO trigger evidence requires an exposure-start timestamp");
+
+    frame = validFrame();
+    frame.acquisition.receive_monotonic_timestamp =
+        timestamp(500, "other-monotonic");
+    check(
+        core::validate(frame).error == core::DomainError::clock_domain_mismatch,
+        "GPIO edge and USB arrival must retain the same monotonic domain");
 }
 
 void testAssociationValidation() {
