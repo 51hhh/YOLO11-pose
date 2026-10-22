@@ -33,7 +33,9 @@ public:
      * @param minDepth 最小有效深度 (m)
      * @param maxDepth 最大有效深度 (m)
      */
-    void init(const cv::Mat& P1, float baseline, float minDepth, float maxDepth, float d0 = 0.0f);
+    [[nodiscard]] bool init(const cv::Mat& P1, float baseline,
+                            float minDepth, float maxDepth,
+                            float d0 = 0.0f);
 
     /**
      * @brief 对单个检测框计算 3D 坐标
@@ -60,6 +62,18 @@ public:
                                        int imgWidth, int imgHeight,
                                        cudaStream_t stream,
                                        float disparityScale = 1.0f);
+
+    /**
+     * @brief 可区分“合法空结果”和 CUDA/初始化失败的批量接口。
+     * @return true 表示计算链成功；results 为空仍可能是没有有效视差。
+     */
+    [[nodiscard]] bool tryComputeBatch(
+        const std::vector<Detection>& dets,
+        const int16_t* disparityGPU, int dispPitch,
+        int imgWidth, int imgHeight,
+        cudaStream_t stream,
+        std::vector<Object3D>& results,
+        float disparityScale = 1.0f);
 
 private:
     float focal_    = 0.0f;    ///< 焦距 (pixels)

@@ -493,7 +493,30 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                              &hostDataR);
         lockedL = stL == VPI_SUCCESS;
         lockedR = stR == VPI_SUCCESS;
-        if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
+        if (!lockedL || !lockedR) {
+            LOG_ERROR("[Pipeline] ROI host image lock failed: "
+                      "frame=%d left=%d right=%d",
+                      slot.frame_id, (int)stL, (int)stR);
+            if (lockedL) {
+                const VPIStatus unlock = vpiImageUnlock(slot.rectGray_vpiL);
+                if (unlock != VPI_SUCCESS) {
+                    LOG_ERROR("[Pipeline] ROI left cleanup unlock failed: "
+                              "frame=%d status=%d",
+                              slot.frame_id, (int)unlock);
+                }
+            }
+            if (lockedR) {
+                const VPIStatus unlock = vpiImageUnlock(slot.rectGray_vpiR);
+                if (unlock != VPI_SUCCESS) {
+                    LOG_ERROR("[Pipeline] ROI right cleanup unlock failed: "
+                              "frame=%d status=%d",
+                              slot.frame_id, (int)unlock);
+                }
+            }
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return;
+        } else {
             input.left_cpu = static_cast<const uint8_t*>(
                 hostDataL.buffer.pitch.planes[0].data);
             input.left_cpu_pitch = hostDataL.buffer.pitch.planes[0].pitchBytes;
@@ -509,6 +532,31 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
         output = runRoiStage2Core(input);
     }
 
+    bool unlock_ok = true;
+    if (lockedL) {
+        const VPIStatus status = vpiImageUnlock(slot.rectGray_vpiL);
+        if (status != VPI_SUCCESS) {
+            LOG_ERROR("[Pipeline] ROI left host image unlock failed: "
+                      "frame=%d status=%d",
+                      slot.frame_id, (int)status);
+            unlock_ok = false;
+        }
+    }
+    if (lockedR) {
+        const VPIStatus status = vpiImageUnlock(slot.rectGray_vpiR);
+        if (status != VPI_SUCCESS) {
+            LOG_ERROR("[Pipeline] ROI right host image unlock failed: "
+                      "frame=%d status=%d",
+                      slot.frame_id, (int)status);
+            unlock_ok = false;
+        }
+    }
+    if (!unlock_ok) {
+        slot.grab_failed = true;
+        NVTX_RANGE_POP();
+        return;
+    }
+
     for (auto& row : output.p2_artifact_rows) {
         if (row.frame_id < 0) {
             row.frame_id = slot.frame_id;
@@ -520,9 +568,6 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     }
     writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
     writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
-
-    if (lockedL) vpiImageUnlock(slot.rectGray_vpiL);
-    if (lockedR) vpiImageUnlock(slot.rectGray_vpiR);
 
     applyRoiStage2Output(slot, std::move(output));
 

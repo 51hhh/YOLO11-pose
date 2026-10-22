@@ -739,10 +739,13 @@ bool Pipeline::init(const PipelineConfig& config) {
 
         // 全帧模式需要 Coordinate3D 融合器
         fusion_ = std::make_unique<Coordinate3D>();
-        fusion_->init(calibration_->getProjectionLeft(),
-                      calibration_->getBaseline(),
-                      config_.depth.min_depth, config_.depth.max_depth,
-                      activeDisparityOffset());
+        if (!fusion_->init(calibration_->getProjectionLeft(),
+                           calibration_->getBaseline(),
+                           config_.depth.min_depth, config_.depth.max_depth,
+                           activeDisparityOffset())) {
+            LOG_ERROR("Failed to initialize full-frame Coordinate3D fusion");
+            return false;
+        }
     }
 
     if (config_.async_roi_stage2 &&

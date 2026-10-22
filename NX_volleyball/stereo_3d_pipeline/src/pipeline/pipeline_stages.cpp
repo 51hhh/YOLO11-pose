@@ -349,35 +349,74 @@ bool Pipeline::stage2_stereo(FrameSlot& slot) {
     return submitted;
 }
 
-void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
+bool Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage3_Fuse");
 
     slot.results.clear();
 
     collectRoiDetections(slot, slot_index);
 
+    if (!fusion_) {
+        LOG_ERROR("stage3_fuse: Coordinate3D fusion is not initialized "
+                  "(frame=%d)", slot.frame_id);
+        slot.grab_failed = true;
+        NVTX_RANGE_POP();
+        return false;
+    }
+
     VPIImageData dispData;
     VPIStatus st = vpiImageLockData(slot.disparityMap, VPI_LOCK_READ,
                      VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &dispData);
     if (st != VPI_SUCCESS) {
-        LOG_WARN("stage3_fuse: vpiImageLockData failed (%d)", (int)st);
+        LOG_ERROR("stage3_fuse: disparity image lock failed "
+                  "(frame=%d status=%d)", slot.frame_id, (int)st);
+        slot.grab_failed = true;
         NVTX_RANGE_POP();
-        return;
+        return false;
     }
 
     const int16_t* disp_ptr = static_cast<const int16_t*>(
         dispData.buffer.pitch.planes[0].data);
     int disp_pitch = dispData.buffer.pitch.planes[0].pitchBytes;
+    if (!disp_ptr || disp_pitch <= 0) {
+        LOG_ERROR("stage3_fuse: invalid disparity CUDA view "
+                  "(frame=%d ptr=%p pitch=%d)",
+                  slot.frame_id, static_cast<const void*>(disp_ptr), disp_pitch);
+        slot.grab_failed = true;
+        const VPIStatus unlock_status = vpiImageUnlock(slot.disparityMap);
+        if (unlock_status != VPI_SUCCESS) {
+            LOG_ERROR("stage3_fuse: disparity cleanup unlock failed "
+                      "(frame=%d status=%d)",
+                      slot.frame_id, (int)unlock_status);
+        }
+        NVTX_RANGE_POP();
+        return false;
+    }
 
     float dispScale = (config_.disparity_strategy == DisparityStrategy::HALF_RESOLUTION)
                       ? 2.0f : 1.0f;
-    slot.results = fusion_->computeBatch(slot.detections, disp_ptr, disp_pitch,
-                                         config_.rect_width, config_.rect_height,
-                                         streams_.cudaStreamFuse, dispScale);
-    stampFrameMetadata(slot);
+    const bool compute_ok = fusion_->tryComputeBatch(
+        slot.detections, disp_ptr, disp_pitch,
+        config_.rect_width, config_.rect_height,
+        streams_.cudaStreamFuse, slot.results, dispScale);
+    if (!compute_ok) {
+        LOG_ERROR("stage3_fuse: Coordinate3D CUDA chain failed (frame=%d)",
+                  slot.frame_id);
+        slot.grab_failed = true;
+        slot.results.clear();
+    }
 
-    vpiImageUnlock(slot.disparityMap);
+    const VPIStatus unlock_status = vpiImageUnlock(slot.disparityMap);
+    if (unlock_status != VPI_SUCCESS) {
+        LOG_ERROR("stage3_fuse: disparity image unlock failed "
+                  "(frame=%d status=%d)",
+                  slot.frame_id, (int)unlock_status);
+        slot.grab_failed = true;
+        slot.results.clear();
+    }
+    if (!slot.grab_failed) stampFrameMetadata(slot);
     NVTX_RANGE_POP();
+    return !slot.grab_failed;
 }
 
 }  // namespace stereo3d

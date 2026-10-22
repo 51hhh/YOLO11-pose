@@ -106,6 +106,8 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - `grab_failed` 是为兼容旧回调保留的“本帧不可发布为有效观测”总门控：FrameCounter 无法对齐、抓取/Stage 0、TensorRT/CUDA 同步或 VPI Stereo 失败都会设置它；不能按字段名把它仅解释为相机抓取失败；
 - TensorRT `enqueue` 失败时仍可能已有预处理、推理或 D2H 工作进入 stream，失败路径必须先排空对应 stream；
 - detect event 记录失败时禁止等待槽位中旧 event，改为直接同步真正的源 stream，并把本帧交给 fail-trial；
+- Stage 2 需要 host Gray 时，左右 VPI image 必须同时 lock/unlock 成功；基础设施失败不能退化为“没有纹理候选”；
+- 全帧 Stage 3 使用显式成功状态区分“计算成功但没有有效视差”和 Coordinate3D CUDA/图像锁失败，后一种必须使帧失败；
 - ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；
 - 采集模式仍会触发帧回调，让 fail-trial 录制器立即停止，而不是静默制造序号缺口；
 - 停止时先让 pipeline 排空已提交的工作，再关闭 ROI/P2 worker 和 grab 线程，最后同步所有 stream 并停止 PWM/相机；

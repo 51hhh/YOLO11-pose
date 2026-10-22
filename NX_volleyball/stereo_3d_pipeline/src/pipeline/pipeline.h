@@ -133,7 +133,7 @@ private:
     void stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded = false);
     bool stage1_detect(FrameSlot& slot, int slot_index);
     bool stage2_stereo(FrameSlot& slot);
-    void stage3_fuse(FrameSlot& slot, int slot_index);
+    bool stage3_fuse(FrameSlot& slot, int slot_index);
 
     // ROI 模式专用 Stage
     void stage2_roi_match_fuse(FrameSlot& slot, int slot_index);

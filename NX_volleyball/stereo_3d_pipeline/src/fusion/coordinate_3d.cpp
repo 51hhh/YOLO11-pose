@@ -23,19 +23,31 @@ Coordinate3D::~Coordinate3D() {
     freeGPUBuffers();
 }
 
-void Coordinate3D::init(const cv::Mat& P1, float baseline,
+bool Coordinate3D::init(const cv::Mat& P1, float baseline,
                         float minDepth, float maxDepth, float d0)
 {
+    freeGPUBuffers();
+    if (P1.empty() || P1.rows != 3 || P1.cols != 4 ||
+        P1.type() != CV_64F || !std::isfinite(baseline) || baseline <= 0.0f ||
+        !std::isfinite(minDepth) || !std::isfinite(maxDepth) ||
+        minDepth <= 0.0f || maxDepth <= minDepth || !std::isfinite(d0)) {
+        LOG_ERROR("Coordinate3D: invalid calibration/depth configuration");
+        return false;
+    }
+
     baseline_ = baseline;
     d0_       = d0;
     minDepth_ = minDepth;
     maxDepth_ = maxDepth;
 
     // 从 P1 提取焦距和主点
-    if (!P1.empty() && P1.rows == 3 && P1.cols == 4) {
-        focal_ = static_cast<float>(P1.at<double>(0, 0));
-        cx_    = static_cast<float>(P1.at<double>(0, 2));
-        cy_    = static_cast<float>(P1.at<double>(1, 2));
+    focal_ = static_cast<float>(P1.at<double>(0, 0));
+    cx_    = static_cast<float>(P1.at<double>(0, 2));
+    cy_    = static_cast<float>(P1.at<double>(1, 2));
+    if (!std::isfinite(focal_) || focal_ <= 0.0f ||
+        !std::isfinite(cx_) || !std::isfinite(cy_)) {
+        LOG_ERROR("Coordinate3D: invalid projection matrix values");
+        return false;
     }
 
     LOG_INFO("Coordinate3D: focal=%.1f, cx=%.1f, cy=%.1f, baseline=%.4fm, d0=%.3fpx",
@@ -45,6 +57,7 @@ void Coordinate3D::init(const cv::Mat& P1, float baseline,
     if (!ready_) {
         LOG_ERROR("Coordinate3D: failed to allocate GPU buffers");
     }
+    return ready_;
 }
 
 bool Coordinate3D::allocateGPUBuffers() {
@@ -93,12 +106,31 @@ std::vector<Object3D> Coordinate3D::computeBatch(
     cudaStream_t stream,
     float disparityScale)
 {
+    std::vector<Object3D> results;
+    if (!tryComputeBatch(dets, disparityGPU, dispPitch,
+                         imgWidth, imgHeight, stream,
+                         results, disparityScale)) {
+        results.clear();
+    }
+    return results;
+}
+
+bool Coordinate3D::tryComputeBatch(
+    const std::vector<Detection>& dets,
+    const int16_t* disparityGPU, int dispPitch,
+    int imgWidth, int imgHeight,
+    cudaStream_t stream,
+    std::vector<Object3D>& results,
+    float disparityScale)
+{
+    results.clear();
     int numBoxes = std::min(static_cast<int>(dets.size()), maxBoxes_);
-    if (numBoxes == 0) return {};
+    if (numBoxes == 0) return true;
     if (!ready_ || !disparityGPU || dispPitch <= 0 ||
-        imgWidth <= 0 || imgHeight <= 0) {
+        imgWidth <= 0 || imgHeight <= 0 ||
+        !std::isfinite(disparityScale) || disparityScale <= 0.0f) {
         LOG_WARN("Coordinate3D::computeBatch invalid state/input");
-        return {};
+        return false;
     }
 
     // 1. 准备 BBox 数据并上传到 GPU
@@ -120,7 +152,7 @@ std::vector<Object3D> Coordinate3D::computeBatch(
                                       cudaMemcpyHostToDevice, stream);
     if (err != cudaSuccess) {
         LOG_WARN("Coordinate3D: H2D bboxes failed: %s", cudaGetErrorString(err));
-        return {};
+        return false;
     }
 
     // 2. CUDA kernel: 每个 block 处理一个 BBox，用直方图法求峰值视差
@@ -130,7 +162,7 @@ std::vector<Object3D> Coordinate3D::computeBatch(
     err = cudaGetLastError();
     if (err != cudaSuccess) {
         LOG_WARN("Coordinate3D: depth extract launch failed: %s", cudaGetErrorString(err));
-        return {};
+        return false;
     }
 
     // 3. 拷回 CPU
@@ -139,16 +171,15 @@ std::vector<Object3D> Coordinate3D::computeBatch(
                           cudaMemcpyDeviceToHost, stream);
     if (err != cudaSuccess) {
         LOG_WARN("Coordinate3D: D2H depth results failed: %s", cudaGetErrorString(err));
-        return {};
+        return false;
     }
     err = cudaStreamSynchronize(stream);
     if (err != cudaSuccess) {
         LOG_WARN("Coordinate3D: stream sync failed: %s", cudaGetErrorString(err));
-        return {};
+        return false;
     }
 
     // 4. 3D 投影
-    std::vector<Object3D> results;
     results.reserve(numBoxes);
 
     for (int i = 0; i < numBoxes; ++i) {
@@ -179,7 +210,7 @@ std::vector<Object3D> Coordinate3D::computeBatch(
         results.push_back(obj);
     }
 
-    return results;
+    return true;
 }
 
 }  // namespace stereo3d
