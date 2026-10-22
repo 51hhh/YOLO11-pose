@@ -37,17 +37,19 @@ NX GPIO 上升沿 ────────┐
 
 ### Ports
 
-`ports` 定义相机、双目预处理、检测器、trial 写入器和发布器的最小接口。用例依赖接口，不依赖某一型号相机或推理后端。
+`ports` 定义相机、双目预处理、检测器、直接观测估计器、trial 写入器和发布器的最小接口。用例依赖接口，不依赖某一型号相机或推理后端。
 
 原始 `StereoFrame` 与 `RectifiedStereoFrame` 是不同类型。前者携带 Bayer 图像和不可修改的采集事实；后者只用 `FrameReference` 引用来源，并携带同一校正模型下的 BGR8 detector 输入与 Gray8 几何输入。`Detector` 只接受后者，因此不能隐式把 Bayer 当成 BGR，也不能在检测器内部悄悄采用另一套校正坐标。
 
 ### Algorithms
 
-`algorithms/stereo` 只完成左右候选关联、校正双目的三角化和协方差传播。输入输出均为 core 类型，可以在无相机、无 GPU 的主机上测试。
+`algorithms/stereo` 完成左右候选关联、校正双目的中心三角化和协方差传播，并提供实现 `DirectObservationEstimator` 的 `RectifiedCenterEstimator`。后者只用于回放、单元测试和几何基线；它的稳定方法标识为 `detection_center`，不能代替生产配置中的 `roi_multi_point`。这些实现均不依赖相机或 GPU，可以在普通主机上测试。
 
 ### Services
 
-`StereoObservationService` 负责一次双目观测用例：先校验并保存原始配对帧，再调用 `StereoPreprocessor` 生成与来源帧强绑定的校正 BGR/Gray 图，之后调用两侧检测器、保存全部候选、枚举并保存全部配对尝试、三角化通过门控的配对，然后写入或发布直接观测。预处理输出若交换帧身份、改变尺寸、缺少图像或使用错误像素格式，整次 trial 会明确失败；原始 Bayer 事实仍留在未发布 staging 中供排障。任何必需写入失败同样会使本次 trial 失败。
+`StereoObservationService` 负责一次双目观测用例：先校验并保存原始配对帧，再调用 `StereoPreprocessor` 生成与来源帧强绑定的校正 BGR/Gray 图，之后调用两侧检测器、保存全部候选并枚举全部配对尝试。最终选中的 2D 配对连同校正图传给 `DirectObservationEstimator`，服务只接受与观测 ID、pair ID、曝光中点和重投影语义一致的直接 3D，再写入或发布。预处理输出若交换帧身份、改变尺寸、缺少图像或使用错误像素格式，整次 trial 会明确失败；原始 Bayer 事实仍留在未发布 staging 中供排障。任何必需写入失败同样会使本次 trial 失败。
+
+2D 关联里的 `disparity_px` 是检测中心形成的门控证据，ROI 估计器返回的精化视差是另一条事实，二者不得相互覆盖。`DirectObservationEvidence` 因而独立携带实际方法、精化视差、视差离散度和支持点数。估计器返回 `rejected` 表示合法的算法无测量，配对会以 `triangulation_failure` 保存；返回 `failed` 表示 CUDA、图像访问或其他基础设施故障，整个 trial 必须中止，不能降级成一次普通漏检。
 
 `StereoPipelineRunner` 负责一个 trial 的平台无关生命周期。它从 `CameraSource` 逐项读取配对帧，把帧交给 `StereoObservationService`，并区分正常流结束、可容忍的连续超时、超时越限、数据源错误和源协议错误。只有 `end_of_stream` 能触发 `finalize`；其他终止路径统一 `abort`，同一 runner 不能运行第二次。相机线程、SDK 句柄、GPU 缓冲和 detector 资源仍属于 adapter，runner 不接管硬件所有权，也不是实机可执行入口。
 
@@ -55,7 +57,7 @@ NX GPIO 上升沿 ────────┐
 
 `accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。数据校验还要求每个 accepted 配对与唯一轨迹样本的帧引用、3D、协方差和误差数值一致，因此不会出现“接受配对存在但对应 3D 缺失或被替换”的原始数据。
 
-`ObservationPublisher` 接收的不是孤立 3D 点，而是 `ObservationPublication`：直接观测及验证状态、左右原始帧元数据、最终选中的两个检测候选和接受配对。ROS2 适配器因此可以从同一证据填写曝光时刻、设备时间、同步残差、二维框、视差和协方差，而不回读旧管线全局状态，也不需要用滤波速度补齐直接测量。
+`ObservationPublisher` 接收的不是孤立 3D 点，而是 `ObservationPublication`：直接观测及验证状态、左右原始帧元数据、最终选中的两个检测候选、接受配对和实际深度方法证据。ROS2 适配器因此可以从同一证据填写曝光时刻、设备时间、同步残差、二维框、关联视差、精化视差和协方差，而不回读旧管线全局状态，也不需要用滤波速度补齐直接测量。
 
 检测器输出还必须声明与输入完全相同的相机、角色和帧号，候选 ID 在单帧内唯一，候选的 pipeline ID 与批次一致。候选传入的 `selected` 值不受信任；服务先全部清零，只在直接 3D 成功后标记最终左右候选，防止 detector 内部临时选择污染原始契约。
 
@@ -67,7 +69,7 @@ NX GPIO 上升沿 ────────┐
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
 
-现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，平台无关服务也已显式建立 `StereoPreprocessor` 契约，但真实 CUDA/VPI 预处理、TensorRT detector 尚未实现该新端口，更未组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，平台无关服务也已显式建立 `StereoPreprocessor` 与 `DirectObservationEstimator` 契约，但真实 CUDA/VPI 预处理、TensorRT detector、ROI 多点估计器尚未实现这些新端口，更未组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 

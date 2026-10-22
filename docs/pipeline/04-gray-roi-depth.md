@@ -8,6 +8,13 @@
 
 所有当前主线 ROI 深度算法使用已经双目标定校正的左右 Gray8 图像。校正后理想对应点应主要沿 x 方向变化，视差通过标定焦距和基线转换为深度；检测框只提供初始对应和有限搜索区，不应被当作亚像素测量本身。
 
+新的用例边界已经把这一区别编码为类型：`StereoAssociationAttempt.disparity_px`
+只保留检测中心形成的 2D 配对门控证据；`DirectObservationEstimator` 接收校正 Gray8、
+最终左右候选和接受配对，另行返回 `DirectObservationEvidence`。后者声明实际采用的
+方法、精化视差、视差标准差和支持点数。当前 `RectifiedCenterEstimator` 的方法名固定为
+`detection_center`，只用于主机测试和回放几何基线，任何声明 `roi_multi_point` 的实机
+profile 都必须注入后续迁出的 ROI/CUDA 实现。
+
 ## 当前有效算法层级
 
 最终投影会启用多种候选，但它们的作用不同：
