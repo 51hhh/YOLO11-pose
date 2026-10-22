@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`adapters/legacy_nx` 保留成熟的 CUDA/VPI 校正、ROI 深度和当前实机 ROS2 编排，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine/context/buffer 生命周期、静态 I/O 验证、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL 解码 kernel 已经迁入 `adapters/tensorrt`；该目录也已实现主线 `Detector` 端口和检测事实映射，旧管线只以兼容类型别名持有 runtime。直接观测到 `NxBallObservation` 的严格映射和 rclcpp 发布器已进入 `adapters/ros2`，并由 NX 目标强制编译。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
+`adapters/legacy_nx` 保留成熟的 CUDA/VPI 校正、ROI 深度和当前实机 ROS2 编排，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine/context/buffer 生命周期、静态 I/O 验证、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL 解码 kernel 已经迁入 `adapters/tensorrt`；该目录也已实现主线 `Detector` 端口和检测事实映射，旧管线只以兼容类型别名持有 runtime。直接观测到 `NxBallObservation` 的严格映射、rclcpp 发布器和进程源纪元持久化已进入 `adapters/ros2`，并由 NX 目标强制编译；旧 publisher 也复用该源纪元实现，不再在兼容目录维护副本。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
 旧的轨迹 CSV、baseline clip 录制器和一次性特征匹配导出入口已经删除；它们既不满足 v2.1 原始事实契约，也无法由正式 profile 到达。真实图像、候选、配对和直接 3D 只允许通过 `volleyball capture` 驱动的 v2.1 staging 写入，低频排障截图则由显式诊断配置控制。
 
