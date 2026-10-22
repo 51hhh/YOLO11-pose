@@ -52,10 +52,9 @@ python3 tools/check_repository.py
 | `services/` | 将端口与算法编排为观测用例 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
 | `adapters/legacy_nx/` | 海康 MVS、GPIO、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
-| `apps/` | 可执行程序的依赖组装与用户流程 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
-| `tools/` | 仓库审计等跨平台维护入口；不放一次性实验脚本 |
+| `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
 
 旧 NX 实现仍承载海康 MVS、CUDA、TensorRT、GPIO 和 ROS2 的实机代码，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 

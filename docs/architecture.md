@@ -51,9 +51,9 @@ NX GPIO 上升沿 ────────┐
 
 进入检测前，左右帧还必须具有相同帧号、不同相机 ID、非负且处于同一映射时钟域的曝光中心时间；已标记 dropped 的帧不能继续处理。左右曝光中心允许存在有界残差，关联层以 `max_capture_delta_ns` 门控，并把实测 `delta_t_lr_ns` 原样写入配对证据；超限项记录为 `temporal_mismatch`，而不是要求两个软件估计值逐纳秒相等。图像缓冲的宽高、像素格式、stride 和实际容量必须覆盖 metadata 声明的 ROI，避免错误 adapter 把尺寸漂移或短缓冲传入 GPU。
 
-### Adapters 与 Apps
+### Adapters 与运行入口
 
-`adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，并由根工程 ExternalProject 隔离构建。
+`adapters` 实现实际硬件和外部系统。当前唯一用户入口是 Python 包导出的 `volleyball` CLI；现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 

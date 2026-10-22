@@ -24,7 +24,7 @@ chore(ci): 增加 CPU 契约门禁
 - `libs/core` 只包含与平台无关的强类型事实、时钟和坐标语义。
 - `ports` 定义用例需要的接口，不包含 Hik/TensorRT/CUDA/VPI/ROS2 头文件。
 - `adapters` 实现硬件、推理、存储和中间件边界。
-- `apps` 只组装依赖和处理用户流程，不实现立体匹配算法。
+- 用户流程统一由 `volleyball_vision.cli` 组装；若未来增加原生 C++ 应用，再建立 `apps/`，且其中不得实现立体匹配算法。
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
 - `legacy` 只允许兼容转换和可删除的过渡代码，不得反向被 core 依赖。
 

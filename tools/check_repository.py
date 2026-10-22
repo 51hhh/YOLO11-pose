@@ -20,7 +20,6 @@ ALLOWED_TOP_LEVEL = {
     "README.md",
     "adapters",
     "algorithms",
-    "apps",
     "configs",
     "contracts",
     "docs",
