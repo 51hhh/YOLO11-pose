@@ -66,7 +66,7 @@ v2.1 契约的 `calibrations/<calibration_id>.json`。当前资产只证明左�
 不要手工运行 `stereo_pipeline --config adapters/legacy_nx/config/base_pipeline.yaml`。兼容模板不包含完整实验来源和模型指纹。使用：
 
 ```bash
-volleyball config pipeline-report --profile nx-rdk
+volleyball config render-mainline --profile nx-rdk
 volleyball doctor --profile nx-rdk
 volleyball run --profile nx-rdk --dry-run
 volleyball run --profile nx-rdk

@@ -19,12 +19,11 @@ volleyball config validate --profile free-flight
 volleyball config render --profile free-flight --format yaml
 volleyball config explain --profile free-flight recording.loss_policy
 volleyball config diff nx-rdk free-flight
-volleyball config pipeline-report --profile nx-rdk
+volleyball config render-mainline --profile nx-rdk
 ```
 
-`pipeline-report` 汇总最终 profile 与旧 NX 投影后的帧身份、图像产品、处理阶段、
-深度候选角色、stream 分配/逐帧工作和输出。它属于 L1 配置证据，不表示目标机
-已经成功初始化或实际执行了相应 CUDA/VPI/TensorRT 算子。
+`render-mainline` 只输出原生进程实际读取的最小配置，可作为 L1 配置证据；它不
+表示目标机已经成功初始化或实际执行了相应 CUDA/TensorRT 算子。
 
 ## 修改原则
 

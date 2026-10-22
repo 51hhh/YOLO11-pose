@@ -34,7 +34,7 @@ python3 -m pip install -e '.[test]'
 volleyball config validate --profile nx-rdk
 volleyball config validate --profile free-flight
 volleyball config validate --profile replay
-volleyball config pipeline-report --profile nx-rdk
+volleyball config render-mainline --profile nx-rdk
 
 PYTHONPATH=python PYTHONDONTWRITEBYTECODE=1 \
   python3 -m unittest discover -s tests -v
