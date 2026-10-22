@@ -39,6 +39,24 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "volleyball_tracking/",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
+ALLOWED_HARDWARE_TOOL_FILES = {
+    "adapters/legacy_nx/tools/capture_chessboard/args.cpp",
+    "adapters/legacy_nx/tools/capture_chessboard/args.h",
+    "adapters/legacy_nx/tools/capture_chessboard/main.cpp",
+    "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.cpp",
+    "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.h",
+    "adapters/legacy_nx/tools/hik_frame_metadata_probe/main.cpp",
+    "adapters/legacy_nx/tools/hik_frame_metadata_probe/stats.cpp",
+    "adapters/legacy_nx/tools/hik_frame_metadata_probe/stats.h",
+    "adapters/legacy_nx/tools/stereo_calibrate/args.cpp",
+    "adapters/legacy_nx/tools/stereo_calibrate/args.h",
+    "adapters/legacy_nx/tools/stereo_calibrate/images.cpp",
+    "adapters/legacy_nx/tools/stereo_calibrate/images.h",
+    "adapters/legacy_nx/tools/stereo_calibrate/main.cpp",
+}
+ALLOWED_LEGACY_CONFIG_FILES = {
+    "adapters/legacy_nx/config/base_pipeline.yaml",
+}
 
 PURE_CPP_LAYERS = (
     "libs/core",
@@ -59,6 +77,17 @@ FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS = re.compile(
     re.IGNORECASE,
 )
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+CMAKE_SOURCE_GROUPS = (
+    ("libs/core/src", "libs/core/CMakeLists.txt"),
+    ("algorithms/stereo/src", "algorithms/stereo/CMakeLists.txt"),
+    ("services/src", "services/CMakeLists.txt"),
+    ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
+    ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
+    ("adapters/legacy_nx/tests", "adapters/legacy_nx/CMakeLists.txt"),
+    ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),
+    ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
+    ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
+)
 
 
 def _git(*arguments: str) -> str:
@@ -143,6 +172,29 @@ def _check_documentation(tracked: list[str]) -> list[str]:
     return errors
 
 
+def _check_cmake_sources(tracked: list[str]) -> list[str]:
+    """拒绝未加入对应 CMake 目标的 C++/CUDA 实现或测试。"""
+
+    errors: list[str] = []
+    tracked_set = set(tracked)
+    for source_root, cmake_file in CMAKE_SOURCE_GROUPS:
+        cmake_path = ROOT / cmake_file
+        if cmake_file not in tracked_set or not cmake_path.is_file():
+            continue
+        cmake_text = cmake_path.read_text(encoding="utf-8")
+        cmake_directory = Path(cmake_file).parent
+        for source in sorted(tracked_set):
+            path = Path(source)
+            if not source.startswith(f"{source_root}/"):
+                continue
+            if path.suffix not in {".cc", ".cpp", ".cxx", ".cu"}:
+                continue
+            token = path.relative_to(cmake_directory).as_posix()
+            if token not in cmake_text and path.name not in cmake_text:
+                errors.append(f"{source}: 未列入 {cmake_file}")
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     staged_entries = _git("ls-files", "-s").splitlines()
@@ -185,6 +237,13 @@ def main() -> int:
             + "\n    ".join(documentation_errors)
         )
 
+    cmake_source_errors = _check_cmake_sources(tracked)
+    if cmake_source_errors:
+        errors.append(
+            "C++/CUDA 源码或测试未连接到构建目标:\n    "
+            + "\n    ".join(cmake_source_errors)
+        )
+
     unexpected_tools = sorted(
         path for path in tracked
         if path.startswith("tools/") and path not in ALLOWED_TOOL_FILES
@@ -193,6 +252,28 @@ def main() -> int:
         errors.append(
             "tools 只保留仓库维护门禁，用户功能应进入统一 CLI:\n    "
             + "\n    ".join(unexpected_tools)
+        )
+
+    unexpected_hardware_tools = sorted(
+        path for path in tracked
+        if path.startswith("adapters/legacy_nx/tools/")
+        and path not in ALLOWED_HARDWARE_TOOL_FILES
+    )
+    if unexpected_hardware_tools:
+        errors.append(
+            "NX 辅助工具必须归入已审核的硬件工具入口:\n    "
+            + "\n    ".join(unexpected_hardware_tools)
+        )
+
+    unexpected_legacy_config = sorted(
+        path for path in tracked
+        if path.startswith("adapters/legacy_nx/config/")
+        and path not in ALLOWED_LEGACY_CONFIG_FILES
+    )
+    if unexpected_legacy_config:
+        errors.append(
+            "旧 NX config 只保留兼容模板，实验结果应存放在 trial/derived:\n    "
+            + "\n    ".join(unexpected_legacy_config)
         )
 
     flat_cpp_tests = sorted(
@@ -204,6 +285,18 @@ def main() -> int:
         errors.append(
             "C++ 测试必须归入 mainline 或 legacy_nx:\n    "
             + "\n    ".join(flat_cpp_tests)
+        )
+
+    flat_python_tests = sorted(
+        path for path in tracked
+        if Path(path).parent == Path("tests")
+        and Path(path).name.startswith("test_")
+        and Path(path).suffix == ".py"
+    )
+    if flat_python_tests:
+        errors.append(
+            "Python 测试必须归入 unit 或 contract:\n    "
+            + "\n    ".join(flat_python_tests)
         )
 
     required = [
