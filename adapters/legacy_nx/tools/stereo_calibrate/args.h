@@ -16,7 +16,6 @@ struct StereoCalibrateArgs {
     int board_w = 5;
     int board_h = 8;
     bool no_vis = false;
-    bool use_gpu_preprocess = false;
     bool fix_intrinsics = true;
     bool use_sb = false;
     bool use_exhaustive = false;

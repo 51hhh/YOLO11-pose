@@ -36,7 +36,6 @@ std::vector<ImagePair> pairImagesByStem(
 
 DetectionResult detectPairCorners(const ImagePair& pair,
                                   cv::Size boardSize,
-                                  bool use_gpu_preprocess,
                                   bool use_sb,
                                   bool use_exhaustive);
 

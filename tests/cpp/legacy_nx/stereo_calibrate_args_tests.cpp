@@ -69,6 +69,7 @@ int main() {
              std::vector<std::string>{"calibrate", "--square-size", "nan"},
              std::vector<std::string>{"calibrate", "--board-w", "5x"},
              std::vector<std::string>{"calibrate", "--jobs", "many"},
+             std::vector<std::string>{"calibrate", "--gpu-preprocess"},
          }) {
         StereoCalibrateArgs args;
         check(!parse(invalid, args),

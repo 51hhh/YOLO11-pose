@@ -122,13 +122,9 @@ int main(int argc, char* argv[]) {
     cv::Size imgSize;
 
     const size_t n = pairs.size();
-    const int default_jobs = args.use_gpu_preprocess ? 1 : defaultJobCount();
-    const int jobs = std::clamp(args.jobs > 0 ? args.jobs : default_jobs,
+    const int jobs = std::clamp(args.jobs > 0 ? args.jobs : defaultJobCount(),
                                 1, static_cast<int>(n));
     printf("\n%zu image pairs, detecting corners with %d worker(s)...\n\n", n, jobs);
-    if (args.use_gpu_preprocess && args.jobs <= 0) {
-        printf("[INFO] --gpu-preprocess enabled: defaulting to one detection worker\n");
-    }
 
     std::vector<DetectionResult> results(n);
     std::string parallel_error;
@@ -139,7 +135,6 @@ int main(int argc, char* argv[]) {
                 results[index] = detectPairCorners(
                     pairs[index],
                     boardSize,
-                    args.use_gpu_preprocess,
                     args.use_sb,
                     args.use_exhaustive);
             },

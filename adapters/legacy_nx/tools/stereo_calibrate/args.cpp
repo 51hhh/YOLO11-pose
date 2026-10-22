@@ -62,11 +62,10 @@ void printStereoCalibrateUsage(const char* argv0, std::FILE* stream) {
         "  --board-w N            Inner corners width [5]\n"
         "  --board-h N            Inner corners height [8]\n"
         "  --no-vis               Skip visualization\n"
-        "  --gpu-preprocess       Use CUDA for image-to-gray preprocessing when available\n"
         "  --optimize-intrinsics  Refine intrinsics during stereo calibration\n"
         "  --sb                   Enable SB chessboard fallback\n"
         "  --exhaustive           Enable slow exhaustive SB fallback\n"
-        "  --jobs N               Detection workers [CPU cores; 1 with GPU preprocessing]\n"
+        "  --jobs N               Detection workers [CPU cores]\n"
         "  -h, --help             Show this help\n",
         argv0);
 }
@@ -106,8 +105,6 @@ bool parseStereoCalibrateArgs(int argc,
             }
         } else if (arg == "--no-vis") {
             a.no_vis = true;
-        } else if (arg == "--gpu-preprocess") {
-            a.use_gpu_preprocess = true;
         } else if (arg == "--optimize-intrinsics") {
             a.fix_intrinsics = false;
         } else if (arg == "--sb") {

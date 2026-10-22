@@ -6,8 +6,6 @@
 #include "images.h"
 
 #include <opencv2/opencv.hpp>
-#include <opencv2/core/cuda.hpp>
-#include <opencv2/cudaimgproc.hpp>
 
 #include <algorithm>
 #include <cstdio>
@@ -87,31 +85,6 @@ cv::Mat toGrayCPU(const std::string& path) {
     return img;
 }
 
-cv::Mat toGrayGPU(const std::string& path) {
-    cv::Mat img = cv::imread(path, cv::IMREAD_UNCHANGED);
-    if (img.empty()) return {};
-    try {
-        cv::cuda::GpuMat gpu(img);
-        cv::cuda::GpuMat gray_gpu;
-        if (img.channels() == 3) {
-            cv::cuda::cvtColor(gpu, gray_gpu, cv::COLOR_BGR2GRAY);
-        } else if (img.channels() == 1 && img.type() == CV_8UC1) {
-            cv::cuda::cvtColor(gpu, gray_gpu, cv::COLOR_BayerBG2GRAY);
-        } else {
-            return toGrayCPU(path);
-        }
-        cv::Mat gray;
-        gray_gpu.download(gray);
-        return gray;
-    } catch (const cv::Exception&) {
-        return toGrayCPU(path);
-    }
-}
-
-cv::Mat toGray(const std::string& path, bool use_gpu_preprocess) {
-    return use_gpu_preprocess ? toGrayGPU(path) : toGrayCPU(path);
-}
-
 enum class ChessboardDetectorMode {
     CLASSIC_FAST,
     CLASSIC_FILTER_QUADS,
@@ -164,12 +137,11 @@ bool findCornersWithMode(const cv::Mat& gray, cv::Size boardSize,
 
 DetectionResult detectPairCorners(const ImagePair& pair,
                                   cv::Size boardSize,
-                                  bool use_gpu_preprocess,
                                   bool use_sb,
                                   bool use_exhaustive) {
     DetectionResult result;
-    cv::Mat gL = toGray(pair.left, use_gpu_preprocess);
-    cv::Mat gR = toGray(pair.right, use_gpu_preprocess);
+    cv::Mat gL = toGrayCPU(pair.left);
+    cv::Mat gR = toGrayCPU(pair.right);
     if (gL.empty() || gR.empty()) return result;
     result.read_ok = true;
     result.left_size = gL.size();
