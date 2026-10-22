@@ -54,7 +54,7 @@ python3 tools/check_repository.py
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
 | `adapters/capture_v21/` | 与硬件无关的 v2.1 staging 序列化适配器 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
-| `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、水印清除和帧对齐 |
+| `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
 | `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |

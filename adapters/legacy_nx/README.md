@@ -46,7 +46,7 @@ src/utils/    VPI 图像访问和性能计数等底层工具
 tools/        按可执行程序分目录的标定与硬件诊断入口及 common 文件提交边界
 ```
 
-海康双目相机、GPIO 触发与公共日志分别归 `adapters/hik_mvs/`、`adapters/gpio/` 与 `libs/logging/` 所有；旧工程只复用这些目标，不再维护私有副本。
+海康双目相机、主线 `CameraSource` 桥、GPIO 触发与公共日志分别归 `adapters/hik_mvs/`、`adapters/gpio/` 与 `libs/logging/` 所有；旧工程只复用这些目标，不再维护私有副本。旧 `stereo_pipeline` 目前仍直接编排海康相机和 GPIO；等正式写入器、GPU detector 与发布器迁出并完成同批数据回归后，才由新应用入口改用该桥。
 
 独立硬件 adapter 的 SDK 桩测试位于 `tests/cpp/adapters/`；尚未迁出的兼容逻辑与 CUDA/VPI 桩位于 `tests/cpp/legacy_nx/`。两者都由根目录主机预设执行，本目录不再保留第二套测试入口。
 

@@ -57,7 +57,11 @@ NX GPIO 上升沿 ────────┐
 
 ### Adapters 与运行入口
 
-`adapters` 实现实际硬件、存储格式和外部系统。v2.1 staging 序列化、GPIO 触发和海康双目相机分别位于 `adapters/capture_v21`、`adapters/gpio` 与 `adapters/hik_mvs`，由根工程声明并供旧 NX 管线复用。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。当前唯一用户入口是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+`adapters` 实现实际硬件、存储格式和外部系统。v2.1 staging 行序列化、GPIO 触发和海康双目相机分别位于 `adapters/capture_v21`、`adapters/gpio` 与 `adapters/hik_mvs`，由根工程声明并供旧 NX 管线复用。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
+
+`HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
+
+现有 CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`，正式磁盘 `TrialWriter` 也尚未从旧录制器迁出。当前唯一用户入口是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 
