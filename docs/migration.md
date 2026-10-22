@@ -10,7 +10,7 @@
 
 主线目前已有 `CameraSource → StereoPipelineRunner → StereoObservationService → StereoPreprocessor/Detector/DirectObservationEstimator → TrialWriter/ObservationPublisher` 的平台无关编排，并用脚本相机源覆盖结束、超时、错误和中止语义。外层 `runManagedStereoTrial` 已证明“相机先进入抓取、GPIO 后启动；退出时 GPIO 先停止”的单次 trial 顺序。`StereoPreprocessor` 的输出与原始帧身份强绑定，必须同时提供同尺寸的校正 BGR8 和 Gray8；`Detector` 不再接受原始 Bayer。2D 关联中心视差与最终深度测量证据已经分离，中心三角化只保留为显式测试/回放基线，服务不会把它隐式当成 `roi_multi_point`。`HikStereoCameraSource` 已把海康双目帧接入该端口：它按 `FrameCounter` 查询 GPIO 上升沿、分别保留左右设备时钟和主机到达时钟、按每帧实际曝光计算曝光中心，并以有界自有缓冲保证下游持有图像时不会被覆盖。`MainlineStageTrialWriter` 已按四类事实原子写入 v6 staging，其中直接观测与实际深度方法、精化视差、离散度和支持点数不可拆分；独立 finalizer 会重新验证计数、时序、时钟映射、方法是否来自冻结配置、关系和原图后发布 v2.1。上述平台无关边界均有主机契约测试。
 
-这仍不等于新的实机入口已经完成。主线 `TrialWriter`、TensorRT/CUDA `Detector`、ROS2 `ObservationPublisher` 与平台无关启停编排已完成，但 CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator`、配置装配和原生进程入口尚未接入。新 ROS2 目标目前只作为 `stereo_pipeline` 的构建依赖接受真实接口编译，旧可执行文件仍调用旧 publisher；只有原生主线进程装配完成后才会切换运行时。当前实机仍由旧管线编排，不能仅凭主机 SDK 桩测试宣称新入口可采集或达到实时性能。当前服务还会顺序调用左右两个同步 detector，独立 stream 只是资源隔离，并非已经证明双路并发。
+这仍不等于新的实机入口已经完成。主线 `TrialWriter`、TensorRT/CUDA `Detector`、ROS2 `ObservationPublisher` 与平台无关启停编排已完成，但 CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator`、配置装配和原生进程入口尚未接入。新 ROS2 目标目前只作为 `stereo_pipeline` 的构建依赖接受真实接口编译，旧可执行文件仍调用旧 publisher；只有原生主线进程装配完成后才会切换运行时。当前实机仍由旧管线编排，不能仅凭主机 SDK 桩测试宣称新入口可采集或达到实时性能。服务层已用两个常驻工作线程并发调用左右同步 detector，并以主机屏障测试证明调用重叠；独立 CUDA stream 是否在目标机形成实际 GPU 重叠仍需 Nsight 证据。
 
 根工程通过 `nx-legacy-release` 预设将旧工程作为 ExternalProject 编译。这样可以复用实机能力，同时防止旧工程的全局 CUDA、VPI、MVS、OpenCV 和 ROS2 依赖进入 `libs/core`、`ports`、`algorithms` 或 `services`。
 

@@ -6,7 +6,7 @@
 
 主线 `TensorRtDetector` 已实现平台无关 `Detector` 端口。它只接受 CUDA-device BGR8 校正图，验证输入尺寸和容量后调用 checked runtime API；合法的零候选会返回成功，CUDA、enqueue 或解码错误会保留失败语义。映射层再冻结 pipeline ID，过滤非目标类别、非有限或越界几何，稳定按置信度排序并生成单帧唯一候选 ID。主机 SDK 桩会真实编译和运行这条端口边界，但底层 runtime 和 kernel 仍必须在 Orin NX 的 CUDA/TensorRT SDK 上构建验证。
 
-每个 detector 实例拥有独立非阻塞 CUDA stream，但当前 `StereoObservationService` 使用同步端口并顺序调用左右实例。因此资源已经隔离，不代表主线已经实现左右推理重叠；若目标机时序证明需要并发，应在服务/端口契约层显式引入异步批次，而不是在 adapter 内隐藏线程或改变候选语义。
+每个 detector 实例拥有独立非阻塞 CUDA stream。`StereoObservationService` 在两个常驻工作线程上同时调用左右同步端口，每个 detector 始终由唯一线程串行访问；主机屏障测试会在调用不重叠时失败。这个结果只证明提交路径并发，不能替代目标 NX 上的 Nsight 时间线；TensorRT kernel 是否真正重叠仍受 engine、DLA/GPU 分配和资源竞争影响。
 
 当前参数：
 
