@@ -26,7 +26,7 @@ cmake --build --preset nx-legacy-release --parallel
 | `stereo_calibrate` | 从已采集棋盘图计算双目标定 | 输出经复核后放入 `configs/calibration/` |
 | `hik_frame_metadata_probe` | 检查 FrameCounter、触发计数和到达顺序 | 正式采集前的硬件验收工具 |
 
-具体入口与验收顺序见[实机辅助工具](../../docs/hardware-tools.md)和[验收标准](../../docs/acceptance.md)。
+具体入口与验收顺序见[实机与标定辅助工具](../../docs/hardware-tools.md)和[验收标准](../../docs/acceptance.md)。
 
 ## 代码边界
 

@@ -1,6 +1,6 @@
-# 实机辅助工具
+# 实机与标定辅助工具
 
-主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。`adapters/legacy_nx/build/` 中只保留必须直接访问 Jetson 或海康 SDK 的三个辅助程序，避免把一次性脚本混进生产入口。
+主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。`adapters/legacy_nx/build/` 只保留与实机验收链直接相关的三个辅助程序：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
 
 ## 推荐顺序
 
@@ -46,6 +46,7 @@ adapters/legacy_nx/build/stereo_calibrate \
 ```
 
 输出文件必须不存在，工具不会覆盖已有候选或权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
+角点检测和标定在 CPU 上执行，可用 `--jobs` 控制检测线程；它不启动相机，也不借用实时 CUDA/VPI 图像流水线。
 角点检测与左右单目标定的工作线程异常会使工具明确失败；最终 YAML 先写入同目录 `.partial` 文件，完整关闭并确认非空后再以无覆盖方式发布。残留 `.partial` 会被拒绝并要求人工检查，不会被下一次运行静默复用。
 
 ## 主流水线
