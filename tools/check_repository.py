@@ -140,7 +140,10 @@ CMAKE_SOURCE_GROUPS = (
     ("tools/hardware", "tools/hardware/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
-    ("tests/cpp/tools", "tests/cpp/tools/CMakeLists.txt"),
+    (
+        "tests/cpp/hardware_tools",
+        "tests/cpp/hardware_tools/CMakeLists.txt",
+    ),
     ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
 )
 
