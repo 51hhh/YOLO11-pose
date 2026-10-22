@@ -34,10 +34,16 @@ namespace fs = std::filesystem;
 
 static std::vector<cv::Point3f> makeObjectPoints(cv::Size boardSize, float squareSize) {
     std::vector<cv::Point3f> pts;
-    pts.reserve(boardSize.width * boardSize.height);
+    const std::size_t corner_count =
+        static_cast<std::size_t>(boardSize.width) *
+        static_cast<std::size_t>(boardSize.height);
+    pts.reserve(corner_count);
     for (int r = 0; r < boardSize.height; ++r)
         for (int c = 0; c < boardSize.width; ++c)
-            pts.emplace_back(c * squareSize, r * squareSize, 0.0f);
+            pts.emplace_back(
+                static_cast<float>(c) * squareSize,
+                static_cast<float>(r) * squareSize,
+                0.0f);
     return pts;
 }
 
@@ -428,8 +434,8 @@ int main(int argc, char* argv[]) {
         cv::initUndistortRectifyMap(K1, D1, R1, P1, imgSize, CV_32FC1, mapLx, mapLy);
         cv::initUndistortRectifyMap(K2, D2, R2, P2, imgSize, CV_32FC1, mapRx, mapRy);
 
-        int nSample = std::min(3, (int)pairs.size());
-        for (int i = 0; i < nSample; ++i) {
+        const std::size_t sample_count = std::min<std::size_t>(3, pairs.size());
+        for (std::size_t i = 0; i < sample_count; ++i) {
             cv::Mat imgL = cv::imread(pairs[i].left, cv::IMREAD_UNCHANGED);
             cv::Mat imgR = cv::imread(pairs[i].right, cv::IMREAD_UNCHANGED);
             if (imgL.empty() || imgR.empty()) continue;
