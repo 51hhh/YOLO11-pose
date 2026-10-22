@@ -82,10 +82,6 @@ bool CaptureV21StageRecorder::init(
         return false;
     }
     try {
-        if (cfg_.raw_frames != "none") {
-            fs::create_directories(root / "raw" / "left");
-            fs::create_directories(root / "raw" / "right");
-        }
         const fs::path outputs[] = {
             root / "frames.csv", root / "detections.csv",
             root / "pairs.csv", root / "status.json"};
@@ -96,6 +92,17 @@ bool CaptureV21StageRecorder::init(
                 cfg_.enabled = false;
                 return false;
             }
+        }
+        const fs::path raw_root = root / "raw";
+        if (cfg_.raw_frames != "none" && fs::exists(raw_root)) {
+            LOG_ERROR("CaptureV21: refusing to reuse raw image directory %s",
+                      raw_root.string().c_str());
+            cfg_.enabled = false;
+            return false;
+        }
+        if (cfg_.raw_frames != "none") {
+            fs::create_directories(raw_root / "left");
+            fs::create_directories(raw_root / "right");
         }
         frames_file_.open((root / "frames.csv").string(),
                           std::ios::out | std::ios::trunc);
@@ -156,6 +163,10 @@ bool CaptureV21StageRecorder::copyGrayImage(
 bool CaptureV21StageRecorder::writePgm(
     const std::string& path, const cv::Mat& image) const {
     if (image.empty() || image.type() != CV_8UC1) return false;
+    std::error_code exists_error;
+    if (std::filesystem::exists(path, exists_error) || exists_error) {
+        return false;
+    }
     std::ofstream output(path, std::ios::binary | std::ios::out | std::ios::trunc);
     if (!output) return false;
     output << "P5\n" << image.cols << ' ' << image.rows << "\n255\n";

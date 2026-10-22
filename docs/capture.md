@@ -149,6 +149,10 @@ volleyball capture --profile free-flight \
 volleyball dataset validate data/captures/trials/trial-001
 ```
 
+每次运行使用独立的随机 staging 目录。旧 staging 中只要已有 CSV、状态文件或
+`raw/` 图像目录，NX 录制器都会拒绝复用；失败数据用于审计，不能作为续写点，
+更不能覆盖后重新发布。
+
 每个实验批次先拍静态标定板和静止球，再进行低速、常用速度和高速自由飞行。不要在采集期间改变曝光、增益、焦距、基线或相机安装；若改变，必须生成新标定/配置指纹。
 
 回放报告的 `quality.transport_timing` 会自动给出左右曝光到 USB 接收、曝光到推理完成的 p50/p95/p99/max，以及 `left_first`、`right_first`、`tie` 次数和左右到达时间差。它用于判断 USB 长尾和乱序，报告中同时固定声明 `arrival_time_used_for_pairing=false`。
