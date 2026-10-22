@@ -18,7 +18,11 @@ add_legacy_nx_test(
   "${LEGACY_NX_SOURCE_DIR}/stereo/depth_match_contract.cpp"
 )
 
-add_legacy_nx_test(trigger_edge_history_tests trigger_edge_history_tests.cpp)
+add_legacy_nx_test(
+  trigger_edge_history_tests
+  trigger_edge_history_tests.cpp
+  "${LEGACY_NX_SOURCE_DIR}/capture/pwm_trigger.cpp"
+)
 target_compile_definitions(trigger_edge_history_tests PRIVATE NO_GPIOD=1)
 
 add_legacy_nx_test(

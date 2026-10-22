@@ -187,6 +187,7 @@ endif()
 # ==================== 源文件 ====================
 set(PIPELINE_SOURCES
   src/main.cpp
+  src/capture/pwm_trigger.cpp
   src/main_cli_options.cpp
   src/main_config_loaders.cpp
   src/main_dual_yolo_config.cpp
@@ -356,6 +357,7 @@ if(HIK_FOUND)
     tools/capture_chessboard/main.cpp
     tools/capture_chessboard/args.cpp
     src/capture/hikvision_camera.cpp
+    src/capture/pwm_trigger.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -377,6 +379,7 @@ if(HIK_FOUND)
     tools/hik_frame_metadata_probe/main.cpp
     tools/hik_frame_metadata_probe/args.cpp
     tools/hik_frame_metadata_probe/stats.cpp
+    src/capture/pwm_trigger.cpp
   )
   set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
   target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
