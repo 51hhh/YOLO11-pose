@@ -145,6 +145,12 @@ private:
     bool configureCamera(void* handle, const CameraConfig& cfg, const char* tag);
     bool grabOneFrame(void* handle, uint8_t* dst, int pitch,
                       unsigned int timeout_ms, GrabResult& result);
+    bool grabFramePairAttempt(
+        uint8_t* dst_left, uint8_t* dst_right,
+        int left_pitch, int right_pitch,
+        unsigned int timeout_ms,
+        GrabResult& result_left, GrabResult& result_right,
+        bool& sync_warmup_pending);
     void resetSyncState();
 
     void* handle_left_  = nullptr;

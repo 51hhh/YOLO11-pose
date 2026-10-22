@@ -54,3 +54,20 @@ add_test(
   COMMAND stereo_observation_service_tests
 )
 
+find_package(Threads REQUIRED)
+add_executable(hik_camera_sync_tests
+  hik_camera_sync_tests.cpp
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/capture/hikvision_camera.cpp
+)
+target_include_directories(hik_camera_sync_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/mvs_stub
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+)
+target_link_libraries(hik_camera_sync_tests PRIVATE Threads::Threads)
+target_compile_features(hik_camera_sync_tests PRIVATE cxx_std_17)
+target_compile_options(hik_camera_sync_tests PRIVATE
+  # 旧 logger 宏使用 GNU 的空 __VA_ARGS__ 扩展，不能与 -Wpedantic 同开。
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Werror>
+)
+add_test(NAME hik_camera_sync_tests COMMAND hik_camera_sync_tests)
+

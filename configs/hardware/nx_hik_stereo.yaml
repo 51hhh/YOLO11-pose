@@ -23,7 +23,7 @@ cameras:
     pwm_duty_cycle: 50.0
     frame_identity_source: hik_frame_spec_info
     estimated_error_ns: 100000.0
-    # GPIO 写高的时刻是本系统的曝光开始事实；若后续实测相机输入延迟，只改下面两项。
+    # GPIO 写高是软件曝光参考；实际传感器曝光需把实测固定延迟写入下面两项。
     exposure_timestamp_source: nx_gpio_rising_edge
     exposure_delay_ns: 0
     exposure_delay_uncertainty_ns: 0

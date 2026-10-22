@@ -462,6 +462,41 @@ bool HikvisionCamera::grabFramePair(
     unsigned int timeout_ms,
     GrabResult& result_left, GrabResult& result_right)
 {
+    // 同步基线需要连续的水印样本。预热属于一次抓帧请求的内部过程，不能把
+    // 前两个有效水印帧伪装成管线丢帧，否则 free-flight 的 fail_trial 会在
+    // 启动时必然失败。预热次数有界；真实超时、断流和对齐失败仍立即返回。
+    constexpr int kMaxSyncWarmupPairs = 16;
+    for (int warmup_pairs = 0; warmup_pairs < kMaxSyncWarmupPairs;
+         ++warmup_pairs) {
+        result_left = GrabResult{};
+        result_right = GrabResult{};
+        bool sync_warmup_pending = false;
+        if (grabFramePairAttempt(
+                dst_left, dst_right,
+                left_pitch, right_pitch,
+                timeout_ms,
+                result_left, result_right,
+                sync_warmup_pending)) {
+            return true;
+        }
+        if (!sync_warmup_pending || !grabbing_) return false;
+        LOG_INFO("[HikCam] Sync warm-up consumed pair %d/%d",
+                 warmup_pairs + 1, kMaxSyncWarmupPairs);
+    }
+
+    LOG_ERROR("[HikCam] Sync baseline did not stabilize within %d frame pairs",
+              kMaxSyncWarmupPairs);
+    return false;
+}
+
+bool HikvisionCamera::grabFramePairAttempt(
+    uint8_t* dst_left,  uint8_t* dst_right,
+    int left_pitch, int right_pitch,
+    unsigned int timeout_ms,
+    GrabResult& result_left, GrabResult& result_right,
+    bool& sync_warmup_pending)
+{
+    sync_warmup_pending = false;
     if (!grabbing_) return false;
 
     // 并行抓取左右帧 — 确保两个 MV_CC_GetImageBuffer 同时发起,
@@ -634,6 +669,8 @@ bool HikvisionCamera::grabFramePair(
                          kRequiredBaselineSamples,
                          (long)frame_counter_delta,
                          (long)dt);
+                consecutive_failures_ = 0;
+                sync_warmup_pending = true;
                 return false;
             }
 
@@ -645,6 +682,8 @@ bool HikvisionCamera::grabFramePair(
                          kRequiredBaselineSamples,
                          (long)frame_counter_delta,
                          (long)dt);
+                consecutive_failures_ = 0;
+                sync_warmup_pending = true;
                 return false;
             }
 
