@@ -11,6 +11,34 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
+ALLOWED_TOP_LEVEL = {
+    ".github",
+    ".gitignore",
+    "CMakeLists.txt",
+    "CMakePresets.json",
+    "CONTRIBUTING.md",
+    "README.md",
+    "adapters",
+    "algorithms",
+    "apps",
+    "configs",
+    "contracts",
+    "docs",
+    "libs",
+    "models",
+    "ports",
+    "pyproject.toml",
+    "python",
+    "services",
+    "tests",
+    "tools",
+}
+FORBIDDEN_TRACKED_PREFIXES = (
+    "NX_volleyball/",
+    "Stereo/",
+    "volleyball_tracking/",
+)
+
 PURE_CPP_LAYERS = (
     "libs/core",
     "ports",
@@ -51,9 +79,29 @@ def main() -> int:
         errors.append("禁止无明确声明的嵌套 gitlink:\n    " + "\n    ".join(gitlinks))
 
     tracked = _git("ls-files").splitlines()
+    top_level = {Path(path).parts[0] for path in tracked}
+    unexpected_top_level = sorted(top_level - ALLOWED_TOP_LEVEL)
+    if unexpected_top_level:
+        errors.append(
+            "禁止新增未声明的顶层入口:\n    "
+            + "\n    ".join(unexpected_top_level)
+        )
+
+    retired_paths = [
+        path for path in tracked
+        if path.startswith(FORBIDDEN_TRACKED_PREFIXES)
+    ]
+    if retired_paths:
+        errors.append(
+            "已退役目录不得重新进入主线:\n    "
+            + "\n    ".join(retired_paths)
+        )
+
     generated = [
         path for path in tracked
-        if path.endswith(".pyc") or "/__pycache__/" in f"/{path}/"
+        if path.endswith((".pyc", ".pyo"))
+        or "/__pycache__/" in f"/{path}/"
+        or "/.pytest_cache/" in f"/{path}/"
     ]
     if generated:
         errors.append("禁止跟踪 Python 缓存:\n    " + "\n    ".join(generated))
@@ -65,8 +113,12 @@ def main() -> int:
         "configs/profiles/free-flight.yaml",
         "models/manifest.yaml",
         "CMakePresets.json",
+        "adapters/legacy_nx/CMakeLists.txt",
+        "adapters/legacy_nx/config/base_pipeline.yaml",
+        "configs/calibration/stereo_calib.yaml",
         "algorithms/stereo/CMakeLists.txt",
         "services/CMakeLists.txt",
+        "docs/hardware-tools.md",
     ]
     missing = [path for path in required if not (ROOT / path).is_file()]
     if missing:
@@ -93,7 +145,7 @@ def main() -> int:
         )
 
     vpi_plane_access_violations: list[str] = []
-    legacy_source_root = ROOT / "NX_volleyball/stereo_3d_pipeline/src"
+    legacy_source_root = ROOT / "adapters/legacy_nx/src"
     vpi_adapter = legacy_source_root / "utils/vpi_plane_access.h"
     if legacy_source_root.exists():
         for path in legacy_source_root.rglob("*"):

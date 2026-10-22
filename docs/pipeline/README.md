@@ -47,7 +47,7 @@ GPIO 上升沿
 4. 运行时资源创建、日志和性能计数；
 5. 目标 NX 上的实际执行轨迹。
 
-主线基础配置是 `NX_volleyball/stereo_3d_pipeline/config/pipeline_record_p0p1.yaml`。旧文件 `pipeline_dual_yolo_roi.yaml` 和旧 wiki 仍可作为实验历史参考，但不能单独用于判断当前 profile。
+适配器基础模板是 `adapters/legacy_nx/config/base_pipeline.yaml`。它只提供旧 C++ 参数形状，所有生产开关必须由主线 profile 投影覆盖，不能直接把模板当成运行配置。
 
 可随时重新核对最终配置：
 
@@ -69,7 +69,7 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 
 | 责任 | 当前入口 |
 |---|---|
-| 相机初始化、FrameSpecInfo 和配对 | `NX_volleyball/stereo_3d_pipeline/src/capture/` |
+| 相机初始化、FrameSpecInfo 和配对 | `adapters/legacy_nx/src/capture/` |
 | 三缓冲帧容器 | `src/pipeline/frame_slot.h` |
 | CUDA/VPI stream | `src/pipeline/sync.h` |
 | VPI 图像的短期 CUDA view 锁边界 | `src/pipeline/pipeline_image_access.cpp` |

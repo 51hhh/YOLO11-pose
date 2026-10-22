@@ -14,10 +14,10 @@ add_test(NAME core_contract_tests COMMAND core_contract_tests)
 
 add_executable(legacy_pair_audit_tests
   legacy_pair_audit_tests.cpp
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/stereo/depth_match_contract.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src/stereo/depth_match_contract.cpp
 )
 target_include_directories(legacy_pair_audit_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_features(legacy_pair_audit_tests PRIVATE cxx_std_17)
 target_compile_options(legacy_pair_audit_tests PRIVATE
@@ -29,7 +29,7 @@ add_executable(trigger_edge_history_tests
   trigger_edge_history_tests.cpp
 )
 target_include_directories(trigger_edge_history_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_definitions(trigger_edge_history_tests PRIVATE NO_GPIOD=1)
 target_compile_features(trigger_edge_history_tests PRIVATE cxx_std_17)
@@ -57,11 +57,11 @@ add_test(
 find_package(Threads REQUIRED)
 add_executable(hik_camera_sync_tests
   hik_camera_sync_tests.cpp
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/capture/hikvision_camera.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src/capture/hikvision_camera.cpp
 )
 target_include_directories(hik_camera_sync_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/mvs_stub
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_link_libraries(hik_camera_sync_tests PRIVATE Threads::Threads)
 target_compile_features(hik_camera_sync_tests PRIVATE cxx_std_17)
@@ -75,7 +75,7 @@ add_executable(async_grab_state_tests
   async_grab_state_tests.cpp
 )
 target_include_directories(async_grab_state_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_link_libraries(async_grab_state_tests PRIVATE Threads::Threads)
 target_compile_features(async_grab_state_tests PRIVATE cxx_std_17)
@@ -88,7 +88,7 @@ add_executable(async_roi_buffer_state_tests
   async_roi_buffer_state_tests.cpp
 )
 target_include_directories(async_roi_buffer_state_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_features(async_roi_buffer_state_tests PRIVATE cxx_std_17)
 target_compile_options(async_roi_buffer_state_tests PRIVATE
@@ -100,7 +100,7 @@ add_executable(pipeline_run_state_tests
   pipeline_run_state_tests.cpp
 )
 target_include_directories(pipeline_run_state_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_link_libraries(pipeline_run_state_tests PRIVATE Threads::Threads)
 target_compile_features(pipeline_run_state_tests PRIVATE cxx_std_17)
@@ -114,7 +114,7 @@ add_executable(pipeline_streams_tests
 )
 target_include_directories(pipeline_streams_tests BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/fakes/sync
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_features(pipeline_streams_tests PRIVATE cxx_std_17)
 target_compile_options(pipeline_streams_tests PRIVATE
@@ -124,11 +124,11 @@ add_test(NAME pipeline_streams_tests COMMAND pipeline_streams_tests)
 
 add_executable(dual_yolo_depth_gpu_tests
   dual_yolo_depth_gpu_tests.cpp
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/stereo/dual_yolo_depth_gpu.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src/stereo/dual_yolo_depth_gpu.cpp
 )
 target_include_directories(dual_yolo_depth_gpu_tests BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/fakes/gpu
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_features(dual_yolo_depth_gpu_tests PRIVATE cxx_std_17)
 target_compile_options(dual_yolo_depth_gpu_tests PRIVATE
@@ -144,7 +144,7 @@ foreach(VPI_FAKE_MAJOR IN ITEMS 3 4)
   )
   target_include_directories(${VPI_PLANE_TEST_TARGET} BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/vpi${VPI_FAKE_MAJOR}
-    ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+    ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
   )
   target_compile_features(${VPI_PLANE_TEST_TARGET} PRIVATE cxx_std_17)
   target_compile_options(${VPI_PLANE_TEST_TARGET} PRIVATE
@@ -156,10 +156,10 @@ endforeach()
 
 add_executable(trt_engine_contract_tests
   trt_engine_contract_tests.cpp
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/detect/trt_engine_contract.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src/detect/trt_engine_contract.cpp
 )
 target_include_directories(trt_engine_contract_tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src
 )
 target_compile_features(trt_engine_contract_tests PRIVATE cxx_std_17)
 target_compile_options(trt_engine_contract_tests PRIVATE

@@ -59,7 +59,7 @@ cameras:
 
 calibration:
   id: vehicle-stereo-main
-  file: NX_volleyball/calibration/stereo_calib.yaml
+  file: configs/calibration/stereo_calib.yaml
   format: opencv_yaml
   body_frame: base_link
   rig_frame: stereo_rig
@@ -67,8 +67,8 @@ calibration:
 
 adapters:
   legacy_pipeline:
-    executable: NX_volleyball/stereo_3d_pipeline/build/stereo_pipeline
-    base_config: NX_volleyball/stereo_3d_pipeline/config/pipeline_record_p0p1.yaml
+    executable: adapters/legacy_nx/build/stereo_pipeline
+    base_config: adapters/legacy_nx/config/base_pipeline.yaml
 
 rectification:
   backend: opencv

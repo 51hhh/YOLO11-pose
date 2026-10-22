@@ -51,10 +51,11 @@ python3 tools/check_repository.py
 | `algorithms/stereo/` | 纯双目关联、三角化和协方差传播 |
 | `services/` | 将端口与算法编排为观测用例 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
+| `adapters/legacy_nx/` | 海康 MVS、GPIO、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
 | `apps/` | 可执行程序的依赖组装与用户流程 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
-| `NX_volleyball/stereo_3d_pipeline/` | 现有 NX/CUDA 实现；由主线以适配器方式构建和启动 |
+| `tools/` | 仓库审计等跨平台维护入口；不放一次性实验脚本 |
 
 旧 NX 实现仍承载海康 MVS、CUDA、TensorRT、GPIO 和 ROS2 的实机代码，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 
@@ -143,6 +144,7 @@ volleyball replay \
 
 - [架构与数据流](docs/architecture.md)
 - [CUDA/VPI、YOLO、ROI 与完整帧生命周期](docs/pipeline/README.md)
+- [实机辅助工具](docs/hardware-tools.md)
 - [配置系统](docs/configuration.md)
 - [采集契约](docs/capture.md)
 - [旧 NX 管线迁移](docs/migration.md)

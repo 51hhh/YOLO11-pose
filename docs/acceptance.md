@@ -12,8 +12,6 @@ volleyball config validate --profile replay
 volleyball config pipeline-report --profile nx-rdk --format json
 PYTHONPATH=python PYTHONDONTWRITEBYTECODE=1 \
   python3 -m unittest discover -s tests -v
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
-  -s NX_volleyball/stereo_3d_pipeline/trajectory_fusion/tests -v
 cmake --preset host-core-release
 cmake --build --preset host-core-release --parallel 2
 ctest --preset host-core-release
@@ -42,7 +40,7 @@ volleyball run --profile nx-rdk --dry-run
 先运行海康元数据探针，再录制至少 10 分钟静态场景和一批自由飞行：
 
 ```bash
-NX_volleyball/stereo_3d_pipeline/build/hik_frame_metadata_probe \
+adapters/legacy_nx/build/hik_frame_metadata_probe \
   --left-sn 00D39342665 --right-sn 00219471413 \
   --pwm-hz 90 --frames 300
 ```

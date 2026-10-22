@@ -4,7 +4,7 @@ models:
   yolo26-volleyball-640-fp16:
     family: yolo26
     task: volleyball_detection
-    artifact: NX_volleyball/model/yolo26_gpu_fp16.engine
+    artifact: models/yolo26_gpu_fp16.engine
     artifact_format: tensorrt_engine
     sha256: null
     input_resolution: [640, 640]

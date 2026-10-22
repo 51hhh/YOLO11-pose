@@ -80,7 +80,7 @@ STEREO_CUDA_TEMPLATE_BACKEND=opencv
 3. 旧选择器按候选向量顺序取第一个有效且被列为 legacy output 的候选；向量前部还保留 `fallback_feature_points` 和 `fallback_template` 两个历史入口，但主线投影会把它们明确关闭，因此当前可达顺序才是 epipolar fallback/circle center，之后是 radial、edge-pair、edge-centroid 和 bbox 系列；
 4. center patch、CUDA template 和大部分稀疏/神经特征候选即使有效，也不会由这条旧选择器发布为最终 `z`。
 
-根配置把三件事分开声明：`candidate_methods` 决定实际计算集合，`primary_method` 决定首选，`fallback_methods` 决定首选失败后的允许顺序。适配器会先关闭旧模板中的全部 `depth_modes`，再显式开启候选集合，因此算法开关不再从 `pipeline_record_p0p1.yaml` 隐式继承。
+根配置把三件事分开声明：`candidate_methods` 决定实际计算集合，`primary_method` 决定首选，`fallback_methods` 决定首选失败后的允许顺序。适配器会先关闭基础模板中的全部 `depth_modes`，再显式开启候选集合，因此算法开关不会从模板隐式继承。
 
 旧 C++ 当前仍只有两个首选选择器，并具有固定的 legacy fallback 相对顺序。配置加载器会拒绝无法忠实投影的首选、漏列候选或乱序回退；这比接受配置后悄悄执行另一套算法更安全。
 

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class CalibrationAndLegacyConfigTests(unittest.TestCase):
     def test_opencv_calibration_is_converted_as_rectified_rig(self) -> None:
-        source = ROOT / "NX_volleyball" / "calibration" / "stereo_calib.yaml"
+        source = ROOT / "configs" / "calibration" / "stereo_calib.yaml"
         loaded = load_opencv_stereo_calibration(source)
         self.assertEqual((loaded.image_width, loaded.image_height), (1440, 1080))
         self.assertAlmostEqual(loaded.baseline_m, 0.8531543824782482)

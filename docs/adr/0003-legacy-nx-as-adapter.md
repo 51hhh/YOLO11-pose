@@ -5,7 +5,7 @@
 
 ## 决策
 
-保留 `NX_volleyball/stereo_3d_pipeline` 的实机能力，但从根工程以隔离 ExternalProject 构建，并由主线配置生成器和 CLI 驱动。新 core、ports、algorithms 和 services 不得依赖其头文件或全局状态。
+保留 `adapters/legacy_nx` 的实机能力，但从根工程以隔离 ExternalProject 构建，并由主线配置生成器和 CLI 驱动。新 core、ports、algorithms 和 services 不得依赖其头文件或全局状态。
 
 ## 原因
 

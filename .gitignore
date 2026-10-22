@@ -1,82 +1,44 @@
-# 排除路径
+# 可选的本地参考仓库（不属于本项目）
+/YOLOv11-RGBT/
+/Samples_MSV_SDK/
+/rm_auto_aim/
+/toe_aimbot/
+/RC_Volleyball_vision/
+/TensorYOLO8Volleyball/
 
-# yolo11仓库
-YOLOv11-RGBT/
-# 海康SDK
-Samples_MSV_SDK/
-# RM装甲板自瞄
-rm_auto_aim/
-# 排球视觉推理框架
-toe_aimbot/
-# 排球视觉推理框架
-RC_Volleyball_vision/
+# IDE 与 Python 本地产物
+/.vscode/
+**/__pycache__/
+*.py[cod]
+/.venv*/
+/.pytest_cache/
+/.coverage
 
-# 校准图片
-NX_volleyball/calibration/calibration_images/
-NX_volleyball/calib_500/
-NX_volleyball/calib_500.tar
-
-# Jetson 本地生成模型/引擎产物
-NX_volleyball/model/*.onnx
-NX_volleyball/model/*.pt
-NX_volleyball/model/*.engine
-
-# NX 本地测试输出
-NX_volleyball/stereo_3d_pipeline/test_logs/
-NX_volleyball/stereo_3d_pipeline/baseline_clips/
-NX_volleyball/stereo_3d_pipeline/benchmark_results/
-NX_volleyball/stereo_3d_pipeline/diagnose_output/*.png
-NX_volleyball/stereo_3d_pipeline/diagnose_output/*.npy
-NX_volleyball/calibration/depth_output/*.png
-NX_volleyball/calibration/depth_results/
-NX_volleyball/calibration/depth_results/*.png
-
-# DL 模型文件（大文件不入库）
-NX_volleyball/stereo_3d_pipeline/dl_models/*.onnx
-NX_volleyball/stereo_3d_pipeline/dl_models/*.engine
-NX_volleyball/stereo_3d_pipeline/dl_models/*.whl
-NX_volleyball/stereo_3d_pipeline/dl_models/*.tar.gz
-
-# ROS2 旧架构（本地保留作参考）
-NX_volleyball/ros2_ws/
-
-# 编译产物
-NX_volleyball/stereo_3d_pipeline/build/
-
-# 本地临时脚本与检查文件
-NX_volleyball/scripts/nx_trt_build*.sh
-NX_volleyball/scripts/sync_to_nx.ps1
-nx_check.txt
-
-# IDE 本地配置（.github 需入库，用于 CI 与贡献规范）
-.vscode/
-# Python cache
-__pycache__/
-*.pyc
-.venv-stereo-neural/
-
-# Local model artifacts
-NX_volleyball/stereo_3d_pipeline/models/
-
-# 可选的上游研究仓库：由 third_party/manifest.lock 记录版本，不嵌套入库
-NX_volleyball/LightTrack/
-NX_volleyball/MixFormerV2/
-TensorYOLO8Volleyball/
-
-# 根工程构建与本地覆盖
+# CMake 与编译产物
 /build/
 /build-*/
 /out/
+/adapters/legacy_nx/build/
+
+# 本地配置、模型与 TensorRT 引擎
 /configs/local.yaml
 /configs/local/
+/models/**/*.onnx
+/models/**/*.pt
+/models/**/*.engine
+/adapters/legacy_nx/models/
 
-# 运行时数据集与临时文件
+# 采集、标定和运行时输出
 /data/
 /runs/
+/configs/calibration/images*/
+/adapters/legacy_nx/test_logs/
+/adapters/legacy_nx/baseline_clips/
+/adapters/legacy_nx/benchmark_results/
+/adapters/legacy_nx/diagnose_output/
+/adapters/legacy_nx/raw_observation_data.csv
+
+# 临时文件
 *.tmp
 *.partial
-
-# Calibration runtime data
-NX_volleyball/calibration/calibration_images*/
-NX_volleyball/calibration/stereo_calib.npz
-NX_volleyball/stereo_3d_pipeline/raw_observation_data.csv
+/nx_check.txt

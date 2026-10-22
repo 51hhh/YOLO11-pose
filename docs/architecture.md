@@ -47,7 +47,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Adapters 与 Apps
 
-`adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码暂时由 `NX_volleyball/stereo_3d_pipeline` 提供硬件适配能力，并由根工程 ExternalProject 隔离构建。
+`adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，并由根工程 ExternalProject 隔离构建。
 
 ## 三条独立时间链
 

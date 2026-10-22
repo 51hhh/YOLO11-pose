@@ -30,10 +30,6 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m unittest discover -s tests -v
-      - name: Run legacy CPU trajectory tests
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: python -m unittest discover -s NX_volleyball/stereo_3d_pipeline/trajectory_fusion/tests -v
       - name: Configure CPU C++ core
         run: cmake --preset host-core-debug
       - name: Build CPU C++ core

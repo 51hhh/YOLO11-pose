@@ -100,7 +100,7 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 - `primary_method/fallback_methods` 会在投影前校验旧选择器是否能忠实实现；当前只允许两个实时首选和固定相对回退顺序；
 - 根层 subpixel、关联、相机、模型、校正和发布参数会明确投影；
 - 采集专用的同步/no-drop 覆盖只在带 `capture_stage` 构建配置时发生；
-- 旧 `pipeline_dual_yolo_roi.yaml` 中例如 XFeat 的状态不代表主线状态。
+- 适配器模板中的默认值不代表主线状态，必须查看 profile 投影和运行时证据。
 
 任何新候选仍应先加入主配置 schema、候选到旧 mode 的唯一映射及 adapter 测试，再修改旧 YAML；否则正式 profile 不会启用它。
 

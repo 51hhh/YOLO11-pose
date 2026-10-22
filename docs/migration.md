@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`NX_volleyball/stereo_3d_pipeline` 已有成熟的海康 MVS、GPIO、CUDA 校正、TensorRT、ROI 深度和 ROS2 实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步把实现迁到明确的 adapters/apps 边界。
+`adapters/legacy_nx` 保留成熟的海康 MVS、GPIO、CUDA 校正、TensorRT、ROI 深度和 ROS2 实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
 根工程通过 `nx-legacy-release` 预设将旧工程作为 ExternalProject 编译。这样可以复用实机能力，同时防止旧工程的全局 CUDA、VPI、MVS、OpenCV 和 ROS2 依赖进入 `libs/core`、`ports`、`algorithms` 或 `services`。
 
