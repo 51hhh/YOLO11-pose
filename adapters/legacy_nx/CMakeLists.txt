@@ -347,6 +347,8 @@ add_executable(stereo_calibrate
   tools/stereo_calibrate/main.cpp
   tools/stereo_calibrate/args.cpp
   tools/stereo_calibrate/images.cpp
+  tools/common/atomic_file.cpp
+  tools/common/parallel_tasks.cpp
 )
 set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
 target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)

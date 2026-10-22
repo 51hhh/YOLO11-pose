@@ -46,6 +46,7 @@ adapters/legacy_nx/build/stereo_calibrate \
 ```
 
 输出文件必须不存在，工具不会覆盖已有候选或权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
+角点检测与左右单目标定的工作线程异常会使工具明确失败；最终 YAML 先写入同目录 `.partial` 文件，完整关闭并确认非空后再以无覆盖方式发布。残留 `.partial` 会被拒绝并要求人工检查，不会被下一次运行静默复用。
 
 ## 主流水线
 

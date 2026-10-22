@@ -48,6 +48,8 @@ ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_HARDWARE_TOOL_FILES = {
     "adapters/legacy_nx/tools/common/atomic_file.cpp",
     "adapters/legacy_nx/tools/common/atomic_file.h",
+    "adapters/legacy_nx/tools/common/parallel_tasks.cpp",
+    "adapters/legacy_nx/tools/common/parallel_tasks.h",
     "adapters/legacy_nx/tools/capture_chessboard/args.cpp",
     "adapters/legacy_nx/tools/capture_chessboard/args.h",
     "adapters/legacy_nx/tools/capture_chessboard/main.cpp",

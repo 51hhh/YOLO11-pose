@@ -135,6 +135,17 @@ target_include_directories(
 )
 
 add_legacy_nx_test(
+  tool_parallel_tasks_tests
+  tool_parallel_tasks_tests.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/common/parallel_tasks.cpp
+)
+target_include_directories(
+  tool_parallel_tasks_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
+)
+target_link_libraries(tool_parallel_tasks_tests PRIVATE Threads::Threads)
+
+add_legacy_nx_test(
   stereo_calibrate_args_tests
   stereo_calibrate_args_tests.cpp
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/stereo_calibrate/args.cpp

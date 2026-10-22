@@ -13,8 +13,14 @@
 
 #include "args.h"
 #include "images.h"
+#include "../common/atomic_file.h"
+#include "../common/parallel_tasks.h"
 
-#include <opencv2/opencv.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -22,10 +28,7 @@
 #include <numeric>
 #include <filesystem>
 #include <cmath>
-#include <atomic>
-#include <chrono>
-#include <future>
-#include <thread>
+#include <exception>
 
 namespace fs = std::filesystem;
 
@@ -122,30 +125,24 @@ int main(int argc, char* argv[]) {
     }
 
     std::vector<DetectionResult> results(n);
-    std::atomic<size_t> next{0};
-    std::atomic<size_t> completed{0};
-    std::vector<std::thread> workers;
-    workers.reserve(jobs);
-    for (int j = 0; j < jobs; ++j) {
-        workers.emplace_back([&]() {
-            while (true) {
-                const size_t i = next.fetch_add(1);
-                if (i >= n) break;
-                results[i] = detectPairCorners(pairs[i], boardSize,
-                                               args.use_gpu_preprocess,
-                                               args.use_sb,
-                                               args.use_exhaustive);
-                completed.fetch_add(1);
-            }
-        });
+    std::string parallel_error;
+    if (!legacy_nx_tools::runIndexedTasks(
+            n,
+            static_cast<std::size_t>(jobs),
+            [&](std::size_t index) {
+                results[index] = detectPairCorners(
+                    pairs[index],
+                    boardSize,
+                    args.use_gpu_preprocess,
+                    args.use_sb,
+                    args.use_exhaustive);
+            },
+            parallel_error)) {
+        fprintf(stderr, "[ERROR] Corner detection failed: %s\n",
+                parallel_error.c_str());
+        return 1;
     }
-    while (completed.load() < n) {
-        printf("\rDetecting corners: %zu/%zu", completed.load(), n);
-        fflush(stdout);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    for (auto& worker : workers) worker.join();
-    printf("\rDetecting corners: %zu/%zu\n\n", n, n);
+    printf("Detecting corners: %zu/%zu\n\n", n, n);
 
     for (const auto& result : results) {
         if (result.read_ok) {
@@ -208,13 +205,27 @@ int main(int argc, char* argv[]) {
     cv::Mat K1, D1, K2, D2;
     std::vector<cv::Mat> rvecsL, tvecsL, rvecsR, tvecsR;
 
-    auto calibrate_left = std::async(std::launch::async, [&]() {
-        return cv::calibrateCamera(objPoints, imgPointsL, imgSize,
-                                   K1, D1, rvecsL, tvecsL);
-    });
-    double rmsR = cv::calibrateCamera(objPoints, imgPointsR, imgSize,
-                                      K2, D2, rvecsR, tvecsR);
-    double rmsL = calibrate_left.get();
+    double rmsL = 0.0;
+    double rmsR = 0.0;
+    if (!legacy_nx_tools::runIndexedTasks(
+            2,
+            2,
+            [&](std::size_t index) {
+                if (index == 0) {
+                    rmsL = cv::calibrateCamera(
+                        objPoints, imgPointsL, imgSize,
+                        K1, D1, rvecsL, tvecsL);
+                } else {
+                    rmsR = cv::calibrateCamera(
+                        objPoints, imgPointsR, imgSize,
+                        K2, D2, rvecsR, tvecsR);
+                }
+            },
+            parallel_error)) {
+        fprintf(stderr, "[ERROR] Monocular calibration failed: %s\n",
+                parallel_error.c_str());
+        return 1;
+    }
     printf("\n  [LEFT]  RMS=%.4f  fx=%.1f fy=%.1f cx=%.1f cy=%.1f\n",
            rmsL, K1.at<double>(0,0), K1.at<double>(1,1),
            K1.at<double>(0,2), K1.at<double>(1,2));
@@ -243,14 +254,21 @@ int main(int argc, char* argv[]) {
     int stereo_flags = args.fix_intrinsics
         ? cv::CALIB_FIX_INTRINSIC
         : cv::CALIB_USE_INTRINSIC_GUESS;
-    double rmsS = cv::stereoCalibrate(
-        objPoints, imgPointsL, imgPointsR,
-        K1, D1, K2, D2, imgSize,
-        R, T, E, F,
-        stereo_flags,
-        stereoCrit);
-
-    double baseline = cv::norm(T);
+    double rmsS = 0.0;
+    double baseline = 0.0;
+    try {
+        rmsS = cv::stereoCalibrate(
+            objPoints, imgPointsL, imgPointsR,
+            K1, D1, K2, D2, imgSize,
+            R, T, E, F,
+            stereo_flags,
+            stereoCrit);
+        baseline = cv::norm(T);
+    } catch (const cv::Exception& exception) {
+        fprintf(stderr, "[ERROR] Stereo calibration failed: %s\n",
+                exception.what());
+        return 1;
+    }
 
     printf("\n  Stereo RMS = %.4f px\n", rmsS);
     if (rmsS > 1.0)
@@ -260,10 +278,16 @@ int main(int argc, char* argv[]) {
     // ---- Stereo rectification ----
     cv::Mat R1, R2, P1, P2, Q;
     cv::Rect roiL, roiR;
-    cv::stereoRectify(K1, D1, K2, D2, imgSize, R, T,
-                      R1, R2, P1, P2, Q,
-                      cv::CALIB_ZERO_DISPARITY, 0.0,
-                      cv::Size(), &roiL, &roiR);
+    try {
+        cv::stereoRectify(K1, D1, K2, D2, imgSize, R, T,
+                          R1, R2, P1, P2, Q,
+                          cv::CALIB_ZERO_DISPARITY, 0.0,
+                          cv::Size(), &roiL, &roiR);
+    } catch (const cv::Exception& exception) {
+        fprintf(stderr, "[ERROR] Stereo rectification failed: %s\n",
+                exception.what());
+        return 1;
+    }
 
     printf("  ROI Left:  [%d, %d, %d, %d]\n", roiL.x, roiL.y, roiL.width, roiL.height);
     printf("  ROI Right: [%d, %d, %d, %d]\n", roiR.x, roiR.y, roiR.width, roiR.height);
@@ -285,51 +309,102 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Save calibration ----
-    // Output format compatible with StereoCalibration::load()
+    // Long-running calibration writes a peer temporary file first. The final
+    // path appears only after the complete file closes and passes basic checks.
     {
-        // Calibration can take minutes. Refuse a target that appeared after
-        // argument validation rather than truncating it through FileStorage.
         if (!validateStereoCalibrateOutputPath(args.output)) return 1;
         const fs::path output_path(args.output);
         const fs::path parent = output_path.parent_path();
         if (!parent.empty()) {
-            std::error_code ec;
-            fs::create_directories(parent, ec);
-            if (ec || !fs::is_directory(parent)) {
+            std::error_code error;
+            fs::create_directories(parent, error);
+            if (error || !fs::is_directory(parent)) {
                 fprintf(stderr, "[ERROR] Failed to create output directory %s: %s\n",
                         parent.string().c_str(),
-                        ec ? ec.message().c_str() : "path exists but is not a directory");
+                        error ? error.message().c_str()
+                              : "path exists but is not a directory");
                 return 1;
             }
         }
-        cv::FileStorage fs(args.output, cv::FileStorage::WRITE);
-        if (!fs.isOpened()) {
-            fprintf(stderr, "[ERROR] Failed to open output calibration file: %s\n",
-                    args.output.c_str());
+        const fs::path temporary_path = output_path.parent_path() /
+            (output_path.stem().string() + ".partial" +
+             output_path.extension().string());
+        std::error_code error;
+        const bool temporary_exists = fs::exists(temporary_path, error);
+        if (error || temporary_exists) {
+            fprintf(stderr,
+                    "[ERROR] Refusing stale calibration temporary file %s%s%s\n",
+                    temporary_path.string().c_str(),
+                    error ? ": " : "",
+                    error ? error.message().c_str() : "");
             return 1;
         }
-        fs << "image_width"  << imgSize.width;
-        fs << "image_height" << imgSize.height;
-        fs << "baseline"     << baseline;
-        fs << "rms_error"    << rmsS;
 
-        fs << "camera_matrix_left"              << K1;
-        fs << "distortion_coefficients_left"    << D1;
-        fs << "rectification_left"              << R1;
-        fs << "projection_left"                 << P1;
+        try {
+            cv::FileStorage storage(
+                temporary_path.string(), cv::FileStorage::WRITE);
+            if (!storage.isOpened()) {
+                fprintf(stderr,
+                        "[ERROR] Failed to open temporary calibration file: %s\n",
+                        temporary_path.string().c_str());
+                fs::remove(temporary_path, error);
+                return 1;
+            }
+            storage << "image_width"  << imgSize.width;
+            storage << "image_height" << imgSize.height;
+            storage << "baseline"     << baseline;
+            storage << "rms_error"    << rmsS;
 
-        fs << "camera_matrix_right"             << K2;
-        fs << "distortion_coefficients_right"   << D2;
-        fs << "rectification_right"             << R2;
-        fs << "projection_right"                << P2;
+            storage << "camera_matrix_left"           << K1;
+            storage << "distortion_coefficients_left" << D1;
+            storage << "rectification_left"           << R1;
+            storage << "projection_left"              << P1;
 
-        fs << "rotation"                << R;
-        fs << "translation"             << T;
-        fs << "essential_matrix"        << E;
-        fs << "fundamental_matrix"      << F;
-        fs << "disparity_to_depth_map"  << Q;
-        fs.release();
+            storage << "camera_matrix_right"           << K2;
+            storage << "distortion_coefficients_right" << D2;
+            storage << "rectification_right"           << R2;
+            storage << "projection_right"              << P2;
 
+            storage << "rotation"               << R;
+            storage << "translation"            << T;
+            storage << "essential_matrix"       << E;
+            storage << "fundamental_matrix"     << F;
+            storage << "disparity_to_depth_map" << Q;
+            storage.release();
+        } catch (const cv::Exception& exception) {
+            fs::remove(temporary_path, error);
+            fprintf(stderr, "[ERROR] Failed to serialize calibration: %s\n",
+                    exception.what());
+            return 1;
+        } catch (const std::exception& exception) {
+            fs::remove(temporary_path, error);
+            fprintf(stderr, "[ERROR] Failed to serialize calibration: %s\n",
+                    exception.what());
+            return 1;
+        }
+
+        error.clear();
+        const bool regular = fs::is_regular_file(temporary_path, error);
+        const auto bytes = regular && !error
+            ? fs::file_size(temporary_path, error) : 0;
+        if (error || !regular || bytes == 0) {
+            fprintf(stderr,
+                    "[ERROR] Temporary calibration is missing or empty: %s\n",
+                    temporary_path.string().c_str());
+            error.clear();
+            fs::remove(temporary_path, error);
+            return 1;
+        }
+
+        std::string publish_error;
+        if (!legacy_nx_tools::publishFileNoReplace(
+                temporary_path, output_path, publish_error)) {
+            error.clear();
+            fs::remove(temporary_path, error);
+            fprintf(stderr, "[ERROR] Failed to publish calibration: %s\n",
+                    publish_error.c_str());
+            return 1;
+        }
         printf("\nSaved: %s\n", args.output.c_str());
     }
 
