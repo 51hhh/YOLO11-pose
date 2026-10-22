@@ -139,6 +139,12 @@ bool asyncRoiNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
 
 void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
     slot.host_capture_timestamp_ns = meta.host_capture_timestamp_ns;
+    slot.capture_timestamp_from_trigger =
+        meta.capture_timestamp_from_trigger;
+    slot.capture_timestamp_mapping_valid =
+        meta.capture_timestamp_mapping_valid;
+    slot.capture_timestamp_uncertainty_ns =
+        meta.capture_timestamp_uncertainty_ns;
     slot.left_receive_monotonic_ns = meta.left_receive_monotonic_ns;
     slot.right_receive_monotonic_ns = meta.right_receive_monotonic_ns;
     slot.left_receive_realtime_ns = meta.left_receive_realtime_ns;

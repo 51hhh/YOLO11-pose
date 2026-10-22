@@ -65,6 +65,26 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (cam["use_trigger"])       cfg.camera.use_trigger = cam["use_trigger"].as<bool>();
         if (cam["trigger_source"])    cfg.camera.trigger_source = cam["trigger_source"].as<std::string>();
         if (cam["trigger_activation"]) cfg.camera.trigger_activation = cam["trigger_activation"].as<std::string>();
+        if (cam["shutter_type"])
+            cfg.camera.shutter_type = cam["shutter_type"].as<std::string>();
+        if (cam["exposure_timestamp_source"])
+            cfg.camera.exposure_timestamp_source =
+                cam["exposure_timestamp_source"].as<std::string>();
+        if (cam["exposure_delay_status"])
+            cfg.camera.exposure_delay_status =
+                cam["exposure_delay_status"].as<std::string>();
+        if (cam["exposure_delay_ns"])
+            cfg.camera.exposure_delay_ns =
+                cam["exposure_delay_ns"].as<std::uint64_t>();
+        if (cam["exposure_delay_uncertainty_ns"] &&
+            !cam["exposure_delay_uncertainty_ns"].IsNull()) {
+            cfg.camera.exposure_delay_uncertainty_ns =
+                cam["exposure_delay_uncertainty_ns"].as<std::uint64_t>();
+            cfg.camera.exposure_delay_uncertainty_known = true;
+        }
+        if (cam["exposure_midpoint_offset_ns"])
+            cfg.camera.exposure_midpoint_offset_ns =
+                cam["exposure_midpoint_offset_ns"].as<std::uint64_t>();
         if (cam["trigger_frequency_hz"]) {
             cfg.camera.trigger_frequency_hz = cam["trigger_frequency_hz"].as<int>();
             camera_trigger_frequency_set = true;
@@ -499,18 +519,6 @@ stereo3d::Ros2BridgeConfig loadRos2Config(const std::string& path) {
                 cfg.nx_observation_reacquire_base_gate_m);
         cfg.nx_observation_allow_fallback =
             n["allow_fallback"].as<bool>(cfg.nx_observation_allow_fallback);
-        cfg.nx_observation_timestamp_warmup_frames =
-            n["timestamp_warmup_frames"].as<int>(
-                cfg.nx_observation_timestamp_warmup_frames);
-        cfg.nx_observation_timestamp_window_frames =
-            n["timestamp_window_frames"].as<int>(
-                cfg.nx_observation_timestamp_window_frames);
-        cfg.nx_observation_timestamp_offset_us =
-            n["timestamp_offset_us"].as<double>(
-                cfg.nx_observation_timestamp_offset_us);
-        cfg.nx_observation_max_timestamp_uncertainty_s =
-            n["max_timestamp_uncertainty_s"].as<double>(
-                cfg.nx_observation_max_timestamp_uncertainty_s);
     }
     if (auto v = ros["vision_to_world"]) {
         cfg.swap_xy       = v["swap_xy"].as<bool>(false);

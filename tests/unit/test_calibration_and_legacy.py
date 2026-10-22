@@ -56,6 +56,23 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertEqual(rendered["camera"]["trigger_line"], 7)
         self.assertEqual(rendered["camera"]["image_node_num"], 3)
         self.assertEqual(rendered["camera"]["embedded_info_clear_rows"], 2)
+        self.assertEqual(rendered["camera"]["shutter_type"], "global")
+        self.assertEqual(
+            rendered["camera"]["exposure_timestamp_source"],
+            "nx_gpio_rising_edge",
+        )
+        self.assertEqual(
+            rendered["camera"]["exposure_delay_status"],
+            "assumed_zero_unmeasured",
+        )
+        self.assertEqual(rendered["camera"]["exposure_delay_ns"], 0)
+        self.assertIsNone(
+            rendered["camera"]["exposure_delay_uncertainty_ns"]
+        )
+        self.assertEqual(
+            rendered["camera"]["exposure_midpoint_offset_ns"],
+            4_933_500,
+        )
         self.assertEqual(rendered["performance"]["pwm_duty_cycle"], 50.0)
         self.assertEqual(
             rendered["capture_v21"]["exposure_timestamp_source"],

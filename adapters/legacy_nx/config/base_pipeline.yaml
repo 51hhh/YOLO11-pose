@@ -13,6 +13,12 @@ camera:
   use_trigger: true
   trigger_source: "Line0"
   trigger_activation: "RisingEdge"
+  shutter_type: "global"
+  exposure_timestamp_source: "nx_gpio_rising_edge"
+  exposure_delay_status: "assumed_zero_unmeasured"
+  exposure_delay_ns: 0
+  exposure_delay_uncertainty_ns: null
+  exposure_midpoint_offset_ns: 4933500
   image_node_num: 3               # SDK OneByOne FIFO depth, absorbs USB arrival jitter
   embedded_info_clear_rows: 2     # FrameSpecInfo watermark rows cleared before debayer/YOLO
   trigger_chip: "gpiochip2"

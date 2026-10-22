@@ -45,6 +45,13 @@ struct CameraConfig {
     int trigger_frequency_hz = 100;         // 外触发频率, 用于帧计数追帧超时
     int image_node_num = 3;                 // SDK 取流 FIFO 深度, 吸收 USB 到达抖动
     int embedded_info_clear_rows = 2;       // FrameSpecInfo 写入图像首部后清除的行数
+    std::string shutter_type = "unknown";
+    std::string exposure_timestamp_source = "unavailable";
+    std::string exposure_delay_status = "unavailable";
+    std::uint64_t exposure_delay_ns = 0;
+    std::uint64_t exposure_delay_uncertainty_ns = 0;
+    bool exposure_delay_uncertainty_known = false;
+    std::uint64_t exposure_midpoint_offset_ns = 0;
 
     int width = 1440;                      // 图像宽度
     int height = 1080;                     // 图像高度

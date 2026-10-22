@@ -47,6 +47,16 @@ def build_legacy_pipeline_config(
             "use_trigger": sync["method"] == "hardware_trigger",
             "trigger_source": sync["trigger_source"],
             "trigger_activation": sync["trigger_activation"],
+            "shutter_type": sync["shutter_type"],
+            "exposure_timestamp_source": sync["exposure_timestamp_source"],
+            "exposure_delay_status": sync["exposure_delay_status"],
+            "exposure_delay_ns": sync["exposure_delay_ns"],
+            "exposure_delay_uncertainty_ns": sync[
+                "exposure_delay_uncertainty_ns"
+            ],
+            "exposure_midpoint_offset_ns": round(
+                float(left["exposure_us"]) * 1000.0 / 2.0
+            ),
             "trigger_frequency_hz": round(config.data["runtime"]["nominal_fps"]),
             "trigger_chip": sync["gpio_chip"],
             "trigger_line": sync["gpio_line"],

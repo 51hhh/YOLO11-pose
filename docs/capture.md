@@ -43,6 +43,12 @@ capture_timestamp_ns = exposure_start_ns + round(exposure_us * 1000 / 2)
 `timestamp_semantics=stereo_midpoint_capture`。旧 trial 若声明 `hardware_trigger`，仍按
 其原始语义读取，不得静默套用曝光中心校正。
 
+实时 ROS 观测使用同一曝光中心公式。若无法把 payload 的 `FrameCounter` 绑定到对应
+GPIO 上升沿，则该帧不发布；不得退回 USB 到达时刻、SDK 主机时间戳或发布时刻。
+`assumed_zero_unmeasured` 仍会产生供当前原型使用的时间估计，但必须同时发布
+`capture_timestamp_mapping_valid=false` 和未知不确定度；只有完成曝光延迟测量后，
+映射才可标记为有效。
+
 ## 数据包
 
 ```text

@@ -1,4 +1,5 @@
 #include "pipeline.h"
+#include "exposure_timestamp.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
 #include "../utils/vpi_plane_access.h"
@@ -23,6 +24,29 @@ void Pipeline::attachPwmTriggerMetadata(
     slot.trigger_edge_monotonic_ns = event.edge_monotonic_ns;
     slot.trigger_edge_realtime_ns = event.edge_realtime_ns;
     slot.trigger_write_uncertainty_ns = event.write_uncertainty_ns;
+
+    ExposureTimestampConfig timestamp_config;
+    timestamp_config.contract_valid =
+        config_.camera.shutter_type == "global" &&
+        config_.camera.exposure_timestamp_source == "nx_gpio_rising_edge";
+    timestamp_config.delay_measured =
+        config_.camera.exposure_delay_status == "measured" &&
+        config_.camera.exposure_delay_uncertainty_known;
+    timestamp_config.delay_ns = config_.camera.exposure_delay_ns;
+    timestamp_config.delay_uncertainty_ns =
+        config_.camera.exposure_delay_uncertainty_ns;
+    timestamp_config.midpoint_offset_ns =
+        config_.camera.exposure_midpoint_offset_ns;
+    const auto timestamp = estimateExposureMidpointTimestamp(
+        event.edge_realtime_ns,
+        event.write_uncertainty_ns,
+        timestamp_config);
+    if (timestamp.timestamp_ns > 0) {
+        slot.host_capture_timestamp_ns = timestamp.timestamp_ns;
+        slot.capture_timestamp_from_trigger = true;
+        slot.capture_timestamp_mapping_valid = timestamp.mapping_valid;
+        slot.capture_timestamp_uncertainty_ns = timestamp.uncertainty_ns;
+    }
 }
 #endif
 

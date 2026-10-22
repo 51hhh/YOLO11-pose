@@ -96,6 +96,8 @@ add_legacy_nx_test(
 
 add_legacy_nx_test(fusion_timing_tests fusion_timing_tests.cpp)
 
+add_legacy_nx_test(exposure_timestamp_tests exposure_timestamp_tests.cpp)
+
 add_legacy_nx_test(
   nx_observation_quality_tests
   nx_observation_quality_tests.cpp

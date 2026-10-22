@@ -16,6 +16,7 @@
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace stereo3d {
@@ -52,7 +53,13 @@ enum class TrackerState {
  * @brief Per-frame stereo sync metadata exposed to callbacks and recorders.
  */
 struct FrameMetadata {
+    // NX realtime 时钟下的曝光中心。仅
+    // capture_timestamp_from_trigger=true 时可作为传感器采样时刻。
     uint64_t host_capture_timestamp_ns = 0;
+    bool capture_timestamp_from_trigger = false;
+    bool capture_timestamp_mapping_valid = false;
+    uint64_t capture_timestamp_uncertainty_ns =
+        std::numeric_limits<uint64_t>::max();
     uint64_t left_receive_monotonic_ns = 0;
     uint64_t right_receive_monotonic_ns = 0;
     uint64_t left_receive_realtime_ns = 0;
@@ -112,6 +119,10 @@ struct FrameSlot {
     bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
     uint64_t left_timestamp_us = 0;
     uint64_t host_capture_timestamp_ns = 0;
+    bool capture_timestamp_from_trigger = false;
+    bool capture_timestamp_mapping_valid = false;
+    uint64_t capture_timestamp_uncertainty_ns =
+        std::numeric_limits<uint64_t>::max();
     uint64_t left_receive_monotonic_ns = 0;
     uint64_t right_receive_monotonic_ns = 0;
     uint64_t left_receive_realtime_ns = 0;
@@ -293,6 +304,10 @@ struct FrameSlot {
         frame_id = -1;
         left_timestamp_us = right_timestamp_us = 0;
         host_capture_timestamp_ns = 0;
+        capture_timestamp_from_trigger = false;
+        capture_timestamp_mapping_valid = false;
+        capture_timestamp_uncertainty_ns =
+            std::numeric_limits<uint64_t>::max();
         left_receive_monotonic_ns = right_receive_monotonic_ns = 0;
         left_receive_realtime_ns = right_receive_realtime_ns = 0;
         left_sdk_host_timestamp_raw = right_sdk_host_timestamp_raw = 0;
@@ -342,6 +357,10 @@ struct FrameSlot {
         grab_failed = false;
         left_timestamp_us = right_timestamp_us = 0;
         host_capture_timestamp_ns = 0;
+        capture_timestamp_from_trigger = false;
+        capture_timestamp_mapping_valid = false;
+        capture_timestamp_uncertainty_ns =
+            std::numeric_limits<uint64_t>::max();
         left_receive_monotonic_ns = right_receive_monotonic_ns = 0;
         left_receive_realtime_ns = right_receive_realtime_ns = 0;
         left_sdk_host_timestamp_raw = right_sdk_host_timestamp_raw = 0;
@@ -404,6 +423,12 @@ inline uint64_t chooseCaptureTimestampNs(
 inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     FrameMetadata meta;
     meta.host_capture_timestamp_ns = slot.host_capture_timestamp_ns;
+    meta.capture_timestamp_from_trigger =
+        slot.capture_timestamp_from_trigger;
+    meta.capture_timestamp_mapping_valid =
+        slot.capture_timestamp_mapping_valid;
+    meta.capture_timestamp_uncertainty_ns =
+        slot.capture_timestamp_uncertainty_ns;
     meta.left_receive_monotonic_ns = slot.left_receive_monotonic_ns;
     meta.right_receive_monotonic_ns = slot.right_receive_monotonic_ns;
     meta.left_receive_realtime_ns = slot.left_receive_realtime_ns;
