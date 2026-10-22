@@ -33,6 +33,10 @@ volleyball run --profile nx-rdk --dry-run
 
 通过条件：目标机为 Jetson Orin NX；`doctor` 的配置意图、MVS/CUDA/TensorRT/VPI/OpenCV/ROS2、GPIO 和二进制动态链接检查全部通过；模型存在且 SHA-256 与清单一致；标定语义有效；生成配置可复现。这里证明的是 SDK/链接可用，不等于算子已经在目标 backend 实际执行；后者还必须按[运行依赖与实际启用判定](pipeline/07-runtime-enablement.md)保存启动日志和 Nsight 证据。非 Jetson CUDA 服务器只能验证通用 GPU 代码，不能替代此项。
 
+`nx-legacy-release` 固定启用 `VOLLEYBALL_REQUIRE_HIK=ON` 和
+`VOLLEYBALL_REQUIRE_ROS2=ON`。缺少 MVS 头文件、MVS 动态库或 ROS2 工作区时，
+配置阶段必须失败；不允许通过静默禁用相机或发布器得到“成功构建”。
+
 真实启动日志还必须证明左右 TensorRT engine 均成功反序列化、I/O 契约通过，且实际网络输入尺寸与 profile 一致。仅有 engine 文件和正确哈希不能证明其 tensor 布局受当前后处理支持。
 
 ## C. 触发与水印

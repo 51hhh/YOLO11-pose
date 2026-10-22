@@ -15,7 +15,7 @@ cmake --build --preset nx-legacy-release --parallel
 
 构建产物位于 `adapters/legacy_nx/build/`。主机 CPU 预设不会配置本目录，因此 CI 不需要 CUDA、VPI、TensorRT、海康 SDK 或 ROS2。
 
-依赖由 JetPack/系统包提供；海康 SDK 路径通过根工程的 `VOLLEYBALL_MVS_SDK_ROOT` 指定，可选 libSGM 路径通过 `VOLLEYBALL_LIBSGM_ROOT` 指定。仓库不内嵌 SDK 或第三方源码。
+依赖由 JetPack/系统包提供；海康 SDK 路径通过根工程的 `VOLLEYBALL_MVS_SDK_ROOT` 指定，可选 libSGM 路径通过 `VOLLEYBALL_LIBSGM_ROOT` 指定。正式 NX 预设要求 MVS 头文件和动态库同时存在，缺少任一项会直接停止配置。仓库不内嵌 SDK 或第三方源码。
 
 ## 保留的可执行程序
 

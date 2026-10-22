@@ -36,6 +36,7 @@
         "VOLLEYBALL_BUILD_LEGACY": "ON",
         "VOLLEYBALL_CUDA_ARCH": "87",
         "VOLLEYBALL_REQUIRE_ROS2": "ON",
+        "VOLLEYBALL_REQUIRE_HIK": "ON",
         "VOLLEYBALL_MVS_SDK_ROOT": "/opt/MVS"
       }
     }

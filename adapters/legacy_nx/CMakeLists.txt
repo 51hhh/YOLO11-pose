@@ -120,15 +120,33 @@ endif()
 message(STATUS "TensorRT: ${NVINFER}")
 
 # 海康 MVS SDK
+option(REQUIRE_HIK "Fail configuration when Hikvision MVS SDK is unavailable" OFF)
 set(MVS_SDK_ROOT "/opt/MVS" CACHE PATH "Hikvision MVS SDK root")
-if(EXISTS "${MVS_SDK_ROOT}/include/MvCameraControl.h")
+find_path(MVS_INCLUDE_DIR MvCameraControl.h
+  HINTS
+    "${MVS_SDK_ROOT}/include"
+    "${MVS_SDK_ROOT}/include/MvCameraControl"
+  NO_DEFAULT_PATH)
+find_library(MVS_LIBRARY MvCameraControl
+  HINTS
+    "${MVS_SDK_ROOT}/lib/aarch64"
+    "${MVS_SDK_ROOT}/lib/arm64"
+    "${MVS_SDK_ROOT}/lib"
+  NO_DEFAULT_PATH)
+if(MVS_INCLUDE_DIR AND MVS_LIBRARY)
   set(HIK_FOUND ON)
-  message(STATUS "Hikvision SDK: ${MVS_SDK_ROOT}")
+  message(STATUS
+    "Hikvision SDK: include=${MVS_INCLUDE_DIR}, library=${MVS_LIBRARY}")
 else()
   set(HIK_FOUND OFF)
+  if(REQUIRE_HIK)
+    message(FATAL_ERROR
+      "REQUIRE_HIK=ON but Hikvision MVS SDK header/library was not found "
+      "under MVS_SDK_ROOT=${MVS_SDK_ROOT}")
+  endif()
   message(WARNING
-    "Hikvision SDK not found at MVS_SDK_ROOT=${MVS_SDK_ROOT}; "
-    "camera module disabled")
+    "Hikvision MVS SDK header/library not found under "
+    "MVS_SDK_ROOT=${MVS_SDK_ROOT}; camera module disabled")
 endif()
 
 # yaml-cpp
@@ -163,8 +181,7 @@ include_directories(
 )
 
 if(HIK_FOUND)
-  include_directories(${MVS_SDK_ROOT}/include)
-  link_directories(${MVS_SDK_ROOT}/lib/aarch64)
+  include_directories(${MVS_INCLUDE_DIR})
 endif()
 
 # ==================== 源文件 ====================
@@ -315,7 +332,7 @@ if(HAS_FIXSTARS_LIBSGM)
 endif()
 
 if(HIK_FOUND)
-  target_link_libraries(stereo_pipeline MvCameraControl)
+  target_link_libraries(stereo_pipeline ${MVS_LIBRARY})
 endif()
 
 # PWM trigger: libgpiod 或 sysfs fallback
@@ -388,7 +405,7 @@ if(HIK_FOUND)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_link_libraries(capture_chessboard
     ${STEREO_OPENCV_LIBS}
-    MvCameraControl
+    ${MVS_LIBRARY}
     pthread
     stdc++fs
   )
@@ -408,7 +425,7 @@ if(HIK_FOUND)
   set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
   target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
   target_link_libraries(hik_frame_metadata_probe
-    MvCameraControl
+    ${MVS_LIBRARY}
     pthread
   )
   if(GPIOD_FOUND)
