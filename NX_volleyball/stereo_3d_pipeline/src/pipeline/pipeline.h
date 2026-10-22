@@ -24,6 +24,7 @@
 #include "pipeline_config.h"
 #include "pipeline_feature_jobs.h"
 #include "sync.h"
+#include "../capture/async_grab_state.h"
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
 #ifndef HIK_CAMERA_ENABLED
 namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
@@ -448,14 +449,9 @@ private:
         FrameSlot& slot,
         std::uint32_t frame_counter) const;
 
-    std::mutex grab_mutex_;
-    std::condition_variable grab_request_cv_;  ///< pipeline→grab: 请求采集
-    std::condition_variable grab_done_cv_;     ///< grab→pipeline: 采集完成
-    int grab_request_slot_ = -1;               ///< 待采集 slot 索引 (-1=空闲)
-    bool grab_done_ = false;                   ///< 采集完成标志
-    bool grab_done_ok_ = false;                ///< 采集结果
+    AsyncGrabState grab_state_;
 
-    void requestGrab(int slot_idx);   ///< 发起异步采集请求 (非阻塞)
+    bool requestGrab(int slot_idx);   ///< 发起异步采集请求 (非阻塞)
     bool waitGrab();                  ///< 等待异步采集完成 (阻塞至完成)
 #endif
     std::unique_ptr<StereoCalibration> calibration_;

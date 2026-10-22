@@ -350,7 +350,10 @@ void Pipeline::pipelineLoopROI() {
         bool grab_preloaded = false;
 #ifdef HIK_CAMERA_ENABLED
         if (camera_) {
-            requestGrab(slot_idx);
+            const bool requested = requestGrab(slot_idx);
+            if (!requested) {
+                return;
+            }
             if (!waitGrab()) {
                 slot.grab_failed = true;
             }
@@ -395,6 +398,9 @@ void Pipeline::pipelineLoopROI() {
         //   pipeline 线程继续执行 Stage1/Stage2, 与 grab 并行
         // ====================================================================
         int grab_slot_idx = next_grab_frame % RING_BUFFER_SIZE;
+#ifdef HIK_CAMERA_ENABLED
+        bool grab_requested = false;
+#endif
         {
             auto& slot = slots_[grab_slot_idx];
             if (!waitAsyncRoiSlotSnapshotDone(
@@ -408,7 +414,8 @@ void Pipeline::pipelineLoopROI() {
             slot.frame_id = next_grab_frame;
 #ifdef HIK_CAMERA_ENABLED
             if (camera_) {
-                requestGrab(grab_slot_idx);
+                grab_requested = requestGrab(grab_slot_idx);
+                if (!grab_requested) break;
             }
 #endif
         }
@@ -678,7 +685,7 @@ void Pipeline::pipelineLoopROI() {
 #ifdef HIK_CAMERA_ENABLED
             if (camera_) {
                 ScopedTimer tw("Stage0_WaitGrab");
-                bool ok = waitGrab();
+                const bool ok = grab_requested && waitGrab();
                 const double wait_grab_ms = tw.elapsedMs();
                 globalPerf().record("Stage0_WaitGrab", wait_grab_ms);
                 if (wait_grab_ms > kStage0WaitGrabOutlierMs) {

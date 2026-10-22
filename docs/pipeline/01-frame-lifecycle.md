@@ -72,6 +72,8 @@ slot_index = frame_id % 3
 
 Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 或空结果都只能结束当前融合块，不能直接 `continue` 外层循环。Phase D 是每一轮的必达清理点：它必须收割当前异步抓帧并推进 `next_grab_frame`，否则下一轮可能覆盖尚未完成的请求或把 payload 写进错误槽位。
 
+异步抓帧是严格 single-flight 握手。`stop()` 只停止接受新请求，不把已经接受的请求伪装成“已完成”：grab 线程仍会完成当前 raw 写入、解除左右 host lock 并发布真实结果，`waitGrab()` 才能返回。若停止发生在新请求被接受前，该请求被拒绝且不会生成一个没有 payload 的虚假帧。这样 Stage 0、槽位排空和相机写线程不会同时访问同一 raw image。
+
 当前投影中 C++ SOT tracker 为关闭，因此每帧都是 YOLO 检测帧。实时 profile 允许：
 
 - 当更新帧的 YOLO 已就绪时丢弃过期 ROI 任务；
@@ -114,6 +116,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；
 - 采集模式仍会触发帧回调，让 fail-trial 录制器立即停止，而不是静默制造序号缺口；
 - 停止时先让 pipeline 排空已提交的工作，再关闭 ROI/P2 worker 和 grab 线程，最后同步所有 stream 并停止 PWM/相机；
+- 停止发生在 USB 等待期间时，已接受的抓帧必须完成握手；`running=false` 本身绝不能唤醒 `waitGrab()` 并复用上一帧成功状态；
 - 实时模式的主动丢弃必须有性能计数，采集模式的任何丢弃都不允许发布完整 trial。
 
 ## 代码核对点

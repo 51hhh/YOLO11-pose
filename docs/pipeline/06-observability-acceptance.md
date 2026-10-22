@@ -79,6 +79,7 @@ fusion/callback
 - 注入 Stage 1 失败时，已入队 GPU 工作完成排空、失败回调恰好一次，v2.1 recorder 以 `fail_trial` 结束而不是写出正常空检测；
 - 注入 ROI host image lock/unlock 与全帧 Coordinate3D CUDA 失败时，帧状态为失败；而合法“没有有效视差”仍是成功空结果，两者不可混淆；
 - ROI Phase C 的失败/stale-drop 分支之后 Phase D 仍执行，异步 grab 请求没有遗留；
+- 在 USB 抓帧等待中注入停止：已接受请求完成并解锁后 Stage 0 才可继续；不得读取上一帧 `grab_done_ok`，不得产生无 payload 的额外 frame；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

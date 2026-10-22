@@ -17,6 +17,8 @@
 | P2 feature worker/stream | NCC、XFeat、SuperPoint、ALIKED 作业框架 | worker 会创建；当前只有 NCC 候选实际启用，神经候选关闭 |
 | capture writer | 写 v2.1 staging | 仅真实采集开启 |
 
+pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 single-flight 状态机：同一时刻最多一个 active 请求；重叠请求被拒绝；停止后拒绝新请求，但已接受请求必须写完并发出 completion。completion 才转移 raw 图像所有权，`running` 标志不承担图像完成语义。
+
 ## 实时异步 ROI 数据流
 
 异步 Stage 2 只有同时满足以下条件才可启动：

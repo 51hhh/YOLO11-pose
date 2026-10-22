@@ -90,6 +90,7 @@ bool Pipeline::start() {
     }
 
     if (camera_) {
+        grab_state_.start();
         grab_thread_ = std::thread(&Pipeline::grabLoop, this);
         LOG_INFO("Async grab thread started");
     }
@@ -110,8 +111,7 @@ void Pipeline::stop() {
     if (!running_.compare_exchange_strong(expected, false)) return;
 
 #ifdef HIK_CAMERA_ENABLED
-    grab_request_cv_.notify_all();
-    grab_done_cv_.notify_all();
+    grab_state_.stop();
 #endif
 
     if (pipeline_thread_.joinable()) {
@@ -262,17 +262,8 @@ void Pipeline::waitP2InlineFeatureTask(P2InlineFeatureWorker& worker) {
 
 #ifdef HIK_CAMERA_ENABLED
 void Pipeline::grabLoop() {
-    while (running_) {
-        int slot_idx;
-        {
-            std::unique_lock<std::mutex> lk(grab_mutex_);
-            grab_request_cv_.wait(lk, [this]{
-                return grab_request_slot_ >= 0 || !running_;
-            });
-            if (!running_) break;
-            slot_idx = grab_request_slot_;
-            grab_request_slot_ = -1;
-        }
+    int slot_idx = -1;
+    while (grab_state_.waitForRequest(slot_idx)) {
 
         auto& slot = slots_[slot_idx];
 
@@ -335,28 +326,24 @@ void Pipeline::grabLoop() {
             }
         }
 
-        {
-            std::lock_guard<std::mutex> lk(grab_mutex_);
-            grab_done_ = true;
-            grab_done_ok_ = ok;
+        if (!grab_state_.complete(ok)) {
+            LOG_ERROR("[Pipeline] async grab completion state mismatch: slot=%d",
+                      slot_idx);
         }
-        grab_done_cv_.notify_one();
     }
 }
 
-void Pipeline::requestGrab(int slot_idx) {
-    {
-        std::lock_guard<std::mutex> lk(grab_mutex_);
-        grab_request_slot_ = slot_idx;
-        grab_done_ = false;
+bool Pipeline::requestGrab(int slot_idx) {
+    if (!running_ || !grab_state_.request(slot_idx, RING_BUFFER_SIZE)) {
+        LOG_ERROR("[Pipeline] reject async grab request: slot=%d running=%d",
+                  slot_idx, running_.load() ? 1 : 0);
+        return false;
     }
-    grab_request_cv_.notify_one();
+    return true;
 }
 
 bool Pipeline::waitGrab() {
-    std::unique_lock<std::mutex> lk(grab_mutex_);
-    grab_done_cv_.wait(lk, [this]{ return grab_done_ || !running_; });
-    return grab_done_ok_;
+    return grab_state_.waitForCompletion();
 }
 #endif
 
