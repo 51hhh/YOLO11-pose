@@ -66,6 +66,14 @@ public:
                                   int width, int height,
                                   cudaStream_t stream);
 
+    /** 同步执行并区分合法零检测与运行时失败。 */
+    [[nodiscard]] PostprocessResult detectChecked(
+        const void* gpuImageU8,
+        int pitch,
+        int width,
+        int height,
+        cudaStream_t stream);
+
     /**
      * @brief 异步提交一次推理 (不阻塞)
      * @param slotId 调用方异步槽位 ID `[0, kBufferCount)`
@@ -81,6 +89,12 @@ public:
      * 调用方需保证对应 stream 的推理和 D2H 已完成 (例如通过 cudaEvent 等待)。
      */
     std::vector<Detection> collect(int slotId, int width, int height);
+
+    /** 回收异步结果，并保留后处理失败语义。 */
+    [[nodiscard]] PostprocessResult collectChecked(
+        int slotId,
+        int width,
+        int height);
 
     int getInputSize() const { return inputSize_; }
     bool isDLA() const { return useDLA_; }
@@ -153,14 +167,18 @@ private:
     /**
      * @brief 后处理: 从 TRT 输出提取检测框
      */
-    std::vector<Detection> postprocess(const float* outputBufferHost,
-                                       float scaleX, float scaleY);
+    PostprocessResult postprocess(
+        const float* outputBufferHost,
+        float scaleX,
+        float scaleY);
 
     /**
      * @brief Multi-scale DFL postprocess (CPU fallback)
      */
-    std::vector<Detection> postprocessMultiScale(const BufferSet& buf,
-                                                  float scaleX, float scaleY);
+    PostprocessResult postprocessMultiScale(
+        const BufferSet& buf,
+        float scaleX,
+        float scaleY);
 
     /**
      * @brief Multi-scale DFL postprocess via CUDA kernel (GPU accelerated)
@@ -168,7 +186,7 @@ private:
      * GPU DFL kernel runs in enqueue(). This method reads the pre-computed
      * results from dflOutHost and applies NMS.
      */
-    std::vector<Detection> collectGPUDFLResults(const BufferSet& buf);
+    PostprocessResult collectGPUDFLResults(const BufferSet& buf);
     bool useGPUPostprocess_ = true;   ///< Use CUDA DFL decode (vs CPU)
 
 };

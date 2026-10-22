@@ -318,15 +318,33 @@ std::vector<Detection> TensorRtRuntime::detect(const void* gpuImageU8, int pitch
                                            int width, int height,
                                            cudaStream_t stream)
 {
-    // 兼容接口: 使用 slot 0 同步执行
+    auto result = detectChecked(gpuImageU8, pitch, width, height, stream);
+    if (!result.success) {
+        LOG_ERROR("[TRT] Synchronous detection failed: %s",
+                  result.message.c_str());
+        return {};
+    }
+    return std::move(result.detections);
+}
+
+PostprocessResult TensorRtRuntime::detectChecked(
+    const void* gpuImageU8,
+    int pitch,
+    int width,
+    int height,
+    cudaStream_t stream) {
+    PostprocessResult result;
+    // 同步兼容路径固定使用 slot 0。
     if (!enqueue(0, gpuImageU8, pitch, width, height, stream)) {
-        return {};
+        result.message = "TensorRT enqueue failed";
+        return result;
     }
-    cudaError_t err = cudaStreamSynchronize(stream);
+    const cudaError_t err = cudaStreamSynchronize(stream);
     if (!checkCudaSubmit(err, "detect cudaStreamSynchronize")) {
-        return {};
+        result.message = "TensorRT stream synchronization failed";
+        return result;
     }
-    return collect(0, width, height);
+    return collectChecked(0, width, height);
 }
 
 bool TensorRtRuntime::enqueue(int slotId,
@@ -464,62 +482,72 @@ std::vector<Detection> TensorRtRuntime::collect(
     int slotId,
     int width,
     int height) {
-    if (slotId < 0 || slotId >= kBufferCount) {
-        LOG_ERROR("[TRT] Invalid collect ring slot id: %d (expected 0..%d)",
-                  slotId, kBufferCount - 1);
+    auto result = collectChecked(slotId, width, height);
+    if (!result.success) {
+        LOG_ERROR("[TRT] Result collection failed: %s", result.message.c_str());
         return {};
     }
-    int sid = slotId;
-    auto& b = buffers_[sid];
+    return std::move(result.detections);
+}
+
+PostprocessResult TensorRtRuntime::collectChecked(
+    int slotId,
+    int width,
+    int height) {
+    PostprocessResult result;
+    if (slotId < 0 || slotId >= kBufferCount) {
+        result.message = "TensorRT collect received an invalid buffer slot";
+        return result;
+    }
+    if (width <= 0 || height <= 0 || inputSize_ <= 0) {
+        result.message = "TensorRT collect received invalid image dimensions";
+        return result;
+    }
+    auto& buffer = buffers_[slotId];
+
+    auto decode = [&](float scale_x, float scale_y) {
+        if (!multiScaleOutput_) {
+            return postprocess(buffer.outputHost, scale_x, scale_y);
+        }
+        return useGPUPostprocess_
+            ? collectGPUDFLResults(buffer)
+            : postprocessMultiScale(buffer, scale_x, scale_y);
+    };
 
     if (useLetterbox_) {
-        float scale = std::min(static_cast<float>(inputSize_) / width,
-                               static_cast<float>(inputSize_) / height);
-        float padX = (inputSize_ - width * scale) / 2.0f;
-        float padY = (inputSize_ - height * scale) / 2.0f;
-        float invScale = 1.0f / scale;
-
-        if (multiScaleOutput_) {
-            std::vector<Detection> dets;
-            if (useGPUPostprocess_) {
-                dets = collectGPUDFLResults(b);
-            } else {
-                dets = postprocessMultiScale(b, 1.0f, 1.0f);
-            }
-            for (auto& d : dets) {
-                d.cx     = (d.cx - padX) * invScale;
-                d.cy     = (d.cy - padY) * invScale;
-                d.width  = d.width  * invScale;
-                d.height = d.height * invScale;
-            }
-            return dets;
-        } else {
-            auto dets = postprocess(b.outputHost, 1.0f, 1.0f);
-            for (auto& d : dets) {
-                d.cx     = (d.cx - padX) * invScale;
-                d.cy     = (d.cy - padY) * invScale;
-                d.width  = d.width  * invScale;
-                d.height = d.height * invScale;
-            }
-            return dets;
+        const float scale = std::min(
+            static_cast<float>(inputSize_) / width,
+            static_cast<float>(inputSize_) / height);
+        const float padX = (inputSize_ - width * scale) / 2.0F;
+        const float padY = (inputSize_ - height * scale) / 2.0F;
+        const float inverse_scale = 1.0F / scale;
+        result = decode(1.0F, 1.0F);
+        if (!result.success) {
+            return result;
         }
-    } else {
-        float scaleX = static_cast<float>(width) / inputSize_;
-        float scaleY = static_cast<float>(height) / inputSize_;
-        if (multiScaleOutput_) {
-            if (useGPUPostprocess_) {
-                auto dets = collectGPUDFLResults(b);
-                for (auto& d : dets) {
-                    d.cx *= scaleX; d.cy *= scaleY;
-                    d.width *= scaleX; d.height *= scaleY;
-                }
-                return dets;
-            }
-            return postprocessMultiScale(b, scaleX, scaleY);
-        } else {
-            return postprocess(b.outputHost, scaleX, scaleY);
+        for (auto& detection : result.detections) {
+            detection.cx = (detection.cx - padX) * inverse_scale;
+            detection.cy = (detection.cy - padY) * inverse_scale;
+            detection.width *= inverse_scale;
+            detection.height *= inverse_scale;
         }
+        return result;
     }
+
+    const float scale_x = static_cast<float>(width) / inputSize_;
+    const float scale_y = static_cast<float>(height) / inputSize_;
+    result = decode(scale_x, scale_y);
+    if (!result.success || !multiScaleOutput_ || !useGPUPostprocess_) {
+        return result;
+    }
+    // GPU DFL 解码返回 engine 坐标；CPU 和单输出路径已在 decode 中缩放。
+    for (auto& detection : result.detections) {
+        detection.cx *= scale_x;
+        detection.cy *= scale_y;
+        detection.width *= scale_x;
+        detection.height *= scale_y;
+    }
+    return result;
 }
 
 void TensorRtRuntime::preprocessGPU(const void* gpuImageU8, int pitch,
@@ -599,9 +627,10 @@ void TensorRtRuntime::preprocessGPU(const void* gpuImageU8, int pitch,
     }
 }
 
-std::vector<Detection> TensorRtRuntime::postprocess(
+PostprocessResult TensorRtRuntime::postprocess(
     const float* outputBufferHost,
-                                                float scaleX, float scaleY) {
+    float scaleX,
+    float scaleY) {
     const auto dimensions = engine_->getTensorShape(outputTensorName_.c_str());
     const SingleOutputView output{
         outputBufferHost,
@@ -611,24 +640,28 @@ std::vector<Detection> TensorRtRuntime::postprocess(
         singleOutputClassCount_,
         singleOutputLayout_,
     };
-    const auto result = decodeSingleOutput(
+    return decodeSingleOutput(
         output,
         scaleX,
         scaleY,
         PostprocessConfig{confThreshold_, nmsThreshold_});
-    if (!result.success) {
-        LOG_ERROR("[TRT] Single-output postprocess failed: %s",
-                  result.message.c_str());
-        return {};
-    }
-    return result.detections;
 }
 
-std::vector<Detection> TensorRtRuntime::collectGPUDFLResults(
+PostprocessResult TensorRtRuntime::collectGPUDFLResults(
     const BufferSet& buf) {
+    PostprocessResult result;
+    if (buf.dflCountHost == nullptr || buf.dflOutHost == nullptr) {
+        result.message = "GPU DFL result buffers are unavailable";
+        return result;
+    }
     // GPU DFL kernel already ran in enqueue(), results in dflOutHost
     constexpr int MAX_DFL_DET = 512;
-    int count = std::clamp(*buf.dflCountHost, 0, MAX_DFL_DET);
+    const int reported_count = *buf.dflCountHost;
+    if (reported_count < 0) {
+        result.message = "GPU DFL reported a negative detection count";
+        return result;
+    }
+    const int count = std::min(reported_count, MAX_DFL_DET);
 
     std::vector<Detection> raw_dets;
     raw_dets.reserve(count);
@@ -642,8 +675,8 @@ std::vector<Detection> TensorRtRuntime::collectGPUDFLResults(
             row[4] >= confThreshold_ && row[5] >= 0.0F &&
             row[5] <= static_cast<float>(std::numeric_limits<int>::max());
         if (!valid) {
-            LOG_ERROR("[TRT] GPU DFL output contains an invalid detection");
-            return {};
+            result.message = "GPU DFL output contains an invalid detection";
+            return result;
         }
         Detection det;
         det.cx         = row[0];
@@ -654,12 +687,15 @@ std::vector<Detection> TensorRtRuntime::collectGPUDFLResults(
         det.class_id   = static_cast<int>(row[5]);
         raw_dets.push_back(det);
     }
-    return nonMaxSuppression(raw_dets, nmsThreshold_);
+    result.detections = nonMaxSuppression(raw_dets, nmsThreshold_);
+    result.success = true;
+    return result;
 }
 
-std::vector<Detection> TensorRtRuntime::postprocessMultiScale(
+PostprocessResult TensorRtRuntime::postprocessMultiScale(
     const BufferSet& buf, float scaleX, float scaleY)
 {
+    PostprocessResult result;
     std::vector<DflScaleView> scales;
     for (std::size_t i = 0; i < buf.scaleOutputs.size(); ++i) {
         const auto& so = buf.scaleOutputs[i];
@@ -675,9 +711,9 @@ std::vector<Detection> TensorRtRuntime::postprocessMultiScale(
             }
         }
         if (!bboxOut) {
-            LOG_ERROR("[TRT] DFL classification tensor '%s' has no box pair",
-                      so.name.c_str());
-            return {};
+            result.message = "DFL classification tensor '" + so.name +
+                             "' has no box pair";
+            return result;
         }
         const auto cells = static_cast<std::size_t>(so.h) *
                            static_cast<std::size_t>(so.w);
@@ -693,17 +729,12 @@ std::vector<Detection> TensorRtRuntime::postprocessMultiScale(
         });
     }
 
-    const auto result = decodeDflOutputs(
+    return decodeDflOutputs(
         scales,
         regMax_,
         scaleX,
         scaleY,
         PostprocessConfig{confThreshold_, nmsThreshold_});
-    if (!result.success) {
-        LOG_ERROR("[TRT] DFL postprocess failed: %s", result.message.c_str());
-        return {};
-    }
-    return result.detections;
 }
 
 }  // namespace volleyball::adapters::tensorrt
