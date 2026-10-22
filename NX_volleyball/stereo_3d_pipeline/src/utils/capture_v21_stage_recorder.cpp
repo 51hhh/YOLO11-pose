@@ -1,0 +1,446 @@
+#include "capture_v21_stage_recorder.h"
+
+#include "logger.h"
+#include "../stereo/depth_match_contract.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+#include <utility>
+
+namespace stereo3d {
+namespace {
+
+constexpr int kStageSchemaVersion = 1;
+
+std::uint64_t realtimeNowNs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+std::string frameName(int frame_id) {
+    std::ostringstream stream;
+    stream << std::setw(8) << std::setfill('0') << frame_id << ".pgm";
+    return stream.str();
+}
+
+std::string jsonEscape(const std::string& value) {
+    std::ostringstream stream;
+    for (const unsigned char character : value) {
+        switch (character) {
+        case '\\': stream << "\\\\"; break;
+        case '"': stream << "\\\""; break;
+        case '\n': stream << "\\n"; break;
+        case '\r': stream << "\\r"; break;
+        case '\t': stream << "\\t"; break;
+        default:
+            if (character < 0x20) {
+                stream << "\\u" << std::hex << std::setw(4)
+                       << std::setfill('0') << static_cast<int>(character)
+                       << std::dec;
+            } else {
+                stream << character;
+            }
+        }
+    }
+    return stream.str();
+}
+
+bool finitePosition(const StereoRoiPairAttempt& attempt) {
+    return attempt.triangulated &&
+           std::isfinite(attempt.x_rig_m) &&
+           std::isfinite(attempt.y_rig_m) &&
+           std::isfinite(attempt.z_rig_m) && attempt.z_rig_m > 0.0f;
+}
+
+}  // namespace
+
+bool CaptureV21StageRecorder::init(
+    const CaptureV21StageRecorderConfig& config) {
+    close();
+    cfg_ = config;
+    if (!cfg_.enabled) return true;
+    if (cfg_.output_dir.empty() || cfg_.frame_limit < 0 ||
+        cfg_.queue_capacity == 0 || cfg_.overflow_policy != "block" ||
+        cfg_.loss_policy != "fail_trial" ||
+        (cfg_.raw_frames != "none" && cfg_.raw_frames != "selected" &&
+         cfg_.raw_frames != "all") ||
+        cfg_.image_product != "rectified_gray8" ||
+        cfg_.image_format != "pgm") {
+        LOG_ERROR("CaptureV21: invalid configuration");
+        cfg_.enabled = false;
+        return false;
+    }
+
+    namespace fs = std::filesystem;
+    const fs::path root(cfg_.output_dir);
+    if (!fs::is_directory(root) || !fs::is_regular_file(root / "context.json")) {
+        LOG_ERROR("CaptureV21: staging/context.json missing under %s",
+                  cfg_.output_dir.c_str());
+        cfg_.enabled = false;
+        return false;
+    }
+    try {
+        if (cfg_.raw_frames != "none") {
+            fs::create_directories(root / "raw" / "left");
+            fs::create_directories(root / "raw" / "right");
+        }
+        const fs::path outputs[] = {
+            root / "frames.csv", root / "detections.csv",
+            root / "pairs.csv", root / "status.json"};
+        for (const auto& path : outputs) {
+            if (fs::exists(path)) {
+                LOG_ERROR("CaptureV21: refusing to overwrite %s",
+                          path.string().c_str());
+                cfg_.enabled = false;
+                return false;
+            }
+        }
+        frames_file_.open((root / "frames.csv").string(),
+                          std::ios::out | std::ios::trunc);
+        detections_file_.open((root / "detections.csv").string(),
+                              std::ios::out | std::ios::trunc);
+        pairs_file_.open((root / "pairs.csv").string(),
+                         std::ios::out | std::ios::trunc);
+    } catch (const std::exception& error) {
+        LOG_ERROR("CaptureV21: staging initialization failed: %s", error.what());
+        cfg_.enabled = false;
+        return false;
+    }
+    if (!frames_file_ || !detections_file_ || !pairs_file_) {
+        LOG_ERROR("CaptureV21: failed to open staging CSV files");
+        cfg_.enabled = false;
+        return false;
+    }
+    frames_file_
+        << "frame_id,host_capture_timestamp_ns,callback_timestamp_ns,"
+           "left_device_timestamp_ns,right_device_timestamp_ns,"
+           "stereo_timestamp_residual_ns,left_frame_number,right_frame_number,"
+           "left_frame_counter,right_frame_counter,left_trigger_index,"
+           "right_trigger_index,raw_left,raw_right\n";
+    detections_file_
+        << "frame_id,camera_role,candidate_id,cx_px,cy_px,width_px,height_px,"
+           "confidence,class_id,selected\n";
+    pairs_file_
+        << "pair_id,frame_id,left_candidate_id,right_candidate_id,disparity_px,"
+           "epipolar_error_px,pair_score,semantic_confidence,x_rig_m,y_rig_m,"
+           "z_rig_m,accepted,reject_reason\n";
+
+    queue_.clear();
+    fatal_error_.clear();
+    captured_frames_ = 0;
+    written_frames_ = 0;
+    dropped_frames_ = 0;
+    copy_failures_ = 0;
+    write_failures_ = 0;
+    next_pair_id_ = 0;
+    last_frame_id_ = -1;
+    last_left_counter_ = 0;
+    last_right_counter_ = 0;
+    have_previous_frame_ = false;
+    capture_complete_ = false;
+    status_publishable_ = false;
+    running_ = true;
+    writer_thread_ = std::thread(&CaptureV21StageRecorder::writerLoop, this);
+    LOG_INFO("CaptureV21 armed: dir=%s frames=%d queue=%zu raw=%s",
+             cfg_.output_dir.c_str(), cfg_.frame_limit, cfg_.queue_capacity,
+             cfg_.raw_frames.c_str());
+    return true;
+}
+
+bool CaptureV21StageRecorder::copyGrayImage(
+    VPIImage image, cv::Mat& out) const {
+    if (!image) return false;
+    VPIImageData data{};
+    const VPIStatus status = vpiImageLockData(
+        image, VPI_LOCK_READ, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &data);
+    if (status != VPI_SUCCESS) return false;
+    try {
+        const auto& plane = data.buffer.pitch.planes[0];
+        cv::Mat view(plane.height, plane.width, CV_8UC1,
+                     plane.data, plane.pitchBytes);
+        out = view.clone();
+    } catch (const cv::Exception&) {
+        vpiImageUnlock(image);
+        out.release();
+        return false;
+    }
+    vpiImageUnlock(image);
+    return !out.empty();
+}
+
+bool CaptureV21StageRecorder::writePgm(
+    const std::string& path, const cv::Mat& image) const {
+    if (image.empty() || image.type() != CV_8UC1) return false;
+    std::ofstream output(path, std::ios::binary | std::ios::out | std::ios::trunc);
+    if (!output) return false;
+    output << "P5\n" << image.cols << ' ' << image.rows << "\n255\n";
+    for (int row = 0; row < image.rows; ++row) {
+        output.write(reinterpret_cast<const char*>(image.ptr(row)), image.cols);
+        if (!output) return false;
+    }
+    output.flush();
+    return static_cast<bool>(output);
+}
+
+void CaptureV21StageRecorder::setFatal(std::string message) {
+    {
+        std::lock_guard<std::mutex> lock(error_mutex_);
+        if (fatal_error_.empty()) fatal_error_ = std::move(message);
+    }
+    capture_complete_ = true;
+    queue_not_empty_.notify_all();
+    queue_not_full_.notify_all();
+}
+
+std::string CaptureV21StageRecorder::fatalError() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return fatal_error_;
+}
+
+bool CaptureV21StageRecorder::shouldStop() const noexcept {
+    return cfg_.enabled && capture_complete_.load();
+}
+
+void CaptureV21StageRecorder::record(const FrameCallbackData& frame) {
+    if (!cfg_.enabled || !running_.load() || capture_complete_.load()) return;
+    if (frame.frame_id < 0 || frame.metadata.grab_failed) {
+        ++dropped_frames_;
+        setFatal("invalid or failed stereo frame reached capture callback");
+        return;
+    }
+    if (have_previous_frame_) {
+        if (frame.frame_id != last_frame_id_ + 1) {
+            ++dropped_frames_;
+            setFatal("pipeline frame sequence contains a gap");
+            return;
+        }
+        if (frame.metadata.left_frame_counter != last_left_counter_ + 1 ||
+            frame.metadata.right_frame_counter != last_right_counter_ + 1) {
+            ++dropped_frames_;
+            setFatal("hardware frame counter contains a gap");
+            return;
+        }
+    }
+    if (frame.metadata.left_frame_counter !=
+        frame.metadata.right_frame_counter) {
+        ++dropped_frames_;
+        setFatal("left/right hardware frame counters disagree");
+        return;
+    }
+
+    QueuedFrame queued;
+    queued.frame_id = frame.frame_id;
+    queued.callback_timestamp_ns = realtimeNowNs();
+    queued.metadata = frame.metadata;
+    queued.candidates_left = frame.detector_candidates_left;
+    queued.candidates_right = frame.detector_candidates_right;
+    queued.pair_attempts = frame.stereo_pair_attempts;
+
+    bool accepted_pair = false;
+    for (const auto& attempt : queued.pair_attempts) {
+        accepted_pair = accepted_pair || finitePosition(attempt);
+        if (attempt.pair.left_index < 0 || attempt.pair.right_index < 0 ||
+            attempt.pair.left_index >=
+                static_cast<int>(queued.candidates_left.size()) ||
+            attempt.pair.right_index >=
+                static_cast<int>(queued.candidates_right.size())) {
+            setFatal("stereo pair references a missing detector candidate");
+            return;
+        }
+    }
+    const bool copy_raw = cfg_.raw_frames == "all" ||
+                          (cfg_.raw_frames == "selected" && accepted_pair);
+    if (copy_raw) {
+        if (!copyGrayImage(frame.rect_gray_left, queued.left_gray) ||
+            !copyGrayImage(frame.rect_gray_right, queued.right_gray)) {
+            ++copy_failures_;
+            setFatal("failed to copy rectified gray frame from VPI");
+            return;
+        }
+        queued.has_raw_images = true;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        queue_not_full_.wait(lock, [this] {
+            return !running_.load() || !fatalError().empty() ||
+                   queue_.size() < cfg_.queue_capacity;
+        });
+        if (!running_.load() || !fatalError().empty()) return;
+        queue_.push_back(std::move(queued));
+    }
+    queue_not_empty_.notify_one();
+    last_frame_id_ = frame.frame_id;
+    last_left_counter_ = frame.metadata.left_frame_counter;
+    last_right_counter_ = frame.metadata.right_frame_counter;
+    have_previous_frame_ = true;
+    const int captured = ++captured_frames_;
+    if (cfg_.frame_limit > 0 && captured >= cfg_.frame_limit) {
+        capture_complete_ = true;
+    }
+}
+
+void CaptureV21StageRecorder::writerLoop() {
+    while (true) {
+        QueuedFrame frame;
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_not_empty_.wait(lock, [this] {
+                return !running_.load() || !queue_.empty();
+            });
+            if (queue_.empty()) {
+                if (!running_.load()) break;
+                continue;
+            }
+            frame = std::move(queue_.front());
+            queue_.pop_front();
+        }
+        queue_not_full_.notify_one();
+        if (!writeFrame(frame)) {
+            ++write_failures_;
+            setFatal("failed to write capture staging frame");
+        } else {
+            ++written_frames_;
+        }
+    }
+}
+
+bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
+    namespace fs = std::filesystem;
+    std::string left_raw;
+    std::string right_raw;
+    if (frame.has_raw_images) {
+        const std::string name = frameName(frame.frame_id);
+        left_raw = "raw/left/" + name;
+        right_raw = "raw/right/" + name;
+        if (!writePgm((fs::path(cfg_.output_dir) / left_raw).string(),
+                      frame.left_gray) ||
+            !writePgm((fs::path(cfg_.output_dir) / right_raw).string(),
+                      frame.right_gray)) {
+            return false;
+        }
+    }
+    frames_file_
+        << frame.frame_id << ','
+        << frame.metadata.host_capture_timestamp_ns << ','
+        << frame.callback_timestamp_ns << ','
+        << frame.metadata.left_device_timestamp_ns << ','
+        << frame.metadata.right_device_timestamp_ns << ','
+        << frame.metadata.stereo_timestamp_residual_ns << ','
+        << frame.metadata.left_frame_number << ','
+        << frame.metadata.right_frame_number << ','
+        << frame.metadata.left_frame_counter << ','
+        << frame.metadata.right_frame_counter << ','
+        << frame.metadata.left_trigger_index << ','
+        << frame.metadata.right_trigger_index << ','
+        << left_raw << ',' << right_raw << '\n';
+
+    std::vector<bool> selected_left(frame.candidates_left.size(), false);
+    std::vector<bool> selected_right(frame.candidates_right.size(), false);
+    for (const auto& attempt : frame.pair_attempts) {
+        if (!finitePosition(attempt)) continue;
+        selected_left[static_cast<std::size_t>(attempt.pair.left_index)] = true;
+        selected_right[static_cast<std::size_t>(attempt.pair.right_index)] = true;
+    }
+    auto write_detections = [&](const char* role,
+                                const std::vector<Detection>& candidates,
+                                const std::vector<bool>& selected) {
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            const auto& detection = candidates[index];
+            detections_file_
+                << frame.frame_id << ',' << role << ',' << index << ','
+                << std::setprecision(9)
+                << detection.cx << ',' << detection.cy << ','
+                << detection.width << ',' << detection.height << ','
+                << detection.confidence << ',' << detection.class_id << ','
+                << (selected[index] ? "true" : "false") << '\n';
+        }
+    };
+    write_detections("left", frame.candidates_left, selected_left);
+    write_detections("right", frame.candidates_right, selected_right);
+
+    for (const auto& attempt : frame.pair_attempts) {
+        const bool accepted = finitePosition(attempt);
+        StereoRoiPairRejectReason reason = attempt.reject_reason;
+        if (!accepted && reason == StereoRoiPairRejectReason::NONE) {
+            reason = StereoRoiPairRejectReason::DEPTH_REJECTED;
+        }
+        pairs_file_
+            << next_pair_id_++ << ',' << frame.frame_id << ','
+            << attempt.pair.left_index << ',' << attempt.pair.right_index << ','
+            << std::setprecision(9)
+            << attempt.pair.initial_disparity << ','
+            << attempt.pair.epipolar_dy << ','
+            << attempt.pair.score << ','
+            << attempt.pair.semantic_confidence << ',';
+        if (accepted) {
+            pairs_file_ << attempt.x_rig_m << ',' << attempt.y_rig_m << ','
+                        << attempt.z_rig_m << ",true,";
+        } else {
+            pairs_file_ << ",,,false,"
+                        << stereoRoiPairRejectReasonName(reason);
+        }
+        pairs_file_ << '\n';
+    }
+    frames_file_.flush();
+    detections_file_.flush();
+    pairs_file_.flush();
+    return frames_file_.good() && detections_file_.good() && pairs_file_.good();
+}
+
+void CaptureV21StageRecorder::writeStatus() {
+    if (!cfg_.enabled || cfg_.output_dir.empty()) return;
+    const std::string fatal = fatalError();
+    const bool reached_target = cfg_.frame_limit > 0
+        ? captured_frames_.load() >= cfg_.frame_limit
+        : captured_frames_.load() > 0;
+    const bool complete = fatal.empty() && reached_target &&
+        dropped_frames_.load() == 0 && copy_failures_.load() == 0 &&
+        write_failures_.load() == 0 &&
+        written_frames_.load() == captured_frames_.load();
+    std::ofstream status(
+        (std::filesystem::path(cfg_.output_dir) / "status.json").string(),
+        std::ios::out | std::ios::trunc);
+    if (!status) return;
+    status << "{\n"
+           << "  \"stage_schema_version\": " << kStageSchemaVersion << ",\n"
+           << "  \"complete\": " << (complete ? "true" : "false") << ",\n"
+           << "  \"fatal_error\": \"" << jsonEscape(fatal) << "\",\n"
+           << "  \"frames_captured\": " << captured_frames_.load() << ",\n"
+           << "  \"frames_written\": " << written_frames_.load() << ",\n"
+           << "  \"dropped_frames\": " << dropped_frames_.load() << ",\n"
+           << "  \"copy_failures\": " << copy_failures_.load() << ",\n"
+           << "  \"write_failures\": " << write_failures_.load() << "\n"
+           << "}\n";
+    status.flush();
+    status_publishable_ = complete && status.good();
+}
+
+void CaptureV21StageRecorder::close() {
+    if (running_.exchange(false)) {
+        queue_not_empty_.notify_all();
+        queue_not_full_.notify_all();
+        if (writer_thread_.joinable()) writer_thread_.join();
+    } else if (writer_thread_.joinable()) {
+        writer_thread_.join();
+    }
+    if (frames_file_.is_open()) frames_file_.close();
+    if (detections_file_.is_open()) detections_file_.close();
+    if (pairs_file_.is_open()) pairs_file_.close();
+    if (cfg_.enabled && !status_publishable_.load()) {
+        writeStatus();
+        LOG_INFO("CaptureV21 closed: captured=%d written=%d publishable=%d error=%s",
+                 captured_frames_.load(), written_frames_.load(),
+                 status_publishable_.load() ? 1 : 0,
+                 fatalError().empty() ? "none" : fatalError().c_str());
+    }
+}
+
+}  // namespace stereo3d
+

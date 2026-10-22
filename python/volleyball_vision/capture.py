@@ -541,6 +541,7 @@ def finalize_capture_stage(
             ("capture_stage_pairs", directory / "pairs.csv", "audit/stage_pairs.csv"),
             ("capture_stage_status", directory / "status.json", "audit/stage_status.json"),
             ("capture_context", directory / "context.json", "audit/context.json"),
+            ("legacy_pipeline_config", directory / "pipeline.yaml", "audit/pipeline.yaml"),
         )
         for label, source, filename in audit_sources:
             writer.add_raw_source(label, source, filename=filename)
@@ -549,8 +550,10 @@ def finalize_capture_stage(
                 frame_id = _int(row, "frame_id")
                 for role, column in (("left", "raw_left"), ("right", "raw_right")):
                     relative = row[column]
-                    if not relative:
+                    if not relative and raw_mode == "all":
                         raise DatasetError("raw_frames 启用但 staging 缺少图像路径")
+                    if not relative:
+                        continue
                     source = (directory / relative).resolve()
                     if directory not in source.parents:
                         raise DatasetError("staging 原始图像路径逃逸")

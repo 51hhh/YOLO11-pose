@@ -143,8 +143,22 @@ int main(int argc, char* argv[]) {
     stereo3d::TrajectoryPredictor predictor;
     stereo3d::TrajectoryRecorder recorder;
     stereo3d::BaselineClipRecorder baseline_recorder;
+    stereo3d::CaptureV21StageRecorder capture_v21_recorder;
     RealtimeDebugDumper realtime_debug_dumper;
     bool nx_prediction_enabled = false;
+    const auto capture_v21_cfg = loadCaptureV21StageRecorderConfig(config_path);
+    if (!capture_v21_cfg.valid) {
+        LOG_ERROR("Capture v2.1 configuration is invalid");
+        return 1;
+    }
+    if (capture_v21_cfg.enabled && baseline_cfg.enabled) {
+        LOG_ERROR("capture_v21 and baseline_recording cannot run together");
+        return 1;
+    }
+    if (!capture_v21_recorder.init(capture_v21_cfg)) {
+        LOG_ERROR("Capture v2.1 staging recorder initialization failed");
+        return 1;
+    }
     if (baseline_cfg.enabled) {
         baseline_recorder.init(baseline_cfg);
     } else {
@@ -403,9 +417,16 @@ int main(int argc, char* argv[]) {
     DisplayJob display_job;
     bool display_job_ready = false;
 
-    if (baseline_cfg.enabled || enable_display || realtime_debug_dumper.enabled()) {
+    if (capture_v21_recorder.enabled() || baseline_cfg.enabled ||
+        enable_display || realtime_debug_dumper.enabled()) {
         pipeline.setFrameCallback(
             [&, use_bgr](const stereo3d::FrameCallbackData& frame_data) {
+                if (capture_v21_recorder.enabled()) {
+                    capture_v21_recorder.record(frame_data);
+                    if (capture_v21_recorder.shouldStop()) {
+                        g_shutdown.store(true);
+                    }
+                }
                 if (baseline_cfg.enabled) {
                     baseline_recorder.record(frame_data.frame_id,
                                              frame_data.rect_gray_left,
@@ -517,10 +538,18 @@ int main(int argc, char* argv[]) {
 #endif
 
     pipeline.stop();
+    capture_v21_recorder.close();
     realtime_debug_dumper.close();
     baseline_recorder.close();
     recorder.close();
     pipeline.printPerfReport();
+
+    if (capture_v21_recorder.enabled() &&
+        !capture_v21_recorder.publishable()) {
+        LOG_ERROR("Capture v2.1 staging is not publishable: %s",
+                  capture_v21_recorder.fatalError().c_str());
+        return 2;
+    }
 
     LOG_INFO("Done.");
     return 0;

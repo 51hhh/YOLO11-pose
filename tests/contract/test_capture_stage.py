@@ -68,6 +68,7 @@ class CaptureStageTests(unittest.TestCase):
         }
         stage = root / "stage"
         prepare_capture_stage(stage, context)
+        (stage / "pipeline.yaml").write_text("capture_v21: {enabled: true}\n", encoding="utf-8")
         raw = stage / "raw"
         raw.mkdir()
         frame_rows = []

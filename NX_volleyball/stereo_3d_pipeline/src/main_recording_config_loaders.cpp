@@ -261,6 +261,48 @@ stereo3d::BaselineClipRecorderConfig loadBaselineClipRecorderConfig(
     return cfg;
 }
 
+stereo3d::CaptureV21StageRecorderConfig loadCaptureV21StageRecorderConfig(
+    const std::string& path) {
+    stereo3d::CaptureV21StageRecorderConfig cfg;
+    try {
+        const YAML::Node root = YAML::LoadFile(path);
+        const YAML::Node capture = root["capture_v21"];
+        if (!capture) return cfg;
+        if (capture["enabled"]) cfg.enabled = capture["enabled"].as<bool>();
+        if (capture["output_dir"])
+            cfg.output_dir = capture["output_dir"].as<std::string>();
+        if (capture["frame_limit"])
+            cfg.frame_limit = capture["frame_limit"].as<int>();
+        if (capture["queue_capacity"])
+            cfg.queue_capacity = capture["queue_capacity"].as<std::size_t>();
+        if (capture["overflow_policy"])
+            cfg.overflow_policy = capture["overflow_policy"].as<std::string>();
+        if (capture["raw_frames"])
+            cfg.raw_frames = capture["raw_frames"].as<std::string>();
+        if (capture["image_product"])
+            cfg.image_product = capture["image_product"].as<std::string>();
+        if (capture["image_format"])
+            cfg.image_format = capture["image_format"].as<std::string>();
+        if (capture["left_camera_id"])
+            cfg.left_camera_id = capture["left_camera_id"].as<std::string>();
+        if (capture["right_camera_id"])
+            cfg.right_camera_id = capture["right_camera_id"].as<std::string>();
+        if (capture["pipeline_id"])
+            cfg.pipeline_id = capture["pipeline_id"].as<std::string>();
+        if (capture["loss_policy"])
+            cfg.loss_policy = capture["loss_policy"].as<std::string>();
+    } catch (const std::exception& error) {
+        LOG_ERROR("capture_v21 config: %s", error.what());
+        cfg.valid = false;
+        cfg.enabled = false;
+    } catch (...) {
+        LOG_ERROR("capture_v21 config: unknown error");
+        cfg.valid = false;
+        cfg.enabled = false;
+    }
+    return cfg;
+}
+
 RealtimeDebugDumpConfig loadRealtimeDebugDumpConfig(const std::string& path) {
     RealtimeDebugDumpConfig cfg;
     try {
