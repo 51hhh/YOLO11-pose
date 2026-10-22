@@ -115,6 +115,16 @@ target_include_directories(
 )
 
 add_legacy_nx_test(
+  capture_chessboard_args_tests
+  capture_chessboard_args_tests.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/capture_chessboard/args.cpp
+)
+target_include_directories(
+  capture_chessboard_args_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
+)
+
+add_legacy_nx_test(
   nx_observation_quality_tests
   nx_observation_quality_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/ros/nx_observation_quality.cpp"

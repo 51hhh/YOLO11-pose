@@ -12,7 +12,6 @@
  * Keys:
  *   SPACE  - save current frame pair
  *   q/ESC  - quit
- *   c      - clear all saved images
  */
 
 #include "args.h"
@@ -25,6 +24,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cmath>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -34,14 +34,10 @@
 
 namespace fs = std::filesystem;
 
-static constexpr double PWM_FREQ     = 100.0;
 static constexpr double PWM_DUTY     = 50.0;
 static constexpr double GUI_PREVIEW_FPS = 60.0;
 static constexpr unsigned int GUI_GRAB_TIMEOUT_MS = 40;
 static constexpr unsigned int HEADLESS_GRAB_TIMEOUT_MS = 1000;
-static const char*      GPIO_CHIP    = "gpiochip2";
-static constexpr unsigned GPIO_LINE  = 7;
-
 static std::atomic<bool> g_quit{false};
 static void sigHandler(int) { g_quit.store(true); }
 
@@ -110,24 +106,9 @@ int main(int argc, char* argv[]) {
 
     CaptureChessboardArgs args;
     if (!parseCaptureChessboardArgs(argc, argv, args)) return 1;
+    if (args.help_requested) return 0;
     if (!validateCaptureChessboardArgs(args)) return 1;
-
-    std::error_code ec;
-    const fs::path left_dir = fs::path(args.output_dir) / "left";
-    const fs::path right_dir = fs::path(args.output_dir) / "right";
-    fs::create_directories(left_dir, ec);
-    if (ec || !fs::is_directory(left_dir)) {
-        fprintf(stderr, "[ERROR] Failed to create left output directory: %s\n",
-                ec ? ec.message().c_str() : left_dir.string().c_str());
-        return 1;
-    }
-    ec.clear();
-    fs::create_directories(right_dir, ec);
-    if (ec || !fs::is_directory(right_dir)) {
-        fprintf(stderr, "[ERROR] Failed to create right output directory: %s\n",
-                ec ? ec.message().c_str() : right_dir.string().c_str());
-        return 1;
-    }
+    if (!validateCaptureChessboardOutputDirectory(args.output_dir)) return 1;
 
     // PWM trigger is started after both cameras enter grabbing state.
     // Starting PWM earlier can give the two USB cameras different local
@@ -146,7 +127,7 @@ int main(int argc, char* argv[]) {
     cfg.serial_left = args.serial_left;
     cfg.serial_right = args.serial_right;
     cfg.image_node_num = std::max(2, args.image_node_num);
-    cfg.trigger_frequency_hz = static_cast<int>(PWM_FREQ);
+    cfg.trigger_frequency_hz = static_cast<int>(std::lround(args.pwm_hz));
     cfg.embedded_info_clear_rows = 2;
 
     if (args.free_run) {
@@ -169,10 +150,14 @@ int main(int argc, char* argv[]) {
 
     if (!args.free_run && !args.no_pwm) {
         pwm = std::make_unique<stereo3d::PWMTrigger>(
-            GPIO_CHIP, GPIO_LINE, PWM_FREQ, PWM_DUTY);
+            args.trigger_chip, args.trigger_line, args.pwm_hz, PWM_DUTY);
         if (!pwm->start()) {
-            fprintf(stderr, "[WARN] PWM start failed; waiting for an external trigger source\n");
-            pwm.reset();
+            fprintf(stderr,
+                    "[ERROR] Local PWM start failed; use --no-pwm only when "
+                    "an external trigger is intentionally connected\n");
+            camera.stopGrabbing();
+            camera.close();
+            return 1;
         }
     } else if (args.no_pwm && !args.free_run) {
         fprintf(stderr, "[WARN] PWM disabled. Ensure the external trigger starts after both cameras are grabbing.\n");
@@ -184,6 +169,38 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> bufL(W * H);
     std::vector<uint8_t> bufR(W * H);
 
+    // Keep failed hardware initialization side-effect free. Recheck the
+    // destination immediately before the first filesystem write to narrow the
+    // preflight/write race window.
+    if (!validateCaptureChessboardOutputDirectory(args.output_dir)) {
+        if (pwm) pwm->stop();
+        camera.stopGrabbing();
+        camera.close();
+        return 1;
+    }
+    std::error_code ec;
+    const fs::path left_dir = fs::path(args.output_dir) / "left";
+    const fs::path right_dir = fs::path(args.output_dir) / "right";
+    fs::create_directories(left_dir, ec);
+    if (ec || !fs::is_directory(left_dir)) {
+        fprintf(stderr, "[ERROR] Failed to create left output directory: %s\n",
+                ec ? ec.message().c_str() : left_dir.string().c_str());
+        if (pwm) pwm->stop();
+        camera.stopGrabbing();
+        camera.close();
+        return 1;
+    }
+    ec.clear();
+    fs::create_directories(right_dir, ec);
+    if (ec || !fs::is_directory(right_dir)) {
+        fprintf(stderr, "[ERROR] Failed to create right output directory: %s\n",
+                ec ? ec.message().c_str() : right_dir.string().c_str());
+        if (pwm) pwm->stop();
+        camera.stopGrabbing();
+        camera.close();
+        return 1;
+    }
+
     int captureCount = 0;
     auto lastCapture = std::chrono::steady_clock::now() - std::chrono::seconds(2);
     auto lastPreview = std::chrono::steady_clock::now() - std::chrono::seconds(1);
@@ -192,9 +209,9 @@ int main(int argc, char* argv[]) {
     if (!metadata.is_open()) {
         fprintf(stderr, "[ERROR] Failed to open metadata file: %s\n",
                 metadata_path.string().c_str());
+        if (pwm) pwm->stop();
         camera.stopGrabbing();
         camera.close();
-        if (pwm) pwm->stop();
         return 1;
     }
     writeMetadataHeader(metadata);
@@ -214,9 +231,14 @@ int main(int argc, char* argv[]) {
                args.left_index, args.right_index);
     }
     if (!args.headless)
-        printf("Keys:   SPACE=save  q/ESC=quit  c=clear\n");
+        printf("Keys:   SPACE=save  q/ESC=quit\n");
     printf("Trigger: %s\n",
-           args.free_run ? "camera free-run" : "100.0 Hz PWM hardware trigger");
+           args.free_run ? "camera free-run" :
+           (args.no_pwm ? "external hardware trigger" : "local PWM hardware trigger"));
+    if (!args.free_run && !args.no_pwm) {
+        printf("GPIO:   %s line %u at %.3f Hz\n",
+               args.trigger_chip.c_str(), args.trigger_line, args.pwm_hz);
+    }
     if (!args.headless) {
         printf("Preview: display capped at %.0f fps\n", GUI_PREVIEW_FPS);
     }
@@ -292,6 +314,27 @@ int main(int argc, char* argv[]) {
             snprintf(name, sizeof(name), "%04d.png", captureCount);
             std::string pathL = (fs::path(args.output_dir) / "left"  / name).string();
             std::string pathR = (fs::path(args.output_dir) / "right" / name).string();
+            std::error_code file_error;
+            const bool left_exists = fs::exists(pathL, file_error);
+            if (file_error) {
+                fprintf(stderr,
+                        "\n[ERROR] Cannot inspect output path %s: %s\n",
+                        pathL.c_str(), file_error.message().c_str());
+                break;
+            }
+            const bool right_exists = fs::exists(pathR, file_error);
+            if (file_error) {
+                fprintf(stderr,
+                        "\n[ERROR] Cannot inspect output path %s: %s\n",
+                        pathR.c_str(), file_error.message().c_str());
+                break;
+            }
+            if (left_exists || right_exists) {
+                fprintf(stderr,
+                        "\n[ERROR] Refusing to overwrite existing pair %s\n",
+                        name);
+                break;
+            }
             const SyncInfo sync = makeSyncInfo(resL, resR);
 
             cv::Mat bayerSaveL(H, W, CV_8UC1, bufL.data());
@@ -304,8 +347,7 @@ int main(int argc, char* argv[]) {
             if (!wroteL || !wroteR) {
                 fprintf(stderr, "\n[ERROR] Failed to save pair %s (left=%d right=%d)\n",
                         name, wroteL ? 1 : 0, wroteR ? 1 : 0);
-                lastCapture = now;
-                continue;
+                break;
             }
 
             writeMetadataRow(metadata, captureCount, name, resL, resR, sync);
@@ -326,29 +368,13 @@ int main(int argc, char* argv[]) {
             }
         } else if (key == 'q' || key == 27) {
             break;
-        } else if (key == 'c') {
-            for (const auto& sub : {"left", "right"}) {
-                auto dir = fs::path(args.output_dir) / sub;
-                for (auto& entry : fs::directory_iterator(dir))
-                    if (entry.is_regular_file()) fs::remove(entry.path());
-            }
-            metadata.close();
-            metadata.open(metadata_path.string(), std::ios::out | std::ios::trunc);
-            if (!metadata.is_open()) {
-                fprintf(stderr, "[ERROR] Failed to reset metadata file: %s\n",
-                        metadata_path.string().c_str());
-                break;
-            }
-            writeMetadataHeader(metadata);
-            captureCount = 0;
-            printf("\r[Cleared] All images\n");
         }
     }
 
     if (!args.headless) cv::destroyAllWindows();
+    if (pwm) pwm->stop();
     camera.stopGrabbing();
     camera.close();
-    if (pwm) pwm->stop();
 
     printf("\nTotal: %d pairs in %s/\n", captureCount, args.output_dir.c_str());
     if (captureCount > 0) {

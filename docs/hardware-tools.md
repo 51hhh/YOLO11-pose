@@ -27,10 +27,12 @@ adapters/legacy_nx/build/hik_frame_metadata_probe \
 adapters/legacy_nx/build/capture_chessboard --help
 adapters/legacy_nx/build/capture_chessboard \
   --serial-left <左相机序列号> --serial-right <右相机序列号> \
-  -o /path/to/calibration_images -e 9867 -g 11.9906
+  -o /path/to/new_calibration_images -e 9867 -g 11.9906 \
+  --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
 ```
 
 正式标定应使用与运行相同的分辨率、镜头、光圈、焦距、对焦、全局快门、曝光和硬触发方式。`--free-run`、`--no-pwm` 仅用于诊断，不应用于生成生产标定。
+输出目录必须不存在或为空，工具不会覆盖已有标定图或 metadata；需要重采时请使用新的目录，旧数据由操作者显式归档或删除。
 
 ## 双目标定
 

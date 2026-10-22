@@ -6,6 +6,7 @@
 #ifndef STEREO_3D_PIPELINE_CAPTURE_CHESSBOARD_ARGS_H_
 #define STEREO_3D_PIPELINE_CAPTURE_CHESSBOARD_ARGS_H_
 
+#include <cstdio>
 #include <string>
 
 struct CaptureChessboardArgs {
@@ -23,6 +24,10 @@ struct CaptureChessboardArgs {
     int image_node_num = 3;
     std::string serial_left;
     std::string serial_right;
+    std::string trigger_chip = "gpiochip2";
+    unsigned int trigger_line = 7;
+    double pwm_hz = 90.0;
+    bool help_requested = false;
 };
 
 bool parseCaptureChessboardArgs(int argc,
@@ -30,5 +35,8 @@ bool parseCaptureChessboardArgs(int argc,
                                 CaptureChessboardArgs& args);
 
 bool validateCaptureChessboardArgs(const CaptureChessboardArgs& args);
+bool validateCaptureChessboardOutputDirectory(const std::string& output_dir);
+void printCaptureChessboardUsage(const char* argv0,
+                                 std::FILE* stream = stdout);
 
 #endif  // STEREO_3D_PIPELINE_CAPTURE_CHESSBOARD_ARGS_H_
