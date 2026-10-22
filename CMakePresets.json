@@ -39,6 +39,20 @@
       }
     },
     {
+      "name": "nx-mainline-release",
+      "displayName": "Jetson Orin NX native mainline (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/nx-mainline-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VOLLEYBALL_BUILD_TESTS": "OFF",
+        "VOLLEYBALL_BUILD_LEGACY": "OFF",
+        "VOLLEYBALL_BUILD_NX_MAINLINE": "ON",
+        "VOLLEYBALL_CUDA_ARCH": "87",
+        "VOLLEYBALL_MVS_SDK_ROOT": "/opt/MVS"
+      }
+    },
+    {
       "name": "nx-legacy-release",
       "displayName": "Jetson Orin NX legacy adapter (Release)",
       "generator": "Ninja",
@@ -58,6 +72,7 @@
     {"name": "host-core-debug", "configurePreset": "host-core-debug"},
     {"name": "host-core-release", "configurePreset": "host-core-release"},
     {"name": "cuda-adapters-release", "configurePreset": "cuda-adapters-release"},
+    {"name": "nx-mainline-release", "configurePreset": "nx-mainline-release"},
     {"name": "nx-legacy-release", "configurePreset": "nx-legacy-release"}
   ],
   "testPresets": [

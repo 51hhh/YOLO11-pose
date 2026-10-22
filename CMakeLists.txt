@@ -5,11 +5,41 @@ project(volleyball_vision VERSION 0.1.0 LANGUAGES CXX)
 option(VOLLEYBALL_BUILD_TESTS "构建无硬件单元测试" ON)
 option(VOLLEYBALL_BUILD_LEGACY "构建重构前的 NX CUDA 管线" OFF)
 option(VOLLEYBALL_BUILD_CUDA_ADAPTERS "构建可独立验证的 CUDA 适配器" OFF)
+option(VOLLEYBALL_BUILD_NX_MAINLINE "构建原生 Jetson Orin NX 主线应用" OFF)
 set(VOLLEYBALL_CUDA_ARCH "87" CACHE STRING "NX 管线 CUDA 架构")
 option(VOLLEYBALL_REQUIRE_ROS2 "NX 管线配置时必须找到 ROS2" ON)
 option(VOLLEYBALL_REQUIRE_HIK "NX 管线配置时必须找到海康 MVS SDK" ON)
 set(VOLLEYBALL_MVS_SDK_ROOT "/opt/MVS" CACHE PATH "海康 MVS SDK 根目录")
 set(VOLLEYBALL_LIBSGM_ROOT "" CACHE PATH "可选 Fixstars libSGM 安装目录")
+
+if(VOLLEYBALL_BUILD_NX_MAINLINE)
+  set(VOLLEYBALL_BUILD_CUDA_ADAPTERS ON CACHE BOOL "" FORCE)
+  set(VOLLEYBALL_BUILD_HIK_MVS ON CACHE BOOL "" FORCE)
+  set(VOLLEYBALL_GPIO_WITH_GPIOD ON CACHE BOOL "" FORCE)
+  set(VOLLEYBALL_BUILD_ROS2_ADAPTER ON CACHE BOOL "" FORCE)
+
+  find_path(VOLLEYBALL_HIK_MVS_SDK_INCLUDE_DIR MvCameraControl.h
+    HINTS
+      "${VOLLEYBALL_MVS_SDK_ROOT}/include"
+      "${VOLLEYBALL_MVS_SDK_ROOT}/include/MvCameraControl"
+    REQUIRED
+  )
+  find_library(VOLLEYBALL_HIK_MVS_SDK_LIBRARY MvCameraControl
+    HINTS
+      "${VOLLEYBALL_MVS_SDK_ROOT}/lib/aarch64"
+      "${VOLLEYBALL_MVS_SDK_ROOT}/lib/arm64"
+      "${VOLLEYBALL_MVS_SDK_ROOT}/lib"
+    REQUIRED
+  )
+  find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+    HINTS /usr/include/aarch64-linux-gnu /usr/include
+    REQUIRED
+  )
+  find_library(NVINFER nvinfer
+    HINTS /usr/lib/aarch64-linux-gnu /usr/lib
+    REQUIRED
+  )
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +72,10 @@ add_subdirectory(adapters/cuda_depth)
 add_subdirectory(adapters/tensorrt)
 add_subdirectory(adapters/ros2)
 add_subdirectory(adapters/fake)
+
+if(VOLLEYBALL_BUILD_NX_MAINLINE)
+  add_subdirectory(apps/nx_mainline)
+endif()
 
 if(VOLLEYBALL_BUILD_TESTS)
   include(CTest)

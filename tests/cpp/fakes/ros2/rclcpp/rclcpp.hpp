@@ -9,6 +9,15 @@
 
 namespace rclcpp {
 
+inline bool& contextOk() {
+    static bool value = false;
+    return value;
+}
+
+inline void init(int, const char* const*) { contextOk() = true; }
+inline bool ok() noexcept { return contextOk(); }
+inline void shutdown() noexcept { contextOk() = false; }
+
 struct Duration {
     double seconds{0.0};
 
@@ -67,6 +76,10 @@ typename Publisher<Message>::SharedPtr& lastPublisher() {
 
 class Node {
 public:
+    static std::shared_ptr<Node> make_shared(const std::string&) {
+        return std::make_shared<Node>();
+    }
+
     template <typename Message>
     typename Publisher<Message>::SharedPtr create_publisher(
         const std::string& topic,

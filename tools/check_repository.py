@@ -21,6 +21,7 @@ ALLOWED_TOP_LEVEL = {
     "README.md",
     "adapters",
     "algorithms",
+    "apps",
     "configs",
     "contracts",
     "docs",
@@ -148,6 +149,7 @@ FORBIDDEN_MAINLINE_ADAPTER_INCLUDE = re.compile(
 )
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 CMAKE_SOURCE_GROUPS = (
+    ("apps/nx_mainline", "apps/nx_mainline/CMakeLists.txt"),
     ("libs/core/src", "libs/core/CMakeLists.txt"),
     ("algorithms/stereo/src", "algorithms/stereo/CMakeLists.txt"),
     ("services/src", "services/CMakeLists.txt"),
@@ -505,6 +507,8 @@ def main() -> int:
         "configs/calibration/stereo_calib.yaml",
         "algorithms/stereo/CMakeLists.txt",
         "services/CMakeLists.txt",
+        "apps/nx_mainline/CMakeLists.txt",
+        "apps/nx_mainline/main.cpp",
         "docs/hardware-tools.md",
         "tests/cpp/adapters/CMakeLists.txt",
     ]

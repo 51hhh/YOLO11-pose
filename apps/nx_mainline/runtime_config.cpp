@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <limits>
 #include <set>
-#include <sstream>
 #include <stdexcept>
 #include <string_view>
 
@@ -329,8 +329,13 @@ void validate(const MainlineRuntimeConfig& value) {
         throw std::runtime_error("runtime.mode must be runtime or capture");
     }
     if (!finite(value.runtime.nominal_fps) || value.runtime.nominal_fps <= 0.0 ||
+        value.runtime.nominal_fps >
+            static_cast<double>(std::numeric_limits<int>::max()) ||
+        std::floor(value.runtime.nominal_fps) != value.runtime.nominal_fps ||
         value.runtime.source_timeout_ms == 0 ||
+        value.runtime.max_consecutive_timeouts > 1000U ||
         value.runtime.queue_capacity == 0 ||
+        value.runtime.queue_capacity > 4096U ||
         (value.runtime.overflow_policy != "block" &&
          value.runtime.overflow_policy != "drop_oldest")) {
         throw std::runtime_error("runtime timing/queue configuration is invalid");
@@ -346,10 +351,17 @@ void validate(const MainlineRuntimeConfig& value) {
         value.camera.left_id == value.camera.right_id ||
         value.camera.left_serial.empty() || value.camera.right_serial.empty() ||
         value.camera.left_serial == value.camera.right_serial ||
+        value.camera.left_index < 0 || value.camera.right_index < 0 ||
         value.camera.left_index == value.camera.right_index ||
         value.camera.width <= 0 || value.camera.height <= 0 ||
         !finite(value.camera.exposure_us) || value.camera.exposure_us <= 0.0 ||
-        !finite(value.camera.gain_db) || value.camera.image_node_num < 2 ||
+        !finite(value.camera.gain_db) ||
+        value.camera.exposure_us >
+            static_cast<double>(std::numeric_limits<float>::max()) ||
+        std::abs(value.camera.gain_db) >
+            static_cast<double>(std::numeric_limits<float>::max()) ||
+        value.camera.image_node_num < 2 ||
+        value.camera.image_node_num > 16 ||
         value.camera.embedded_info_clear_rows <= 0 ||
         value.camera.embedded_info_clear_rows > value.camera.height ||
         value.camera.trigger_source != "Line0" ||
