@@ -60,7 +60,8 @@ void testPostNmsOutput() {
         1.0F, 2.0F, 3.0F, 4.0F, 0.1F, 2.0F,
     };
     const auto result = trt::decodeSingleOutput(
-        {output.data(), output.size(), 2, 6},
+        {output.data(), output.size(), 2, 6, 0,
+         trt::SingleOutputLayout::post_nms_xyxy_rows},
         2.0F,
         3.0F,
         {0.5F, 0.4F});
@@ -79,7 +80,8 @@ void testPostNmsOutput() {
 void testPreNmsLayoutsAndNms() {
     const auto transposed = transposedPreNmsOutput();
     const auto column_result = trt::decodeSingleOutput(
-        {transposed.data(), transposed.size(), 6, 7},
+        {transposed.data(), transposed.size(), 6, 7, 2,
+         trt::SingleOutputLayout::pre_nms_channels_first},
         1.0F,
         1.0F,
         {0.5F, 0.4F});
@@ -93,7 +95,8 @@ void testPreNmsLayoutsAndNms() {
 
     const auto row_major = rowMajorFromTransposed(transposed);
     const auto row_result = trt::decodeSingleOutput(
-        {row_major.data(), row_major.size(), 7, 5},
+        {row_major.data(), row_major.size(), 7, 5, 1,
+         trt::SingleOutputLayout::pre_nms_rows},
         1.0F,
         1.0F,
         {0.5F, 0.4F});
@@ -104,7 +107,8 @@ void testPreNmsLayoutsAndNms() {
 void testRejectsInvalidSingleOutputView() {
     const auto output = transposedPreNmsOutput();
     const auto truncated = trt::decodeSingleOutput(
-        {output.data(), output.size() - 1, 6, 7},
+        {output.data(), output.size() - 1, 6, 7, 2,
+         trt::SingleOutputLayout::pre_nms_channels_first},
         1.0F,
         1.0F,
         {0.5F, 0.4F});
@@ -112,7 +116,8 @@ void testRejectsInvalidSingleOutputView() {
           "single-output decoder must reject a truncated host buffer");
 
     const auto invalid_scale = trt::decodeSingleOutput(
-        {output.data(), output.size(), 6, 7},
+        {output.data(), output.size(), 6, 7, 2,
+         trt::SingleOutputLayout::pre_nms_channels_first},
         0.0F,
         1.0F,
         {0.5F, 0.4F});
@@ -122,12 +127,22 @@ void testRejectsInvalidSingleOutputView() {
     auto nonfinite = output;
     nonfinite[0] = std::numeric_limits<float>::quiet_NaN();
     const auto invalid_detection = trt::decodeSingleOutput(
-        {nonfinite.data(), nonfinite.size(), 6, 7},
+        {nonfinite.data(), nonfinite.size(), 6, 7, 2,
+         trt::SingleOutputLayout::pre_nms_channels_first},
         1.0F,
         1.0F,
         {0.5F, 0.4F});
     check(!invalid_detection.success && invalid_detection.detections.empty(),
           "decoder must reject non-finite accepted detection geometry");
+
+    const auto contradictory = trt::decodeSingleOutput(
+        {output.data(), output.size(), 6, 7, 1,
+         trt::SingleOutputLayout::pre_nms_channels_first},
+        1.0F,
+        1.0F,
+        {0.5F, 0.4F});
+    check(!contradictory.success && contradictory.detections.empty(),
+          "decoder must reject metadata that contradicts the validated shape");
 }
 
 void testDflDecodeAndBounds() {

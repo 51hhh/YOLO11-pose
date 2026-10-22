@@ -109,7 +109,8 @@ PostprocessResult decodeSingleOutput(
         result.message = "invalid TensorRT postprocess configuration";
         return result;
     }
-    if (output.data == nullptr || output.dim1 <= 0 || output.dim2 <= 0) {
+    if (output.data == nullptr || output.dim1 <= 0 || output.dim2 <= 0 ||
+        output.layout == SingleOutputLayout::none) {
         result.message = "single-output tensor view is empty";
         return result;
     }
@@ -124,7 +125,12 @@ PostprocessResult decodeSingleOutput(
     }
 
     const float* data = output.data;
-    if (output.dim2 == 6 && output.dim1 <= 1000) {
+    if (output.layout == SingleOutputLayout::post_nms_xyxy_rows) {
+        if (output.dim2 != 6 || output.class_count != 0) {
+            result.message =
+                "post-NMS tensor view contradicts its validated layout";
+            return result;
+        }
         result.detections.reserve(static_cast<std::size_t>(output.dim1));
         for (int index = 0; index < output.dim1; ++index) {
             const float* row = data + index * 6;
@@ -160,12 +166,19 @@ PostprocessResult decodeSingleOutput(
         return result;
     }
 
-    const bool transposed = output.dim1 < output.dim2;
+    const bool transposed =
+        output.layout == SingleOutputLayout::pre_nms_channels_first;
+    if (!transposed &&
+        output.layout != SingleOutputLayout::pre_nms_rows) {
+        result.message = "single-output tensor layout is unsupported";
+        return result;
+    }
     const int detection_count = transposed ? output.dim2 : output.dim1;
     const int channel_count = transposed ? output.dim1 : output.dim2;
-    const int class_count = channel_count - 4;
-    if (class_count <= 0) {
-        result.message = "pre-NMS tensor has no class score";
+    if (output.class_count <= 0 ||
+        channel_count != output.class_count + 4) {
+        result.message =
+            "pre-NMS tensor view contradicts its validated layout";
         return result;
     }
 
@@ -179,7 +192,9 @@ PostprocessResult decodeSingleOutput(
         };
         float confidence = -std::numeric_limits<float>::infinity();
         int class_id = 0;
-        for (int class_index = 0; class_index < class_count; ++class_index) {
+        for (int class_index = 0;
+             class_index < output.class_count;
+             ++class_index) {
             const float score = value(4 + class_index);
             if (score > confidence) {
                 confidence = score;

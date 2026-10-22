@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "volleyball/adapters/tensorrt/engine_contract.hpp"
+
 #include "../pipeline/frame_slot.h"
 
 namespace stereo3d {
@@ -127,6 +129,10 @@ private:
     int  dlaCore_   = 0;
     bool useLetterbox_ = true;  ///< 使用 letterbox 预处理 (保持宽高比)
     InputFormat inputFormat_ = InputFormat::GRAY;  ///< 输入像素格式
+    int singleOutputClassCount_ = 0;
+    volleyball::adapters::tensorrt::SingleOutputLayout
+        singleOutputLayout_ =
+            volleyball::adapters::tensorrt::SingleOutputLayout::none;
     bool multiScaleOutput_ = false;  ///< 6-tensor DFL output mode
     int  regMax_ = 16;          ///< DFL regression max bins
 

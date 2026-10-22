@@ -56,14 +56,42 @@ void testAcceptsSupportedContracts() {
           "single-output contract must preserve input identity and size");
     check(contract.single_output_name == "output0" &&
               contract.single_output_elements == 42000 &&
+              contract.single_output_class_count == 1 &&
+              contract.single_output_layout ==
+                  volleyball::adapters::tensorrt::SingleOutputLayout::
+                      pre_nms_channels_first &&
               !contract.multi_scale_output,
-          "single-output contract must derive a checked element count");
+          "single-output contract must derive layout, classes, and element count");
+
+    auto row_major = validSingleOutput();
+    row_major.back().dimensions = {1, 8400, 5};
+    check(volleyball::adapters::tensorrt::validateDetectorEngineContract(
+              row_major, contract, error) &&
+              contract.single_output_layout ==
+                  volleyball::adapters::tensorrt::SingleOutputLayout::
+                      pre_nms_rows &&
+              contract.single_output_class_count == 1,
+          "row-major pre-NMS layout must be explicit in the contract");
+
+    auto post_nms = validSingleOutput();
+    post_nms.back().dimensions = {1, 100, 6};
+    check(volleyball::adapters::tensorrt::validateDetectorEngineContract(
+              post_nms, contract, error) &&
+              contract.single_output_layout ==
+                  volleyball::adapters::tensorrt::SingleOutputLayout::
+                      post_nms_xyxy_rows &&
+              contract.single_output_class_count == 0,
+          "post-NMS row layout must be explicit in the contract");
 
     check(volleyball::adapters::tensorrt::validateDetectorEngineContract(
               validDflOutputs(), contract, error),
           "three-scale DFL engine should be accepted");
     check(contract.output_count == 6 && contract.multi_scale_output,
           "DFL contract must select multi-scale mode");
+    check(contract.single_output_layout ==
+              volleyball::adapters::tensorrt::SingleOutputLayout::none &&
+              contract.single_output_class_count == 0,
+          "DFL contract must not leak a stale single-output layout");
 }
 
 void testRejectsUnsupportedInput() {

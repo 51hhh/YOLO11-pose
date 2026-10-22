@@ -13,6 +13,13 @@
 
 namespace volleyball::adapters::tensorrt {
 
+enum class SingleOutputLayout {
+    none,
+    pre_nms_channels_first,
+    pre_nms_rows,
+    post_nms_xyxy_rows,
+};
+
 struct DetectorTensorSpec {
     std::string name;
     bool is_input = false;
@@ -26,6 +33,8 @@ struct DetectorEngineContract {
     int input_size = 0;
     int output_count = 0;
     int single_output_elements = 0;
+    int single_output_class_count = 0;
+    SingleOutputLayout single_output_layout = SingleOutputLayout::none;
     bool multi_scale_output = false;
 };
 

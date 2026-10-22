@@ -232,6 +232,8 @@ bool TRTDetector::loadEngine(const std::string& path) {
     inputSize_ = contract.input_size;
     numOutputTensors_ = contract.output_count;
     outputSize_ = contract.single_output_elements;
+    singleOutputClassCount_ = contract.single_output_class_count;
+    singleOutputLayout_ = contract.single_output_layout;
     multiScaleOutput_ = contract.multi_scale_output;
 
     for (const auto& spec : tensorSpecs) {
@@ -648,6 +650,8 @@ std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
         static_cast<std::size_t>(std::max(0, outputSize_)),
         dimensions.nbDims >= 2 ? dimensions.d[1] : 0,
         dimensions.nbDims >= 3 ? dimensions.d[2] : 0,
+        singleOutputClassCount_,
+        singleOutputLayout_,
     };
     const auto result = decodeSingleOutput(
         output,

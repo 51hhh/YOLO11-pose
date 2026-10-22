@@ -1,5 +1,7 @@
 #pragma once
 
+#include "volleyball/adapters/tensorrt/engine_contract.hpp"
+
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -25,6 +27,8 @@ struct SingleOutputView {
     std::size_t element_count{0};
     int dim1{0};
     int dim2{0};
+    int class_count{0};
+    SingleOutputLayout layout{SingleOutputLayout::none};
 };
 
 struct DflScaleView {
