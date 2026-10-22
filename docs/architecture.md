@@ -49,6 +49,8 @@ NX GPIO 上升沿 ────────┐
 
 检测器输出还必须声明与输入完全相同的相机、角色和帧号，候选 ID 在单帧内唯一，候选的 pipeline ID 与批次一致。候选传入的 `selected` 值不受信任；服务先全部清零，只在直接 3D 成功后标记最终左右候选，防止 detector 内部临时选择污染原始契约。
 
+进入检测前，左右帧还必须具有相同帧号、不同相机 ID、有效且相同语义的曝光时间；已标记 dropped 的帧不能继续处理。图像缓冲的宽高、像素格式、stride 和实际容量必须覆盖 metadata 声明的 ROI，避免错误 adapter 把尺寸漂移或短缓冲传入 GPU。
+
 ### Adapters 与 Apps
 
 `adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，并由根工程 ExternalProject 隔离构建。

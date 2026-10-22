@@ -28,19 +28,43 @@ void check(bool condition, const char* message) {
 
 class TestImage final : public ports::ImageBuffer {
 public:
+    explicit TestImage(
+        std::uint32_t width = 1440,
+        std::uint32_t height = 1080,
+        core::PixelFormat format = core::PixelFormat::gray8,
+        std::size_t stride = 0,
+        std::size_t size = 0)
+        : width_(width),
+          height_(height),
+          format_(format),
+          stride_(stride == 0 ? width * channels(format) : stride),
+          size_(size == 0 ? stride_ * height : size) {}
+
     [[nodiscard]] ports::MemoryKind memoryKind() const noexcept override {
         return ports::MemoryKind::host;
     }
-    [[nodiscard]] std::uint32_t width() const noexcept override { return 1440; }
-    [[nodiscard]] std::uint32_t height() const noexcept override { return 1080; }
-    [[nodiscard]] std::size_t strideBytes() const noexcept override { return 1440; }
+    [[nodiscard]] std::uint32_t width() const noexcept override { return width_; }
+    [[nodiscard]] std::uint32_t height() const noexcept override { return height_; }
+    [[nodiscard]] std::size_t strideBytes() const noexcept override { return stride_; }
     [[nodiscard]] core::PixelFormat pixelFormat() const noexcept override {
-        return core::PixelFormat::gray8;
+        return format_;
     }
     [[nodiscard]] std::uintptr_t nativeHandle() const noexcept override { return 1; }
-    [[nodiscard]] std::size_t sizeBytes() const noexcept override {
-        return 1440U * 1080U;
+    [[nodiscard]] std::size_t sizeBytes() const noexcept override { return size_; }
+
+private:
+    static std::size_t channels(core::PixelFormat format) noexcept {
+        return format == core::PixelFormat::bgr8 ||
+                       format == core::PixelFormat::rgb8
+            ? 3U
+            : 1U;
     }
+
+    std::uint32_t width_;
+    std::uint32_t height_;
+    core::PixelFormat format_;
+    std::size_t stride_;
+    std::size_t size_;
 };
 
 class StaticDetector final : public ports::Detector {
@@ -367,6 +391,55 @@ void testArrivalOrderNeverDefinesStereoIdentity() {
           "USB arrival order must not alter watermark-aligned pairing");
 }
 
+bool rejectsInvalidStereoFrame(ports::StereoFrame input) {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+    const auto result = service.process(input);
+    return result.status == services::ProcessStatus::invalid_input &&
+           !writer.abortReason().empty();
+}
+
+void testStereoFrameIdentityAndBufferContract() {
+    auto mismatched_index = stereoFrame();
+    mismatched_index.right.metadata.frame_index += 1;
+    check(rejectsInvalidStereoFrame(std::move(mismatched_index)),
+          "left/right frame identity mismatch must abort the trial");
+
+    auto duplicate_camera = stereoFrame();
+    duplicate_camera.right.metadata.camera_id = core::CameraId{"left"};
+    check(rejectsInvalidStereoFrame(std::move(duplicate_camera)),
+          "left/right camera IDs must be distinct");
+
+    auto dropped = stereoFrame();
+    dropped.left.metadata.dropped = true;
+    dropped.left.metadata.drop_reason = "injected loss";
+    check(rejectsInvalidStereoFrame(std::move(dropped)),
+          "dropped frame must never enter detection");
+
+    auto wrong_size = stereoFrame();
+    wrong_size.left.image = std::make_shared<TestImage>(1280, 1080);
+    check(rejectsInvalidStereoFrame(std::move(wrong_size)),
+          "image dimensions must match frame metadata");
+
+    auto wrong_format = stereoFrame();
+    wrong_format.left.image = std::make_shared<TestImage>(
+        1440, 1080, core::PixelFormat::bgr8);
+    check(rejectsInvalidStereoFrame(std::move(wrong_format)),
+          "image pixel format must match frame metadata");
+
+    auto short_buffer = stereoFrame();
+    short_buffer.left.image = std::make_shared<TestImage>(
+        1440, 1080, core::PixelFormat::gray8, 1440, 1024);
+    check(rejectsInvalidStereoFrame(std::move(short_buffer)),
+          "image allocation must cover stride times height");
+}
+
 }  // namespace
 
 int main() {
@@ -379,6 +452,7 @@ int main() {
     testDuplicateCandidateIdsAbortTrial();
     testServiceOwnsSelectedFlags();
     testArrivalOrderNeverDefinesStereoIdentity();
+    testStereoFrameIdentityAndBufferContract();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

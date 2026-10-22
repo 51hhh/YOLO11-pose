@@ -1,6 +1,7 @@
 #include "volleyball/services/stereo_observation_service.hpp"
 
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 
@@ -24,6 +25,41 @@ core::Detection2D* findCandidate(
         }
     }
     return nullptr;
+}
+
+std::size_t bytesPerPixel(core::PixelFormat format) noexcept {
+    switch (format) {
+    case core::PixelFormat::bayer8:
+    case core::PixelFormat::gray8:
+        return 1;
+    case core::PixelFormat::bgr8:
+    case core::PixelFormat::rgb8:
+        return 3;
+    }
+    return 0;
+}
+
+bool imageMatchesMetadata(const ports::CapturedFrame& frame) noexcept {
+    if (!frame.image || frame.metadata.dropped ||
+        frame.image->nativeHandle() == 0 ||
+        frame.image->width() != frame.metadata.roi.width ||
+        frame.image->height() != frame.metadata.roi.height ||
+        frame.image->pixelFormat() != frame.metadata.pixel_format) {
+        return false;
+    }
+    const std::size_t channels = bytesPerPixel(frame.metadata.pixel_format);
+    const std::size_t width = frame.image->width();
+    const std::size_t height = frame.image->height();
+    if (channels == 0 || width > std::numeric_limits<std::size_t>::max() / channels) {
+        return false;
+    }
+    const std::size_t minimum_stride = width * channels;
+    const std::size_t stride = frame.image->strideBytes();
+    if (stride < minimum_stride ||
+        (stride != 0 && height > std::numeric_limits<std::size_t>::max() / stride)) {
+        return false;
+    }
+    return frame.image->sizeBytes() >= stride * height;
 }
 
 }  // namespace
@@ -118,9 +154,13 @@ StereoProcessResult StereoObservationService::process(
     }
     const auto left_valid = core::validate(frame.left.metadata);
     const auto right_valid = core::validate(frame.right.metadata);
-    if (!left_valid || !right_valid || !frame.left.image || !frame.right.image ||
+    if (!left_valid || !right_valid ||
+        !imageMatchesMetadata(frame.left) ||
+        !imageMatchesMetadata(frame.right) ||
         frame.left.metadata.role != core::CameraRole::left ||
-        frame.right.metadata.role != core::CameraRole::right) {
+        frame.right.metadata.role != core::CameraRole::right ||
+        frame.left.metadata.camera_id == frame.right.metadata.camera_id ||
+        frame.left.metadata.frame_index != frame.right.metadata.frame_index) {
         return fail(ProcessStatus::invalid_input, "invalid left/right stereo frame");
     }
     if (frame.left.metadata.capture_timestamp.clock_domain !=
