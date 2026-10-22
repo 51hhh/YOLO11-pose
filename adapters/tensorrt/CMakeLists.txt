@@ -14,6 +14,18 @@ add_library(volleyball::tensorrt_postprocess ALIAS volleyball_tensorrt_postproce
 target_include_directories(volleyball_tensorrt_postprocess PUBLIC include)
 target_compile_features(volleyball_tensorrt_postprocess PUBLIC cxx_std_17)
 
+add_library(volleyball_tensorrt_mapping
+  src/detector_mapping.cpp
+)
+add_library(volleyball::tensorrt_mapping ALIAS volleyball_tensorrt_mapping)
+
+target_include_directories(volleyball_tensorrt_mapping PUBLIC include)
+target_link_libraries(volleyball_tensorrt_mapping PUBLIC
+  volleyball::tensorrt_postprocess
+  volleyball::ports
+)
+target_compile_features(volleyball_tensorrt_mapping PUBLIC cxx_std_17)
+
 # 根工程只启用 CXX，因此主机测试不会看到这个目标。NX 外部工程已经启用
 # CUDA，届时才构建硬件 kernel，避免把 CUDA SDK 泄漏进平台无关层。
 if(CMAKE_CUDA_COMPILER)

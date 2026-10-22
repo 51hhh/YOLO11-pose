@@ -53,6 +53,14 @@ target_link_libraries(
 )
 
 add_adapter_test(
+  tensorrt_detector_mapping_tests
+  tensorrt_detector_mapping_tests.cpp
+)
+target_link_libraries(
+  tensorrt_detector_mapping_tests PRIVATE volleyball::tensorrt_mapping
+)
+
+add_adapter_test(
   hik_mvs_camera_tests
   hik_mvs_camera_tests.cpp
 )
