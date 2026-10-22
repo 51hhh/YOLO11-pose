@@ -26,6 +26,8 @@
 
 水印解析和清除发生在相机层，必须早于去 Bayer、YOLO 和图像保存。`FrameCounter` 等解析结果保存在元数据里，清除像素不会丢失身份信息。
 
+Stage 0 对每个 VPI lock/unlock、submit 和 stream sync 检查返回状态；`VPIRectifier` 也把左右 remap 的提交结果返回给调用方。任一步失败时不会记录 `evtRectDone`，更不会把旧槽位像素送进 TensorRT。初始化日志只能证明 payload 创建成功，逐帧返回状态和后续同步共同证明该帧执行成功。
+
 ## 图像资源与内存域
 
 | 资源 | 格式 | 生产者 | 主要消费者 | 当前启用 |

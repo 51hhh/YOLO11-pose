@@ -178,7 +178,13 @@ bool CaptureV21StageRecorder::copyGrayImage(
         out.release();
         return false;
     }
-    vpiImageUnlock(image);
+    const VPIStatus unlock_status = vpiImageUnlock(image);
+    if (unlock_status != VPI_SUCCESS) {
+        LOG_ERROR("CaptureV21: failed to unlock copied gray image: %d",
+                  (int)unlock_status);
+        out.release();
+        return false;
+    }
     return !out.empty();
 }
 

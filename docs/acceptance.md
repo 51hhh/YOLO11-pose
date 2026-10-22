@@ -55,6 +55,7 @@ NX_volleyball/stereo_3d_pipeline/build/hik_frame_metadata_probe \
 - 左右 `FrameCounter` 始终同号且逐帧 +1，允许 uint32 自然回绕；
 - USB 到达先后可变化，但不会改变配对；
 - 水印像素在 SDK 解析后、视觉处理前被清除；
+- raw VPI 锁定/解锁及 Stage 0 VPI/CUDA 任一步失败都会阻止该帧进入检测；
 - 任何一侧断流、计数缺口或对齐超限均使采集失败，而不是静默继续。
 
 必须用示波器同时观察 GPIO 和两台相机可用的曝光/闪光输出，测量：

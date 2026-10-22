@@ -56,6 +56,8 @@ slot_index = frame_id % 3
 1. 普通 CUDA/VPI 工作必须已被对应 stream/event 同步；
 2. 实时异步 ROI 若正在从该槽做 D2D/D2H 快照，`waitAsyncRoiSlotSnapshotDone()` 必须先完成。
 
+取流失败的槽不会继续沿用上一次留在 raw buffer 中的像素。raw VPI 锁定/解锁、Stage 0 stream 同步、TNR、remap 或格式转换任一失败都会设置 `grab_failed`；该帧跳过 YOLO 和深度计算，并沿失败回调进入采集的 `fail_trial` 契约。采集回调深拷贝校正 Gray8 后也必须成功解锁 VPI 图像，否则计为 `copy_failure` 并使 trial 失败。
+
 ## 实时 `nx-rdk` 生命周期
 
 实时主线使用 `ROI_ONLY` 循环，逻辑上交错四个阶段：

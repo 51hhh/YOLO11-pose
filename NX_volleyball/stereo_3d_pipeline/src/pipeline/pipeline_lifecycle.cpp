@@ -318,8 +318,22 @@ void Pipeline::grabLoop() {
                      (int)stL, (int)stR);
         }
 
-        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rawL);
-        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rawR);
+        if (stL == VPI_SUCCESS) {
+            const VPIStatus unlock = vpiImageUnlock(slot.rawL);
+            if (unlock != VPI_SUCCESS) {
+                LOG_ERROR("[Pipeline] grabLoop left raw unlock failed: %d",
+                          (int)unlock);
+                ok = false;
+            }
+        }
+        if (stR == VPI_SUCCESS) {
+            const VPIStatus unlock = vpiImageUnlock(slot.rawR);
+            if (unlock != VPI_SUCCESS) {
+                LOG_ERROR("[Pipeline] grabLoop right raw unlock failed: %d",
+                          (int)unlock);
+                ok = false;
+            }
+        }
 
         {
             std::lock_guard<std::mutex> lk(grab_mutex_);

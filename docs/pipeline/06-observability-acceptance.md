@@ -71,6 +71,7 @@ fusion/callback
 - `FrameCounter`、trigger sequence 和 frame id 连续；
 - 左右计数器一致，时间字段不倒退；
 - callback 前完成图像深拷贝；
+- raw lock/unlock、VPI submit/sync 或 CUDA 前处理失败均形成失败帧，不能复用旧像素伪造成功帧；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

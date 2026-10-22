@@ -18,6 +18,14 @@ namespace stereo3d {
 void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     NVTX_RANGE("Stage0_GrabRect");
 
+    auto checkVpi = [&](VPIStatus status, const char* operation) {
+        if (status == VPI_SUCCESS) return true;
+        LOG_ERROR("[Pipeline] %s failed: frame=%d status=%d",
+                  operation, slot.frame_id, (int)status);
+        slot.grab_failed = true;
+        return false;
+    };
+
 #ifdef HIK_CAMERA_ENABLED
     if (camera_ && !grab_preloaded) {
         VPIImageData imgDataL, imgDataR;
@@ -62,8 +70,14 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
                      (int)stL, (int)stR);
         }
 
-        if (stL == VPI_SUCCESS) vpiImageUnlock(slot.rawL);
-        if (stR == VPI_SUCCESS) vpiImageUnlock(slot.rawR);
+        if (stL == VPI_SUCCESS &&
+            !checkVpi(vpiImageUnlock(slot.rawL), "unlock left raw image")) {
+            grab_ok = false;
+        }
+        if (stR == VPI_SUCCESS &&
+            !checkVpi(vpiImageUnlock(slot.rawR), "unlock right raw image")) {
+            grab_ok = false;
+        }
 
         if (!grab_ok) {
             slot.grab_failed = true;
@@ -72,35 +86,67 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     }
 #endif
 
-    vpiStreamSync(streams_.vpiStreamPVA);
+    // 异步抓取失败时 raw buffer 可能仍保存上一轮像素，绝不能继续生成一帧
+    // 看似有效的校正图。VPI 提交失败也统一沿 grab_failed 进入采集失败契约。
+    if (slot.grab_failed) {
+        NVTX_RANGE_POP();
+        return;
+    }
+
+    if (!checkVpi(vpiStreamSync(streams_.vpiStreamPVA),
+                  "sync rectification stream before reuse")) {
+        NVTX_RANGE_POP();
+        return;
+    }
 
     if (config_.tnr_enabled) {
         ScopedTimer tt("TNR");
 
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    slot.rawL, tnrNV12L_, nullptr);
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    slot.rawR, tnrNV12R_, nullptr);
+        if (!checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          slot.rawL, tnrNV12L_, nullptr),
+                      "submit left raw-to-NV12") ||
+            !checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          slot.rawR, tnrNV12R_, nullptr),
+                      "submit right raw-to-NV12")) {
+            NVTX_RANGE_POP();
+            return;
+        }
 
         VPITNRParams tnrParams;
-        vpiInitTemporalNoiseReductionParams(&tnrParams);
+        if (!checkVpi(vpiInitTemporalNoiseReductionParams(&tnrParams),
+                      "initialize TNR parameters")) {
+            NVTX_RANGE_POP();
+            return;
+        }
         tnrParams.preset = config_.tnr_preset;
         tnrParams.strength = config_.tnr_strength;
 
         VPIImage prevL = tnrFirstFrame_ ? nullptr : tnrOutNV12L_;
         VPIImage prevR = tnrFirstFrame_ ? nullptr : tnrOutNV12R_;
 
-        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                         tnrPayloadL_, prevL,
-                                         tnrNV12L_, tnrOutNV12L_, &tnrParams);
-        vpiSubmitTemporalNoiseReduction(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                         tnrPayloadR_, prevR,
-                                         tnrNV12R_, tnrOutNV12R_, &tnrParams);
-
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    tnrOutNV12L_, slot.rawL, nullptr);
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    tnrOutNV12R_, slot.rawR, nullptr);
+        if (!checkVpi(vpiSubmitTemporalNoiseReduction(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          tnrPayloadL_, prevL, tnrNV12L_, tnrOutNV12L_,
+                          &tnrParams),
+                      "submit left TNR") ||
+            !checkVpi(vpiSubmitTemporalNoiseReduction(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          tnrPayloadR_, prevR, tnrNV12R_, tnrOutNV12R_,
+                          &tnrParams),
+                      "submit right TNR") ||
+            !checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          tnrOutNV12L_, slot.rawL, nullptr),
+                      "submit left NV12-to-raw") ||
+            !checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          tnrOutNV12R_, slot.rawR, nullptr),
+                      "submit right NV12-to-raw")) {
+            NVTX_RANGE_POP();
+            return;
+        }
 
         tnrFirstFrame_ = false;
         globalPerf().record("TNR", tt.elapsedMs());
@@ -143,18 +189,33 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             return;
         }
 
-        rectifier_->submitBGR(streams_.vpiStreamPVA,
-                              slot.tempBGR_L, slot.tempBGR_R,
-                              slot.rectBGR_vpiL, slot.rectBGR_vpiR);
+        if (!rectifier_->submitBGR(streams_.vpiStreamPVA,
+                                   slot.tempBGR_L, slot.tempBGR_R,
+                                   slot.rectBGR_vpiL, slot.rectBGR_vpiR)) {
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return;
+        }
 
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    slot.rectBGR_vpiL, slot.rectGray_vpiL, nullptr);
-        vpiSubmitConvertImageFormat(streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                                    slot.rectBGR_vpiR, slot.rectGray_vpiR, nullptr);
+        if (!checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          slot.rectBGR_vpiL, slot.rectGray_vpiL, nullptr),
+                      "submit left BGR-to-gray") ||
+            !checkVpi(vpiSubmitConvertImageFormat(
+                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
+                          slot.rectBGR_vpiR, slot.rectGray_vpiR, nullptr),
+                      "submit right BGR-to-gray")) {
+            NVTX_RANGE_POP();
+            return;
+        }
     } else {
-        rectifier_->submit(streams_.vpiStreamPVA,
-                           slot.rawL, slot.rawR,
-                           slot.rectGray_vpiL, slot.rectGray_vpiR);
+        if (!rectifier_->submit(streams_.vpiStreamPVA,
+                                slot.rawL, slot.rawR,
+                                slot.rectGray_vpiL, slot.rectGray_vpiR)) {
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return;
+        }
     }
 
     NVTX_RANGE_POP();

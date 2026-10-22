@@ -48,14 +48,14 @@ public:
      * @param rectL 校正后左图 (输出)
      * @param rectR 校正后右图 (输出)
      */
-    void submit(VPIStream stream,
+    bool submit(VPIStream stream,
                 VPIImage rawL, VPIImage rawR,
                 VPIImage rectL, VPIImage rectR);
 
     /**
      * @brief BGR 三通道校正 (同一 LUT, CUDA backend)
      */
-    void submitBGR(VPIStream stream,
+    bool submitBGR(VPIStream stream,
                    VPIImage bgrL, VPIImage bgrR,
                    VPIImage rectBGR_L, VPIImage rectBGR_R);
 

@@ -68,4 +68,5 @@ TensorRT detector 和各自 CUDA stream；ROI 候选集合由最终 profile 投�
 ## 参考
 
 - [NVIDIA VPI 安装说明](https://docs.nvidia.com/vpi/4.0/installation.html)：不同版本安装在 `/opt/nvidia/vpiN`，包含头文件和库目录。
+- [NVIDIA VPI C API](https://docs.nvidia.com/vpi/group__VPI__TNR.html)：VPI 初始化、submit、stream sync 和 image unlock 都以状态码报告失败，逐帧路径必须检查而不能只依赖初始化日志。
 - [NVIDIA TensorRT 安装说明](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/installing.html)：C++ 部署需要 TensorRT 动态库；仅安装 Python wheel 不能替代当前 C++ 管线依赖。
