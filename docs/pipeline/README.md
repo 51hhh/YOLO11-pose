@@ -69,7 +69,8 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 
 | 责任 | 当前入口 |
 |---|---|
-| 相机初始化、FrameSpecInfo 和配对 | `adapters/legacy_nx/src/capture/` |
+| GPIO 周期触发与上升沿审计 | `adapters/gpio/` |
+| 相机初始化、FrameSpecInfo、水印清除和配对 | `adapters/hik_mvs/` |
 | 三缓冲帧容器 | `src/pipeline/frame_slot.h` |
 | CUDA/VPI stream | `src/pipeline/sync.h` |
 | VPI 图像的短期 CUDA view 锁边界 | `src/pipeline/pipeline_image_access.cpp` |
