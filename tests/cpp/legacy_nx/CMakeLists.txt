@@ -125,6 +125,17 @@ target_include_directories(
 )
 
 add_legacy_nx_test(
+  hik_metadata_probe_pair_audit_tests
+  hik_metadata_probe_pair_audit_tests.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/hik_frame_metadata_probe/pair_audit.cpp
+)
+target_include_directories(
+  hik_metadata_probe_pair_audit_tests BEFORE PRIVATE
+  fakes/mvs
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
+)
+
+add_legacy_nx_test(
   capture_chessboard_args_tests
   capture_chessboard_args_tests.cpp
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/capture_chessboard/args.cpp

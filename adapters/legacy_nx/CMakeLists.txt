@@ -383,7 +383,7 @@ if(HIK_FOUND)
     tools/hik_frame_metadata_probe/main.cpp
     tools/hik_frame_metadata_probe/args.cpp
     tools/hik_frame_metadata_probe/camera_session.cpp
-    tools/hik_frame_metadata_probe/stats.cpp
+    tools/hik_frame_metadata_probe/pair_audit.cpp
     tools/common/parallel_tasks.cpp
     src/capture/pwm_trigger.cpp
   )

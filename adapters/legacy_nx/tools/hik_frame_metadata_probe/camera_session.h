@@ -3,12 +3,33 @@
 
 #include "MvCameraControl.h"
 #include "args.h"
-#include "stats.h"
 
 #include <cstdint>
 #include <string>
 
 namespace hik_metadata_probe {
+
+struct FrameMeta {
+    bool ok = false;
+    int ret = 0;
+    std::uint32_t frame_num = 0;
+    std::uint64_t dev_ts = 0;
+    std::int64_t host_ts = 0;
+    std::uint32_t frame_counter = 0;
+    std::uint32_t trigger_index = 0;
+    std::uint32_t second_count = 0;
+    std::uint32_t cycle_count = 0;
+    std::uint32_t cycle_offset = 0;
+    float gain = 0.0F;
+    float exposure = 0.0F;
+    std::uint32_t input = 0;
+    std::uint32_t output = 0;
+    std::uint32_t unparsed_chunks = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint64_t frame_len = 0;
+    std::uint8_t first_bytes[16] = {};
+};
 
 class CameraSession {
 public:
