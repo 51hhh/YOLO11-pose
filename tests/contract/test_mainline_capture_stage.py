@@ -213,7 +213,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 "source_pair_id": 7,
                 "capture_reference_ns": 2_000_000_000,
                 "capture_reference_clock_domain": "nx-realtime",
-                "coordinate_frame": "stereo_rig",
+                "coordinate_frame": "nx_left_rectified_optical_frame",
                 "x_m": 0.1,
                 "y_m": 0.2,
                 "z_m": 5.0,

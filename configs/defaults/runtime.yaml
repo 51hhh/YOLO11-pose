@@ -62,7 +62,7 @@ calibration:
   file: configs/calibration/stereo_calib.yaml
   format: opencv_yaml
   body_frame: base_link
-  rig_frame: stereo_rig
+  rig_frame: nx_left_rectified_optical_frame
   world_frame: world
 
 adapters:
@@ -142,7 +142,7 @@ publisher:
   enabled: false
   backend: none
   topic: ""
-  frame_id: stereo_rig
+  frame_id: nx_left_rectified_optical_frame
   qos: sensor_data
 
 diagnostics:

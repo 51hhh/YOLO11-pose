@@ -36,6 +36,10 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
             converted["cameras"][0]["clock_domain"],
             "hik-shared-device-clock",
         )
+        self.assertEqual(
+            converted["body_frame_id"],
+            "nx_left_rectified_optical_frame",
+        )
 
     def test_legacy_projection_disables_lossy_async_capture_path(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)

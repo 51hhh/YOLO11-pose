@@ -250,6 +250,11 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("publisher.enabled=true 时 topic 不得为空")
         if not publisher["frame_id"]:
             errors.append("publisher.enabled=true 时 frame_id 不得为空")
+        elif publisher["frame_id"] != payload["calibration"]["rig_frame"]:
+            errors.append(
+                "publisher.frame_id 必须与 calibration.rig_frame 一致；"
+                "坐标系变换不能只靠改名"
+            )
     if mode == "capture" and not payload["recording"]["enabled"]:
         errors.append("capture 模式必须启用 recording")
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":

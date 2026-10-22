@@ -109,6 +109,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "backend"):
             _validate_semantics(ROOT, payload)
 
+    def test_publisher_frame_must_match_direct_observation_frame(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["publisher"]["frame_id"] = "renamed_without_transform"
+        with self.assertRaisesRegex(ConfigError, "calibration.rig_frame"):
+            _validate_semantics(ROOT, payload)
+
     def test_hardware_trigger_requires_frame_watermark_identity(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

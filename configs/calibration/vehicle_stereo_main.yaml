@@ -5,6 +5,7 @@ calibration:
   file: configs/calibration/stereo_calib.yaml
   format: opencv_yaml
   body_frame: base_link
-  rig_frame: stereo_rig
+  # 校正后的三角化坐标原点和轴向均属于左目校正光学坐标系。
+  rig_frame: nx_left_rectified_optical_frame
   world_frame: world
 

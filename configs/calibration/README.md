@@ -6,7 +6,8 @@
 
 正式采集时，`python/volleyball_vision/calibration.py` 会从校正投影矩阵生成
 符合 `contracts/capture/v2.1.0/calibration.schema.json` 的
-`calibrations/vehicle-stereo-main.json`。当前 JSON 只描述以左目校正光心为原点
-的双目 rig：右目平移来自实测基线，畸变在校正模型中为零。仓库尚未保存
+`calibrations/vehicle-stereo-main.json`。当前 JSON 只描述
+`nx_left_rectified_optical_frame`：原点是左目校正光心，右目平移来自实测
+基线，畸变在校正模型中为零。仓库尚未保存
 rig 到车体 `base_link` 的实测变换；完成独立外参测量前不得猜测或伪造它。
 
