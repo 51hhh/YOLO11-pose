@@ -129,6 +129,7 @@ volleyball replay \
 ## 文档
 
 - [架构与数据流](docs/architecture.md)
+- [CUDA/VPI、YOLO、ROI 与完整帧生命周期](docs/pipeline/README.md)
 - [配置系统](docs/configuration.md)
 - [采集契约](docs/capture.md)
 - [旧 NX 管线迁移](docs/migration.md)

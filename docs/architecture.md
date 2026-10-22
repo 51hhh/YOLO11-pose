@@ -94,3 +94,5 @@ NX GPIO 上升沿 ────────┐
 
 NX 负责相机、校正、检测、双目关联和直接 3D 观测。RDK 负责最终稳健滤波、未来轨迹和控制。NX 内部可为关联使用临时滤波器，但不得把滤波位置伪装成直接测量发布；`publish_filtered_as_measurement` 在 schema 中固定为 `false`。
 
+NX 内部 CUDA/VPI 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 深度候选以及一帧资源所有权的详细说明见 [NX 图像处理流水线](pipeline/README.md)。该文档同时区分最终 profile、旧配置投影和运行时自动降级，避免从历史 YAML 推断当前启用状态。
+

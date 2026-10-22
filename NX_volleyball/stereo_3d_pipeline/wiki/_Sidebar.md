@@ -1,6 +1,7 @@
 # 导航
 
 - [首页](Home.md)
+- [主线 CUDA/VPI 与帧生命周期](../../../docs/pipeline/README.md)
 
 ## 入门与操作
 

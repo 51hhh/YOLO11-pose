@@ -1,18 +1,20 @@
 # 排球双目追踪系统 Wiki
 
-最后更新: 2026-07-19
+最后更新: 2026-10-22
 
-本 Wiki 是 `stereo_3d_pipeline` 的正式文档入口，覆盖 Jetson Orin NX 上的双目排球追踪、标定、录制、深度测量、轨迹融合、部署和排障。仓库内旧 `docs/` 保留为历史资料、实验报告和迁移来源，不再作为首要入口。
+本 Wiki 保留 `stereo_3d_pipeline` 的实现细节、实验记录和排障资料。重构后的主线配置、数据契约和最终启用状态以仓库根文档为准；CUDA/VPI、双路 YOLO、ROI 和完整帧生命周期见 [NX 图像处理流水线](../../../docs/pipeline/README.md)。旧实验页不能单独用于判断当前部署状态。
 
 ## 当前系统
 
-目标是在 100Hz 硬件触发下完成双目同步采集、YOLO 检测、ROI 深度候选生成、错误点剔除、轨迹记录和离线评估。
+当前 profile 目标是在 90 Hz 硬件触发下完成双目同步采集、YOLO 检测、ROI 深度候选生成、错误点剔除、直接观测发布和离线评估。Wiki 中仍出现的 100 Hz 是历史实验目标。
 
 当前主路径:
 
 - 实时程序: `stereo_pipeline`
-- 正式 NX→RDK 配置: `config/pipeline_rdk_joint.yaml`
-- 深度/性能专项配置: `config/pipeline_dual_yolo_roi.yaml`
+- 正式 NX→RDK 配置入口: 根目录 `configs/profiles/nx-rdk.yaml`
+- 正式自由飞行采集入口: 根目录 `configs/profiles/free-flight.yaml`
+- 旧管线基础模板: `config/pipeline_record_p0p1.yaml`，由主线适配器生成最终 YAML，禁止直接当作部署入口
+- `config/pipeline_rdk_joint.yaml`、`config/pipeline_dual_yolo_roi.yaml`: 历史/专项配置，只用于对照
 - 标定采集: `capture_chessboard`
 - 标定求解: `stereo_calibrate` 或本机 `stereo_calibration.py`
 - 轨迹模型训练采集: [轨迹模型数据采集流程](轨迹模型数据采集流程.md)
@@ -22,8 +24,9 @@
 当前正式深度不是全帧 SGM 或神经特征匹配。左右 YOLO direct pair 成功后，
 `depth_solver=roi_subpixel_match` 首选 CUDA ROI 多点亚像素候选
 `z_roi_multi_point`；若候选无效，再回退到圆心、径向中心、成对边缘中心、
-边缘质心和 bbox 几何深度。XFeat、NCC、SuperPoint、ALIKED、BM/SGM 与 VPI
-Stereo 在联合配置中关闭。完整口径见仓库根 `README.md` 和
+边缘质心和 bbox 几何深度。CUDA template/NCC 当前会计算和记录候选，但不属于最终
+preferred/legacy 选择集合；XFeat、SuperPoint、ALIKED、BM/SGM 与 VPI Stereo
+关闭。完整口径见仓库根 `README.md`、[NX 图像处理流水线](../../../docs/pipeline/README.md) 和
 [深度算法导航](深度算法导航.md)。
 
 ## 阅读路径
