@@ -1,3 +1,8 @@
+add_library(volleyball_tensorrt_types INTERFACE)
+add_library(volleyball::tensorrt_types ALIAS volleyball_tensorrt_types)
+target_include_directories(volleyball_tensorrt_types INTERFACE include)
+target_compile_features(volleyball_tensorrt_types INTERFACE cxx_std_17)
+
 add_library(volleyball_tensorrt_contract
   src/engine_contract.cpp
 )
@@ -12,6 +17,9 @@ add_library(volleyball_tensorrt_postprocess
 add_library(volleyball::tensorrt_postprocess ALIAS volleyball_tensorrt_postprocess)
 
 target_include_directories(volleyball_tensorrt_postprocess PUBLIC include)
+target_link_libraries(volleyball_tensorrt_postprocess PUBLIC
+  volleyball::tensorrt_types
+)
 target_compile_features(volleyball_tensorrt_postprocess PUBLIC cxx_std_17)
 
 add_library(volleyball_tensorrt_mapping

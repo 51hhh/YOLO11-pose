@@ -12,7 +12,6 @@ function(add_legacy_nx_test target)
   target_compile_options(${target} PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
   )
-  target_link_libraries(${target} PRIVATE volleyball::tensorrt_postprocess)
   add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
@@ -60,6 +59,9 @@ add_legacy_nx_test(
   stereo/depth_match_contract_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/stereo/depth_match_contract.cpp"
 )
+target_link_libraries(depth_match_contract_tests PRIVATE
+  volleyball::tensorrt_types
+)
 
 add_legacy_nx_test(
   dual_yolo_depth_gpu_tests
@@ -67,6 +69,9 @@ add_legacy_nx_test(
   "${LEGACY_NX_SOURCE_DIR}/stereo/dual_yolo_depth_gpu.cpp"
 )
 target_include_directories(dual_yolo_depth_gpu_tests BEFORE PRIVATE fakes/gpu)
+target_link_libraries(dual_yolo_depth_gpu_tests PRIVATE
+  volleyball::tensorrt_types
+)
 
 foreach(VPI_FAKE_MAJOR IN ITEMS 3 4)
   set(VPI_PLANE_TEST_TARGET vpi${VPI_FAKE_MAJOR}_plane_access_tests)
@@ -86,6 +91,9 @@ add_legacy_nx_test(
   "${LEGACY_NX_SOURCE_DIR}/stereo/depth_candidate_builder_feature.cpp"
   "${LEGACY_NX_SOURCE_DIR}/stereo/depth_candidate_contract.cpp"
 )
+target_link_libraries(depth_candidate_selection_tests PRIVATE
+  volleyball::tensorrt_types
+)
 
 # 深度融合与时间语义
 add_legacy_nx_test(
@@ -94,6 +102,9 @@ add_legacy_nx_test(
   "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth.cpp"
   "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_track.cpp"
   "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_candidate_copy.cpp"
+)
+target_link_libraries(hybrid_depth_tests PRIVATE
+  volleyball::tensorrt_types
 )
 
 add_legacy_nx_test(
