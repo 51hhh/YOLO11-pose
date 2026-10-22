@@ -37,6 +37,14 @@ volleyball run --profile nx-rdk --dry-run
 
 先运行海康元数据探针，再录制至少 10 分钟静态场景和一批自由飞行：
 
+```bash
+NX_volleyball/stereo_3d_pipeline/build/hik_frame_metadata_probe \
+  --left-sn 00D39342665 --right-sn 00219471413 \
+  --pwm-hz 90 --frames 300
+```
+
+探针必须返回 0，且 `FrameCounter-to-GPIO mapping` 的 `missing=0`；否则当前相机计数起点不满足采集适配器的映射前提，禁止正式采集。
+
 - 两台相机在 PWM 启动前均已 `StartGrabbing`；
 - TriggerMode/Source/Activation 回读分别为 On/Line0/RisingEdge；
 - FrameSpecInfo 的 Timestamp、Framecounter、ExtTriggerCount 均已启用并可读取；

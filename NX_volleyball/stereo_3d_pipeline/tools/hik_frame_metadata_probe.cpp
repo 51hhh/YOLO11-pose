@@ -360,7 +360,8 @@ int main(int argc, char** argv) {
     if (args.start_pwm) {
         pwm.reset(new stereo3d::PWMTrigger(args.trigger_chip, args.trigger_line, args.pwm_hz, 50.0));
         if (!pwm->start()) {
-            std::fprintf(stderr, "PWM start failed, continuing; external trigger must already be present\n");
+            std::fprintf(stderr, "PWM start failed; cannot verify FrameCounter-to-GPIO mapping\n");
+            return 1;
         }
     }
 
@@ -371,6 +372,8 @@ int main(int argc, char** argv) {
     int trigger_delta_changes = 0;
     int trigger_nonzero_or_changing = 0;
     int counter_nonzero_or_changing = 0;
+    int pwm_sequence_matches = 0;
+    int pwm_sequence_missing = 0;
     int l_frame_num_jumps = 0;
     int r_frame_num_jumps = 0;
     int l_frame_counter_jumps = 0;
@@ -409,6 +412,21 @@ int main(int argc, char** argv) {
             continue;
         }
         ++ok_pairs;
+
+        if (pwm) {
+            stereo3d::PWMTriggerEdgeEvent edge;
+            if (l.frame_counter == r.frame_counter &&
+                pwm->eventForSequence(l.frame_counter, edge) &&
+                edge.sequence == l.frame_counter) {
+                ++pwm_sequence_matches;
+            } else {
+                ++pwm_sequence_missing;
+                std::printf(
+                    "    GPIO mapping failure at %04d: Lfc=%u Rfc=%u latest_gpio=%llu\n",
+                    i, l.frame_counter, r.frame_counter,
+                    static_cast<unsigned long long>(pwm->latestEventSequence()));
+            }
+        }
 
         if (!have_first) {
             first_frame_delta = static_cast<int64_t>(l.frame_num) - static_cast<int64_t>(r.frame_num);
@@ -514,6 +532,10 @@ int main(int argc, char** argv) {
     std::printf("  per-camera jumps: trigger_index L/R=%d/%d max_step=%u/%u\n",
                 l_trigger_index_jumps, r_trigger_index_jumps,
                 l_max_trigger_index_step, r_max_trigger_index_step);
+    if (args.start_pwm) {
+        std::printf("  FrameCounter-to-GPIO mapping: matches=%d missing=%d\n",
+                    pwm_sequence_matches, pwm_sequence_missing);
+    }
     printIntervalStats("left_dev_timestamp_step", l_dev_ts_step_stats);
     printIntervalStats("right_dev_timestamp_step", r_dev_ts_step_stats);
     printIntervalStats("left_host_timestamp_step", l_host_ts_step_stats);
@@ -522,5 +544,16 @@ int main(int argc, char** argv) {
     std::printf("  verdict: frame_counter=%s trigger_index=%s\n",
                 counter_nonzero_or_changing > 0 ? "usable-looking" : "not populated",
                 trigger_nonzero_or_changing > 0 ? "usable-looking" : "not populated");
+    const bool frame_counter_ok = ok_pairs > 0 && fail_pairs == 0 &&
+        first_counter_delta == 0 && counter_delta_changes == 0 &&
+        l_frame_counter_jumps == 0 && r_frame_counter_jumps == 0;
+    const bool pwm_mapping_ok = !args.start_pwm ||
+        (pwm_sequence_missing == 0 && pwm_sequence_matches == ok_pairs);
+    if (!frame_counter_ok || !pwm_mapping_ok) {
+        std::fprintf(stderr,
+                     "FAIL: frame_counter_ok=%d pwm_mapping_ok=%d; do not start capture\n",
+                     frame_counter_ok ? 1 : 0, pwm_mapping_ok ? 1 : 0);
+        return 1;
+    }
     return 0;
 }
