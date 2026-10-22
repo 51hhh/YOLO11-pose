@@ -189,7 +189,7 @@ cudaError_t launchBayerRggbToBgr8(
         (static_cast<unsigned int>(height) + block.y - 1U) / block.y);
     bayerToBGR8Kernel<<<grid, block, 0, stream>>>(
         bayer, bgr, width, height, bayer_pitch_bytes, bgr_pitch_bytes);
-    return cudaPeekAtLastError();
+    return cudaGetLastError();
 }
 
 cudaError_t launchRemapBgrToBgrGray8(
@@ -236,7 +236,7 @@ cudaError_t launchRemapBgrToBgrGray8(
         rectified_gray_pitch_bytes,
         output_width,
         output_height);
-    return cudaPeekAtLastError();
+    return cudaGetLastError();
 }
 
 }  // namespace volleyball::adapters::cuda_preprocess
