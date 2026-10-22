@@ -173,9 +173,6 @@ def build_legacy_pipeline_config(
     result["performance"]["log_interval"] = diagnostics[
         "metrics_interval_frames"
     ]
-    ros2.setdefault("diagnostic", {})["enable"] = bool(
-        ros2["enable"] and diagnostics["ros2_depth_enabled"]
-    )
     result.setdefault("debug_realtime_dump", {})["enabled"] = diagnostics[
         "realtime_dump_enabled"
     ]
@@ -185,7 +182,6 @@ def build_legacy_pipeline_config(
         result["performance"]["async_roi_stage2"] = False
         result.setdefault("ros2", {})["enable"] = False
         result["ros2"]["nx_observation"]["enable"] = False
-        result["ros2"]["diagnostic"]["enable"] = False
         result["debug_realtime_dump"]["enabled"] = False
         result["capture_v21"] = {
             "enabled": True,

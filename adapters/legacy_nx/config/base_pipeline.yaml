@@ -287,10 +287,6 @@ ros2:
     topic: "/nx/ball/observation"
     frame_id: "nx_left_rectified_optical_frame"
     source_epoch_file: "/run/volleyball/nx_source_epoch"
-  diagnostic:
-    enable: false
-    depth_full_divisor: 6
-
 debug_realtime_dump:
   enabled: false
   output_dir: "debug_realtime_dumps"

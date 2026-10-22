@@ -106,11 +106,6 @@ public:
     void setFrameCallback(FrameCallback cb) { frame_callback_ = std::move(cb); }
 
     /**
-     * @brief 设置诊断回调 (ROS2 录制用)
-     */
-    void setDiagnosticCallback(DiagnosticCallback cb) { diagnostic_callback_ = std::move(cb); }
-
-    /**
      * @brief 获取当前帧率 (吞吐量)
      */
     float getCurrentFPS() const { return current_fps_.load(); }
@@ -527,7 +522,6 @@ private:
 
     ResultCallback result_callback_;
     FrameCallback frame_callback_;
-    DiagnosticCallback diagnostic_callback_;
 };
 
 }  // namespace stereo3d

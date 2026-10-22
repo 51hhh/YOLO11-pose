@@ -39,7 +39,7 @@ src/rectify/  VPI 校正
 src/stereo/   ROI、特征与深度候选
 src/fusion/   兼容性关联、内部跟踪和直接观测保护
 src/pipeline/ 实时流水线编排
-src/ros/      直接观测与可选深度诊断的 ROS2 发布适配；不负责预测或控制
+src/ros/      直接观测 ROS2 发布适配；不负责预测、控制或图像诊断
 src/diagnostics/ 可选实时调试 artifact 写出
 src/ui/       本地显示与点击测距叠加
 src/utils/    VPI 图像访问和性能计数等底层工具

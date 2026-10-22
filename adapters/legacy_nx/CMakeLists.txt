@@ -71,8 +71,6 @@ find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
   set(USE_ROS2 ON)
   find_package(rclcpp REQUIRED)
-  find_package(geometry_msgs REQUIRED)
-  find_package(sensor_msgs REQUIRED)
   find_package(volleyball_interfaces REQUIRED)
   message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
 else()
@@ -355,7 +353,6 @@ endif()
 # ROS2 源文件 (条件编译)
 if(USE_ROS2)
   list(APPEND PIPELINE_SOURCES
-    src/ros/diagnostic_publisher.cpp
     src/ros/nx_ball_observation_publisher.cpp
     src/ros/nx_observation_quality.cpp
     src/ros/source_epoch.cpp
@@ -419,7 +416,7 @@ endif()
 
 # ROS2 链接
 if(USE_ROS2)
-  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs sensor_msgs volleyball_interfaces)
+  ament_target_dependencies(stereo_pipeline rclcpp volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 

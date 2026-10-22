@@ -239,12 +239,11 @@
     },
     "diagnostics": {
       "type": "object", "additionalProperties": false,
-      "required": ["json_logs", "processing_timing", "metrics_interval_frames", "ros2_depth_enabled", "realtime_dump_enabled"],
+      "required": ["json_logs", "processing_timing", "metrics_interval_frames", "realtime_dump_enabled"],
       "properties": {
         "json_logs": {"type": "boolean"},
         "processing_timing": {"type": "boolean"},
         "metrics_interval_frames": {"type": "integer", "minimum": 1},
-        "ros2_depth_enabled": {"type": "boolean"},
         "realtime_dump_enabled": {"type": "boolean"}
       }
     }

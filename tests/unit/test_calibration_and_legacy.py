@@ -100,7 +100,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
             "nx_left_rectified_optical_frame",
         )
         self.assertNotIn("control_goal", rendered["ros2"])
-        self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
+        self.assertNotIn("diagnostic", rendered["ros2"])
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
         self.assertEqual(rendered["performance"]["log_interval"], 900)
         self.assertFalse(rendered["capture_v21"]["enabled"])

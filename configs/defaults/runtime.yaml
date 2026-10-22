@@ -150,6 +150,5 @@ diagnostics:
   json_logs: false
   processing_timing: true
   metrics_interval_frames: 900
-  ros2_depth_enabled: false
   realtime_dump_enabled: false
 

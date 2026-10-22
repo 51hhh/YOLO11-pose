@@ -14,7 +14,6 @@
 #include "ui/display_render.h"
 #include "ui/display_types.h"
 
-#include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
 #include <csignal>
 #include <cmath>
@@ -28,7 +27,6 @@
 #ifdef HAS_ROS2
 #include "ros/nx_ball_observation_publisher.h"
 #include <rclcpp/rclcpp.hpp>
-#include "ros/diagnostic_publisher.h"
 #endif
 
 // ==================== 全局信号 ====================
@@ -107,7 +105,6 @@ int main(int argc, char* argv[]) {
     // === ROS2 Bridge 初始化 ===
 #ifdef HAS_ROS2
     std::shared_ptr<rclcpp::Node> ros2_node;
-    std::unique_ptr<stereo3d::DiagnosticPublisher> ros2_diag;
     std::unique_ptr<stereo3d::NxBallObservationPublisher> nx_observation_pub;
     std::thread ros2_spin_thread;
     stereo3d::NxObservationRos2Config ros2_cfg{};
@@ -136,40 +133,11 @@ int main(int argc, char* argv[]) {
                 ros2_cfg.nx_observation_allow_fallback);
         }
 
-        // 诊断发布器 (录制深度图 + 检测框)
-        stereo3d::DiagnosticPublisherConfig diag_cfg;
-        try {
-            YAML::Node root = YAML::LoadFile(config_path);
-            if (auto ros = root["ros2"]) {
-                if (auto diag = ros["diagnostic"]) {
-                    diag_cfg.enabled = diag["enable"].as<bool>(false);
-                    if (diag["depth_full_divisor"])
-                        diag_cfg.depth_full_divisor = diag["depth_full_divisor"].as<int>(6);
-                }
-            }
-        } catch (...) {}
-        ros2_diag = std::make_unique<stereo3d::DiagnosticPublisher>(ros2_node, diag_cfg);
-
         ros2_spin_thread = std::thread([&ros2_node]() {
             rclcpp::spin(ros2_node);
         });
-        LOG_INFO("ROS2 direct observation publisher enabled: %s (diag=%d)",
-                 ros2_cfg.nx_observation_topic.c_str(), diag_cfg.enabled);
-    }
-#endif
-
-    // === 诊断回调 (录制深度图+检测框) ===
-#ifdef HAS_ROS2
-    if (ros2_diag && ros2_diag->enabled()) {
-        pipeline.setDiagnosticCallback(
-            [&](int frame_id, const float* depth_gpu, int depth_pitch,
-                int depth_w, int depth_h,
-                const std::vector<stereo3d::Detection>& detections,
-                const std::vector<stereo3d::Object3D>& results) {
-                ros2_diag->publish(frame_id, depth_gpu, depth_pitch, depth_w, depth_h,
-                                   depth_w * 2, depth_h * 2,
-                                   detections, results);
-            });
+        LOG_INFO("ROS2 direct observation publisher enabled: %s",
+                 ros2_cfg.nx_observation_topic.c_str());
     }
 #endif
 

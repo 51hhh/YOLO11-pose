@@ -46,15 +46,6 @@ struct FrameCallbackData {
 
 using FrameCallback = std::function<void(const FrameCallbackData& frame)>;
 
-/**
- * @brief 诊断回调 (深度图 + 检测框 + 3D结果)
- */
-using DiagnosticCallback = std::function<void(
-    int frame_id, const float* depth_gpu, int depth_pitch,
-    int depth_w, int depth_h,
-    const std::vector<Detection>& detections,
-    const std::vector<Object3D>& results)>;
-
 }  // namespace stereo3d
 
 #endif  // STEREO_3D_PIPELINE_PIPELINE_CALLBACKS_H_

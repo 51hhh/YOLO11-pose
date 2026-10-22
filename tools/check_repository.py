@@ -47,6 +47,7 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "adapters/legacy_nx/src/track/",
     "adapters/legacy_nx/src/fusion/trajectory_predictor",
     "adapters/legacy_nx/src/ros/goal_pose_bridge",
+    "adapters/legacy_nx/src/ros/diagnostic_publisher",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_TEST_ROOT_FILES = {
