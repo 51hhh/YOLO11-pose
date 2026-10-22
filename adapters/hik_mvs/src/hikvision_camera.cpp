@@ -453,8 +453,9 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
                               config_.embedded_info_clear_rows);
     }
 
-    result.timestamp_us = info.nDevTimeStampHigh;
-    result.timestamp_us = (result.timestamp_us << 32) | info.nDevTimeStampLow;
+    result.device_timestamp_ns = info.nDevTimeStampHigh;
+    result.device_timestamp_ns =
+        (result.device_timestamp_ns << 32) | info.nDevTimeStampLow;
     result.host_timestamp = info.nHostTimeStamp;
     result.frame_number = info.nFrameNum;
     result.frame_counter = info.nFrameCounter;
@@ -546,8 +547,8 @@ bool HikvisionCamera::grabFramePairAttempt(
     }
 
     int64_t timestamp_residual_ns =
-        static_cast<int64_t>(result_left.timestamp_us) -
-        static_cast<int64_t>(result_right.timestamp_us);
+        static_cast<int64_t>(result_left.device_timestamp_ns) -
+        static_cast<int64_t>(result_right.device_timestamp_ns);
 
     // 检查硬触发配对: FrameCounter 是随图像 payload 到达的水印计数。
     // PWM 在两台相机 StartGrabbing 之后启动，因此同一触发脉冲应满足 Lfc==Rfc。
@@ -568,8 +569,8 @@ bool HikvisionCamera::grabFramePairAttempt(
         constexpr int64_t kExpectedFrameCounterDelta = 0;
 
         auto timestamp_offset = [&]() -> int64_t {
-            return static_cast<int64_t>(result_left.timestamp_us) -
-                   static_cast<int64_t>(result_right.timestamp_us);
+            return static_cast<int64_t>(result_left.device_timestamp_ns) -
+                   static_cast<int64_t>(result_right.device_timestamp_ns);
         };
         auto frame_number_delta_value = [&]() -> int64_t {
             return static_cast<int64_t>(result_left.frame_number) -

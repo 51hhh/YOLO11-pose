@@ -442,8 +442,8 @@ void Pipeline::grabLoop() {
                 slot.right_receive_realtime_ns = resR.receive_realtime_ns;
                 slot.left_sdk_host_timestamp_raw = resL.host_timestamp;
                 slot.right_sdk_host_timestamp_raw = resR.host_timestamp;
-                slot.left_timestamp_us = resL.timestamp_us;
-                slot.right_timestamp_us = resR.timestamp_us;
+                slot.left_timestamp_us = resL.device_timestamp_ns;
+                slot.right_timestamp_us = resR.device_timestamp_ns;
                 slot.left_frame_number = resL.frame_number;
                 slot.right_frame_number = resR.frame_number;
                 slot.left_frame_counter = resL.frame_counter;

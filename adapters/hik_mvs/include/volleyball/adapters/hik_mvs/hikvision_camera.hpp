@@ -57,7 +57,9 @@ struct CameraConfig {
  */
 struct GrabResult {
     bool success = false;
-    std::uint64_t timestamp_us = 0;    // SDK 设备时间戳原值; 当前海康 USB 实测为 ns
+    // SDK 设备时间戳原值。当前海康 USB 机型实测单位为 ns；这个时间戳
+    // 只在相机设备时钟域内使用，不能直接当作 NX 系统时间。
+    std::uint64_t device_timestamp_ns = 0;
     std::int64_t host_timestamp = 0;   // 主机生成时间戳, 仅用于诊断传输/调度 jitter
     std::uint64_t receive_monotonic_ns = 0; // GetImageBuffer 返回后的 NX 单调时钟
     std::uint64_t receive_realtime_ns = 0;  // 同一到达事件的 NX 实时时钟

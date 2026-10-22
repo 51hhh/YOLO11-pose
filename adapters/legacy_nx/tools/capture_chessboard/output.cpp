@@ -61,8 +61,8 @@ SyncInfo makeSyncInfo(
         static_cast<std::int64_t>(left.trigger_index) -
         static_cast<std::int64_t>(right.trigger_index);
     sync.timestamp_delta_ns =
-        static_cast<std::int64_t>(left.timestamp_us) -
-        static_cast<std::int64_t>(right.timestamp_us);
+        static_cast<std::int64_t>(left.device_timestamp_ns) -
+        static_cast<std::int64_t>(right.device_timestamp_ns);
     return sync;
 }
 
@@ -70,7 +70,7 @@ bool writeMetadataHeader(std::ostream& metadata) {
     metadata << "pair,file,left_frame_number,right_frame_number,"
              << "left_frame_counter,right_frame_counter,"
              << "left_trigger_index,right_trigger_index,"
-             << "left_timestamp_ns,right_timestamp_ns,"
+             << "left_device_timestamp_ns,right_device_timestamp_ns,"
              << "frame_number_delta,frame_counter_delta,"
              << "trigger_delta,timestamp_delta_ns\n";
     metadata.flush();
@@ -88,7 +88,8 @@ bool writeMetadataRow(
              << left.frame_number << ',' << right.frame_number << ','
              << left.frame_counter << ',' << right.frame_counter << ','
              << left.trigger_index << ',' << right.trigger_index << ','
-             << left.timestamp_us << ',' << right.timestamp_us << ','
+             << left.device_timestamp_ns << ','
+             << right.device_timestamp_ns << ','
              << sync.frame_number_delta << ',' << sync.frame_counter_delta << ','
              << sync.trigger_delta << ',' << sync.timestamp_delta_ns << '\n';
     metadata.flush();

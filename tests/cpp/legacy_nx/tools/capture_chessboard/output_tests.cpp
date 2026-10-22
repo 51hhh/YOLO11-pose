@@ -49,12 +49,12 @@ void testSyncAndMetadataContract() {
     left.frame_number = 20;
     left.frame_counter = 30;
     left.trigger_index = 40;
-    left.timestamp_us = 5000;
+    left.device_timestamp_ns = 5000;
     volleyball::adapters::hik_mvs::GrabResult right;
     right.frame_number = 18;
     right.frame_counter = 29;
     right.trigger_index = 37;
-    right.timestamp_us = 4500;
+    right.device_timestamp_ns = 4500;
 
     const auto sync = capture_chessboard::makeSyncInfo(left, right);
     check(sync.frame_number_delta == 2, "frame-number delta must be signed");
@@ -69,7 +69,8 @@ void testSyncAndMetadataContract() {
               output, 7, "0007.png", left, right, sync),
           "metadata row must write to a healthy stream");
     const std::string value = output.str();
-    check(value.find("left_timestamp_ns,right_timestamp_ns") !=
+    check(value.find(
+              "left_device_timestamp_ns,right_device_timestamp_ns") !=
               std::string::npos,
           "metadata header must state timestamp units");
     check(value.find("7,0007.png,20,18,30,29,40,37,5000,4500,2,1,3,500\n") !=

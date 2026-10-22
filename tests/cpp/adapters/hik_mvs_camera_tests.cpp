@@ -265,6 +265,12 @@ void testCameraSourcePreservesAuditedFrameEvidence() {
                   right.metadata.hardware_timestamp.clock_domain ==
                   volleyball::core::ClockDomainId{"right-device"},
               "each hardware timestamp must retain its own device clock");
+        check(left.metadata.hardware_timestamp.nanoseconds == 3 * 11'111'111 +
+                  50'000 &&
+                  right.metadata.hardware_timestamp.nanoseconds ==
+                      3 * 11'111'111,
+              "SDK device timestamps measured in nanoseconds must not be "
+              "rescaled while entering the core contract");
         check(left.metadata.capture_timestamp.nanoseconds ==
                   static_cast<std::int64_t>(
                       triggerEvidence(3).edge_realtime_ns + 4'933'500ULL),

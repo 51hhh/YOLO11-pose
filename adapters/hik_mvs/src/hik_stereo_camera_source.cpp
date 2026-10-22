@@ -230,7 +230,7 @@ struct HikStereoCameraSource::Impl {
         if (!checkedAdd(edge.edge_realtime_ns, config.camera.exposure_delay_ns,
                         exposure_start_ns) ||
             !checkedAdd(exposure_start_ns, midpoint_offset_ns, capture_ns) ||
-            !fitsTimestamp(result.timestamp_us) ||
+            !fitsTimestamp(result.device_timestamp_ns) ||
             !fitsTimestamp(result.receive_monotonic_ns) ||
             !fitsTimestamp(result.receive_realtime_ns) ||
             !fitsTimestamp(edge.scheduled_monotonic_ns) ||
@@ -247,7 +247,7 @@ struct HikStereoCameraSource::Impl {
         output.role = role;
         output.frame_index = result.frame_counter;
         output.hardware_timestamp = timestamp(
-            result.timestamp_us,
+            result.device_timestamp_ns,
             role == core::CameraRole::left
                 ? config.left_device_clock
                 : config.right_device_clock);
