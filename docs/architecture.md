@@ -45,7 +45,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Algorithms
 
-`algorithms/stereo` 完成左右候选关联、校正双目的中心三角化和协方差传播，并提供实现 `DirectObservationEstimator` 的 `RectifiedCenterEstimator`。后者只用于回放、单元测试和几何基线；它的稳定方法标识为 `detection_center`，不能代替生产配置中的 `roi_multi_point`。这些实现均不依赖相机或 GPU，可以在普通主机上测试。
+`algorithms/stereo` 完成左右候选关联、校正双目的中心三角化和协方差传播。它分别支持检测中心的相关像素噪声传播，以及“左图真实锚点 + 精化视差及其标准差”的独立传播；精化视差不会覆盖 2D 关联中心视差。`RectifiedCenterEstimator` 只用于回放、单元测试和几何基线；它的稳定方法标识为 `detection_center`，不能代替生产配置中的 `roi_multi_point`。这些实现均不依赖相机或 GPU，可以在普通主机上测试。
 
 ### Services
 
@@ -71,7 +71,7 @@ NX GPIO 上升沿 ────────┐
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
 
-现有 VPI 校正、ROI 深度和 ROS2 运行时编排仍集中在 `adapters/legacy_nx`。`adapters/cuda_preprocess` 已实现真实的主线 `StereoPreprocessor`：从 OpenCV 标定生成与其解耦的紧密浮点映射，启动时上传一次；每个有界槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。旧管线当前只复用其中 Bayer 算子；完整新适配器会在 NX 构建中接受编译，但尚未由原生入口实例化。TensorRT engine/context/buffer/enqueue 生命周期、无 SDK I/O 契约、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL kernel 已进入 `adapters/tensorrt`；该目录还提供真实的主线 `Detector` 端口实现，把 runtime 结果按冻结 pipeline ID、目标类别、图像边界和最大候选数映射为 `Detection2D`，并区分合法零检测与推理失败。旧 detector 只保留指向新 runtime 的兼容类型别名。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出；`adapters/ros2` 也已实现无中间件可测的消息映射、rclcpp publisher 和进程源纪元的原子持久化，旧 publisher 复用同一源纪元实现。目标 NX 会编译新 publisher，但旧可执行入口尚未调用它。平台无关服务仍缺少生产 ROI 多点 `DirectObservationEstimator`，也尚未组装成新的原生应用入口。左右 `Detector` 由两个常驻工作线程并发调用，每个实例仍由唯一线程串行访问；主机屏障测试证明调用重叠，但真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+现有 VPI 校正和运行时编排仍集中在 `adapters/legacy_nx`。`adapters/cuda_preprocess` 已实现真实的主线 `StereoPreprocessor`：从 OpenCV 标定生成与其解耦的紧密浮点映射，启动时上传一次；每个有界槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 已从旧目录提取同一套 ROI CUDA 内核，并实现生产 `DirectObservationEstimator`：多点、圆/边缘几何与 bbox 候选按冻结顺序选择，实际方法、视差、标准差和支持点数原样返回；GPU/图像故障与合法无匹配严格分开。双侧已关联端口不会把只适用于单侧搜索的 `epipolar_fallback` 冒充为圆心候选。TensorRT engine/context/buffer/enqueue 生命周期、无 SDK I/O 契约、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL kernel 已进入 `adapters/tensorrt`；该目录还提供真实的主线 `Detector` 端口实现。正式磁盘 `TrialWriter` 与 ROS2 publisher 也已迁出。上述主线适配器会随 NX 目标接受编译，但尚未由新的原生入口实例化；旧可执行文件仍负责当前实机运行。左右 `Detector` 由两个常驻工作线程并发调用，每个实例仍由唯一线程串行访问；真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
 
 ## 三条独立时间链
 

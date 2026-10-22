@@ -11,9 +11,9 @@
 新的用例边界已经把这一区别编码为类型：`StereoAssociationAttempt.disparity_px`
 只保留检测中心形成的 2D 配对门控证据；`DirectObservationEstimator` 接收校正 Gray8、
 最终左右候选和接受配对，另行返回 `DirectObservationEvidence`。后者声明实际采用的
-方法、精化视差、视差标准差和支持点数。当前 `RectifiedCenterEstimator` 的方法名固定为
-`detection_center`，只用于主机测试和回放几何基线，任何声明 `roi_multi_point` 的实机
-profile 都必须注入后续迁出的 ROI/CUDA 实现。
+方法、精化视差、视差标准差和支持点数。`adapters/cuda_depth` 已实现该生产端口；
+`RectifiedCenterEstimator` 的方法名固定为 `detection_center`，只用于主机测试和回放
+几何基线，不能注入声明 `roi_multi_point` 的实机 profile。
 
 成功估计的证据与 3D 组成 `EstimatedDirectObservation`，由 `TrialWriter` 原子接收。
 主线 v6 的 `observations_v6.csv` 保存实际方法、精化视差、标准差和支持点数；最终 v2.1
@@ -41,6 +41,11 @@ accepted pair 使用该精化视差。检测中心初始视差不会丢失，而
 | 两个 color-IoU 候选 | 否 | BGR ROI 颜色/边缘 | 当前关闭 |
 
 “计算”一列指当前最终旧 YAML 会启动相应代码路径；是否最终发布还要看候选选择规则。
+
+主线 CUDA 估计器目前接收已经具有左右检测的 accepted pair，因此可直接复用多点、
+圆心、径向中心、边缘中心和 bbox 候选。`epipolar_fallback` 属于单侧漏检后的搜索，
+不满足这个请求前提；它在方法顺序中会被明确跳过，而不会改名复用 circle 结果。
+若要让新入口恢复单侧搜索，必须在关联服务前增加独立的一侧搜索端口和审计记录。
 
 ## GPU 几何批处理
 
