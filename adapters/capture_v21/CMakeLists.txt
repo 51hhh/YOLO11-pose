@@ -1,5 +1,6 @@
 add_library(volleyball_capture_v21 STATIC
   src/mainline_stage_schema.cpp
+  src/mainline_stage_trial_writer.cpp
   src/stage_schema.cpp
 )
 add_library(volleyball::capture_v21 ALIAS volleyball_capture_v21)
