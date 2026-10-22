@@ -48,8 +48,7 @@ NX_volleyball/scripts/nx_trt_build*.sh
 NX_volleyball/scripts/sync_to_nx.ps1
 nx_check.txt
 
-# Copilot / IDE 配置
-.github/
+# IDE 本地配置（.github 需入库，用于 CI 与贡献规范）
 .vscode/
 # Python cache
 __pycache__/
@@ -58,6 +57,24 @@ __pycache__/
 
 # Local model artifacts
 NX_volleyball/stereo_3d_pipeline/models/
+
+# 可选的上游研究仓库：由 third_party/manifest.lock 记录版本，不嵌套入库
+NX_volleyball/LightTrack/
+NX_volleyball/MixFormerV2/
+TensorYOLO8Volleyball/
+
+# 根工程构建与本地覆盖
+/build/
+/build-*/
+/out/
+/configs/local.yaml
+/configs/local/
+
+# 运行时数据集与临时文件
+/data/
+/runs/
+*.tmp
+*.partial
 
 # Calibration runtime data
 NX_volleyball/calibration/calibration_images*/
