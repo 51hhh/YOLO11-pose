@@ -13,6 +13,13 @@ from volleyball_vision.capture import (
     STAGE_PAIR_COLUMNS,
     STAGE_SCHEMA_VERSION,
 )
+from volleyball_vision.mainline_stage_contract import (
+    MAINLINE_ASSOCIATION_COLUMNS,
+    MAINLINE_DETECTION_COLUMNS,
+    MAINLINE_FRAME_COLUMNS,
+    MAINLINE_OBSERVATION_COLUMNS,
+    MAINLINE_STAGE_SCHEMA_VERSION,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -127,6 +134,51 @@ class BuildContractTests(unittest.TestCase):
             STAGE_DETECTION_COLUMNS,
         )
         self.assertEqual(columns("kCaptureV21PairColumns"), STAGE_PAIR_COLUMNS)
+
+    def test_cpp_and_python_mainline_stage_contracts_match(self) -> None:
+        header = (
+            ROOT
+            / "adapters"
+            / "capture_v21"
+            / "include"
+            / "volleyball"
+            / "adapters"
+            / "capture_v21"
+            / "mainline_stage_schema.hpp"
+        ).read_text(encoding="utf-8")
+        version = re.search(
+            r"kCaptureV21MainlineStageSchemaVersion\s*=\s*(\d+)\s*;",
+            header,
+        )
+        self.assertIsNotNone(version)
+        assert version is not None
+        self.assertEqual(int(version.group(1)), MAINLINE_STAGE_SCHEMA_VERSION)
+
+        def columns(name: str) -> list[str]:
+            declaration = re.search(
+                rf"\b{name}\s*=\s*\{{(?P<body>.*?)\}};",
+                header,
+                flags=re.DOTALL,
+            )
+            self.assertIsNotNone(declaration, name)
+            assert declaration is not None
+            return re.findall(r'"([^"\\]+)"', declaration.group("body"))
+
+        self.assertEqual(
+            columns("kCaptureV21MainlineFrameColumns"), MAINLINE_FRAME_COLUMNS
+        )
+        self.assertEqual(
+            columns("kCaptureV21MainlineDetectionColumns"),
+            MAINLINE_DETECTION_COLUMNS,
+        )
+        self.assertEqual(
+            columns("kCaptureV21MainlineAssociationColumns"),
+            MAINLINE_ASSOCIATION_COLUMNS,
+        )
+        self.assertEqual(
+            columns("kCaptureV21MainlineObservationColumns"),
+            MAINLINE_OBSERVATION_COLUMNS,
+        )
 
 
 if __name__ == "__main__":

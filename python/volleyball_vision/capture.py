@@ -24,6 +24,7 @@ from .capture_stage_io import (
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
 from .legacy_config import write_legacy_pipeline_config
+from .mainline_stage_contract import MAINLINE_STAGE_SCHEMA_VERSION
 from .model_manifest import resolve_model, sha256_file
 from .timebase import (
     fit_affine_clock_mapping as _fit_clock_mapping,
@@ -252,6 +253,15 @@ def finalize_capture_stage(
 ) -> Path:
     directory = Path(stage).resolve()
     context = _load_json_object(directory / "context.json")
+    if context.get("stage_schema_version") == MAINLINE_STAGE_SCHEMA_VERSION:
+        from .mainline_capture import finalize_mainline_capture_stage
+
+        return finalize_mainline_capture_stage(
+            directory,
+            dataset_root,
+            config,
+            project_root=project_root,
+        )
     status = _load_json_object(directory / "status.json")
     if context.get("planning_only") is True:
         raise DatasetError("预演 staging 不得发布为真实 trial")
