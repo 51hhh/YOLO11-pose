@@ -282,6 +282,8 @@ void Pipeline::grabLoop() {
             slot.right_frame_counter = resR.frame_counter;
             slot.left_trigger_index = resL.trigger_index;
             slot.right_trigger_index = resR.trigger_index;
+            slot.stereo_timestamp_residual_ns =
+                resL.stereo_timestamp_residual_ns;
         } else {
             LOG_WARN("[Pipeline] grabLoop VPI raw lock failed: L=%d R=%d",
                      (int)stL, (int)stR);

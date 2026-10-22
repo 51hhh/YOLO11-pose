@@ -53,6 +53,9 @@ enum class TrackerState {
  */
 struct FrameMetadata {
     uint64_t host_capture_timestamp_ns = 0;
+    uint64_t left_device_timestamp_ns = 0;
+    uint64_t right_device_timestamp_ns = 0;
+    // 兼容旧 CSV/ROS 字段；新采集代码必须使用上面的纳秒字段。
     uint64_t left_timestamp_us = 0;
     uint64_t right_timestamp_us = 0;
     uint32_t left_frame_number = 0;
@@ -335,6 +338,8 @@ inline uint64_t chooseCaptureTimestampNs(
 inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     FrameMetadata meta;
     meta.host_capture_timestamp_ns = slot.host_capture_timestamp_ns;
+    meta.left_device_timestamp_ns = slot.left_timestamp_us;
+    meta.right_device_timestamp_ns = slot.right_timestamp_us;
     meta.left_timestamp_us = slot.left_timestamp_us;
     meta.right_timestamp_us = slot.right_timestamp_us;
     meta.left_frame_number = slot.left_frame_number;
