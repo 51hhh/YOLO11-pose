@@ -88,6 +88,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertEqual(rendered["performance"]["log_interval"], 900)
         self.assertFalse(rendered["capture_v21"]["enabled"])
         self.assertFalse(rendered["disparity_offset"]["enabled"])
+        self.assertNotIn("file", rendered["disparity_offset"])
         self.assertFalse(rendered["tnr"]["enabled"])
         self.assertFalse(rendered["tracker"]["enabled"])
         self.assertFalse(rendered["display"]["enable"])

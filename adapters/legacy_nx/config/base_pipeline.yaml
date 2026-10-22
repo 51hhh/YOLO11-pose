@@ -27,10 +27,8 @@ calibration:
   file: "configs/calibration/stereo_calib.yaml"
 
 disparity_offset:
-  # Old d0 was fitted before the 853.154 mm recalibration. Keep raw disparity
-  # during the next known-distance collection and fit a replacement d0.
+  # 主线固定保留原始视差；若未来重新启用，必须由当前标定和可追溯数据生成。
   enabled: false
-  file: "config/disparity_offset_fit_20260709.json"
 
 rectify:
   backend: "CUDA"
