@@ -1,0 +1,33 @@
+detector:
+  backend: tensorrt
+  model_id: yolo26-volleyball-640-fp16
+  per_camera: true
+  input_resolution: [640, 640]
+  input_format: bgr8
+  resize_mode: letterbox
+  confidence_threshold: 0.30
+  nms_iou_threshold: 0.40
+  max_detections: 10
+  center_method: bbox_center
+
+stereo:
+  association:
+    epipolar_tolerance_px: 12.0
+    max_size_ratio: 2.0
+    min_shifted_iou: 0.05
+    max_disparity_px: 2048.0
+    record_rejected: true
+  triangulation:
+    backend: cuda
+    primary_method: roi_multi_point
+    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    propagate_covariance: true
+    subpixel:
+      patch_radius: 5
+      search_radius_px: 8
+      max_points: 12
+      min_points: 4
+      min_confidence: 0.25
+      max_stddev_px: 1.0
+      time_budget_ms: 1.5
+

@@ -1,0 +1,15 @@
+schema_version: 1
+
+models:
+  yolo26-volleyball-640-fp16:
+    family: yolo26
+    task: volleyball_detection
+    artifact: NX_volleyball/model/yolo26_gpu_fp16.engine
+    artifact_format: tensorrt_engine
+    sha256: null
+    input_resolution: [640, 640]
+    input_format: bgr8
+    precision: fp16
+    target: jetson-orin-nx
+    note: 在 NX 上通过 doctor 生成并固定 SHA-256，未固定前不得用于可发布数据集。
+

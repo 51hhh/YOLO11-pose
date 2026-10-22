@@ -1,0 +1,8 @@
+detector:
+  backend: recorded
+
+stereo:
+  triangulation:
+    backend: recorded
+    primary_method: recorded
+

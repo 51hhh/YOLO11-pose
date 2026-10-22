@@ -1,0 +1,42 @@
+platform:
+  id: jetson-orin-nx
+  accelerator: cuda
+  cuda_arch: 87
+
+cameras:
+  backend: hik_mvs
+  sync:
+    method: hardware_trigger
+    clock_domain: hik-device-clock
+    trigger_source: Line0
+    trigger_activation: RisingEdge
+    estimated_error_ns: 100000.0
+  left:
+    id: hik-00D39342665
+    serial: "00D39342665"
+    index: 0
+    resolution: [1440, 1080]
+    pixel_format: bayer8
+    exposure_us: 9867.0
+    gain_db: 11.9906
+    roi: {x: 0, y: 0, width: 1440, height: 1080}
+  right:
+    id: hik-00219471413
+    serial: "00219471413"
+    index: 1
+    resolution: [1440, 1080]
+    pixel_format: bayer8
+    exposure_us: 9867.0
+    gain_db: 11.9906
+    roi: {x: 0, y: 0, width: 1440, height: 1080}
+
+rectification:
+  backend: cuda
+
+detector:
+  backend: tensorrt
+
+stereo:
+  triangulation:
+    backend: cuda
+

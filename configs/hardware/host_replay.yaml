@@ -1,0 +1,17 @@
+platform:
+  id: host-replay
+  accelerator: none
+  cuda_arch: null
+
+cameras:
+  backend: recorded
+  sync:
+    method: recorded
+    clock_domain: recorded-camera-clock
+    trigger_source: null
+    trigger_activation: null
+    estimated_error_ns: null
+
+rectification:
+  backend: recorded
+

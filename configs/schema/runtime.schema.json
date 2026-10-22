@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://volleyball.local/config/runtime-v1.schema.json",
+  "title": "Volleyball vision resolved runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "rectification", "detector", "stereo", "tracking", "prediction", "recording", "publisher", "diagnostics"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "nominal_fps", "queue", "threading"],
+      "properties": {
+        "mode": {"enum": ["runtime", "capture", "replay"]},
+        "nominal_fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "queue": {
+          "type": "object", "additionalProperties": false,
+          "required": ["capacity", "overflow_policy"],
+          "properties": {
+            "capacity": {"type": "integer", "minimum": 1, "maximum": 4096},
+            "overflow_policy": {"enum": ["drop_oldest", "block"]}
+          }
+        },
+        "threading": {
+          "type": "object", "additionalProperties": false,
+          "required": ["capture_threads", "inference_threads", "writer_threads"],
+          "properties": {
+            "capture_threads": {"type": "integer", "minimum": 1, "maximum": 16},
+            "inference_threads": {"type": "integer", "minimum": 1, "maximum": 16},
+            "writer_threads": {"type": "integer", "minimum": 1, "maximum": 16}
+          }
+        }
+      }
+    },
+    "platform": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "accelerator", "cuda_arch"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "accelerator": {"enum": ["none", "cuda", "cuda_dla"]},
+        "cuda_arch": {"type": ["integer", "null"], "minimum": 50, "maximum": 999}
+      }
+    },
+    "cameras": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backend", "sync", "left", "right"],
+      "properties": {
+        "backend": {"enum": ["hik_mvs", "recorded"]},
+        "sync": {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "estimated_error_ns"],
+          "properties": {
+            "method": {"enum": ["hardware_trigger", "shared_clock", "recorded"]},
+            "clock_domain": {"type": "string", "minLength": 1},
+            "trigger_source": {"type": ["string", "null"]},
+            "trigger_activation": {"type": ["string", "null"]},
+            "estimated_error_ns": {"type": ["number", "null"], "minimum": 0}
+          }
+        },
+        "left": {"$ref": "#/$defs/camera"},
+        "right": {"$ref": "#/$defs/camera"}
+      }
+    },
+    "calibration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "file", "body_frame", "rig_frame", "world_frame"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "file": {"$ref": "#/$defs/path"},
+        "body_frame": {"type": "string", "minLength": 1},
+        "rig_frame": {"type": "string", "minLength": 1},
+        "world_frame": {"type": "string", "minLength": 1}
+      }
+    },
+    "rectification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backend", "output_resolution"],
+      "properties": {
+        "backend": {"enum": ["cuda", "vpi", "opencv", "recorded"]},
+        "output_resolution": {"$ref": "#/$defs/resolution"}
+      }
+    },
+    "detector": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backend", "model_id", "per_camera", "input_resolution", "input_format", "resize_mode", "confidence_threshold", "nms_iou_threshold", "max_detections", "center_method"],
+      "properties": {
+        "backend": {"enum": ["tensorrt", "onnxruntime", "recorded"]},
+        "model_id": {"type": "string", "minLength": 1},
+        "per_camera": {"type": "boolean"},
+        "input_resolution": {"$ref": "#/$defs/resolution"},
+        "input_format": {"enum": ["bayer8", "gray8", "bgr8", "rgb8"]},
+        "resize_mode": {"enum": ["native", "stretch", "letterbox", "crop"]},
+        "confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "nms_iou_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_detections": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "center_method": {"enum": ["bbox_center", "circle_fit", "keypoints", "segmentation_centroid"]}
+      }
+    },
+    "stereo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["association", "triangulation", "min_depth_m", "max_depth_m", "ball_diameter_m"],
+      "properties": {
+        "association": {
+          "type": "object", "additionalProperties": false,
+          "required": ["epipolar_tolerance_px", "max_size_ratio", "min_shifted_iou", "max_disparity_px", "record_rejected"],
+          "properties": {
+            "epipolar_tolerance_px": {"type": "number", "minimum": 0},
+            "max_size_ratio": {"type": "number", "minimum": 1},
+            "min_shifted_iou": {"type": "number", "minimum": 0, "maximum": 1},
+            "max_disparity_px": {"type": "number", "exclusiveMinimum": 0},
+            "record_rejected": {"type": "boolean"}
+          }
+        },
+        "triangulation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["backend", "primary_method", "fallback_methods", "propagate_covariance", "subpixel"],
+          "properties": {
+            "backend": {"enum": ["cuda", "opencv", "recorded"]},
+            "primary_method": {"enum": ["roi_multi_point", "circle_center", "bbox_center", "recorded"]},
+            "fallback_methods": {"type": "array", "items": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
+            "propagate_covariance": {"type": "boolean"},
+            "subpixel": {
+              "type": "object", "additionalProperties": false,
+              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_stddev_px", "time_budget_ms"],
+              "properties": {
+                "patch_radius": {"type": "integer", "minimum": 1},
+                "search_radius_px": {"type": "integer", "minimum": 1},
+                "max_points": {"type": "integer", "minimum": 1},
+                "min_points": {"type": "integer", "minimum": 1},
+                "min_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "max_stddev_px": {"type": "number", "exclusiveMinimum": 0},
+                "time_budget_ms": {"type": "number", "exclusiveMinimum": 0}
+              }
+            }
+          }
+        },
+        "min_depth_m": {"type": "number", "minimum": 0},
+        "max_depth_m": {"type": "number", "exclusiveMinimum": 0},
+        "ball_diameter_m": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "tracking": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "filter", "publish_filtered_as_measurement"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "filter": {"enum": ["none", "kalman_ca", "student_t"]},
+        "publish_filtered_as_measurement": {"const": false}
+      }
+    },
+    "prediction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "owner", "model"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "owner": {"enum": ["nx", "rdk", "offline", "none"]},
+        "model": {"enum": ["none", "ballistic_drag", "physics_residual"]}
+      }
+    },
+    "recording": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "loss_policy", "atomic_publish", "verify_hashes"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "dataset_root": {"$ref": "#/$defs/path"},
+        "schema_version": {"const": "2.1.0"},
+        "raw_frames": {"enum": ["none", "selected", "all"]},
+        "loss_policy": {"enum": ["fail_trial", "mark_dropped", "allow"]},
+        "atomic_publish": {"const": true},
+        "verify_hashes": {"type": "boolean"}
+      }
+    },
+    "publisher": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "backend", "topic", "qos"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "backend": {"enum": ["none", "ros2"]},
+        "topic": {"type": "string"},
+        "qos": {"enum": ["sensor_data", "reliable"]}
+      }
+    },
+    "diagnostics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["json_logs", "processing_timing", "metrics_interval_frames"],
+      "properties": {
+        "json_logs": {"type": "boolean"},
+        "processing_timing": {"type": "boolean"},
+        "metrics_interval_frames": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "resolution": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}], "items": false},
+    "camera": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "serial", "index", "resolution", "pixel_format", "exposure_us", "gain_db", "roi"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "serial": {"type": "string", "minLength": 1},
+        "index": {"type": "integer", "minimum": 0},
+        "resolution": {"$ref": "#/$defs/resolution"},
+        "pixel_format": {"enum": ["bayer8", "gray8", "bgr8", "rgb8"]},
+        "exposure_us": {"type": "number", "minimum": 0},
+        "gain_db": {"type": "number"},
+        "roi": {
+          "type": "object", "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": {"type": "integer", "minimum": 0},
+            "y": {"type": "integer", "minimum": 0},
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    }
+  }
+}

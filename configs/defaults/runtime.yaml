@@ -1,0 +1,122 @@
+schema_version: 1
+
+runtime:
+  mode: runtime
+  nominal_fps: 90.0
+  queue:
+    capacity: 3
+    overflow_policy: drop_oldest
+  threading:
+    capture_threads: 2
+    inference_threads: 2
+    writer_threads: 1
+
+platform:
+  id: generic-host
+  accelerator: none
+  cuda_arch: null
+
+cameras:
+  backend: recorded
+  sync:
+    method: recorded
+    clock_domain: camera-hardware
+    trigger_source: null
+    trigger_activation: null
+    estimated_error_ns: null
+  left:
+    id: left-camera
+    serial: replay-left
+    index: 0
+    resolution: [1440, 1080]
+    pixel_format: bayer8
+    exposure_us: 9000.0
+    gain_db: 0.0
+    roi: {x: 0, y: 0, width: 1440, height: 1080}
+  right:
+    id: right-camera
+    serial: replay-right
+    index: 1
+    resolution: [1440, 1080]
+    pixel_format: bayer8
+    exposure_us: 9000.0
+    gain_db: 0.0
+    roi: {x: 0, y: 0, width: 1440, height: 1080}
+
+calibration:
+  id: vehicle-stereo-main
+  file: configs/calibration/vehicle-stereo-main.json
+  body_frame: base_link
+  rig_frame: stereo_rig
+  world_frame: world
+
+rectification:
+  backend: opencv
+  output_resolution: [1440, 1080]
+
+detector:
+  backend: onnxruntime
+  model_id: yolo26-volleyball-640-fp16
+  per_camera: true
+  input_resolution: [640, 640]
+  input_format: bgr8
+  resize_mode: letterbox
+  confidence_threshold: 0.30
+  nms_iou_threshold: 0.40
+  max_detections: 10
+  center_method: bbox_center
+
+stereo:
+  association:
+    epipolar_tolerance_px: 12.0
+    max_size_ratio: 2.0
+    min_shifted_iou: 0.05
+    max_disparity_px: 2048.0
+    record_rejected: true
+  triangulation:
+    backend: opencv
+    primary_method: roi_multi_point
+    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    propagate_covariance: true
+    subpixel:
+      patch_radius: 5
+      search_radius_px: 8
+      max_points: 12
+      min_points: 4
+      min_confidence: 0.25
+      max_stddev_px: 1.0
+      time_budget_ms: 1.5
+  min_depth_m: 0.8
+  max_depth_m: 15.0
+  ball_diameter_m: 0.210
+
+tracking:
+  enabled: true
+  filter: kalman_ca
+  publish_filtered_as_measurement: false
+
+prediction:
+  enabled: false
+  owner: none
+  model: none
+
+recording:
+  enabled: false
+  dataset_root: data/captures
+  schema_version: 2.1.0
+  raw_frames: none
+  loss_policy: mark_dropped
+  atomic_publish: true
+  verify_hashes: true
+
+publisher:
+  enabled: false
+  backend: none
+  topic: ""
+  qos: sensor_data
+
+diagnostics:
+  json_logs: true
+  processing_timing: true
+  metrics_interval_frames: 900
+

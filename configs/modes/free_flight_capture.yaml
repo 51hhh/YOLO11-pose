@@ -1,0 +1,27 @@
+runtime:
+  mode: capture
+  queue:
+    capacity: 256
+    overflow_policy: block
+
+tracking:
+  enabled: true
+  filter: kalman_ca
+  publish_filtered_as_measurement: false
+
+prediction:
+  enabled: false
+  owner: offline
+  model: none
+
+recording:
+  enabled: true
+  dataset_root: data/captures
+  raw_frames: all
+  loss_policy: fail_trial
+
+publisher:
+  enabled: false
+  backend: none
+  topic: ""
+

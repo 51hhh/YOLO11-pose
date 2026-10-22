@@ -1,0 +1,10 @@
+schema_version: 1
+profile: nx-rdk
+description: Jetson Orin NX 双目实时感知并向 RDK 发布直接观测
+layers:
+  - defaults/runtime.yaml
+  - hardware/nx_hik_stereo.yaml
+  - calibration/vehicle_stereo_main.yaml
+  - pipelines/dual_yolo_roi.yaml
+  - modes/nx_rdk_runtime.yaml
+

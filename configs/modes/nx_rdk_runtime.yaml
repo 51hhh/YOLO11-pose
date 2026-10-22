@@ -1,0 +1,27 @@
+runtime:
+  mode: runtime
+  queue:
+    capacity: 3
+    overflow_policy: drop_oldest
+
+tracking:
+  enabled: true
+  filter: kalman_ca
+  publish_filtered_as_measurement: false
+
+prediction:
+  enabled: false
+  owner: rdk
+  model: none
+
+recording:
+  enabled: false
+  raw_frames: none
+  loss_policy: mark_dropped
+
+publisher:
+  enabled: true
+  backend: ros2
+  topic: /nx/ball/observation
+  qos: sensor_data
+

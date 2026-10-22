@@ -1,0 +1,5 @@
+# 复制为 configs/local.yaml 作为本机参考；该文件默认不入库。
+# 正式 profile 不会自动读取 local.yaml，避免无声覆盖。
+recording:
+  dataset_root: data/captures
+

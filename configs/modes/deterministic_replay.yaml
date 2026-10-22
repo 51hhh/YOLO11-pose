@@ -1,0 +1,26 @@
+runtime:
+  mode: replay
+  queue:
+    capacity: 64
+    overflow_policy: block
+
+tracking:
+  enabled: false
+  filter: none
+  publish_filtered_as_measurement: false
+
+prediction:
+  enabled: false
+  owner: offline
+  model: none
+
+recording:
+  enabled: false
+  raw_frames: none
+  loss_policy: fail_trial
+
+publisher:
+  enabled: false
+  backend: none
+  topic: ""
+
