@@ -174,6 +174,32 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
+def _distribution(values: list[float]) -> dict[str, float | int | None]:
+    """为延迟与误差提供稳定、无第三方依赖的摘要。"""
+
+    return {
+        "count": len(values),
+        "mean": sum(values) / len(values) if values else None,
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99),
+        "max": max(values) if values else None,
+    }
+
+
+def _optional_timestamp_ns(row: Mapping[str, str], name: str) -> int | None:
+    value = row.get(name, "")
+    if value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise DatasetError(f"camera_frames.{name} 必须是整数纳秒") from error
+    if parsed < 0:
+        raise DatasetError(f"camera_frames.{name} 不得为负")
+    return parsed
+
+
 def _mahalanobis_sq(
     error: tuple[float, float, float],
     covariance: tuple[float, float, float, float, float, float] | None,
@@ -328,7 +354,52 @@ def _trial_quality(trial: Path, metadata: Mapping[str, Any]) -> dict[str, Any]:
         role: sum(row["camera_id"] == camera_id for row in frames)
         for role, camera_id in roles.items()
     }
-    common_frames = min(frame_counts.values(), default=0)
+    frames_by_role: dict[str, dict[int, dict[str, str]]] = {
+        role: {
+            int(row["frame_index"]): row
+            for row in frames
+            if row["camera_id"] == camera_id
+        }
+        for role, camera_id in roles.items()
+    }
+    common_indices = sorted(
+        set(frames_by_role.get("left", {})) & set(frames_by_role.get("right", {}))
+    )
+    common_frames = len(common_indices)
+
+    receive_latency_ms: dict[str, list[float]] = {"left": [], "right": []}
+    inference_latency_ms: dict[str, list[float]] = {"left": [], "right": []}
+    arrival_delta_abs_ms: list[float] = []
+    arrival_order = {"left_first": 0, "right_first": 0, "tie": 0, "unknown": 0}
+    for frame_index in common_indices:
+        paired_rows = {
+            role: frames_by_role[role][frame_index]
+            for role in ("left", "right")
+        }
+        receives: dict[str, int | None] = {}
+        for role, row in paired_rows.items():
+            exposure = _optional_timestamp_ns(row, "exposure_start_ns")
+            receive = _optional_timestamp_ns(row, "receive_timestamp_ns")
+            inference = _optional_timestamp_ns(row, "inference_done_timestamp_ns")
+            receives[role] = receive
+            if exposure is not None and receive is not None:
+                receive_latency_ms[role].append((receive - exposure) / 1.0e6)
+            if exposure is not None and inference is not None:
+                inference_latency_ms[role].append((inference - exposure) / 1.0e6)
+
+        left_receive = receives["left"]
+        right_receive = receives["right"]
+        if left_receive is None or right_receive is None:
+            arrival_order["unknown"] += 1
+        elif left_receive < right_receive:
+            arrival_order["left_first"] += 1
+            arrival_delta_abs_ms.append((right_receive - left_receive) / 1.0e6)
+        elif right_receive < left_receive:
+            arrival_order["right_first"] += 1
+            arrival_delta_abs_ms.append((left_receive - right_receive) / 1.0e6)
+        else:
+            arrival_order["tie"] += 1
+            arrival_delta_abs_ms.append(0.0)
     candidate_counts = {
         role: sum(row["camera_id"] == camera_id for row in detections)
         for role, camera_id in roles.items()
@@ -370,6 +441,20 @@ def _trial_quality(trial: Path, metadata: Mapping[str, Any]) -> dict[str, Any]:
             "p50": _percentile(gaps_ms, 0.50),
             "p95": _percentile(gaps_ms, 0.95),
             "max": max(gaps_ms) if gaps_ms else None,
+        },
+        "transport_timing": {
+            "exposure_to_receive_ms": {
+                role: _distribution(values)
+                for role, values in receive_latency_ms.items()
+            },
+            "exposure_to_inference_done_ms": {
+                role: _distribution(values)
+                for role, values in inference_latency_ms.items()
+            },
+            "left_right_arrival_delta_abs_ms": _distribution(arrival_delta_abs_ms),
+            "arrival_order": arrival_order,
+            "pairing_key": "frame_counter",
+            "arrival_time_used_for_pairing": False,
         },
         "raw_files": len(metadata.get("raw_manifest", [])),
     }

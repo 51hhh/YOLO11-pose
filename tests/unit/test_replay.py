@@ -28,6 +28,16 @@ class ReplayTests(unittest.TestCase):
             self.assertEqual(result.output_directory.name, result.fingerprint_sha256)
             self.assertEqual(result.metrics["quality"]["direct_observations"], 1)
             self.assertEqual(result.metrics["quality"]["accepted_pairs"], 1)
+            timing = result.metrics["quality"]["transport_timing"]
+            self.assertEqual(timing["arrival_order"]["tie"], 1)
+            self.assertEqual(timing["arrival_order"]["left_first"], 0)
+            self.assertEqual(timing["arrival_order"]["right_first"], 0)
+            self.assertEqual(timing["pairing_key"], "frame_counter")
+            self.assertFalse(timing["arrival_time_used_for_pairing"])
+            self.assertAlmostEqual(
+                timing["exposure_to_receive_ms"]["left"]["p50"],
+                0.00015,
+            )
             self.assertIsNone(result.metrics["shadow_comparison"])
             self.assertEqual((trial / "trajectory.csv").read_bytes(), trajectory_before)
             validate_trial(trial, project_root=ROOT)
