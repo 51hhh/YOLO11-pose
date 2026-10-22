@@ -189,21 +189,25 @@
     },
     "publisher": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "backend", "topic", "qos"],
+      "required": ["enabled", "backend", "topic", "frame_id", "qos", "control_goal_enabled"],
       "properties": {
         "enabled": {"type": "boolean"},
         "backend": {"enum": ["none", "ros2"]},
         "topic": {"type": "string"},
-        "qos": {"enum": ["sensor_data", "reliable"]}
+        "frame_id": {"type": "string"},
+        "qos": {"enum": ["sensor_data", "reliable"]},
+        "control_goal_enabled": {"type": "boolean"}
       }
     },
     "diagnostics": {
       "type": "object", "additionalProperties": false,
-      "required": ["json_logs", "processing_timing", "metrics_interval_frames"],
+      "required": ["json_logs", "processing_timing", "metrics_interval_frames", "ros2_depth_enabled", "realtime_dump_enabled"],
       "properties": {
         "json_logs": {"type": "boolean"},
         "processing_timing": {"type": "boolean"},
-        "metrics_interval_frames": {"type": "integer", "minimum": 1}
+        "metrics_interval_frames": {"type": "integer", "minimum": 1},
+        "ros2_depth_enabled": {"type": "boolean"},
+        "realtime_dump_enabled": {"type": "boolean"}
       }
     }
   },

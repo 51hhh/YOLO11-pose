@@ -74,6 +74,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "serial"):
             _validate_semantics(ROOT, payload)
 
+    def test_semantics_reject_enabled_publisher_without_backend(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["publisher"]["backend"] = "none"
+        with self.assertRaisesRegex(ConfigError, "backend"):
+            _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),

@@ -57,6 +57,26 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
             profile.data["stereo"]["association"]["epipolar_tolerance_px"],
         )
 
+    def test_runtime_projection_has_no_hidden_legacy_side_effects(self) -> None:
+        profile = load_profile("nx-rdk", project_root=ROOT)
+        rendered = build_legacy_pipeline_config(profile, project_root=ROOT)
+        self.assertFalse(rendered["recording"]["enabled"])
+        self.assertFalse(rendered["baseline_recording"]["enabled"])
+        self.assertFalse(rendered["prediction"]["enable"])
+        self.assertTrue(rendered["ros2"]["enable"])
+        self.assertTrue(rendered["ros2"]["nx_observation"]["enable"])
+        self.assertEqual(
+            rendered["ros2"]["nx_observation"]["topic"],
+            "/nx/ball/observation",
+        )
+        self.assertEqual(
+            rendered["ros2"]["nx_observation"]["frame_id"],
+            "nx_left_rectified_optical_frame",
+        )
+        self.assertFalse(rendered["ros2"]["control_goal"]["enable"])
+        self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
+        self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

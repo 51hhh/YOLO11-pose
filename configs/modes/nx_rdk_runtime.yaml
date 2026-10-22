@@ -23,5 +23,7 @@ publisher:
   enabled: true
   backend: ros2
   topic: /nx/ball/observation
+  frame_id: nx_left_rectified_optical_frame
   qos: sensor_data
+  control_goal_enabled: false
 

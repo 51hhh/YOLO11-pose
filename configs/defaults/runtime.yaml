@@ -121,10 +121,14 @@ publisher:
   enabled: false
   backend: none
   topic: ""
+  frame_id: stereo_rig
   qos: sensor_data
+  control_goal_enabled: false
 
 diagnostics:
   json_logs: true
   processing_timing: true
   metrics_interval_frames: 900
+  ros2_depth_enabled: false
+  realtime_dump_enabled: false
 

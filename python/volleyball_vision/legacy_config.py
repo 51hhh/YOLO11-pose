@@ -98,14 +98,42 @@ def build_legacy_pipeline_config(
             "target_fps": round(config.data["runtime"]["nominal_fps"]),
         }
     )
+    # 主线从不启用旧版 CSV 录制器；原始层只能通过 capture_v21 发布。
+    result.setdefault("recording", {})["enabled"] = False
+    result.setdefault("baseline_recording", {})["enabled"] = False
+    prediction = config.data["prediction"]
+    result.setdefault("prediction", {})["enable"] = bool(
+        prediction["enabled"] and prediction["owner"] == "nx"
+    )
+    publisher = config.data["publisher"]
+    ros2 = result.setdefault("ros2", {})
+    ros2["enable"] = bool(
+        publisher["enabled"] and publisher["backend"] == "ros2"
+    )
+    nx_observation = ros2.setdefault("nx_observation", {})
+    nx_observation["enable"] = ros2["enable"]
+    nx_observation["topic"] = publisher["topic"]
+    nx_observation["frame_id"] = publisher["frame_id"]
+    ros2.setdefault("control_goal", {})["enable"] = bool(
+        ros2["enable"] and publisher["control_goal_enabled"]
+    )
+    diagnostics = config.data["diagnostics"]
+    ros2.setdefault("diagnostic", {})["enable"] = bool(
+        ros2["enable"] and diagnostics["ros2_depth_enabled"]
+    )
+    result.setdefault("debug_realtime_dump", {})["enabled"] = diagnostics[
+        "realtime_dump_enabled"
+    ]
     if capture_stage is not None:
         # 采集模式禁用会丢旧帧的异步路径和旧 CSV 录制器。
         result["performance"]["drop_stale_roi_frames"] = False
         result["performance"]["async_roi_stage2"] = False
-        result.setdefault("recording", {})["enabled"] = False
-        result.setdefault("baseline_recording", {})["enabled"] = False
         result.setdefault("prediction", {})["enable"] = False
         result.setdefault("ros2", {})["enable"] = False
+        result["ros2"]["nx_observation"]["enable"] = False
+        result["ros2"]["control_goal"]["enable"] = False
+        result["ros2"]["diagnostic"]["enable"] = False
+        result["debug_realtime_dump"]["enabled"] = False
         result["capture_v21"] = {
             "enabled": True,
             "output_dir": str(Path(capture_stage).resolve()),

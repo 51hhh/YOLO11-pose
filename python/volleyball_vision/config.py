@@ -236,6 +236,25 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         errors.append("runtime 模式的 overflow_policy 必须为 drop_oldest 或 block")
     if payload["recording"]["enabled"] and not payload["recording"]["dataset_root"]:
         errors.append("录制启用时 recording.dataset_root 不得为空")
+    publisher = payload["publisher"]
+    if publisher["enabled"]:
+        if publisher["backend"] == "none":
+            errors.append("publisher.enabled=true 时 backend 不得为 none")
+        if not publisher["topic"]:
+            errors.append("publisher.enabled=true 时 topic 不得为空")
+        if not publisher["frame_id"]:
+            errors.append("publisher.enabled=true 时 frame_id 不得为空")
+    elif publisher["control_goal_enabled"]:
+        errors.append("publisher 关闭时不得启用 control_goal")
+    prediction = payload["prediction"]
+    if prediction["enabled"] and prediction["owner"] in {"none", "rdk", "offline"}:
+        errors.append("本仓库启用 prediction 时 owner 必须为 nx")
+    if prediction["enabled"] and prediction["model"] == "none":
+        errors.append("prediction.enabled=true 时 model 不得为 none")
+    if mode == "capture" and not payload["recording"]["enabled"]:
+        errors.append("capture 模式必须启用 recording")
+    if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
+        errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
 
     manifest_path = root / "models" / "manifest.yaml"
     manifest = _load_yaml(manifest_path)
