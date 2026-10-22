@@ -10,7 +10,7 @@
  */
 
 #include "trt_detector.h"
-#include "trt_engine_contract.h"
+#include "volleyball/adapters/tensorrt/engine_contract.hpp"
 #include "volleyball/logging/log.hpp"
 
 #include <NvInfer.h>
@@ -68,6 +68,10 @@ extern "C" void launchDFLDecodeKernel(
     cudaStream_t stream);
 
 namespace stereo3d {
+
+using volleyball::adapters::tensorrt::DetectorEngineContract;
+using volleyball::adapters::tensorrt::DetectorTensorSpec;
+using volleyball::adapters::tensorrt::validateDetectorEngineContract;
 
 // TensorRT Logger
 static class : public nvinfer1::ILogger {

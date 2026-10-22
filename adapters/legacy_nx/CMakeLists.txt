@@ -25,6 +25,14 @@ if(NOT EXISTS
     "Mainline hik_mvs adapter not found next to legacy_nx: "
     "${VOLLEYBALL_HIK_MVS_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_TENSORRT_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../tensorrt")
+if(NOT EXISTS
+   "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}/include/volleyball/adapters/tensorrt/engine_contract.hpp")
+  message(FATAL_ERROR
+    "Mainline tensorrt adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}")
+endif()
 set(VOLLEYBALL_LOGGING_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/logging")
 if(NOT EXISTS
@@ -55,6 +63,11 @@ add_subdirectory(
 add_subdirectory(
   "${VOLLEYBALL_PORTS_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/mainline_ports"
+  EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+  "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_tensorrt"
   EXCLUDE_FROM_ALL
 )
 
@@ -311,7 +324,6 @@ set(PIPELINE_SOURCES
   src/stereo/neural_feature_matcher_xfeat.cpp
   src/stereo/neural_feature_matcher_direct.cpp
   src/stereo/neural_feature_matcher_fused.cpp
-  src/detect/trt_engine_contract.cpp
   src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
   src/fusion/hybrid_depth_candidate_copy.cpp
@@ -370,6 +382,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 
 # ==================== 链接 ====================
 target_link_libraries(stereo_pipeline
+  volleyball::tensorrt_contract
   # VPI
   vpi
   # TensorRT

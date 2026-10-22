@@ -134,6 +134,7 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/capture_v21/src", "adapters/capture_v21/CMakeLists.txt"),
     ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
     ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
+    ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("adapters/legacy_nx/tools", "adapters/legacy_nx/tools/CMakeLists.txt"),

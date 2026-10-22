@@ -60,13 +60,6 @@ add_legacy_nx_test(
   ${LEGACY_NX_SOURCE_DIR}/main_cli_options.cpp
 )
 
-# TensorRT 契约
-add_legacy_nx_test(
-  trt_engine_contract_tests
-  detect/trt_engine_contract_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/detect/trt_engine_contract.cpp"
-)
-
 # 双目与 VPI/CUDA 桩
 add_legacy_nx_test(
   depth_match_contract_tests

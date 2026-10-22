@@ -1,4 +1,4 @@
-#include "trt_engine_contract.h"
+#include "volleyball/adapters/tensorrt/engine_contract.hpp"
 
 #include <climits>
 #include <map>
@@ -6,7 +6,7 @@
 #include <sstream>
 #include <utility>
 
-namespace stereo3d {
+namespace volleyball::adapters::tensorrt {
 namespace {
 
 bool positiveDimensions(const DetectorTensorSpec& tensor, std::string& error) {
@@ -170,4 +170,4 @@ bool validateDetectorEngineContract(
     return true;
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::tensorrt

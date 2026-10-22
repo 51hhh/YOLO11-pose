@@ -1,18 +1,17 @@
 /**
- * @file trt_engine_contract.h
+ * @file engine_contract.hpp
  * @brief 当前排球检测器能够安全执行的 TensorRT I/O 契约。
  *
  * 这个文件故意不依赖 TensorRT/CUDA，便于在无 Jetson 的主机上单测。
  */
 
-#ifndef STEREO_3D_PIPELINE_TRT_ENGINE_CONTRACT_H_
-#define STEREO_3D_PIPELINE_TRT_ENGINE_CONTRACT_H_
+#pragma once
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace stereo3d {
+namespace volleyball::adapters::tensorrt {
 
 struct DetectorTensorSpec {
     std::string name;
@@ -46,6 +45,4 @@ bool validateDetectorEngineContract(
     DetectorEngineContract& contract,
     std::string& error);
 
-}  // namespace stereo3d
-
-#endif  // STEREO_3D_PIPELINE_TRT_ENGINE_CONTRACT_H_
+}  // namespace volleyball::adapters::tensorrt

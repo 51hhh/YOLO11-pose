@@ -1,0 +1,7 @@
+add_library(volleyball_tensorrt_contract
+  src/engine_contract.cpp
+)
+add_library(volleyball::tensorrt_contract ALIAS volleyball_tensorrt_contract)
+
+target_include_directories(volleyball_tensorrt_contract PUBLIC include)
+target_compile_features(volleyball_tensorrt_contract PUBLIC cxx_std_17)

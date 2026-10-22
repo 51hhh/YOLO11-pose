@@ -37,6 +37,14 @@ add_adapter_test(gpio_trigger_tests gpio_trigger_tests.cpp)
 target_link_libraries(gpio_trigger_tests PRIVATE volleyball::gpio)
 
 add_adapter_test(
+  tensorrt_engine_contract_tests
+  tensorrt_engine_contract_tests.cpp
+)
+target_link_libraries(
+  tensorrt_engine_contract_tests PRIVATE volleyball::tensorrt_contract
+)
+
+add_adapter_test(
   hik_mvs_camera_tests
   hik_mvs_camera_tests.cpp
 )
