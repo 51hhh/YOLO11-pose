@@ -18,8 +18,12 @@ struct StubCamera {
     bool fail_pixel_format_string = false;
     bool fail_pixel_format_enum = false;
     bool fail_free = false;
+    bool fail_frame_rate_disable = false;
+    float exposure_readback = 9867.0F;
+    float gain_readback = 11.99F;
     std::string fail_selector;
     std::string fail_enable;
+    std::string false_readback_selector;
     std::string selected_selector;
     std::set<std::string> enabled_selectors;
     std::array<unsigned char, 4> image {{0x11, 0x22, 0x33, 0x44}};
@@ -110,6 +114,8 @@ void testConfigurationRequiresCoreMetadata() {
               left_camera.enabled_selectors.count("Framecounter") == 1 &&
               left_camera.enabled_selectors.count("ExtTriggerCount") == 1,
           "all three core metadata selectors must be enabled");
+    check(left_camera.enabled_selectors.size() == 3,
+          "non-core persistent metadata selectors must be disabled");
 
     resetStub();
     left_camera.fail_selector = "Framecounter";
@@ -122,19 +128,34 @@ void testConfigurationRequiresCoreMetadata() {
           "failure to enable ExtTriggerCount must be fatal");
 
     resetStub();
+    left_camera.false_readback_selector = "Timestamp";
+    check(!hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
+          "required metadata readback mismatch must be fatal");
+
+    resetStub();
     left_camera.fail_selector = "Exposure";
     check(hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
           "optional metadata selector failure must remain diagnostic only");
 
     resetStub();
-    left_camera.fail_pixel_format_string = true;
+    left_camera.fail_pixel_format_enum = true;
     check(hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
-          "numeric pixel-format fallback must support older SDK nodes");
+          "string pixel-format fallback must support SDK enum differences");
     resetStub();
     left_camera.fail_pixel_format_string = true;
     left_camera.fail_pixel_format_enum = true;
     check(!hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
           "configuration must fail when both pixel-format paths fail");
+
+    resetStub();
+    left_camera.fail_frame_rate_disable = true;
+    check(hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
+          "unavailable internal frame-rate node must remain optional");
+
+    resetStub();
+    left_camera.exposure_readback = 9000.0F;
+    check(!hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
+          "exposure readback outside tolerance must be fatal");
 }
 
 void testGrabCopiesMetadataAndChecksRelease() {
@@ -224,25 +245,50 @@ int MV_CC_SetFloatValue(void*, const char*, float) { return MV_OK; }
 
 int MV_CC_SetBoolValue(void* handle, const char* node, bool value) {
     auto* camera = static_cast<StubCamera*>(handle);
-    if (std::string(node) == "FrameSpecInfo" && value) {
-        if (camera->fail_enable == camera->selected_selector) return -14;
-        camera->enabled_selectors.insert(camera->selected_selector);
+    const std::string node_name(node);
+    if (node_name == "AcquisitionFrameRateEnable" &&
+        camera->fail_frame_rate_disable) {
+        return -16;
+    }
+    if (node_name == "FrameSpecInfo") {
+        if (value && camera->fail_enable == camera->selected_selector) {
+            return -14;
+        }
+        if (value) {
+            camera->enabled_selectors.insert(camera->selected_selector);
+        } else {
+            camera->enabled_selectors.erase(camera->selected_selector);
+        }
     }
     return MV_OK;
 }
 
-int MV_CC_GetEnumValue(void*, const char*, MVCC_ENUMVALUE* value) {
-    value->nCurValue = 1;
+int MV_CC_GetEnumValue(void*, const char* node, MVCC_ENUMVALUE* value) {
+    const std::string node_name(node);
+    value->nCurValue = node_name == "TriggerMode" ? 1U : 0U;
     return MV_OK;
 }
 
-int MV_CC_GetFloatValue(void*, const char*, MVCC_FLOATVALUE* value) {
-    value->fCurValue = 1.0F;
+int MV_CC_GetFloatValue(
+    void* handle,
+    const char* node,
+    MVCC_FLOATVALUE* value) {
+    const auto* camera = static_cast<StubCamera*>(handle);
+    value->fCurValue = std::string(node) == "ExposureTime"
+        ? camera->exposure_readback
+        : camera->gain_readback;
     return MV_OK;
 }
 
-int MV_CC_GetBoolValue(void*, const char*, bool* value) {
-    *value = true;
+int MV_CC_GetBoolValue(void* handle, const char* node, bool* value) {
+    const auto* camera = static_cast<StubCamera*>(handle);
+    if (std::string(node) == "FrameSpecInfo") {
+        *value = camera->false_readback_selector == camera->selected_selector
+            ? false
+            : camera->enabled_selectors.count(camera->selected_selector) != 0;
+    } else {
+        *value = false;
+    }
     return MV_OK;
 }
 

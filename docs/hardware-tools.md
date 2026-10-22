@@ -19,7 +19,7 @@ adapters/legacy_nx/build/hik_frame_metadata_probe \
   --frames 1000 --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
 ```
 
-探针用于确认 payload 自带的 `FrameCounter` 是否连续、左右是否同号，以及 USB 到达顺序是否会交换。它会拒绝左右角色解析到同一物理相机，并要求 `Timestamp`、`Framecounter`、`ExtTriggerCount` 三个核心 FrameSpecInfo 字段全部启用成功；任一关键节点配置或 SDK 缓冲归还失败都会以非零状态退出，不能把不完整元数据当作通过。GPIO 上升沿是曝光开始估计的权威时基；当前相机曝光延迟按 0 ns 假设并明确标记为未测量，后续示波器测量不得覆盖原始厂商时间戳或主机到达时间。
+探针用于确认 payload 自带的 `FrameCounter` 是否连续、左右是否同号，以及 USB 到达顺序是否会交换。它会拒绝左右角色解析到同一物理相机，并与正式取流保持相同的最小水印策略：先关闭持久化的多余 FrameSpecInfo，再只启用并读回确认 `Timestamp`、`Framecounter`、`ExtTriggerCount`。固定曝光、增益、上升沿触发的关键读回不匹配，或 SDK 缓冲归还失败，都会以非零状态退出，不能把不完整元数据当作通过。GPIO 上升沿是曝光开始估计的权威时基；当前相机曝光延迟按 0 ns 假设并明确标记为未测量，后续示波器测量不得覆盖原始厂商时间戳或主机到达时间。
 
 ## 标定图采集
 

@@ -1,6 +1,7 @@
 #include "camera_session.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -8,42 +9,29 @@
 namespace hik_metadata_probe {
 namespace {
 
-bool setEnumString(
+bool setEnumValueOrString(
     void* handle,
     const char* node,
-    const char* value,
+    unsigned int numeric_value,
+    const char* string_value,
     const char* tag,
     bool required = false) {
-    const int status = MV_CC_SetEnumValueByString(handle, node, value);
-    if (status != MV_OK) {
-        std::printf(
-            "[%s] set %s=%s failed ret=0x%X%s\n",
-            tag,
-            node,
-            value,
-            status,
-            required ? " REQUIRED" : "");
-    }
-    return status == MV_OK;
-}
-
-bool setEnumValue(
-    void* handle,
-    const char* node,
-    unsigned int value,
-    const char* tag,
-    bool required = false) {
-    const int status = MV_CC_SetEnumValue(handle, node, value);
-    if (status != MV_OK) {
-        std::printf(
-            "[%s] set %s=%u failed ret=0x%X%s\n",
-            tag,
-            node,
-            value,
-            status,
-            required ? " REQUIRED" : "");
-    }
-    return status == MV_OK;
+    const int numeric_status = MV_CC_SetEnumValue(
+        handle, node, numeric_value);
+    if (numeric_status == MV_OK) return true;
+    const int string_status = MV_CC_SetEnumValueByString(
+        handle, node, string_value);
+    if (string_status == MV_OK) return true;
+    std::printf(
+        "[%s] set %s=%u/%s failed ret=0x%X/0x%X%s\n",
+        tag,
+        node,
+        numeric_value,
+        string_value,
+        numeric_status,
+        string_status,
+        required ? " REQUIRED" : "");
+    return false;
 }
 
 bool setBoolValue(
@@ -108,9 +96,10 @@ bool getFloatValue(void* handle, const char* node, float& value) {
     return true;
 }
 
-bool enableFrameSpecItem(
+bool setFrameSpecItem(
     void* handle,
     const char* item,
+    bool enabled,
     const char* tag,
     bool required) {
     const int select_status = MV_CC_SetEnumValueByString(
@@ -124,29 +113,85 @@ bool enableFrameSpecItem(
             required ? " REQUIRED" : "");
         return !required;
     }
-    const int enable_status = MV_CC_SetBoolValue(
-        handle, "FrameSpecInfo", true);
-    if (enable_status != MV_OK) {
+    const int write_status = MV_CC_SetBoolValue(
+        handle, "FrameSpecInfo", enabled);
+    if (write_status != MV_OK) {
         std::printf(
-            "[%s] enable FrameSpecInfo[%s] failed ret=0x%X%s\n",
+            "[%s] set FrameSpecInfo[%s]=%d failed ret=0x%X%s\n",
             tag,
             item,
-            enable_status,
+            enabled ? 1 : 0,
+            write_status,
+            required ? " REQUIRED" : "");
+        return !required;
+    }
+    bool readback = false;
+    if (!getBoolValue(handle, "FrameSpecInfo", readback) ||
+        readback != enabled) {
+        std::printf(
+            "[%s] FrameSpecInfo[%s] readback mismatch expected=%d got=%d%s\n",
+            tag,
+            item,
+            enabled ? 1 : 0,
+            readback ? 1 : 0,
             required ? " REQUIRED" : "");
         return !required;
     }
     return true;
 }
 
-bool enableFrameSpecInfo(void* handle, const char* tag) {
-    for (const char* item : {"Timestamp", "Framecounter", "ExtTriggerCount"}) {
-        if (!enableFrameSpecItem(handle, item, tag, true)) return false;
-    }
+bool configureMinimalFrameSpecInfo(void* handle, const char* tag) {
+    // MVS 客户端会持久化水印开关；先清空再只启用生产链依赖的三项。
     for (const char* item : {
-             "Exposure", "Gain", "LineInputOutput", "ROIPosition"}) {
-        (void)enableFrameSpecItem(handle, item, tag, false);
+             "Timestamp", "Gain", "Exposure", "BrightnessInfo",
+             "WhiteBalance", "Framecounter", "ExtTriggerCount",
+             "LineInputOutput", "ROIPosition"}) {
+        (void)setFrameSpecItem(handle, item, false, tag, false);
+    }
+    for (const char* item : {"Timestamp", "Framecounter", "ExtTriggerCount"}) {
+        if (!setFrameSpecItem(handle, item, true, tag, true)) return false;
     }
     return true;
+}
+
+bool verifyCriticalReadback(
+    void* handle,
+    const Args& args,
+    const char* tag) {
+    float exposure = 0.0F;
+    float gain = 0.0F;
+    unsigned int trigger_mode = 0;
+    unsigned int trigger_source = 0;
+    unsigned int trigger_activation = 0;
+    const bool have_activation = getEnumValue(
+        handle, "TriggerActivation", trigger_activation);
+    if (!getFloatValue(handle, "ExposureTime", exposure) ||
+        !getFloatValue(handle, "Gain", gain) ||
+        !getEnumValue(handle, "TriggerMode", trigger_mode) ||
+        !getEnumValue(handle, "TriggerSource", trigger_source)) {
+        std::printf("[%s] critical camera readback failed REQUIRED\n", tag);
+        return false;
+    }
+    const bool matches =
+        std::fabs(exposure - args.exposure_us) <= 10.0F &&
+        std::fabs(gain - args.gain_db) <= 0.2F &&
+        trigger_mode == 1U && trigger_source == 0U &&
+        (!have_activation || trigger_activation == 0U);
+    if (!matches) {
+        std::printf(
+            "[%s] readback mismatch exp=%.3f/%.3f gain=%.3f/%.3f "
+            "trigger=%u/%u activation=%s%u REQUIRED\n",
+            tag,
+            exposure,
+            args.exposure_us,
+            gain,
+            args.gain_db,
+            trigger_mode,
+            trigger_source,
+            have_activation ? "" : "?",
+            trigger_activation);
+    }
+    return matches;
 }
 
 }  // namespace
@@ -286,31 +331,44 @@ bool openCamera(
 
 bool configureCamera(void* handle, const Args& args, const char* tag) {
     if (handle == nullptr) return false;
-    if (!setEnumString(handle, "PixelFormat", "BayerRG8", tag, false) &&
-        !setEnumValue(
-            handle, "PixelFormat", PixelType_Gvsp_BayerRG8, tag, true)) {
+    if (!setEnumValueOrString(
+            handle,
+            "PixelFormat",
+            PixelType_Gvsp_BayerRG8,
+            "BayerRG8",
+            tag,
+            true)) {
         return false;
     }
-    if (!setEnumString(handle, "ExposureAuto", "Off", tag, true) ||
-        !setFloatValue(handle, "ExposureTime", args.exposure_us, tag, true) ||
-        !setEnumString(handle, "GainAuto", "Off", tag, true) ||
-        !setFloatValue(handle, "Gain", args.gain_db, tag, true) ||
-        !setBoolValue(
-            handle, "AcquisitionFrameRateEnable", false, tag, true)) {
+    (void)setEnumValueOrString(
+        handle, "ExposureAuto", 0, "Off", tag, false);
+    (void)setEnumValueOrString(handle, "GainAuto", 0, "Off", tag, false);
+    if (!setFloatValue(handle, "ExposureTime", args.exposure_us, tag, true) ||
+        !setFloatValue(handle, "Gain", args.gain_db, tag, true)) {
         return false;
     }
+    (void)setBoolValue(
+        handle, "AcquisitionFrameRateEnable", false, tag, false);
     if (MV_CC_SetGrabStrategy(handle, MV_GrabStrategy_OneByOne) != MV_OK ||
         MV_CC_SetImageNodeNum(handle, 8) != MV_OK) {
         std::printf("[%s] failed to configure OneByOne/FIFO REQUIRED\n", tag);
         return false;
     }
-    if (!setEnumString(handle, "TriggerMode", "On", tag, true) ||
-        !setEnumString(handle, "TriggerSource", "Line0", tag, true) ||
-        !setEnumString(
-            handle, "TriggerActivation", "RisingEdge", tag, true)) {
+    if (!setEnumValueOrString(
+            handle, "TriggerMode", 1, "On", tag, true) ||
+        !setEnumValueOrString(
+            handle, "TriggerSource", 0, "Line0", tag, true) ||
+        !setEnumValueOrString(
+            handle,
+            "TriggerActivation",
+            0,
+            "RisingEdge",
+            tag,
+            true)) {
         return false;
     }
-    return enableFrameSpecInfo(handle, tag);
+    return configureMinimalFrameSpecInfo(handle, tag) &&
+        verifyCriticalReadback(handle, args, tag);
 }
 
 void printNodeReadback(void* handle, const char* tag) {
