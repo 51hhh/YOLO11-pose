@@ -74,6 +74,22 @@ ALLOWED_TOOL_FILES = {
     "tools/hardware/stereo_calibrate/images.h",
     "tools/hardware/stereo_calibrate/main.cpp",
 }
+ALLOWED_ROOT_MARKDOWN = {
+    "CONTRIBUTING.md",
+    "README.md",
+}
+ALLOWED_DOC_ROOT_FILES = {
+    "docs/acceptance.md",
+    "docs/architecture.md",
+    "docs/capture.md",
+    "docs/configuration.md",
+    "docs/hardware-tools.md",
+    "docs/migration.md",
+}
+ALLOWED_DOC_GROUPS = {
+    "adr",
+    "pipeline",
+}
 ALLOWED_TEST_ROOT_FILES = {
     "tests/__init__.py",
 }
@@ -139,6 +155,7 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
     ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
     ("adapters/cuda_preprocess/src", "adapters/cuda_preprocess/CMakeLists.txt"),
+    ("adapters/cuda_depth/src", "adapters/cuda_depth/CMakeLists.txt"),
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/ros2/src", "adapters/ros2/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
@@ -301,6 +318,27 @@ def main() -> int:
         errors.append(
             "文档导航或本地链接无效:\n    "
             + "\n    ".join(documentation_errors)
+        )
+
+    scattered_markdown: list[str] = []
+    for path in tracked:
+        if Path(path).suffix.lower() != ".md":
+            continue
+        if path in ALLOWED_ROOT_MARKDOWN or path.startswith(".github/"):
+            continue
+        if path == "contracts/capture/v2.1.0/README.md":
+            continue
+        if path in ALLOWED_DOC_ROOT_FILES:
+            continue
+        if path.startswith("docs/"):
+            relative = Path(path).relative_to("docs")
+            if len(relative.parts) > 1 and relative.parts[0] in ALLOWED_DOC_GROUPS:
+                continue
+        scattered_markdown.append(path)
+    if scattered_markdown:
+        errors.append(
+            "说明文档只能位于根导航、docs 已声明分组或冻结契约目录:\n    "
+            + "\n    ".join(sorted(scattered_markdown))
         )
 
     cmake_source_errors = _check_cmake_sources(tracked)

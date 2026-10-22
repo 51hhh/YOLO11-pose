@@ -28,7 +28,9 @@ chore(ci): 增加 CPU 契约门禁
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
 - `legacy` 只允许兼容转换和可删除的过渡代码，不得反向被 core 依赖。
 - `tests/cpp/mainline` 不得包含硬件 SDK 或旧 NX 头文件；独立硬件 adapter 的 SDK 桩测试放入 `tests/cpp/adapters`，未迁出的兼容逻辑放入 `tests/cpp/legacy_nx`。
-- `tools` 只保留仓库级维护门禁；可复用用户功能必须成为 `volleyball` 子命令。
+- `tools` 只保留仓库级维护门禁和 `tools/hardware` 下的受测硬件验收程序；可复用用户流程必须成为 `volleyball` 子命令。
+- 说明文档集中在 `docs` 的已声明分组中；根目录只保留 `README.md` 与本文件，冻结数据契约可在契约目录就近保留一个 `README.md`。
+- Python 测试只进入 `tests/unit`、`tests/contract` 或共享夹具 `tests/support`；C++ 测试按 `mainline`、`adapters`、`hardware_tools`、`legacy_nx` 分组。
 
 ## 必跑检查
 
