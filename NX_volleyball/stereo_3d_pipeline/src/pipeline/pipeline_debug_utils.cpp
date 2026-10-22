@@ -1,10 +1,9 @@
 #include "pipeline_debug_utils.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_image_copy.h"
 
-#include <cuda_runtime.h>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include <vpi/Image.h>
 
 #include <algorithm>
 #include <cmath>
@@ -36,62 +35,11 @@ bool writeDebugImage(const std::filesystem::path& output_dir,
 }
 
 bool lockGrayVpiImageCopy(VPIImage img, cv::Mat& out) {
-    VPIImageData data;
-    VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
-                                    VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                    &data);
-    if (st != VPI_SUCCESS) return false;
-    try {
-        const int w = data.buffer.pitch.planes[0].width;
-        const int h = data.buffer.pitch.planes[0].height;
-        const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-        cv::Mat view(h, w, CV_8UC1, data.buffer.pitch.planes[0].data, pitch);
-        view.copyTo(out);
-    } catch (const cv::Exception&) {
-        vpiImageUnlock(img);
-        return false;
-    }
-    vpiImageUnlock(img);
-    return true;
+    return copyVpiGray8ToHost(img, out, "feature debug gray copy");
 }
 
 bool lockBgrVpiImageCopy(VPIImage img, cv::Mat& out) {
-    VPIImageData data;
-    VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
-                                    VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR,
-                                    &data);
-    if (st != VPI_SUCCESS) return false;
-    const int plane_width = data.buffer.pitch.planes[0].width;
-    const int h = data.buffer.pitch.planes[0].height;
-    const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-    const void* src = data.buffer.pitch.planes[0].data;
-    if (plane_width <= 0 || h <= 0 || pitch <= 0 || !src) {
-        vpiImageUnlock(img);
-        return false;
-    }
-    int pixel_width = plane_width;
-    size_t row_bytes = static_cast<size_t>(pixel_width) * 3U;
-    if (row_bytes > static_cast<size_t>(pitch)) {
-        if (plane_width % 3 == 0 &&
-            static_cast<size_t>(plane_width) <= static_cast<size_t>(pitch)) {
-            pixel_width = plane_width / 3;
-            row_bytes = static_cast<size_t>(plane_width);
-        } else {
-            vpiImageUnlock(img);
-            return false;
-        }
-    }
-    out.create(h, pixel_width, CV_8UC3);
-    const cudaError_t err = cudaMemcpy2D(out.data, out.step[0],
-                                         src, static_cast<size_t>(pitch),
-                                         row_bytes, static_cast<size_t>(h),
-                                         cudaMemcpyDeviceToHost);
-    vpiImageUnlock(img);
-    if (err != cudaSuccess) {
-        out.release();
-        return false;
-    }
-    return true;
+    return copyVpiBgr8ToHost(img, out, "feature debug BGR copy");
 }
 
 cv::Mat drawDetectionOverlay(const cv::Mat& image,

@@ -1,6 +1,7 @@
 #include "capture_v21_stage_recorder.h"
 
 #include "logger.h"
+#include "vpi_image_copy.h"
 #include "../stereo/depth_match_contract.h"
 
 #include <algorithm>
@@ -163,29 +164,7 @@ bool CaptureV21StageRecorder::init(
 
 bool CaptureV21StageRecorder::copyGrayImage(
     VPIImage image, cv::Mat& out) const {
-    if (!image) return false;
-    VPIImageData data{};
-    const VPIStatus status = vpiImageLockData(
-        image, VPI_LOCK_READ, VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &data);
-    if (status != VPI_SUCCESS) return false;
-    try {
-        const auto& plane = data.buffer.pitch.planes[0];
-        cv::Mat view(plane.height, plane.width, CV_8UC1,
-                     plane.data, plane.pitchBytes);
-        out = view.clone();
-    } catch (const cv::Exception&) {
-        vpiImageUnlock(image);
-        out.release();
-        return false;
-    }
-    const VPIStatus unlock_status = vpiImageUnlock(image);
-    if (unlock_status != VPI_SUCCESS) {
-        LOG_ERROR("CaptureV21: failed to unlock copied gray image: %d",
-                  (int)unlock_status);
-        out.release();
-        return false;
-    }
-    return !out.empty();
+    return copyVpiGray8ToHost(image, out, "CaptureV21 gray copy");
 }
 
 bool CaptureV21StageRecorder::writePgm(

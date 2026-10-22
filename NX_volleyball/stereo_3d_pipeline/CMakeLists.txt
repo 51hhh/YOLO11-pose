@@ -278,6 +278,7 @@ set(PIPELINE_SOURCES
   src/utils/baseline_clip_recorder_io.cpp
   src/utils/baseline_clip_recorder_writer.cpp
   src/utils/capture_v21_stage_recorder.cpp
+  src/utils/vpi_image_copy.cpp
   src/track/nanotrack_trt.cpp
   src/track/mixformer_trt.cpp
 )

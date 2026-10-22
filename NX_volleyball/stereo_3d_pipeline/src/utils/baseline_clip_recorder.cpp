@@ -6,8 +6,7 @@
 #include "baseline_clip_recorder.h"
 #include "baseline_clip_recorder_io.h"
 #include "logger.h"
-
-#include <cuda_runtime.h>
+#include "vpi_image_copy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -209,48 +208,11 @@ BaselineClipRecorder::PairSelection BaselineClipRecorder::selectBestPair(
 }
 
 bool BaselineClipRecorder::copyGrayImage(VPIImage image, cv::Mat& out) const {
-    if (!image) return false;
-    VPIImageData data;
-    const VPIStatus st = vpiImageLockData(image, VPI_LOCK_READ,
-                                          VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                          &data);
-    if (st != VPI_SUCCESS) {
-        return false;
-    }
-    const int h = data.buffer.pitch.planes[0].height;
-    const int w = data.buffer.pitch.planes[0].width;
-    const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-    cv::Mat view(h, w, CV_8UC1, data.buffer.pitch.planes[0].data, pitch);
-    out = view.clone();
-    vpiImageUnlock(image);
-    return !out.empty();
+    return copyVpiGray8ToHost(image, out, "baseline gray copy");
 }
 
 bool BaselineClipRecorder::copyBgrImage(VPIImage image, cv::Mat& out) const {
-    if (!image) return false;
-    VPIImageData data;
-    const VPIStatus st = vpiImageLockData(image, VPI_LOCK_READ,
-                                          VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR,
-                                          &data);
-    if (st != VPI_SUCCESS) {
-        return false;
-    }
-    const int h = data.buffer.pitch.planes[0].height;
-    const int w = data.buffer.pitch.planes[0].width;
-    const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-    const void* src = data.buffer.pitch.planes[0].data;
-    out.create(h, w, CV_8UC3);
-    const cudaError_t err = cudaMemcpy2D(out.data, out.step[0],
-                                         src, pitch,
-                                         static_cast<size_t>(w) * 3u,
-                                         static_cast<size_t>(h),
-                                         cudaMemcpyDeviceToHost);
-    vpiImageUnlock(image);
-    if (err != cudaSuccess) {
-        out.release();
-        return false;
-    }
-    return !out.empty();
+    return copyVpiBgr8ToHost(image, out, "baseline BGR copy");
 }
 
 void BaselineClipRecorder::record(

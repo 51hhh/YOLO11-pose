@@ -2,10 +2,9 @@
 
 #include "main_display_types.h"
 #include "utils/logger.h"
+#include "utils/vpi_image_copy.h"
 
-#include <cuda_runtime.h>
 #include <opencv2/opencv.hpp>
-#include <vpi/Image.h>
 
 #include <cstdint>
 #include <exception>
@@ -82,38 +81,23 @@ inline bool captureDisplayFrame(
 {
     frame.release();
     if (use_bgr) {
-        VPIImage rectL = frame_data.rect_bgr_left;
-        VPIImageData imgData;
-        VPIStatus st = vpiImageLockData(rectL, VPI_LOCK_READ,
-            VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &imgData);
-        if (st == VPI_SUCCESS) {
-            const int h = imgData.buffer.pitch.planes[0].height;
-            const int w = imgData.buffer.pitch.planes[0].width;
-            const int gpuPitch = imgData.buffer.pitch.planes[0].pitchBytes;
-            const void* gpuPtr = imgData.buffer.pitch.planes[0].data;
-            frame.create(h, w, CV_8UC3);
-            cudaMemcpy2D(frame.data, frame.step[0],
-                         gpuPtr, gpuPitch,
-                         w * 3, h,
-                         cudaMemcpyDeviceToHost);
-            vpiImageUnlock(rectL);
+        if (stereo3d::copyVpiBgr8ToHost(
+                frame_data.rect_bgr_left, frame, "display BGR copy")) {
+            return true;
         }
     }
 
-    if (!frame.empty()) return true;
-
-    VPIImage rectL = frame_data.rect_gray_left;
-    VPIImageData imgData;
-    if (vpiImageLockData(rectL, VPI_LOCK_READ,
-        VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR, &imgData) != VPI_SUCCESS) {
+    cv::Mat gray;
+    if (!stereo3d::copyVpiGray8ToHost(
+            frame_data.rect_gray_left, gray, "display gray copy")) {
         return false;
     }
-    const int h = imgData.buffer.pitch.planes[0].height;
-    const int w = imgData.buffer.pitch.planes[0].width;
-    const int pitch = imgData.buffer.pitch.planes[0].pitchBytes;
-    cv::Mat gray(h, w, CV_8UC1,
-                 imgData.buffer.pitch.planes[0].data, pitch);
-    cv::cvtColor(gray, frame, cv::COLOR_GRAY2BGR);
-    vpiImageUnlock(rectL);
-    return true;
+    try {
+        cv::cvtColor(gray, frame, cv::COLOR_GRAY2BGR);
+    } catch (const cv::Exception& error) {
+        LOG_ERROR("display gray-to-BGR conversion failed: %s", error.what());
+        frame.release();
+        return false;
+    }
+    return !frame.empty();
 }

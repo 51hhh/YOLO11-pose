@@ -80,6 +80,7 @@ fusion/callback
 - 注入 ROI host image lock/unlock 与全帧 Coordinate3D CUDA 失败时，帧状态为失败；而合法“没有有效视差”仍是成功空结果，两者不可混淆；
 - ROI Phase C 的失败/stale-drop 分支之后 Phase D 仍执行，异步 grab 请求没有遗留；
 - 在 USB 抓帧等待中注入停止：已接受请求完成并解锁后 Stage 0 才可继续；不得读取上一帧 `grab_done_ok`，不得产生无 payload 的额外 frame；
+- 注入 VPI host/CUDA view 非法尺寸、CUDA D2H 失败或 unlock 失败：显示/诊断/基线/v2.1 复制均返回失败并清空目标图；实时诊断的 `dropped` 计数增加，正式采集不得写出部分图像；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

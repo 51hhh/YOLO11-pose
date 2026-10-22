@@ -1,6 +1,7 @@
 #include "main_realtime_debug_dump.h"
 
 #include "utils/logger.h"
+#include "utils/vpi_image_copy.h"
 
 #include <filesystem>
 #include <utility>
@@ -62,6 +63,9 @@ void RealtimeDebugDumper::record(const stereo3d::FrameCallbackData& frame) {
     job.metadata = frame.metadata;
     if (!copyGray(frame.rect_gray_left, job.left_gray) ||
         !copyGray(frame.rect_gray_right, job.right_gray)) {
+        ++dropped_count_;
+        LOG_WARN("RealtimeDebugDumper: image copy failed at frame=%d",
+                 frame.frame_id);
         releaseReservedSlot(false, nullptr);
         return;
     }
@@ -112,22 +116,6 @@ void RealtimeDebugDumper::releaseReservedSlot(bool enqueue,
 }
 
 bool RealtimeDebugDumper::copyGray(VPIImage img, cv::Mat& out) {
-    VPIImageData data;
-    const VPIStatus st = vpiImageLockData(img, VPI_LOCK_READ,
-                                          VPI_IMAGE_BUFFER_HOST_PITCH_LINEAR,
-                                          &data);
-    if (st != VPI_SUCCESS) return false;
-    try {
-        const int w = data.buffer.pitch.planes[0].width;
-        const int h = data.buffer.pitch.planes[0].height;
-        const int pitch = data.buffer.pitch.planes[0].pitchBytes;
-        cv::Mat view(h, w, CV_8UC1,
-                     data.buffer.pitch.planes[0].data, pitch);
-        view.copyTo(out);
-    } catch (const cv::Exception&) {
-        vpiImageUnlock(img);
-        return false;
-    }
-    vpiImageUnlock(img);
-    return !out.empty();
+    return stereo3d::copyVpiGray8ToHost(
+        img, out, "realtime debug gray copy");
 }
