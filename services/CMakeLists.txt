@@ -1,5 +1,8 @@
+find_package(Threads REQUIRED)
+
 add_library(volleyball_services STATIC
   src/managed_stereo_trial.cpp
+  src/stereo_detector_executor.cpp
   src/stereo_observation_service.cpp
   src/stereo_pipeline_runner.cpp
 )
@@ -11,6 +14,7 @@ target_include_directories(volleyball_services PUBLIC
 target_link_libraries(volleyball_services PUBLIC
   volleyball::ports
   volleyball::stereo_algorithms
+  Threads::Threads
 )
 target_compile_features(volleyball_services PUBLIC cxx_std_17)
 target_compile_options(volleyball_services PRIVATE

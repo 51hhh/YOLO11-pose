@@ -7,11 +7,14 @@
 #include "volleyball/ports/stereo_preprocessor.hpp"
 #include "volleyball/ports/trial_writer.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace volleyball::services {
+
+class StereoDetectorExecutor;
 
 struct ObservationGateConfig {
     double min_depth_m{0.0};
@@ -59,6 +62,10 @@ public:
         ports::DirectObservationEstimator& estimator,
         ports::TrialWriter& writer,
         ports::ObservationPublisher* publisher = nullptr);
+    ~StereoObservationService();
+
+    StereoObservationService(const StereoObservationService&) = delete;
+    StereoObservationService& operator=(const StereoObservationService&) = delete;
 
     [[nodiscard]] StereoProcessResult process(
         const ports::StereoFrame& frame);
@@ -88,8 +95,7 @@ private:
 
     StereoObservationServiceConfig config_;
     ports::StereoPreprocessor& preprocessor_;
-    ports::Detector& left_detector_;
-    ports::Detector& right_detector_;
+    std::unique_ptr<StereoDetectorExecutor> detector_executor_;
     ports::DirectObservationEstimator& estimator_;
     ports::TrialWriter& writer_;
     ports::ObservationPublisher* publisher_;

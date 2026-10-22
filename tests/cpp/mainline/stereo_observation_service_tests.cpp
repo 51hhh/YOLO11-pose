@@ -4,10 +4,13 @@
 #include "stereo_service_fixtures.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -56,6 +59,70 @@ private:
     ports::DirectObservationResult result_;
     std::size_t calls_{0};
     bool saw_gray_inputs_{false};
+};
+
+struct DetectorBarrierState {
+    std::mutex mutex;
+    std::condition_variable entered;
+    int active{0};
+    int maximum_active{0};
+    int total_entered{0};
+    bool timed_out{false};
+};
+
+class BarrierDetector final : public ports::Detector {
+public:
+    BarrierDetector(
+        std::shared_ptr<DetectorBarrierState> state,
+        double center_x)
+        : state_(std::move(state)), center_x_(center_x) {}
+
+    [[nodiscard]] ports::DetectionResult detect(
+        const ports::RectifiedCameraFrame& frame) override {
+        {
+            std::unique_lock<std::mutex> lock(state_->mutex);
+            ++state_->active;
+            state_->maximum_active =
+                std::max(state_->maximum_active, state_->active);
+            ++state_->total_entered;
+            state_->entered.notify_all();
+            if (!state_->entered.wait_for(
+                    lock, std::chrono::milliseconds(500), [&] {
+                        return state_->total_entered >= 2;
+                    })) {
+                state_->timed_out = true;
+            }
+            --state_->active;
+        }
+
+        auto candidate = support::detection(
+            frame.source.role,
+            frame.source.camera_id.value().c_str(),
+            0,
+            center_x_,
+            500.0,
+            0.95);
+        candidate.frame.frame_index = frame.source.frame_index;
+        return {
+            true,
+            {frame.source,
+             core::PipelineId{"fixture-detector"},
+             {std::move(candidate)}},
+            {},
+        };
+    }
+
+private:
+    std::shared_ptr<DetectorBarrierState> state_;
+    double center_x_;
+};
+
+class ThrowingDetector final : public ports::Detector {
+public:
+    [[nodiscard]] ports::DetectionResult detect(
+        const ports::RectifiedCameraFrame&) override {
+        throw std::runtime_error("injected detector exception");
+    }
 };
 
 using support::CollectingPublisher;
@@ -337,6 +404,42 @@ void testDetectorFailureAbortsTrial() {
     check(!writer.abortReason().empty(), "partial trial must be aborted");
     check(service.finalize().status == ports::WriteStatus::failed,
           "aborted service must not publish a trial");
+}
+
+void testStereoDetectorsRunConcurrently() {
+    auto state = std::make_shared<DetectorBarrierState>();
+    BarrierDetector left(state, 700.0);
+    BarrierDetector right(state, 650.0);
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::observation,
+          "parallel detector results must preserve normal observation flow");
+    check(state->maximum_active == 2 && !state->timed_out,
+          "left/right detector calls must overlap on persistent workers");
+}
+
+void testDetectorExceptionBecomesAuditableFailure() {
+    ThrowingDetector left;
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
+
+    const auto result = service.process(stereoFrame());
+    check(
+        result.status == services::ProcessStatus::detector_error &&
+            result.message.find("injected detector exception") !=
+                std::string::npos,
+        "detector exceptions must become explicit detector failures");
+    check(!writer.abortReason().empty(),
+          "detector exceptions must abort the partial trial");
 }
 
 void testPreprocessFailureAbortsAfterRawEvidence() {
@@ -631,6 +734,8 @@ int main() {
     testPreprocessFailureAbortsAfterRawEvidence();
     testMalformedPreprocessProductsAbortTrial();
     testDetectorFailureAbortsTrial();
+    testStereoDetectorsRunConcurrently();
+    testDetectorExceptionBecomesAuditableFailure();
     testExplicitAbortClosesServiceExactlyOnce();
     testMalformedDetectorBatchAbortsTrial();
     testDuplicateCandidateIdsAbortTrial();

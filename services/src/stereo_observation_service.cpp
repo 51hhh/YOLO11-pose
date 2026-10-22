@@ -1,5 +1,7 @@
 #include "volleyball/services/stereo_observation_service.hpp"
 
+#include "stereo_detector_executor.hpp"
+
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -154,8 +156,8 @@ StereoObservationService::StereoObservationService(
     ports::ObservationPublisher* publisher)
     : config_(std::move(config)),
       preprocessor_(preprocessor),
-      left_detector_(left_detector),
-      right_detector_(right_detector),
+      detector_executor_(std::make_unique<StereoDetectorExecutor>(
+          left_detector, right_detector)),
       estimator_(estimator),
       writer_(writer),
       publisher_(publisher) {
@@ -171,6 +173,8 @@ StereoObservationService::StereoObservationService(
         throw std::invalid_argument("invalid stereo observation quality gate");
     }
 }
+
+StereoObservationService::~StereoObservationService() = default;
 
 StereoProcessResult StereoObservationService::fail(
     ProcessStatus status,
@@ -318,8 +322,8 @@ StereoProcessResult StereoObservationService::process(
         return fail(ProcessStatus::preprocess_error, std::move(error));
     }
 
-    auto left_result = left_detector_.detect(preprocess_result.frame->left);
-    auto right_result = right_detector_.detect(preprocess_result.frame->right);
+    auto [left_result, right_result] =
+        detector_executor_->detect(*preprocess_result.frame);
     if (!left_result.success || !right_result.success) {
         const std::string message = !left_result.success
             ? left_result.message
