@@ -50,6 +50,7 @@ ALLOWED_TEST_ROOT_FILES = {
     "tests/trial_factory.py",
 }
 ALLOWED_HARDWARE_TOOL_FILES = {
+    "adapters/legacy_nx/tools/CMakeLists.txt",
     "adapters/legacy_nx/tools/common/atomic_file.cpp",
     "adapters/legacy_nx/tools/common/atomic_file.h",
     "adapters/legacy_nx/tools/common/parallel_tasks.cpp",
@@ -110,7 +111,7 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
-    ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),
+    ("adapters/legacy_nx/tools", "adapters/legacy_nx/tools/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
     ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),

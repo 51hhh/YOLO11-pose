@@ -397,75 +397,11 @@ if(USE_ROS2)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
-# ==================== 标定工具 ====================
-
-# stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
-add_executable(stereo_calibrate
-  tools/stereo_calibrate/main.cpp
-  tools/stereo_calibrate/args.cpp
-  tools/stereo_calibrate/images.cpp
-  tools/common/atomic_file.cpp
-  tools/common/parallel_tasks.cpp
-)
-set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
-target_link_libraries(stereo_calibrate ${STEREO_OPENCV_LIBS} pthread stdc++fs)
-
-# capture_chessboard (需要海康 SDK; libgpiod 可选)
-if(HIK_FOUND)
-  add_executable(capture_chessboard
-    tools/capture_chessboard/main.cpp
-    tools/capture_chessboard/args.cpp
-    tools/capture_chessboard/output.cpp
-    tools/common/atomic_file.cpp
-    ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
-  )
-  set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
-  target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
-  target_link_libraries(capture_chessboard
-    ${STEREO_OPENCV_LIBS}
-    volleyball::hik_mvs
-    pthread
-    stdc++fs
-  )
-  if(GPIOD_FOUND)
-    target_include_directories(capture_chessboard PRIVATE ${GPIOD_INCLUDE})
-    target_link_libraries(capture_chessboard ${GPIOD_LIB})
-  else()
-    target_compile_definitions(capture_chessboard PRIVATE NO_GPIOD)
-  endif()
-  message(STATUS "Calibration tools: capture_chessboard + stereo_calibrate")
-
-  add_executable(hik_frame_metadata_probe
-    tools/hik_frame_metadata_probe/main.cpp
-    tools/hik_frame_metadata_probe/args.cpp
-    tools/hik_frame_metadata_probe/camera_session.cpp
-    tools/hik_frame_metadata_probe/pair_audit.cpp
-    tools/common/parallel_tasks.cpp
-    ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
-  )
-  set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
-  target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)
-  target_link_libraries(hik_frame_metadata_probe
-    ${MVS_LIBRARY}
-    pthread
-  )
-  if(GPIOD_FOUND)
-    target_include_directories(hik_frame_metadata_probe PRIVATE ${GPIOD_INCLUDE})
-    target_link_libraries(hik_frame_metadata_probe ${GPIOD_LIB})
-  else()
-    target_compile_definitions(hik_frame_metadata_probe PRIVATE NO_GPIOD)
-  endif()
-  message(STATUS "Hikvision tools: hik_frame_metadata_probe")
-else()
-  message(STATUS "Calibration tools: stereo_calibrate only (no HIK SDK)")
-endif()
+# ==================== 标定与硬件验收工具 ====================
+add_subdirectory(tools)
 
 # ==================== 安装 ====================
 install(TARGETS stereo_pipeline DESTINATION bin)
-install(TARGETS stereo_calibrate DESTINATION bin)
-if(HIK_FOUND)
-  install(TARGETS capture_chessboard hik_frame_metadata_probe DESTINATION bin)
-endif()
 install(DIRECTORY config/ DESTINATION etc/stereo_3d_pipeline)
 
 # ==================== 信息汇总 ====================
