@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`adapters/legacy_nx` 保留成熟的 CUDA/VPI 校正、ROI 深度和当前实机 ROS2 编排，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine/context/buffer 生命周期、静态 I/O 验证、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL 解码 kernel 已经迁入 `adapters/tensorrt`；该目录也已实现主线 `Detector` 端口和检测事实映射，旧管线只以兼容类型别名持有 runtime。直接观测到 `NxBallObservation` 的严格映射、rclcpp 发布器和进程源纪元持久化已进入 `adapters/ros2`，并由 NX 目标强制编译；旧 publisher 也复用该源纪元实现，不再在兼容目录维护副本。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
+`adapters/legacy_nx` 保留成熟的 VPI 校正、ROI 深度和当前实机 ROS2 编排，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。标定读取、Bayer→BGR 和目标到源浮点映射/灰度输出 CUDA 基础算子已进入 `adapters/cuda_preprocess`；旧管线已经直接调用其中的 Bayer 算子，但尚未切换到新的完整 `StereoPreprocessor`。TensorRT engine/context/buffer 生命周期、静态 I/O 验证、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL 解码 kernel 已经迁入 `adapters/tensorrt`；该目录也已实现主线 `Detector` 端口和检测事实映射，旧管线只以兼容类型别名持有 runtime。直接观测到 `NxBallObservation` 的严格映射、rclcpp 发布器和进程源纪元持久化已进入 `adapters/ros2`，并由 NX 目标强制编译；旧 publisher 也复用该源纪元实现，不再在兼容目录维护副本。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
 旧的轨迹 CSV、baseline clip 录制器和一次性特征匹配导出入口已经删除；它们既不满足 v2.1 原始事实契约，也无法由正式 profile 到达。真实图像、候选、配对和直接 3D 只允许通过 `volleyball capture` 驱动的 v2.1 staging 写入，低频排障截图则由显式诊断配置控制。
 
@@ -30,7 +30,7 @@
 1. **冻结契约（已完成）**：v2.1 数据、强类型核心、配置和 CI 已建立；
 2. **包裹旧实现（已完成）**：主线 CLI 负责 doctor、配置生成、采集 staging 和最终发布；
 3. **提取算法与用例编排（已完成主机门禁）**：纯关联/三角化已进入 `algorithms/stereo`，平台无关 runner 已覆盖 trial 的正常与故障终态；仍需逐项用录制数据对比旧实现；
-4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v6 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界；TensorRT engine/context/buffer、I/O 契约、CPU 后处理、检测输入 CUDA 预处理、GPU DFL kernel、主线 `Detector` 端口桥及检测事实映射也已从旧目录迁出；`adapters/ros2` 会逐项验证帧、候选、配对、时间、坐标系、协方差和深度方法后发布直接观测，不再二次跟踪或合成协方差；CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator` 的真实实现仍待完成；
+4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v6 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界；标定读取和通用 CUDA 图像基础算子已进入 `adapters/cuda_preprocess`，但完整预处理端口尚未装配；TensorRT engine/context/buffer、I/O 契约、CPU 后处理、检测输入 CUDA 预处理、GPU DFL kernel、主线 `Detector` 端口桥及检测事实映射也已从旧目录迁出；`adapters/ros2` 会逐项验证帧、候选、配对、时间、坐标系、协方差和深度方法后发布直接观测，不再二次跟踪或合成协方差；CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator` 的真实实现仍待完成；
 5. **替换可执行入口（已建立生命周期骨架）**：相机与触发的安全启停已进入平台无关服务；待预处理和估计适配器完成后建立配置装配及原生进程入口，再把运行时切到新 detector/writer/publisher，旧管线只保留回归基准；
 6. **删除兼容层（未开始）**：只有在同一批实机数据、性能和输出契约均通过时执行。
 

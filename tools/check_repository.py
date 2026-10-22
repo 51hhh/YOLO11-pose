@@ -220,11 +220,11 @@ def _check_documentation(tracked: list[str]) -> list[str]:
     orphaned = sorted(
         path.relative_to(ROOT).as_posix()
         for path in markdown - reachable
-        if path.is_relative_to(ROOT / "docs")
+        if not path.is_relative_to(ROOT / ".github")
     )
     if orphaned:
         errors.append(
-            "docs 中的文档必须能从根 README 导航到:\n    "
+            "用户文档必须能从根 README 导航到:\n    "
             + "\n    ".join(orphaned)
         )
     return errors

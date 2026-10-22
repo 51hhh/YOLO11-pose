@@ -71,24 +71,24 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 |---|---|
 | GPIO 周期触发与上升沿审计 | `adapters/gpio/` |
 | 相机初始化、FrameSpecInfo、水印清除和配对 | `adapters/hik_mvs/` |
-| 三缓冲帧容器 | `src/pipeline/frame_slot.h` |
-| CUDA/VPI stream | `src/pipeline/sync.h` |
-| VPI 图像的短期 CUDA view 锁边界 | `src/pipeline/pipeline_image_access.cpp` |
-| VPI 图像同步复制到 CPU 的统一锁边界 | `src/utils/vpi_image_copy.*` |
-| VPI 2/3 与 VPI 4 平面地址适配 | `src/utils/vpi_plane_access.h` |
-| Stage 0/1/全帧 Stage 2 | `src/pipeline/pipeline_stages.cpp` |
-| ROI 模式调度 | `src/pipeline/pipeline_loops.cpp` |
-| 异步 ROI 快照与 worker | `src/pipeline/pipeline_async_roi.cpp` |
+| 三缓冲帧容器 | `adapters/legacy_nx/src/pipeline/frame_slot.h` |
+| CUDA/VPI stream | `adapters/legacy_nx/src/pipeline/sync.h` |
+| VPI 图像的短期 CUDA view 锁边界 | `adapters/legacy_nx/src/pipeline/pipeline_image_access.cpp` |
+| VPI 图像同步复制到 CPU 的统一锁边界 | `adapters/legacy_nx/src/utils/vpi_image_copy.*` |
+| VPI 2/3 与 VPI 4 平面地址适配 | `adapters/legacy_nx/src/utils/vpi_plane_access.h` |
+| Stage 0/1/全帧 Stage 2 | `adapters/legacy_nx/src/pipeline/pipeline_stages.cpp` |
+| ROI 模式调度 | `adapters/legacy_nx/src/pipeline/pipeline_loops.cpp` |
+| 异步 ROI 快照与 worker | `adapters/legacy_nx/src/pipeline/pipeline_async_roi.cpp` |
 | TensorRT engine/context/buffer、CPU 后处理与 detector CUDA kernel | `adapters/tensorrt/` |
-| 旧 `TRTDetector` 名称兼容层 | `src/detect/trt_detector.h` |
-| 校正前 Bayer→BGR CUDA 转换 | `src/rectify/bayer_to_bgr.*` |
-| 左右配对契约 | `src/stereo/depth_match_contract.*` |
-| 双路 YOLO 深度候选 | `src/pipeline/pipeline_dual_yolo_match.cpp` |
-| 最终候选选择 | `src/stereo/depth_candidate_*.cpp` |
-| 3D 融合与回调 | `src/pipeline/pipeline_roi_stage2.cpp` |
-| v2.1 采集队列、图像复制与收尾 | `src/capture/capture_v21_stage_recorder.*` |
+| 旧 `TRTDetector` 名称兼容层 | `adapters/legacy_nx/src/detect/trt_detector.h` |
+| 标定读取、Bayer→BGR 与融合 remap/gray CUDA 算子 | `adapters/cuda_preprocess/` |
+| 左右配对契约 | `adapters/legacy_nx/src/stereo/depth_match_contract.*` |
+| 双路 YOLO 深度候选 | `adapters/legacy_nx/src/pipeline/pipeline_dual_yolo_match.cpp` |
+| 最终候选选择 | `adapters/legacy_nx/src/stereo/depth_candidate_*.cpp` |
+| 3D 融合与回调 | `adapters/legacy_nx/src/pipeline/pipeline_roi_stage2.cpp` |
+| v2.1 采集队列、图像复制与收尾 | `adapters/legacy_nx/src/capture/capture_v21_stage_recorder.*` |
 | v2.1 staging CSV 序列化合同 | `adapters/capture_v21/` |
 | 主线直接观测 ROS2 映射与 publisher | `adapters/ros2/`（已构建，待原生入口切换） |
-| 可选实时调试落盘 | `src/diagnostics/realtime_debug_dump*` |
-| 本地可视化叠加 | `src/ui/display_*` |
+| 可选实时调试落盘 | `adapters/legacy_nx/src/diagnostics/realtime_debug_dump*` |
+| 本地可视化叠加 | `adapters/legacy_nx/src/ui/display_*` |
 

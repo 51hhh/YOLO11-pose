@@ -57,6 +57,7 @@ python3 tools/check_repository.py
 | `adapters/capture_v21/` | 与硬件无关的主线 v6 staging 原子写入适配器；最终格式仍是 v2.1 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
+| `adapters/cuda_preprocess/` | 双目标定读取、Bayer 转换和校正 BGR/Gray CUDA 基础算子；完整 `StereoPreprocessor` 尚未装配 |
 | `adapters/tensorrt/` | TensorRT 检测适配器边界；集中 engine/context/buffer 生命周期、检测契约、主线 `Detector` 端口、事实映射及按 CUDA 构建的输入与 DFL kernel |
 | `adapters/ros2/` | 直接 3D 观测到 ROS2 消息的严格映射、发布及源纪元持久化；不执行跟踪、预测或坐标系改名 |
 | `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |

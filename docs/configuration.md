@@ -51,6 +51,16 @@ cp configs/profiles/nx-rdk.yaml configs/profiles/local-nx.yaml
 `volleyball config explain --profile local-nx <键>` 确认覆盖来源。正式采集记录的
 配置指纹仍包含本机层的最终值，不会牺牲可追溯性。
 
+## 模型资产
+
+代码和 profile 只引用稳定的 `model_id`。`models/manifest.yaml` 把该 ID 映射到
+仓库相对 artifact，并冻结输入尺寸、像素格式、精度、目标平台、accelerator 和
+SHA-256；禁止在配置中保存 `/home/nvidia/...` 一类机器绝对路径。
+
+ONNX、权重和 TensorRT engine 都不进入 Git。真实采集前必须在目标机上对最终
+engine 重新计算 SHA-256，更新 manifest，并随 trial 记录 TensorRT、CUDA 和
+JetPack 版本。源模型相同但重新构建的 engine 仍视为不同资产，不能复用旧哈希。
+
 ## 硬件触发约束
 
 当 `cameras.sync.method=hardware_trigger` 时，主线要求：

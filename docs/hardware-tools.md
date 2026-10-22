@@ -49,6 +49,18 @@ build/nx-legacy-superbuild/legacy_nx/stereo_calibrate \
 角点检测和标定在 CPU 上执行，可用 `--jobs` 控制检测线程；它不启动相机，也不借用实时 CUDA/VPI 图像流水线。
 角点检测与左右单目标定的工作线程异常会使工具明确失败；最终 YAML 先写入同目录 `.partial` 文件，完整关闭并确认非空后再以无覆盖方式发布。残留 `.partial` 会被拒绝并要求人工检查，不会被下一次运行静默复用。
 
+## 标定资产归档
+
+`configs/calibration/vehicle_stereo_main.yaml` 是 profile 引用的资产描述，固定标定
+ID、创建时间、源文件和坐标系；`configs/calibration/stereo_calib.yaml` 保存 OpenCV
+原始内参、畸变、左右外参和校正投影矩阵。两者职责不同，不能合并成一份可随意
+覆盖的运行配置。
+
+正式采集时，`python/volleyball_vision/calibration.py` 从校正投影矩阵生成符合
+v2.1 契约的 `calibrations/<calibration_id>.json`。当前资产只证明左目校正光心
+坐标系和实测双目基线；rig 到 `base_link` 的变换尚未独立测量，在测量完成前必须
+保持缺失，不能用猜测值补齐。
+
 ## 主流水线
 
 不要手工运行 `stereo_pipeline --config adapters/legacy_nx/config/base_pipeline.yaml`。兼容模板不包含完整实验来源和模型指纹。使用：
