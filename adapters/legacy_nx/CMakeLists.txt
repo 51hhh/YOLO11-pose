@@ -370,14 +370,6 @@ if(BUILD_TESTING)
   add_test(NAME depth_candidate_selection_test
            COMMAND depth_candidate_selection_test)
 
-  add_executable(hybrid_depth_test
-    tests/hybrid_depth_test.cpp
-    src/fusion/hybrid_depth.cpp
-    src/fusion/hybrid_depth_track.cpp
-    src/fusion/hybrid_depth_candidate_copy.cpp)
-  target_include_directories(hybrid_depth_test PRIVATE src)
-  add_test(NAME hybrid_depth_test COMMAND hybrid_depth_test)
-
   add_executable(fusion_timing_test tests/fusion_timing_test.cpp)
   target_include_directories(fusion_timing_test PRIVATE src)
   add_test(NAME fusion_timing_test COMMAND fusion_timing_test)

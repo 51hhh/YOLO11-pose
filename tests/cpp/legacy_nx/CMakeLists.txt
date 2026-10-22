@@ -77,3 +77,11 @@ add_legacy_nx_test(
   trt_engine_contract_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/detect/trt_engine_contract.cpp"
 )
+
+add_legacy_nx_test(
+  hybrid_depth_tests
+  hybrid_depth_tests.cpp
+  "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth.cpp"
+  "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_track.cpp"
+  "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_candidate_copy.cpp"
+)

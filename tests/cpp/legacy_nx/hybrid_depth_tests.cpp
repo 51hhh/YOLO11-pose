@@ -1,10 +1,20 @@
 #include "fusion/hybrid_depth.h"
 
-#include <cassert>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <vector>
 
 namespace {
+
+int failures = 0;
+
+void check(bool condition, const char* message) {
+    if (!condition) {
+        ++failures;
+        std::cerr << "FAILED: " << message << '\n';
+    }
+}
 
 stereo3d::Detection detection(float cx, float confidence, int class_id = 0) {
     stereo3d::Detection det;
@@ -48,8 +58,9 @@ int main() {
         estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, config());
         const auto result = estimator.estimate(
             {detection(0.0f, 0.9f)}, {stereoObservation(10.0f)}, 0.01);
-        assert(result.size() == 1);
-        assert(std::abs(result[0].raw_z - 10.0f) < 1e-4f);
+        check(result.size() == 1, "valid stereo observation must produce output");
+        check(!result.empty() && std::abs(result[0].raw_z - 10.0f) < 1e-4f,
+              "valid stereo depth must remain available as raw observation");
     }
 
     {
@@ -57,8 +68,9 @@ int main() {
         estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, config());
         const auto result = estimator.estimate(
             {detection(0.0f, 0.9f)}, {stereoObservation(15.1f)}, 0.01);
-        assert(result.empty());
-        assert(estimator.activeTrackCount() == 0);
+        check(result.empty(), "out-of-range stereo observation must be rejected");
+        check(estimator.activeTrackCount() == 0,
+              "rejected new observation must not leave an active track");
     }
 
     {
@@ -67,8 +79,9 @@ int main() {
         const auto result = estimator.estimate(
             {detection(-100.0f, 0.2f), detection(100.0f, 0.9f)},
             {stereoObservation(5.0f), stereoObservation(10.0f)}, 0.01);
-        assert(result.size() == 2);
-        assert(std::abs(estimator.predictPrimaryDepth() - 10.0f) < 1e-3f);
+        check(result.size() == 2, "two valid detections must produce two tracks");
+        check(std::abs(estimator.predictPrimaryDepth() - 10.0f) < 1e-3f,
+              "primary depth must follow the most confident track");
     }
 
     {
@@ -77,16 +90,21 @@ int main() {
         const auto first = estimator.estimate(
             {detection(0.0f, 0.9f, 0), detection(100.0f, 0.9f, 1)},
             {stereoObservation(10.0f), stereoObservation(10.0f)}, 0.01);
-        assert(first.size() == 2);
+        check(first.size() == 2, "class association fixture must create two tracks");
+        if (first.size() != 2) {
+            return EXIT_FAILURE;
+        }
         const int class0_track = first[0].track_id;
         const int class1_track = first[1].track_id;
 
         const auto second = estimator.estimate(
             {detection(30.0f, 0.9f, 0), detection(70.0f, 0.9f, 1)},
             {stereoObservation(10.0f), stereoObservation(10.0f)}, 0.011);
-        assert(second.size() == 2);
-        assert(second[0].track_id == class0_track);
-        assert(second[1].track_id == class1_track);
+        check(second.size() == 2, "class association must retain both tracks");
+        check(second.size() == 2 && second[0].track_id == class0_track,
+              "class zero detection must retain its track identity");
+        check(second.size() == 2 && second[1].track_id == class1_track,
+              "class one detection must retain its track identity");
     }
 
     {
@@ -100,8 +118,10 @@ int main() {
             {stereoObservation(10.0f), stereoObservation(10.0f),
              stereoObservation(10.0f)},
             0.01);
-        assert(result.size() == 3);
-        assert(estimator.activeTrackCount() == 2);
+        check(result.size() == 3,
+              "current frame may emit all observations before pruning tracks");
+        check(estimator.activeTrackCount() == 2,
+              "active track storage must obey its configured hard limit");
     }
 
     {
@@ -109,23 +129,34 @@ int main() {
         estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, config());
         const auto first = estimator.estimate(
             {detection(0.0f, 0.9f)}, {stereoObservation(10.0f)}, 0.01);
-        assert(first.size() == 1);
+        check(first.size() == 1, "innovation fixture must initialize one track");
+        if (first.empty()) {
+            return EXIT_FAILURE;
+        }
         const int track_id = first[0].track_id;
 
         const auto fast = estimator.estimate(
             {detection(30.0f, 0.9f)}, {stereoObservation(10.0f)}, 0.011);
-        assert(fast.size() == 1);
-        assert(fast[0].track_id == track_id);
+        check(fast.size() == 1, "bounded lateral motion must remain accepted");
+        check(!fast.empty() && fast[0].track_id == track_id,
+              "bounded motion must retain track identity");
 
         const auto fast_again = estimator.estimate(
             {detection(60.0f, 0.9f)}, {stereoObservation(10.0f)}, 0.011);
-        assert(fast_again.size() == 1);
-        assert(fast_again[0].track_id == track_id);
+        check(fast_again.size() == 1,
+              "second bounded motion update must remain accepted");
+        check(!fast_again.empty() && fast_again[0].track_id == track_id,
+              "second motion update must retain track identity");
 
         const auto depth_outlier = estimator.estimate(
             {detection(90.0f, 0.9f)}, {stereoObservation(1.0f)}, 0.011);
-        assert(depth_outlier.empty());
+        check(depth_outlier.empty(), "depth innovation outlier must be rejected");
     }
 
-    return 0;
+    if (failures != 0) {
+        std::cerr << failures << " check(s) failed\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << "hybrid depth tests passed\n";
+    return EXIT_SUCCESS;
 }
