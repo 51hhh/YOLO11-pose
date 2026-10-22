@@ -76,18 +76,23 @@ JetPack 版本。源模型相同但重新构建的 engine 仍视为不同资产�
 - 在线校正与三角化后端均为 CUDA；
 - 采集模式必须 `queue.overflow_policy=block`、`recording.loss_policy=fail_trial`、`raw_frames=all`。
 
-这些限制不是相机能力的上限，而是当前旧 NX 适配器能够忠实表达的契约。适配器目前只有一组曝光和增益，并按 profile 分辨率预分配 VPI 图像；因此配置层会拒绝左右参数差异和不能投影到旧 YAML 的视觉选项。相机打开时还会回读两侧 `Width/Height/OffsetX/OffsetY`，每帧复制前再次校验 payload 尺寸和目标 pitch，防止配置漂移造成越界写入。
+这些限制不是相机能力的上限，而是当前原生主线已经实现并测试的契约。相机适配器
+目前使用一组曝光和增益，并按 profile 分辨率预分配有界缓冲；打开相机时会回读
+两侧 `Width/Height/OffsetX/OffsetY`，每帧复制前再次校验 payload 尺寸和目标
+pitch，防止配置漂移造成越界写入。
 
-## 主线到旧 NX 配置
+## 原生进程配置
 
-旧 NX YAML 是生成物，不再手工作为配置真相：
+进程 YAML 是最终 profile 的最小投影，不再手工维护：
 
 ```bash
-volleyball config render-legacy --profile nx-rdk
+volleyball config render-mainline --profile nx-rdk
 volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-run
 ```
 
-显式指定的生成路径必须不存在，避免无提示覆盖人工文件。实际启动前 `doctor` 会检查标定、模型及哈希、旧适配器可执行文件和基础配置。
+显式指定的生成路径必须不存在，避免无提示覆盖人工文件。实际启动前 `doctor` 会
+检查标定、模型及哈希、原生可执行文件、SDK 和动态链接。`render-legacy` 只用于
+显式回归，不是生产配置入口。
 
 ## 常用可调项
 
@@ -102,9 +107,8 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 | 深度 | `stereo.triangulation.*` | 计算候选集合、主方法、回退顺序、亚像素与时间预算 |
 | 录制 | `recording.*` | schema、原图、失败策略、哈希校验 |
 
-`diagnostics.metrics_interval_frames` 会投影为旧管线的 `performance.log_interval`。当前旧 logger 输出带单调时钟、线程和级别前缀的文本，不是逐行 JSON，因此主线固定 `diagnostics.json_logs=false`；把它改成 `true` 会在配置校验阶段被拒绝。性能计时当前是管线固有观测能力，也不能用配置伪装为已关闭。
-
-旧 ROI 管线当前固定初始化 3D `kalman_ca` 混合深度跟踪，NX 原始观测 publisher 固定使用 keep-last/best-effort 的 sensor-data QoS。因此 live profile 只接受 `tracking.enabled=true`、`tracking.filter=kalman_ca` 和 `publisher.qos=sensor_data`。已删除的旧 C++ 图像 SOT 与这项 3D 状态估计无关。
+`diagnostics.metrics_interval_frames` 控制主线进度统计周期。ROS2 使用传感器数据
+QoS，并只发布直接观测；滤波、轨迹预测和控制参数不属于 NX 配置。
 
 ### 深度候选与最终选择
 
@@ -114,25 +118,15 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 - `primary_method`：最终直接深度首先尝试的方法；
 - `fallback_methods`：首选失败后的发布顺序，必须是候选集合的子集。
 
-旧 NX 当前只支持 `roi_multi_point` 或 `circle_center` 作为首选，并按
-`epipolar_fallback -> circle_center -> radial_center -> edge_pair_center -> edge_centroid -> bbox_center -> bbox_edges`
-的固定相对顺序扫描回退。配置可以删去其中任意项，但不能伪造旧选择器无法执行的顺序。
-加载器会在启动前拒绝不忠实的配置。
+原生进程按 `primary_method` 后接 `fallback_methods` 的顺序选择，并要求这一顺序
+恰好覆盖 `candidate_methods`；不允许计算一个候选后又不保存其选择语义。加载器会
+在启动前拒绝重复、缺失或后端不支持的方法。
 
 组装主线 C++ 关联服务时，必须把 `cameras.sync.estimated_error_ns` 作为左右曝光中心差的允许上限，写入 `AssociationConfig.max_capture_delta_ns`。该值表达经时钟映射后的同步误差预算，不是 USB 到达时间差；实际 `delta_t_lr_ns` 始终保留在配对记录中，供采集验收和后续噪声建模使用。
 
-生成旧 YAML 时，适配器先关闭基础模板中的全部 `depth_modes`，再只开启
-`candidate_methods` 显式列出的模式。因此修改旧模板或新增旧开关不会静默改变正式 profile。
-
 当前实际 P0/P1 路径中的 bbox 视差一致性惩罚由
 `stereo.association.bbox_disparity_*` 管理；多点结果相对初始几何的门限由
-`stereo.triangulation.subpixel.max_*` 管理；单侧漏检搜索窗口和圆拟合采样上限分别位于
-`stereo.triangulation.fallback_search` 与 `stereo.triangulation.circle_fit`。这些参数都会被
-严格投影到旧 NX adapter，不能再通过修改 `base_pipeline.yaml` 改变正式 profile。
-
-同样，`legacy_activation_policy.py` 会集中覆盖 DLA、双路 YOLO、全帧视差、
-神经特征、异步 ROI、P2 诊断和显示等功能开关。实时 profile 才允许
-异步/丢旧帧；采集 profile 即使只执行 `render-legacy` 也保持同步无丢帧语义。
-旧模板暂时仍保存已禁用实验候选和诊断工具的兼容数值，但它们不再有权自行开启处理支路；
-当前正式 P0/P1 几何路径使用的上述门限均由主线配置拥有。
+`stereo.triangulation.subpixel.max_*` 管理；圆拟合采样上限位于
+`stereo.triangulation.circle_fit`。正式行为只能由 profile 改变，不能通过编辑
+生成的进程 YAML 或旧兼容模板改变。
 

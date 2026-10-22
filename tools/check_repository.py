@@ -85,11 +85,10 @@ ALLOWED_DOC_ROOT_FILES = {
     "docs/capture.md",
     "docs/configuration.md",
     "docs/hardware-tools.md",
-    "docs/migration.md",
+    "docs/pipeline.md",
 }
 ALLOWED_DOC_GROUPS = {
     "adr",
-    "pipeline",
 }
 ALLOWED_TEST_ROOT_FILES = {
     "tests/__init__.py",
@@ -510,6 +509,7 @@ def main() -> int:
         "apps/nx_mainline/CMakeLists.txt",
         "apps/nx_mainline/main.cpp",
         "docs/hardware-tools.md",
+        "docs/pipeline.md",
         "tests/cpp/adapters/CMakeLists.txt",
     ]
     missing = [path for path in required if not (ROOT / path).is_file()]

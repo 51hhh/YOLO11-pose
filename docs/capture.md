@@ -51,17 +51,17 @@ GPIO 上升沿，则该帧不发布；不得退回 USB 到达时刻、SDK 主机
 
 ## 数据包
 
-最终对外格式固定为 v2.1.0。内部暂存目前有两个可发布版本：
+最终对外格式固定为 v2.1.0。默认采集使用 v6 staging：
 
-- v4：当前 `volleyball capture` 调用旧 NX 管线产生的聚合行格式；
-- v6：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试、直接观测及其实际深度方法证据的格式。
+- v6：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试、直接观测及其实际深度方法证据；
+- v4：只为已存在的旧 staging 与显式 legacy 回归保留读取兼容，不是新数据入口。
 
 v6 使用 `frames_v6.csv`、`detections_v6.csv`、`associations_v6.csv`、
 `observations_v6.csv` 与最后写入的 `status_v6.json`。`observations_v6.csv` 额外保存
 `depth_method`、`measurement_disparity_px`、`disparity_stddev_px` 和
 `support_points`；方法必须属于冻结配置的候选集合，测量视差必须为正。任一表仍有
 `.partial`、状态计数不一致、原图集合不一致或跨表引用不闭合时，finalizer 必须拒绝。
-v4/v6 只在 staging 内兼容，均不能绕过校验直接冒充正式 trial。
+任何 staging 都不能绕过校验直接冒充正式 trial。
 
 `associations_v6.csv:disparity_px` 保留检测中心形成的初始 2D 配对门控视差；它不等于
 ROI 多点等算法最终用于 3D 的精化视差。发布 v2.1 时，accepted pair 的
@@ -84,11 +84,12 @@ dataset-root/
     ├── environment.csv
     ├── clock_mappings.csv
     ├── processing_timing.csv
-    ├── raw/rectified/{left,right}/
+    ├── raw/mainline/{left,right}/
     └── raw/audit/
 ```
 
-`trajectory.csv` 只保存直接三角化球心，并预留测量协方差列；当前协方差生产者尚未接入时允许整组留空。速度、加速度、等效旋转、Magnus 参数、滤波状态及落点都属于 `derived/`。
+`trajectory.csv` 只保存直接三角化球心和传播后的测量协方差。速度、加速度、等效
+旋转、Magnus 参数、滤波状态及落点都属于 `derived/`。
 
 `detections_2d.csv` 的 `u_px/v_px` 使用来源校正图像的局部像素坐标，中心必须位于图像内；
 边缘入画目标的 bbox 可以越过画面边界，但必须具有正宽高、包含检测中心、与图像相交
@@ -107,7 +108,7 @@ dataset-root/
 - 单球数据每个曝光时刻最多保留一个 `accepted` 配对：先取语义置信度最高者，再取几何配对代价最低者，完全相同时按稳定的原始顺序选择；staging 原表仍原样保存在 `raw/audit/`，便于复核或重新选择；
 - `detections_2d.selected=true` 的集合必须与所有 accepted 配对引用的左右候选完全一致；
 - 相机时基下每个 accepted 配对必须恰好生成一条 `trajectory.csv` 直接观测；左右帧引用、3D 位置、协方差和误差必须数值一致，不能只让外键“看起来能对上”；
-- 原始图像、staging 原表、每条直接观测实际采用的深度方法/精化视差证据和生成的旧管线配置；
+- 原始图像、staging 原表、每条直接观测实际采用的深度方法/精化视差证据和生成的主线配置；
 - 球 ID、可获得的球压、温湿度、气流和实验备注；
 - 所有原始文件的路径、大小与 SHA-256。
 
@@ -161,8 +162,9 @@ volleyball capture --profile free-flight \
   --duration 3 --dataset-root /tmp/volleyball-capture-plan --dry-run
 ```
 
-在输出的 `.capture-staging/<trial>/pipeline.yaml` 中确认 `capture_v21.enabled=true`、
-`async_roi_stage2=false`、`drop_stale_roi_frames=false` 和阻塞队列。正式采集仍必须先通过 doctor：
+在输出的 `.capture-staging/<trial>/pipeline.yaml` 中确认 `runtime.mode=capture`、
+`publisher.enabled=false`、有限 `frame_limit` 和阻塞队列。正式采集仍必须先通过
+doctor：
 
 ```bash
 volleyball doctor --profile free-flight

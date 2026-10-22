@@ -1,6 +1,14 @@
 # 实机与标定辅助工具
 
-主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。三个受测辅助程序的源码集中在 `tools/hardware/`，由 NX 构建环境生成到 `build/nx-legacy-superbuild/legacy_nx/`：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
+主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。仓库只保留三个
+受测辅助程序：`hik_frame_metadata_probe`、`capture_chessboard` 和
+`stereo_calibrate`。它们由根工程构建并复用正式 MVS/GPIO 适配器；一次性脚本
+不进入仓库。
+
+```bash
+cmake --preset nx-mainline-release
+cmake --build --preset nx-mainline-release --parallel
+```
 
 ## 推荐顺序
 
@@ -13,8 +21,8 @@
 ## 帧元数据探针
 
 ```bash
-build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe --help
-build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
+build/nx-mainline-release/tools/hardware/hik_frame_metadata_probe --help
+build/nx-mainline-release/tools/hardware/hik_frame_metadata_probe \
   --left-sn <左相机序列号> --right-sn <右相机序列号> \
   --frames 1000 --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
 ```
@@ -24,8 +32,8 @@ build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
 ## 标定图采集
 
 ```bash
-build/nx-legacy-superbuild/legacy_nx/capture_chessboard --help
-build/nx-legacy-superbuild/legacy_nx/capture_chessboard \
+build/nx-mainline-release/tools/hardware/capture_chessboard --help
+build/nx-mainline-release/tools/hardware/capture_chessboard \
   --serial-left <左相机序列号> --serial-right <右相机序列号> \
   -o /path/to/new_calibration_images -e 9867 -g 11.9906 \
   --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
@@ -38,15 +46,16 @@ build/nx-legacy-superbuild/legacy_nx/capture_chessboard \
 ## 双目标定
 
 ```bash
-build/nx-legacy-superbuild/legacy_nx/stereo_calibrate --help
-build/nx-legacy-superbuild/legacy_nx/stereo_calibrate \
+build/nx-mainline-release/tools/hardware/stereo_calibrate --help
+build/nx-mainline-release/tools/hardware/stereo_calibrate \
   --images-dir /path/to/calibration_images \
   --square-size <方格边长毫米> \
   --output /tmp/new_stereo_calib.yaml
 ```
 
 输出文件必须不存在，工具不会覆盖已有候选或权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
-角点检测和标定在 CPU 上执行，可用 `--jobs` 控制检测线程；它不启动相机，也不借用实时 CUDA/VPI 图像流水线。
+角点检测和标定在 CPU 上执行，可用 `--jobs` 控制检测线程；它不启动相机，也不
+借用实时 CUDA 图像流水线。
 角点检测与左右单目标定的工作线程异常会使工具明确失败；最终 YAML 先写入同目录 `.partial` 文件，完整关闭并确认非空后再以无覆盖方式发布。残留 `.partial` 会被拒绝并要求人工检查，不会被下一次运行静默复用。
 
 ## 标定资产归档
@@ -63,14 +72,13 @@ v2.1 契约的 `calibrations/<calibration_id>.json`。当前资产只证明左�
 
 ## 主流水线
 
-不要手工运行 `stereo_pipeline --config adapters/legacy_nx/config/base_pipeline.yaml`。兼容模板不包含完整实验来源和模型指纹。使用：
+不要手工运行可执行文件或编辑生成 YAML。使用统一入口：
 
 ```bash
 volleyball config render-mainline --profile nx-rdk
 volleyball doctor --profile nx-rdk
 volleyball run --profile nx-rdk --dry-run
 volleyball run --profile nx-rdk
-volleyball run --profile nx-rdk --visualize  # 需要图形环境
 ```
 
 自由飞行数据使用 `volleyball capture --profile free-flight ...`，以便生成完整 v2.1 元数据、逐帧原始引用、哈希和原子发布记录。

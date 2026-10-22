@@ -53,28 +53,30 @@ python3 tools/check_repository.py
 | `ports/` | 相机、双目预处理、检测器、直接观测估计器、写入器和发布器接口 |
 | `algorithms/stereo/` | 双目关联、中心三角化基线和协方差传播；不包含硬件实现 |
 | `services/` | 将端口与算法编排为观测用例 |
+| `apps/nx_mainline/` | 原生 NX 进程装配、配置解析、信号处理和退出状态 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
 | `adapters/capture_v21/` | 与硬件无关的主线 v6 staging 原子写入适配器；最终格式仍是 v2.1 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
-| `adapters/cuda_preprocess/` | 双目标定映射、Bayer 转换及主线 CUDA `StereoPreprocessor`；尚待原生 NX 入口装配与性能验收 |
+| `adapters/cuda_preprocess/` | 双目标定映射、Bayer 转换及 CUDA 校正 BGR/Gray |
 | `adapters/cuda_depth/` | CUDA ROI 多点/几何深度候选、显式回退选择及主线 `DirectObservationEstimator` |
 | `adapters/tensorrt/` | TensorRT 检测适配器边界；集中 engine/context/buffer 生命周期、检测契约、主线 `Detector` 端口、事实映射及按 CUDA 构建的输入与 DFL kernel |
 | `adapters/ros2/` | 直接 3D 观测到 ROS2 消息的严格映射、发布及源纪元持久化；不执行跟踪、预测或坐标系改名 |
-| `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |
+| `adapters/legacy_nx/` | 仅供显式回归的旧实现；默认构建和运行均不使用 |
 | `python/volleyball_vision/` | 配置、v4/v6 staging 校验与 v2.1 发布、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
 | `tests/support/` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
-| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试 |
+| `tests/cpp/legacy_nx/` | 旧实现隔离回归；不得成为主线测试依赖 |
 | `tests/cpp/hardware_tools/` | 标定和硬件验收程序的无硬件单元测试；目录与 `tools/hardware/` 对应 |
 | `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
 | `tools/hardware/` | 帧元数据探针、标定图采集和离线双目标定三个受测辅助程序 |
 | `tools/check_repository.py` | 仓库结构、依赖方向、文档导航和构建接线门禁 |
 
-旧 NX 实现仍承载 CUDA、TensorRT 和 ROS2 的实机代码，并复用已提取的海康 MVS、GPIO 与 v2.1 适配器，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
+默认入口只有 `apps/nx_mainline`。旧实现保留为可删除的显式回归边界，不参与原生
+主线的配置、构建依赖或数据契约。
 
 ## 配置与运行
 
@@ -93,20 +95,19 @@ volleyball config diff nx-rdk free-flight
 # 只读环境检查；未固定模型哈希、缺少标定或可执行文件时不允许实机启动
 volleyball doctor --profile nx-rdk
 
-# 生成旧 NX 适配器配置并查看启动命令，不启动硬件
+# 生成原生主线最小配置并查看启动命令，不启动硬件
 volleyball run --profile nx-rdk --dry-run
 ```
 
-NX 构建使用根工程预设，旧工程在隔离的 ExternalProject 中编译，避免 CUDA/SDK 全局依赖污染核心层：
+NX 构建使用根工程的原生主线预设：
 
 ```bash
-cmake --preset nx-legacy-release
-cmake --build --preset nx-legacy-release --parallel
+cmake --preset nx-mainline-release
+cmake --build --preset nx-mainline-release --parallel
 volleyball run --profile nx-rdk
-
-# 调试时显示检测与深度叠加窗口
-volleyball run --profile nx-rdk --visualize
 ```
+
+主线不内置 GUI；实时检查通过 ROS2、结构化运行统计和录制数据完成。
 
 ## 真实采集
 
@@ -121,7 +122,8 @@ volleyball capture \
   --duration 3.0 --dataset-root /tmp/volleyball-capture-plan --dry-run
 ```
 
-正式采集必须去掉 `--dry-run`，并通过模型、NX、MVS、GPIO、CUDA/VPI/TensorRT 等 doctor 门禁：
+正式采集必须去掉 `--dry-run`，并通过模型、NX、MVS、GPIO、CUDA、TensorRT 和
+ROS2 等 doctor 门禁：
 
 ```bash
 volleyball capture \
@@ -135,7 +137,10 @@ volleyball capture \
 volleyball dataset validate data/captures
 ```
 
-采集先写入同文件系统的隐藏 staging 目录，完成帧数、触发、配对、时钟、表格、原始图像和 SHA-256 检查后才原子发布。当前 CLI 实机入口仍由旧 NX 适配器产生 v4 staging；新 C++ 端口链产生逐事实 v6 staging，并额外保存每条 3D 的实际深度方法和精化视差证据。二者共享同一最终化命令并发布为同一个冻结的 v2.1 trial，版本不会被混写。崩溃后的完整 staging 可以显式恢复：
+采集先写入同文件系统的隐藏 staging 目录。原生 C++ 链产生逐事实 v6 staging，
+保存原始 Bayer、全部检测/配对尝试，以及每条 3D 的实际方法和精化视差证据；
+Python 在帧数、触发、时钟、引用闭包和 SHA-256 全部通过后才原子发布冻结的
+v2.1 trial。崩溃后的完整 staging 可以显式恢复：
 
 ```bash
 volleyball capture-finalize \
@@ -163,11 +168,10 @@ volleyball replay \
 ## 文档
 
 - [架构与数据流](docs/architecture.md)
-- [CUDA/VPI、YOLO、ROI 与完整帧生命周期](docs/pipeline/README.md)
+- [原生 NX 帧生命周期、CUDA、YOLO 与 ROI 深度](docs/pipeline.md)
 - [实机与标定辅助工具](docs/hardware-tools.md)
 - [配置系统](docs/configuration.md)
 - [采集契约](docs/capture.md)
-- [旧 NX 管线迁移](docs/migration.md)
 - [验收标准](docs/acceptance.md)
 - [架构决策记录](docs/adr/README.md)
 - [贡献与提交规范](CONTRIBUTING.md)

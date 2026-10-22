@@ -29,24 +29,28 @@ cmake --build --preset cuda-adapters-release --parallel
 ctest --preset cuda-adapters-release
 ```
 
-该预设只验证可移植 CUDA 适配器，不包含 VPI、MVS、TensorRT、ROS2 或 NX 时序，
+该预设只验证可移植 CUDA 适配器，不包含 MVS、TensorRT、ROS2 或 NX 时序，
 因此不能替代下面的目标机验收。
 
 ## B. NX 构建与只读自检
 
 ```bash
-cmake --preset nx-legacy-release
-cmake --build --preset nx-legacy-release --parallel
+cmake --preset nx-mainline-release
+cmake --build --preset nx-mainline-release --parallel
 volleyball doctor --profile nx-rdk
 volleyball doctor --profile free-flight
 volleyball run --profile nx-rdk --dry-run
 ```
 
-通过条件：目标机为 Jetson Orin NX；`doctor` 的配置意图、MVS/CUDA/TensorRT/VPI/OpenCV/ROS2、GPIO 和二进制动态链接检查全部通过；模型存在且 SHA-256 与清单一致；标定语义有效；生成配置可复现。这里证明的是 SDK/链接可用，不等于算子已经在目标 backend 实际执行；后者还必须按[运行依赖与实际启用判定](pipeline/07-runtime-enablement.md)保存启动日志和 Nsight 证据。非 Jetson CUDA 服务器只能验证通用 GPU 代码，不能替代此项。
+通过条件：目标机为 Jetson Orin NX；`doctor` 的配置意图、MVS、CUDA、TensorRT、
+OpenCV、ROS2、GPIO 和原生二进制动态链接检查全部通过；模型存在且 SHA-256 与
+清单一致；标定语义有效；生成配置可复现。这里证明的是 SDK 和链接可用，不等于
+算子已按预期并发执行；L4 仍须按[原生 NX 感知流水线](pipeline.md)保存启动日志、
+逐阶段计数和 Nsight 证据。非 Jetson CUDA 服务器不能替代此项。
 
-`nx-legacy-release` 固定启用 `VOLLEYBALL_REQUIRE_HIK=ON` 和
-`VOLLEYBALL_REQUIRE_ROS2=ON`。缺少 MVS 头文件、MVS 动态库或 ROS2 工作区时，
-配置阶段必须失败；不允许通过静默禁用相机或发布器得到“成功构建”。
+`nx-mainline-release` 固定启用原生应用、海康 MVS、libgpiod、ROS2 和三项硬件
+工具。缺少 MVS 头/库、GPIO 开发库、TensorRT、CUDA 或 ROS2 工作区时，配置阶段
+必须失败；不允许通过静默禁用相机或发布器得到“成功构建”。
 
 真实启动日志还必须证明左右 TensorRT engine 均成功反序列化、I/O 契约通过，且实际网络输入尺寸与 profile 一致。仅有 engine 文件和正确哈希不能证明其 tensor 布局受当前后处理支持。
 
@@ -55,7 +59,7 @@ volleyball run --profile nx-rdk --dry-run
 先运行海康元数据探针，再录制至少 10 分钟静态场景和一批自由飞行：
 
 ```bash
-build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
+build/nx-mainline-release/tools/hardware/hik_frame_metadata_probe \
   --left-sn 00D39342665 --right-sn 00219471413 \
   --pwm-hz 90 --frames 300
 ```
@@ -70,7 +74,7 @@ build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
 - 左右 `FrameCounter` 始终同号且逐帧 +1，允许 uint32 自然回绕；
 - USB 到达先后可变化，但不会改变配对；
 - 水印像素在 SDK 解析后、视觉处理前被清除；
-- raw VPI 锁定/解锁及 Stage 0 VPI/CUDA 任一步失败都会阻止该帧进入检测；
+- 原始缓冲复制或 CUDA 预处理任一步失败都会阻止该帧进入检测；
 - 任何一侧断流、计数缺口或对齐超限均使采集失败，而不是静默继续。
 
 必须用示波器同时观察 GPIO 和两台相机可用的曝光/闪光输出，测量：

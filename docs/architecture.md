@@ -24,7 +24,7 @@ NX GPIO 上升沿 ────────┐
 
 `libs/core` 只定义事实类型及其不变量：相机帧、2D 候选、关联尝试、直接 3D 观测、时钟、坐标系和标定。它不认识 MVS、OpenCV、CUDA、TensorRT、ROS2 或磁盘格式。
 
-`libs/logging` 只提供适配器共用的轻量日志接口，不保存流水线状态，也不参与数据契约。它独立于 `legacy_nx`，避免已提取的适配器反向依赖旧目录。
+`libs/logging` 只提供适配器共用的轻量日志接口，不保存流水线状态，也不参与数据契约。
 
 关键类型刻意分开：
 
@@ -55,7 +55,7 @@ NX GPIO 上升沿 ────────┐
 
 `StereoPipelineRunner` 负责一个 trial 的平台无关生命周期。它从 `CameraSource` 逐项读取配对帧，把帧交给 `StereoObservationService`，并区分正常流结束、可容忍的连续超时、超时越限、数据源错误和源协议错误。只有 `end_of_stream` 能触发 `finalize`；其他终止路径统一 `abort`，同一 runner 不能运行第二次。相机线程、SDK 句柄、GPU 缓冲和 detector 资源仍属于 adapter，runner 不接管硬件所有权，也不是实机可执行入口。
 
-`runManagedStereoTrial` 在 runner 外层管理一次实机启停：只接受尚未启动的 `ManagedCameraSource` 与 `TriggerController`，先让相机进入抓取状态，再启动 GPIO；任一路径退出时先停 GPIO，再停相机。启动函数返回成功但状态未改变也会被视为协议错误。它不会接管调用方已启动的硬件，避免失败清理误停另一条采集任务。该服务补齐的是可测试的生命周期边界；配置装配、信号处理和原生可执行入口仍属于待建立的应用层。
+`runManagedStereoTrial` 在 runner 外层管理一次实机启停：只接受尚未启动的 `ManagedCameraSource` 与 `TriggerController`，先让相机进入抓取状态，再启动 GPIO；任一路径退出时先停 GPIO，再停相机。启动函数返回成功但状态未改变也会被视为协议错误。它不会接管调用方已启动的硬件，避免失败清理误停另一条采集任务。`apps/nx_mainline` 负责配置装配、SIGINT/SIGTERM、模型哈希检查和进程退出状态，不把这些职责放回 service。
 
 `accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。数据校验还要求每个 accepted 配对与唯一轨迹样本的帧引用、3D、协方差和误差数值一致，因此不会出现“接受配对存在但对应 3D 缺失或被替换”的原始数据。
 
@@ -69,9 +69,9 @@ NX GPIO 上升沿 ────────┐
 
 `adapters` 实现实际硬件、存储格式和外部系统。主线 `MainlineStageTrialWriter`、GPIO 触发和海康双目相机分别位于 `adapters/capture_v21`、`adapters/gpio` 与 `adapters/hik_mvs`。写入器按帧、候选、配对和直接观测四类事实分别落盘，只有四张表与全部原图都关闭后才发布完成状态；Python finalizer 再独立校验并原子发布冻结的 v2.1 trial。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
 
-`HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
+`HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机和 GPIO 的顺序由 `runManagedStereoTrial` 统一编排。
 
-现有 VPI 校正和运行时编排仍集中在 `adapters/legacy_nx`。`adapters/cuda_preprocess` 已实现真实的主线 `StereoPreprocessor`：从 OpenCV 标定生成与其解耦的紧密浮点映射，启动时上传一次；每个有界槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 已从旧目录提取同一套 ROI CUDA 内核，并实现生产 `DirectObservationEstimator`：多点、圆/边缘几何与 bbox 候选按冻结顺序选择，实际方法、视差、标准差和支持点数原样返回；GPU/图像故障与合法无匹配严格分开。双侧已关联端口不会把只适用于单侧搜索的 `epipolar_fallback` 冒充为圆心候选。TensorRT engine/context/buffer/enqueue 生命周期、无 SDK I/O 契约、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码、NMS、检测输入 CUDA 预处理和 GPU DFL kernel 已进入 `adapters/tensorrt`；该目录还提供真实的主线 `Detector` 端口实现。正式磁盘 `TrialWriter` 与 ROS2 publisher 也已迁出。上述主线适配器会随 NX 目标接受编译，但尚未由新的原生入口实例化；旧可执行文件仍负责当前实机运行。左右 `Detector` 由两个常驻工作线程并发调用，每个实例仍由唯一线程串行访问；真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
+`apps/nx_mainline` 已装配生产适配器。`adapters/cuda_preprocess` 从 OpenCV 标定生成紧密浮点映射并在启动时上传；每个槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 在校正 Gray8 上生成多点、圆/边缘几何与 bbox 候选，并按冻结顺序选择；实际方法、精化视差、标准差和支持点数原样返回，GPU/图像故障与合法无匹配严格分开。`adapters/tensorrt` 独立拥有左右 engine/context/buffer 和检测 CUDA kernel；两个常驻线程各自串行访问一个 detector。磁盘 `TrialWriter` 与 ROS2 publisher 分别位于 `adapters/capture_v21` 和 `adapters/ros2`。真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
 
 ## 三条独立时间链
 
@@ -118,7 +118,7 @@ NX GPIO 上升沿 ────────┐
 
 NX 负责相机、校正、检测、双目关联和直接 3D 观测。RDK 负责最终稳健滤波、未来轨迹和控制。NX 内部可为关联使用临时滤波器，但不得把滤波位置伪装成直接测量发布；`publish_filtered_as_measurement` 在 schema 中固定为 `false`。
 
-旧 NX 内置的落点预测、世界/车体坐标变换和控制目标发布支路已经删除。NX 的 ROS2 边界只发布带来源证据的直接观测；影子仿真和轨迹预测继续使用冻结 trial 或由 RDK 消费该观测流。
+NX 不执行落点预测、世界/车体坐标变换或控制目标发布。ROS2 边界只发布带来源证据的直接观测；影子仿真和轨迹预测继续使用冻结 trial 或由 RDK 消费该观测流。
 
-NX 内部 CUDA/VPI 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 深度候选以及一帧资源所有权的详细说明见 [NX 图像处理流水线](pipeline/README.md)。该文档同时区分最终 profile、旧配置投影和运行时自动降级，避免从历史 YAML 推断当前启用状态。
+CUDA 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 深度候选和一帧资源所有权见[原生 NX 感知流水线](pipeline.md)。
 
