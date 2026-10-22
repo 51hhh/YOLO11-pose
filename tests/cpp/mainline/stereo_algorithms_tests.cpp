@@ -1,11 +1,14 @@
 #include "volleyball/algorithms/stereo/association.hpp"
 #include "volleyball/algorithms/stereo/triangulation.hpp"
 
+#include "stereo_domain_fixtures.hpp"
+
 #include <cstdlib>
 #include <iostream>
 
 namespace algorithms = volleyball::algorithms::stereo;
 namespace core = volleyball::core;
+namespace support = volleyball::test_support;
 
 namespace {
 
@@ -18,61 +21,22 @@ void check(bool condition, const char* message) {
     }
 }
 
-core::Timestamp time(std::int64_t value) {
-    return {value, core::ClockDomainId{"gpio-clock"}};
-}
-
-core::Detection2D detection(
-    core::CameraRole role,
-    const char* camera,
-    core::CandidateId id,
-    double x,
-    double y,
-    double score) {
-    core::Detection2D output;
-    output.frame = {core::CameraId{camera}, role, 7};
-    output.candidate_id = id;
-    output.center_px = {x, y};
-    output.bounding_box = {x - 20.0, y - 20.0, 40.0, 40.0};
-    output.score = score;
-    output.source_pipeline = core::PipelineId{"fixture-detector"};
-    return output;
-}
-
-algorithms::AssociationConfig associationConfig() {
-    algorithms::AssociationConfig output;
-    output.max_capture_delta_ns = 100;
-    output.epipolar_tolerance_px = 2.0;
-    output.max_size_ratio = 2.0;
-    output.min_shifted_iou = 0.5;
-    return output;
-}
-
-core::RectifiedStereoCalibration calibration() {
-    core::RectifiedStereoCalibration output;
-    output.left = {1000.0, 1000.0, 720.0, 540.0};
-    output.right = output.left;
-    output.baseline_m = 0.8;
-    output.rig_frame = core::CoordinateFrameId{"stereo-rig"};
-    return output;
-}
-
 struct ValidInputs {
-    core::Detection2D left = detection(
+    core::Detection2D left = support::detection(
         core::CameraRole::left, "left", 3, 700.0, 500.0, 0.95);
-    core::Detection2D right = detection(
+    core::Detection2D right = support::detection(
         core::CameraRole::right, "right", 4, 650.0, 500.5, 0.90);
     core::StereoAssociationAttempt association;
-    core::RectifiedStereoCalibration calibration = ::calibration();
-    algorithms::TriangulationConfig config;
+    core::RectifiedStereoCalibration calibration = support::calibration();
+    algorithms::TriangulationConfig config = support::triangulationConfig();
 
     ValidInputs() {
         auto batch = algorithms::associateCandidates(
             {left},
             {right},
-            time(1000),
-            time(1000),
-            associationConfig(),
+            support::time(1000),
+            support::time(1000),
+            support::associationConfig(),
             10);
         association = batch.attempts.front().attempt;
     }

@@ -6,6 +6,8 @@
 #include "volleyball/ports/observation_publisher.hpp"
 #include "volleyball/services/stereo_observation_service.hpp"
 
+#include "stereo_domain_fixtures.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -104,10 +106,6 @@ public:
     std::vector<core::ValidatedObservation> observations;
 };
 
-inline core::Timestamp time(std::int64_t value) {
-    return {value, core::ClockDomainId{"gpio-clock"}};
-}
-
 inline core::CameraFrameRecord frame(
     core::CameraRole role,
     const char* id,
@@ -126,35 +124,11 @@ inline core::CameraFrameRecord frame(
     return output;
 }
 
-inline core::Detection2D detection(
-    core::CameraRole role,
-    const char* camera,
-    core::CandidateId id,
-    double x,
-    double y,
-    double score) {
-    core::Detection2D output;
-    output.frame = {core::CameraId{camera}, role, 7};
-    output.candidate_id = id;
-    output.center_px = {x, y};
-    output.bounding_box =
-        core::BoundingBox2D{x - 20.0, y - 20.0, 40.0, 40.0};
-    output.score = score;
-    output.source_pipeline = core::PipelineId{"fixture-detector"};
-    return output;
-}
-
 inline services::StereoObservationServiceConfig serviceConfig() {
     services::StereoObservationServiceConfig output;
-    output.association.max_capture_delta_ns = 100;
-    output.association.epipolar_tolerance_px = 2.0;
-    output.association.max_size_ratio = 2.0;
-    output.association.min_shifted_iou = 0.5;
-    output.calibration.left = {1000.0, 1000.0, 720.0, 540.0};
-    output.calibration.right = output.calibration.left;
-    output.calibration.baseline_m = 0.8;
-    output.calibration.rig_frame = core::CoordinateFrameId{"stereo-rig"};
-    output.triangulation.center_sigma_px = 0.5;
+    output.association = associationConfig();
+    output.calibration = calibration();
+    output.triangulation = triangulationConfig();
     output.gate.min_depth_m = 0.8;
     output.gate.max_depth_m = 20.0;
     output.gate.max_reprojection_error_px = 2.0;
