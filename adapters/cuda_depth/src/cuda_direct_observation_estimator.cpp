@@ -49,8 +49,7 @@ bool containsMethod(
 bool requiresGpu(const std::vector<Method>& methods) noexcept {
     return std::any_of(methods.begin(), methods.end(), [](const Method& method) {
         const std::string_view value = method.value();
-        return value != "bbox_center" && value != "bbox_edges" &&
-               value != "epipolar_fallback";
+        return value != "bbox_center" && value != "bbox_edges";
     });
 }
 

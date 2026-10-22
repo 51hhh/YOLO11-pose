@@ -51,10 +51,9 @@ GPIO 上升沿，则该帧不发布；不得退回 USB 到达时刻、SDK 主机
 
 ## 数据包
 
-最终对外格式固定为 v2.1.0。默认采集使用 v6 staging：
+最终对外格式固定为 v2.1.0。采集只接受 v6 staging：
 
 - v6：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试、直接观测及其实际深度方法证据；
-- v4：只为已存在的旧 staging 与显式 legacy 回归保留读取兼容，不是新数据入口。
 
 v6 使用 `frames_v6.csv`、`detections_v6.csv`、`associations_v6.csv`、
 `observations_v6.csv` 与最后写入的 `status_v6.json`。`observations_v6.csv` 额外保存
@@ -174,7 +173,7 @@ volleyball capture --profile free-flight \
 volleyball dataset validate data/captures/trials/trial-001
 ```
 
-每次运行使用独立的随机 staging 目录。旧 staging 中只要已有 CSV、状态文件或
+每次运行使用独立的随机 staging 目录。staging 中只要已有 CSV、状态文件或
 `raw/` 图像目录，NX 录制器都会拒绝复用；失败数据用于审计，不能作为续写点，
 更不能覆盖后重新发布。
 

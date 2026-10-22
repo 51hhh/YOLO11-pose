@@ -36,7 +36,6 @@ class MainlineConfigTests(unittest.TestCase):
             payload["depth"]["method_order"],
             [
                 "roi_multi_point",
-                "epipolar_fallback",
                 "circle_center",
                 "radial_center",
                 "edge_pair_center",
@@ -67,18 +66,17 @@ class MainlineConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "staging"):
             build_mainline_pipeline_config(profile, project_root=ROOT)
 
-    def test_projection_rejects_compute_only_candidate_without_evidence(self) -> None:
-        profile = load_profile(
-            "nx-rdk",
-            project_root=ROOT,
-            overrides=(
-                "stereo.triangulation.candidate_methods="
-                "[roi_multi_point,center_patch]",
-                "stereo.triangulation.fallback_methods=[]",
-            ),
-        )
-        with self.assertRaisesRegex(ConfigError, "尚不支持"):
-            build_mainline_pipeline_config(profile, project_root=ROOT)
+    def test_profile_rejects_computed_candidate_without_selection_path(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "必须进入"):
+            load_profile(
+                "nx-rdk",
+                project_root=ROOT,
+                overrides=(
+                    "stereo.triangulation.candidate_methods="
+                    "[roi_multi_point,bbox_center]",
+                    "stereo.triangulation.fallback_methods=[]",
+                ),
+            )
 
     def test_projection_rejects_fractional_sync_error_ns(self) -> None:
         profile = load_profile(

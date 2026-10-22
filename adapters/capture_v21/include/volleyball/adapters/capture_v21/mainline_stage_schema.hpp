@@ -10,9 +10,8 @@
 
 namespace volleyball::adapters::capture_v21 {
 
-// v4 是旧 NX 聚合 staging；v6 为主线端口逐事实写入格式。v6 在 v5
-// 基础上补齐每条直接观测实际使用的深度方法证据。它们均只属于
-// 未发布 staging，不改变对外冻结的 capture v2.1.0 数据包版本。
+// v6 为主线端口逐事实写入格式，并补齐每条直接观测实际使用的深度方法
+// 证据。它只属于未发布 staging，不改变对外冻结的 capture v2.1.0 版本。
 inline constexpr int kCaptureV21MainlineStageSchemaVersion = 6;
 
 inline constexpr std::array<std::string_view, 46>

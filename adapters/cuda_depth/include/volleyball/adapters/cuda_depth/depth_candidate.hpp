@@ -21,8 +21,7 @@ struct DepthCandidate {
 
 [[nodiscard]] bool isValid(const DepthCandidate& candidate) noexcept;
 
-// 只列出当前适配器能作为最终直接观测选择或明确判定“不适用”的方法。
-// epipolar_fallback 需要单侧检测搜索；在本端口的双侧已关联请求中不会生成候选。
+// 只列出当前双侧已关联请求能够实际生成的最终直接观测方法。
 [[nodiscard]] bool isSupportedSelectionMethod(
     const core::StereoDepthMethodId& method) noexcept;
 

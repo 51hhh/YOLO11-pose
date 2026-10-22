@@ -8,10 +8,6 @@ runtime:
   queue:
     capacity: 3
     overflow_policy: drop_oldest
-  threading:
-    capture_threads: 2
-    inference_threads: 2
-    writer_threads: 1
 
 platform:
   id: generic-host
@@ -68,13 +64,9 @@ calibration:
   world_frame: world
 
 adapters:
-  active_pipeline: mainline
   mainline_pipeline:
     executable: build/nx-mainline-release/apps/nx_mainline/volleyball_nx_mainline
     source_epoch_file: /run/volleyball/nx_source_epoch
-  legacy_pipeline:
-    executable: build/nx-legacy-superbuild/legacy_nx/stereo_pipeline
-    base_config: adapters/legacy_nx/config/base_pipeline.yaml
 
 rectification:
   backend: opencv
@@ -108,8 +100,8 @@ stereo:
   triangulation:
     backend: opencv
     primary_method: roi_multi_point
-    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges, epipolar_fallback]
-    fallback_methods: [epipolar_fallback, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     propagate_covariance: true
     subpixel:
       patch_radius: 5
@@ -121,30 +113,18 @@ stereo:
       max_disparity_delta_ratio: 0.03
       max_depth_delta_m: 0.5
       max_stddev_px: 1.0
-      time_budget_ms: 1.5
-    fallback_search:
-      margin_px: 48
-      max_width_px: 220
     circle_fit:
       max_roi_pixels: 18000
   min_depth_m: 0.8
   max_depth_m: 15.0
   ball_diameter_m: 0.210
 
-tracking:
-  enabled: true
-  filter: kalman_ca
-  publish_filtered_as_measurement: false
-
 recording:
   enabled: false
   dataset_root: data/captures
   schema_version: 2.1.0
   raw_frames: none
-  image_product: rectified_gray8
-  image_format: pgm
   loss_policy: mark_dropped
-  atomic_publish: true
   verify_hashes: true
 
 publisher:
@@ -152,12 +132,7 @@ publisher:
   backend: none
   topic: ""
   frame_id: nx_left_rectified_optical_frame
-  qos: sensor_data
 
 diagnostics:
-  # 旧 NX logger 目前是结构化前缀文本，不是逐行 JSON；不能伪报已启用。
-  json_logs: false
-  processing_timing: true
   metrics_interval_frames: 900
-  realtime_dump_enabled: false
 

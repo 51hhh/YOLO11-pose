@@ -8,7 +8,7 @@
 
 namespace volleyball::ports {
 
-enum class MemoryKind { host, host_pinned, cuda_device, vpi_image, external };
+enum class MemoryKind { host, host_pinned, cuda_device, external };
 
 // 图像所有权由缓冲对象本身管理，管线不传递裸的短寿命指针。
 class ImageBuffer {

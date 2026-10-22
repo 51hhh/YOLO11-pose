@@ -217,7 +217,7 @@ void testMissingOrUnrepresentableEvidenceIsRejected() {
           "conflicting stereo residual evidence must be rejected");
 }
 
-void testLegacyMethodCodebookIsFrozen() {
+void testDepthMethodCodebookIsFrozen() {
     const std::pair<const char*, std::uint8_t> cases[] = {
         {"circle_center", 1},
         {"roi_multi_point", 2},
@@ -232,10 +232,10 @@ void testLegacyMethodCodebookIsFrozen() {
         {"cuda_template_match", 21},
     };
     for (const auto& [name, expected] : cases) {
-        const auto actual = adapter::legacyDepthMethodCode(
+        const auto actual = adapter::depthMethodWireCode(
             core::StereoDepthMethodId{name});
         check(actual && *actual == expected,
-              "legacy depth method code changed unexpectedly");
+              "depth method wire code changed unexpectedly");
     }
 }
 
@@ -246,7 +246,7 @@ int main() {
     testFallbackAndMeasuredTimestampUncertaintyAreExplicit();
     testCrossReferenceAndCoordinateMismatchesAreRejected();
     testMissingOrUnrepresentableEvidenceIsRejected();
-    testLegacyMethodCodebookIsFrozen();
+    testDepthMethodCodebookIsFrozen();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return EXIT_FAILURE;

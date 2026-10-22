@@ -34,8 +34,8 @@ target_link_libraries(volleyball_tensorrt_mapping PUBLIC
 )
 target_compile_features(volleyball_tensorrt_mapping PUBLIC cxx_std_17)
 
-# 根工程只启用 CXX，因此主机测试不会看到这个目标。NX 外部工程已经启用
-# CUDA，届时才构建硬件 kernel，避免把 CUDA SDK 泄漏进平台无关层。
+# 主机预设只启用 CXX，因此不会看到这个目标；NX 主线预设启用 CUDA 后才构建
+# 硬件 kernel，避免把 CUDA SDK 泄漏进平台无关层。
 if(CMAKE_CUDA_COMPILER)
   add_library(volleyball_tensorrt_cuda
     src/cuda/preprocess.cu

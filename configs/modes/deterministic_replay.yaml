@@ -4,11 +4,6 @@ runtime:
     capacity: 64
     overflow_policy: block
 
-tracking:
-  enabled: false
-  filter: none
-  publish_filtered_as_measurement: false
-
 recording:
   enabled: false
   raw_frames: none

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable, Mapping
 
 from .calibration import ensure_dataset_calibration
@@ -12,8 +14,8 @@ from .capture_stage_io import (
     parse_float,
     parse_int,
 )
-from .config import ResolvedConfig
-from .dataset import DatasetError, TrialPackageWriter
+from .config import ResolvedConfig, find_project_root
+from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
 from .mainline_stage_contract import (
     COVARIANCE_3D_FIELDS,
     MAINLINE_DETECTION_COLUMNS,
@@ -25,11 +27,28 @@ from .mainline_stage_validation import (
     safe_stage_source as _safe_stage_source,
     validate_mainline_stage,
 )
+from .model_manifest import resolve_model, sha256_file
 from .timebase import (
     fit_affine_clock_mapping,
     integer_midpoint_ns,
     map_timestamp_ns,
 )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _git_revision(root: Path) -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return completed.stdout.strip()
 
 
 def _mapping_or_identity(
@@ -78,23 +97,72 @@ def build_mainline_capture_context(
     verify_model: bool = True,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    """复用公共采集身份生成逻辑，并显式选择主线 v6 staging。"""
+    """生成不可变的主线 v6 staging 身份与感知流水线指纹。"""
 
-    # 延迟导入避免 capture 的 mainline finalizer 分派形成模块初始化环。
-    from .capture import build_capture_context
+    root = find_project_root(project_root)
+    entry, artifact = resolve_model(config, project_root=root)
+    expected = entry.get("sha256")
+    if artifact.is_file():
+        weights_sha256 = sha256_file(artifact)
+        if expected and expected != weights_sha256:
+            raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
+    else:
+        weights_sha256 = expected
+    if verify_model:
+        if not artifact.is_file():
+            raise DatasetError(f"模型文件不存在: {artifact}")
+        if not expected:
+            raise DatasetError("模型清单必须先固定 weights SHA-256 才能发布真实数据")
+        if expected != weights_sha256:
+            raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
 
-    context = build_capture_context(
-        config,
-        trial_id=trial_id,
-        session_id=session_id,
-        ball_id=ball_id,
-        trajectory_kind=trajectory_kind,
-        conditions=conditions,
-        notes=notes,
-        verify_model=verify_model,
-        project_root=project_root,
+    detector = config.data["detector"]
+    pipeline = with_pipeline_fingerprint(
+        {
+            "pipeline_id": detector["model_id"],
+            "detector_family": entry["family"],
+            "detector_version": str(entry.get("version", detector["model_id"])),
+            "code_revision": _git_revision(root),
+            "config_sha256": config.fingerprint_sha256,
+            "weights_sha256": weights_sha256,
+            "input_size_px": list(detector["input_resolution"]),
+            "resize_mode": detector["resize_mode"],
+            "score_threshold": detector["confidence_threshold"],
+            "nms_iou_threshold": detector["nms_iou_threshold"],
+            "center_method": detector["center_method"],
+        }
     )
-    context["stage_schema_version"] = MAINLINE_STAGE_SCHEMA_VERSION
+    context = {
+        "stage_schema_version": MAINLINE_STAGE_SCHEMA_VERSION,
+        "trial_id": trial_id,
+        "session_id": session_id,
+        "ball_id": ball_id,
+        "calibration_id": config.data["calibration"]["id"],
+        "captured_at_utc": _utc_now(),
+        "trajectory_kind": trajectory_kind,
+        "conditions": dict(conditions or {}),
+        "notes": notes,
+        "profile": config.profile,
+        "config_sha256": config.fingerprint_sha256,
+        "exposure_timestamp": {
+            "shutter_type": config.data["cameras"]["sync"]["shutter_type"],
+            "source": config.data["cameras"]["sync"][
+                "exposure_timestamp_source"
+            ],
+            "delay_status": config.data["cameras"]["sync"][
+                "exposure_delay_status"
+            ],
+            "delay_ns": config.data["cameras"]["sync"]["exposure_delay_ns"],
+            "delay_uncertainty_ns": config.data["cameras"]["sync"][
+                "exposure_delay_uncertainty_ns"
+            ],
+            "observation_timestamp": "exposure_midpoint",
+        },
+        "perception_pipeline": pipeline,
+    }
+    if not verify_model:
+        # 预演允许目标机 artifact 尚未安装，但该 staging 永远不能发布。
+        context["planning_only"] = True
     return context
 
 

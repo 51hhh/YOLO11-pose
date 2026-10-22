@@ -41,18 +41,6 @@ void testSelectsByConfiguredOrderNotCandidateOrder() {
           "selection must follow the frozen method order");
 }
 
-void testSkipsInapplicableEpipolarFallback() {
-    const auto result = adapter::selectDepthCandidate(
-        {candidate("circle_center", 8.0)},
-        {core::StereoDepthMethodId{"roi_multi_point"},
-         core::StereoDepthMethodId{"epipolar_fallback"},
-         core::StereoDepthMethodId{"circle_center"}});
-    check(result.valid_input && result.candidate &&
-              result.candidate->method ==
-                  core::StereoDepthMethodId{"circle_center"},
-          "paired requests must skip an unavailable one-sided fallback");
-}
-
 void testNoCandidateIsAValidRejection() {
     const auto result = adapter::selectDepthCandidate(
         {}, {core::StereoDepthMethodId{"roi_multi_point"}});
@@ -77,7 +65,6 @@ void testRejectsAmbiguousOrUnsupportedInput() {
 
 int main() {
     testSelectsByConfiguredOrderNotCandidateOrder();
-    testSkipsInapplicableEpipolarFallback();
     testNoCandidateIsAValidRejection();
     testRejectsAmbiguousOrUnsupportedInput();
     if (failures != 0) {

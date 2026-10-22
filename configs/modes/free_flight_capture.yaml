@@ -5,11 +5,6 @@ runtime:
     capacity: 256
     overflow_policy: block
 
-tracking:
-  enabled: true
-  filter: kalman_ca
-  publish_filtered_as_measurement: false
-
 recording:
   enabled: true
   dataset_root: data/captures

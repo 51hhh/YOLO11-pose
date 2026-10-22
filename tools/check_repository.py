@@ -38,17 +38,8 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "NX_volleyball/",
     "Stereo/",
     "volleyball_tracking/",
-    "adapters/legacy_nx/tests/",
-    "adapters/legacy_nx/baseline_clips/",
-    "adapters/legacy_nx/benchmark_results/",
-    "adapters/legacy_nx/diagnose_output/",
-    "adapters/legacy_nx/raw_observation_data.csv",
-    "adapters/legacy_nx/test_logs/",
-    "adapters/legacy_nx/src/pipeline/pipeline_tracker.cpp",
-    "adapters/legacy_nx/src/track/",
-    "adapters/legacy_nx/src/fusion/trajectory_predictor",
-    "adapters/legacy_nx/src/ros/goal_pose_bridge",
-    "adapters/legacy_nx/src/ros/diagnostic_publisher",
+    "adapters/legacy_nx/",
+    "tests/cpp/legacy_nx/",
 )
 ALLOWED_TOOL_FILES = {
     "tools/check_repository.py",
@@ -103,19 +94,7 @@ ALLOWED_CPP_TEST_GROUPS = {
     "adapters",
     "fakes",
     "hardware_tools",
-    "legacy_nx",
     "mainline",
-}
-ALLOWED_LEGACY_CONFIG_FILES = {
-    "adapters/legacy_nx/config/base_pipeline.yaml",
-}
-ALLOWED_LEGACY_TEST_GROUPS = {
-    "capture",
-    "fakes",
-    "fusion",
-    "pipeline",
-    "ros",
-    "stereo",
 }
 
 PURE_CPP_LAYERS = (
@@ -130,13 +109,6 @@ FORBIDDEN_HARDWARE_INCLUDES = re.compile(
     r"^\s*#\s*include\s*[<\"](?:cuda|vpi|NvInfer|opencv|rclcpp|"
     r"MvCameraControl|gpiod|yaml-cpp)",
     re.IGNORECASE | re.MULTILINE,
-)
-FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS = re.compile(
-    r"(?:"
-    r"(?:buffer\.pitch\.)?planes?\s*\[[^\]]+\]"
-    r"|\b[a-zA-Z_]\w*plane\w*"
-    r")\s*\.\s*(?:data|pBase|offsetBytes)\b",
-    re.IGNORECASE,
 )
 FORBIDDEN_TEST_MODULE_IMPORT = re.compile(
     r"^\s*(?:from|import)\s+(?:tests\.)?(?:unit|contract)\.test_[A-Za-z0-9_]+",
@@ -160,7 +132,6 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/ros2/src", "adapters/ros2/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
-    ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("tools/hardware", "tools/hardware/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
@@ -168,7 +139,6 @@ CMAKE_SOURCE_GROUPS = (
         "tests/cpp/hardware_tools",
         "tests/cpp/hardware_tools/CMakeLists.txt",
     ),
-    ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
 )
 
 
@@ -359,17 +329,6 @@ def main() -> int:
             + "\n    ".join(unexpected_tools)
         )
 
-    unexpected_legacy_config = sorted(
-        path for path in tracked
-        if path.startswith("adapters/legacy_nx/config/")
-        and path not in ALLOWED_LEGACY_CONFIG_FILES
-    )
-    if unexpected_legacy_config:
-        errors.append(
-            "旧 NX config 只保留兼容模板，实验结果应存放在 trial/derived:\n    "
-            + "\n    ".join(unexpected_legacy_config)
-        )
-
     flat_cpp_tests = sorted(
         path for path in tracked
         if Path(path).parent == Path("tests/cpp")
@@ -390,8 +349,7 @@ def main() -> int:
     )
     if unexpected_cpp_test_groups:
         errors.append(
-            "C++ 测试只能进入 mainline、adapters、hardware_tools、"
-            "legacy_nx 或 fakes:\n    "
+            "C++ 测试只能进入 mainline、adapters、hardware_tools 或 fakes:\n    "
             + "\n    ".join(unexpected_cpp_test_groups)
         )
 
@@ -416,30 +374,6 @@ def main() -> int:
         errors.append(
             "mainline 测试不得引用非 fake 适配器，请移入 tests/cpp/adapters:\n    "
             + "\n    ".join(misplaced_adapter_tests)
-        )
-
-    flat_legacy_cpp_tests = sorted(
-        path for path in tracked
-        if Path(path).parent == Path("tests/cpp/legacy_nx")
-        and Path(path).suffix in {".cc", ".cpp", ".cxx"}
-    )
-    if flat_legacy_cpp_tests:
-        errors.append(
-            "旧 NX 测试必须按被测职责分组:\n    "
-            + "\n    ".join(flat_legacy_cpp_tests)
-        )
-
-    unexpected_legacy_test_groups = sorted(
-        path for path in tracked
-        if path.startswith("tests/cpp/legacy_nx/")
-        and len(Path(path).relative_to("tests/cpp/legacy_nx").parts) > 1
-        and Path(path).relative_to("tests/cpp/legacy_nx").parts[0]
-        not in ALLOWED_LEGACY_TEST_GROUPS
-    )
-    if unexpected_legacy_test_groups:
-        errors.append(
-            "旧 NX 测试只能进入已声明的职责目录:\n    "
-            + "\n    ".join(unexpected_legacy_test_groups)
         )
 
     flat_python_tests = sorted(
@@ -500,9 +434,7 @@ def main() -> int:
         "configs/profiles/free-flight.yaml",
         "models/manifest.yaml",
         "CMakePresets.json",
-        "adapters/legacy_nx/CMakeLists.txt",
         "adapters/hik_mvs/CMakeLists.txt",
-        "adapters/legacy_nx/config/base_pipeline.yaml",
         "configs/calibration/stereo_calib.yaml",
         "algorithms/stereo/CMakeLists.txt",
         "services/CMakeLists.txt",
@@ -534,29 +466,6 @@ def main() -> int:
         errors.append(
             "纯核心/算法/服务层禁止直接依赖硬件 SDK:\n    "
             + "\n    ".join(dependency_violations)
-        )
-
-    vpi_plane_access_violations: list[str] = []
-    legacy_source_root = ROOT / "adapters/legacy_nx/src"
-    vpi_adapter = legacy_source_root / "utils/vpi_plane_access.h"
-    if legacy_source_root.exists():
-        for path in legacy_source_root.rglob("*"):
-            if path.suffix not in {
-                ".h", ".hpp", ".cc", ".cpp", ".cxx", ".cu"
-            }:
-                continue
-            if path == vpi_adapter:
-                continue
-            text = path.read_text(encoding="utf-8")
-            match = FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS.search(text)
-            if match:
-                vpi_plane_access_violations.append(
-                    f"{path.relative_to(ROOT)}: {match.group(0)}"
-                )
-    if vpi_plane_access_violations:
-        errors.append(
-            "VPI pitch-linear 地址只能经 vpi_plane_access.h 访问:\n    "
-            + "\n    ".join(vpi_plane_access_violations)
         )
 
     if errors:

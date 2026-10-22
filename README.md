@@ -62,21 +62,18 @@ python3 tools/check_repository.py
 | `adapters/cuda_depth/` | CUDA ROI 多点/几何深度候选、显式回退选择及主线 `DirectObservationEstimator` |
 | `adapters/tensorrt/` | TensorRT 检测适配器边界；集中 engine/context/buffer 生命周期、检测契约、主线 `Detector` 端口、事实映射及按 CUDA 构建的输入与 DFL kernel |
 | `adapters/ros2/` | 直接 3D 观测到 ROS2 消息的严格映射、发布及源纪元持久化；不执行跟踪、预测或坐标系改名 |
-| `adapters/legacy_nx/` | 仅供显式回归的旧实现；默认构建和运行均不使用 |
-| `python/volleyball_vision/` | 配置、v4/v6 staging 校验与 v2.1 发布、回放和离线评估 |
+| `python/volleyball_vision/` | 配置、v6 staging 校验与 v2.1 发布、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
 | `tests/support/` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
-| `tests/cpp/legacy_nx/` | 旧实现隔离回归；不得成为主线测试依赖 |
 | `tests/cpp/hardware_tools/` | 标定和硬件验收程序的无硬件单元测试；目录与 `tools/hardware/` 对应 |
 | `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
 | `tools/hardware/` | 帧元数据探针、标定图采集和离线双目标定三个受测辅助程序 |
 | `tools/check_repository.py` | 仓库结构、依赖方向、文档导航和构建接线门禁 |
 
-默认入口只有 `apps/nx_mainline`。旧实现保留为可删除的显式回归边界，不参与原生
-主线的配置、构建依赖或数据契约。
+部署入口只有 `apps/nx_mainline`；配置、构建和采集均不再维护第二套兼容流水线。
 
 ## 配置与运行
 

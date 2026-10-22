@@ -6,7 +6,7 @@
  *   - grabFramePair(): 同步抓取左右图像
  *   - 从 SDK buffer 拷贝到调用方提供的带 pitch 缓冲
  *   - 支持外触发 (Line0/Line1) + 软触发
- *   - BayerRG8 原始格式输出 (后续由 CUDA/VPI 处理)
+ *   - BayerRG8 原始格式输出（后续由 CUDA 处理）
  */
 
 #pragma once

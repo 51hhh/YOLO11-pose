@@ -1,7 +1,7 @@
 """NX 运行依赖的只读探针。
 
 这里仅判断开发头文件、动态库与已构建二进制的链接事实；实际算子是否在
-CUDA/VPI/TensorRT 上提交，仍应由启动日志与 Nsight 时间线验证。
+CUDA/TensorRT 上提交，仍应由启动日志与 Nsight 时间线验证。
 """
 
 from __future__ import annotations
@@ -27,90 +27,7 @@ class _SdkRequirement:
     libraries: tuple[tuple[str, tuple[str, ...]], ...]
 
 
-_LIVE_SDK_REQUIREMENTS = (
-    _SdkRequirement(
-        name="tensorrt_sdk",
-        headers=(
-            "/usr/include/aarch64-linux-gnu/NvInfer.h",
-            "/usr/include/x86_64-linux-gnu/NvInfer.h",
-            "/usr/include/NvInfer.h",
-            "/usr/local/include/NvInfer.h",
-        ),
-        libraries=(
-            (
-                "nvinfer",
-                (
-                    "/usr/lib/aarch64-linux-gnu/libnvinfer.so*",
-                    "/usr/lib/x86_64-linux-gnu/libnvinfer.so*",
-                    "/usr/lib/libnvinfer.so*",
-                    "/usr/local/lib/libnvinfer.so*",
-                ),
-            ),
-            (
-                "nvinfer_plugin",
-                (
-                    "/usr/lib/aarch64-linux-gnu/libnvinfer_plugin.so*",
-                    "/usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so*",
-                    "/usr/lib/libnvinfer_plugin.so*",
-                    "/usr/local/lib/libnvinfer_plugin.so*",
-                ),
-            ),
-        ),
-    ),
-    _SdkRequirement(
-        name="vpi_sdk",
-        headers=(
-            "/opt/nvidia/vpi*/include/vpi/VPI.h",
-            "/usr/include/vpi/VPI.h",
-            "/usr/local/include/vpi/VPI.h",
-        ),
-        libraries=(
-            (
-                "nvvpi",
-                (
-                    "/opt/nvidia/vpi*/lib/aarch64-linux-gnu/libnvvpi.so*",
-                    "/opt/nvidia/vpi*/lib/x86_64-linux-gnu/libnvvpi.so*",
-                    "/opt/nvidia/vpi*/lib64/libnvvpi.so*",
-                    "/usr/lib/aarch64-linux-gnu/libnvvpi.so*",
-                    "/usr/lib/x86_64-linux-gnu/libnvvpi.so*",
-                    "/usr/lib/libnvvpi.so*",
-                    "/usr/local/lib/libnvvpi.so*",
-                ),
-            ),
-        ),
-    ),
-    _SdkRequirement(
-        name="opencv_sdk",
-        headers=(
-            "/usr/include/opencv4/opencv2/core.hpp",
-            "/usr/local/include/opencv4/opencv2/core.hpp",
-        ),
-        libraries=tuple(
-            (
-                component,
-                (
-                    f"/usr/lib/aarch64-linux-gnu/libopencv_{component}.so*",
-                    f"/usr/lib/x86_64-linux-gnu/libopencv_{component}.so*",
-                    f"/usr/lib/libopencv_{component}.so*",
-                    f"/usr/local/lib/libopencv_{component}.so*",
-                ),
-            )
-            for component in (
-                "core",
-                "imgproc",
-                "features2d",
-                "calib3d",
-                "highgui",
-                "imgcodecs",
-                "cudastereo",
-                "cudaimgproc",
-                "cudafilters",
-            )
-        ),
-    ),
-)
-
-_MAINLINE_SDK_REQUIREMENTS = (
+_SDK_REQUIREMENTS = (
     _SdkRequirement(
         name="tensorrt_sdk",
         headers=(
@@ -180,20 +97,12 @@ def _first_existing(system_root: Path, patterns: Iterable[str]) -> Path | None:
 
 def probe_live_sdk_dependencies(
     system_root: str | Path,
-    *,
-    pipeline: str = "legacy",
 ) -> tuple[DependencyProbe, ...]:
-    """检查所选 NX 管线构建和运行真正需要的 SDK 组件。"""
+    """检查原生 NX 主线构建和运行真正需要的 SDK 组件。"""
 
     root = Path(system_root).resolve()
-    if pipeline == "legacy":
-        requirements = _LIVE_SDK_REQUIREMENTS
-    elif pipeline == "mainline":
-        requirements = _MAINLINE_SDK_REQUIREMENTS
-    else:
-        raise ValueError(f"不支持的 NX pipeline: {pipeline}")
     probes: list[DependencyProbe] = []
-    for requirement in requirements:
+    for requirement in _SDK_REQUIREMENTS:
         header = _first_existing(root, requirement.headers)
         libraries = {
             component: _first_existing(root, patterns)
@@ -253,7 +162,7 @@ def probe_dynamic_linkage(
     expected_libraries: Iterable[tuple[str, str]],
     *,
     command_runner: CommandRunner = _run_command,
-    probe_name: str = "legacy_linkage",
+    probe_name: str = "pipeline_linkage",
 ) -> DependencyProbe:
     """用 ldd 证明二进制没有缺库，且确实链接 profile 所需框架。"""
 

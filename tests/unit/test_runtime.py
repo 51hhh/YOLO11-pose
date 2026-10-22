@@ -68,48 +68,6 @@ class RuntimeTests(unittest.TestCase):
                 / "volleyball_nx_mainline",
             )
 
-    def test_mainline_rejects_legacy_only_visualization(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "pipeline.yaml"
-            error = io.StringIO()
-            with redirect_stderr(error):
-                returncode = main(
-                    (
-                        "run",
-                        "--profile",
-                        "nx-rdk",
-                        "--generated-config",
-                        str(destination),
-                        "--visualize",
-                        "--dry-run",
-                    )
-                )
-            self.assertEqual(returncode, 2)
-            self.assertIn("原生 mainline 不提供 GUI", error.getvalue())
-
-    def test_legacy_visualize_remains_available_for_regression(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "pipeline.yaml"
-            output = io.StringIO()
-            with redirect_stdout(output):
-                returncode = main(
-                    (
-                        "run",
-                        "--profile",
-                        "nx-rdk",
-                        "--set",
-                        "adapters.active_pipeline=legacy",
-                        "--generated-config",
-                        str(destination),
-                        "--visualize",
-                        "--dry-run",
-                    )
-                )
-            self.assertEqual(returncode, 0)
-            self.assertIn(
-                f"--config {destination} --visualize", output.getvalue()
-            )
-
     def test_generated_config_never_overwrites_existing_file(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
         with tempfile.TemporaryDirectory() as directory:

@@ -91,8 +91,7 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 ```
 
 显式指定的生成路径必须不存在，避免无提示覆盖人工文件。实际启动前 `doctor` 会
-检查标定、模型及哈希、原生可执行文件、SDK 和动态链接。`render-legacy` 只用于
-显式回归，不是生产配置入口。
+检查标定、模型及哈希、原生可执行文件、SDK 和动态链接。
 
 ## 常用可调项
 
@@ -104,7 +103,7 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 | 队列 | `runtime.queue.*` | 实时追求低延迟，采集追求不丢帧 |
 | 检测 | `detector.*` | 模型、输入尺寸、阈值与中心方法 |
 | 配对 | `stereo.association.*` | 曝光中心时差、极线、尺寸、视差和 IoU 门限 |
-| 深度 | `stereo.triangulation.*` | 计算候选集合、主方法、回退顺序、亚像素与时间预算 |
+| 深度 | `stereo.triangulation.*` | 计算候选集合、主方法、回退顺序与亚像素门限 |
 | 录制 | `recording.*` | schema、原图、失败策略、哈希校验 |
 
 `diagnostics.metrics_interval_frames` 控制主线进度统计周期。ROS2 使用传感器数据
@@ -128,5 +127,5 @@ QoS，并只发布直接观测；滤波、轨迹预测和控制参数不属于 N
 `stereo.association.bbox_disparity_*` 管理；多点结果相对初始几何的门限由
 `stereo.triangulation.subpixel.max_*` 管理；圆拟合采样上限位于
 `stereo.triangulation.circle_fit`。正式行为只能由 profile 改变，不能通过编辑
-生成的进程 YAML 或旧兼容模板改变。
+生成的进程 YAML 改变。
 

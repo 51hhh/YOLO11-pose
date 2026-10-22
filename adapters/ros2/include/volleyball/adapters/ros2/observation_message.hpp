@@ -73,7 +73,7 @@ struct ObservationMessageResult {
 
 // 与现有 volleyball_interfaces/NxBallObservation.depth_method 数值兼容。
 // 未知方法必须拒绝，不能静默发布为 0 或猜测相近方法。
-[[nodiscard]] std::optional<std::uint8_t> legacyDepthMethodCode(
+[[nodiscard]] std::optional<std::uint8_t> depthMethodWireCode(
     const core::StereoDepthMethodId& method) noexcept;
 
 [[nodiscard]] ObservationMessageResult makeObservationMessage(

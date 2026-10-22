@@ -10,21 +10,10 @@ import yaml
 
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .model_manifest import resolve_model
+from .triangulation_config import SUPPORTED_LIVE_METHODS
 
 
 MAINLINE_CONFIG_SCHEMA_VERSION = 1
-_SUPPORTED_DEPTH_METHODS = frozenset(
-    {
-        "roi_multi_point",
-        "epipolar_fallback",
-        "circle_center",
-        "radial_center",
-        "edge_pair_center",
-        "edge_centroid",
-        "bbox_center",
-        "bbox_edges",
-    }
-)
 
 
 def _selection_order(triangulation: dict[str, Any]) -> list[str]:
@@ -33,7 +22,7 @@ def _selection_order(triangulation: dict[str, Any]) -> list[str]:
     if len(order) != len(set(order)):
         raise ConfigError("原生主线深度选择顺序不得重复")
     candidates = set(triangulation["candidate_methods"])
-    unsupported = sorted(candidates - _SUPPORTED_DEPTH_METHODS)
+    unsupported = sorted(candidates - SUPPORTED_LIVE_METHODS)
     if unsupported:
         raise ConfigError(
             "原生主线尚不支持这些深度候选: " + ", ".join(unsupported)

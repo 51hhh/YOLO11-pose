@@ -18,48 +18,14 @@ class RuntimeDependencyTests(unittest.TestCase):
         by_name = {probe.name: probe for probe in probes}
         self.assertEqual(
             set(by_name),
-            {"tensorrt_sdk", "vpi_sdk", "opencv_sdk"},
+            {"tensorrt_sdk", "opencv_sdk"},
         )
         for probe in probes:
             with self.subTest(name=probe.name):
                 self.assertFalse(probe.available)
                 self.assertIn("缺少", probe.message)
 
-    def test_complete_fake_live_sdk_tree_is_accepted(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            files = [
-                "usr/include/aarch64-linux-gnu/NvInfer.h",
-                "usr/lib/aarch64-linux-gnu/libnvinfer.so",
-                "usr/lib/aarch64-linux-gnu/libnvinfer_plugin.so",
-                "opt/nvidia/vpi3/include/vpi/VPI.h",
-                "opt/nvidia/vpi3/lib/aarch64-linux-gnu/libnvvpi.so",
-                "usr/include/opencv4/opencv2/core.hpp",
-            ]
-            files.extend(
-                f"usr/lib/aarch64-linux-gnu/libopencv_{component}.so"
-                for component in (
-                    "core",
-                    "imgproc",
-                    "features2d",
-                    "calib3d",
-                    "highgui",
-                    "imgcodecs",
-                    "cudastereo",
-                    "cudaimgproc",
-                    "cudafilters",
-                )
-            )
-            for relative in files:
-                path = root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.touch()
-
-            probes = probe_live_sdk_dependencies(root)
-
-        self.assertTrue(all(probe.available for probe in probes))
-
-    def test_mainline_sdk_contract_excludes_vpi_and_legacy_plugins(self) -> None:
+    def test_complete_native_sdk_tree_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             files = (
@@ -74,7 +40,7 @@ class RuntimeDependencyTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
 
-            probes = probe_live_sdk_dependencies(root, pipeline="mainline")
+            probes = probe_live_sdk_dependencies(root)
 
         by_name = {probe.name: probe for probe in probes}
         self.assertEqual(set(by_name), {"tensorrt_sdk", "opencv_sdk"})
@@ -95,12 +61,12 @@ class RuntimeDependencyTests(unittest.TestCase):
 
     def test_dynamic_linkage_requires_profile_frameworks(self) -> None:
         def runner(_command: object) -> tuple[int, str]:
-            return 0, "libnvvpi.so.3 => /opt/nvidia/vpi3/lib/libnvvpi.so.3\n"
+            return 0, "libopencv_core.so => /usr/lib/libopencv_core.so\n"
 
         probe = probe_dynamic_linkage(
             "/tmp/stereo_pipeline",
             "/usr/bin/ldd",
-            (("VPI", "libnvvpi"), ("TensorRT", "libnvinfer")),
+            (("OpenCV", "libopencv_core"), ("TensorRT", "libnvinfer")),
             command_runner=runner,
         )
         self.assertFalse(probe.available)
@@ -110,14 +76,14 @@ class RuntimeDependencyTests(unittest.TestCase):
         def runner(_command: object) -> tuple[int, str]:
             return (
                 0,
-                "libnvvpi.so.3 => /opt/nvidia/vpi3/lib/libnvvpi.so.3\n"
+                "libopencv_core.so => /usr/lib/libopencv_core.so\n"
                 "libnvinfer.so.8 => /usr/lib/libnvinfer.so.8\n",
             )
 
         probe = probe_dynamic_linkage(
             "/tmp/stereo_pipeline",
             "/usr/bin/ldd",
-            (("VPI", "libnvvpi"), ("TensorRT", "libnvinfer")),
+            (("OpenCV", "libopencv_core"), ("TensorRT", "libnvinfer")),
             command_runner=runner,
         )
         self.assertTrue(probe.available)

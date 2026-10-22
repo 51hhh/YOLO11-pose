@@ -3,9 +3,9 @@
  * @brief 海康工业相机采集实现
  *
  * 核心设计:
- *   SDK GetImageBuffer → memcpy 到 VPI host-mapped buffer → FreeImageBuffer
+ *   SDK GetImageBuffer → memcpy 到有界 host/pinned buffer → FreeImageBuffer
  *   不做 ISP / 格式转换, 原始 BayerRG8 输出
- *   ISP 由后续 CUDA/VPI 在 GPU 上完成
+ *   ISP 由后续 CUDA 在 GPU 上完成
  */
 
 #include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
@@ -310,7 +310,7 @@ bool HikvisionCamera::open(const CameraConfig& cfg) {
         return false;
     }
 
-    // VPI 缓冲按配置尺寸预分配。左右相机的实际尺寸或 ROI 偏移只要不一致，
+    // 目标缓冲按配置尺寸预分配。左右相机的实际尺寸或 ROI 偏移只要不一致，
     // 后续 memcpy 就可能越界或让标定坐标失效，因此不能回退到猜测值。
     CameraGeometry left_geometry;
     CameraGeometry right_geometry;
@@ -419,8 +419,8 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
     int srcWidth  = info.nWidth;
     int srcHeight = info.nHeight;
 
-    // 直接 memcpy 到目标 buffer; dst 通常是 VPI host-mapped 内存,
-    // 后续 CUDA/VPI 可复用该图像资源, 但相机 SDK buffer 仍有一次拷贝。
+    // 直接 memcpy 到目标 host/pinned buffer；后续 CUDA 可复用该图像资源，
+    // 但相机 SDK buffer 仍有一次拷贝。
     int dstPitch = (pitch > 0) ? pitch : srcWidth;
     if (!dst || !frameOut.pBufAddr || srcWidth != width_ ||
         srcHeight != height_ || dstPitch < srcWidth) {

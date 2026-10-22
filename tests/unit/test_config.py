@@ -166,29 +166,13 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
-    def test_live_detector_rejects_unfaithful_legacy_projection(self) -> None:
+    def test_live_detector_rejects_unsupported_native_settings(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (
             ("正方形", lambda value: value["detector"].update(input_resolution=[640, 384])),
             ("letterbox", lambda value: value["detector"].update(resize_mode="stretch")),
             ("rgb8", lambda value: value["detector"].update(input_format="rgb8")),
             ("bbox_center", lambda value: value["detector"].update(center_method="circle_fit")),
-        )
-        for expected, mutate in mutations:
-            with self.subTest(expected=expected):
-                payload = copy.deepcopy(dict(resolved.data))
-                mutate(payload)
-                with self.assertRaisesRegex(ConfigError, expected):
-                    _validate_semantics(ROOT, payload)
-
-    def test_hik_adapter_rejects_unimplemented_diagnostic_modes(self) -> None:
-        resolved = load_profile("nx-rdk", project_root=ROOT)
-        mutations = (
-            ("json_logs", lambda value: value["diagnostics"].update(json_logs=True)),
-            (
-                "processing_timing",
-                lambda value: value["diagnostics"].update(processing_timing=False),
-            ),
         )
         for expected, mutate in mutations:
             with self.subTest(expected=expected):
@@ -224,25 +208,6 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
-    def test_hik_adapter_rejects_unprojected_tracking_and_qos(self) -> None:
-        resolved = load_profile("nx-rdk", project_root=ROOT)
-        mutations = (
-            (
-                "kalman_ca",
-                lambda value: value["tracking"].update(enabled=False, filter="none"),
-            ),
-            (
-                "sensor_data",
-                lambda value: value["publisher"].update(qos="reliable"),
-            ),
-        )
-        for expected, mutate in mutations:
-            with self.subTest(expected=expected):
-                payload = copy.deepcopy(dict(resolved.data))
-                mutate(payload)
-                with self.assertRaisesRegex(ConfigError, expected):
-                    _validate_semantics(ROOT, payload)
-
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),
@@ -258,21 +223,34 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "fallback_methods 必须是"):
             _validate_semantics(ROOT, payload)
 
-    def test_legacy_fallback_order_must_be_representable(self) -> None:
+    def test_native_fallback_order_is_explicit_and_configurable(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))
-        payload["stereo"]["triangulation"]["fallback_methods"] = [
+        triangulation = payload["stereo"]["triangulation"]
+        triangulation["candidate_methods"] = [
+            "roi_multi_point",
             "bbox_center",
             "circle_center",
         ]
-        with self.assertRaisesRegex(ConfigError, "固定相对顺序"):
-            _validate_semantics(ROOT, payload)
+        triangulation["fallback_methods"] = ["bbox_center", "circle_center"]
+        _validate_semantics(ROOT, payload)
 
-    def test_live_primary_must_be_supported_by_legacy_selector(self) -> None:
+    def test_any_native_candidate_can_be_primary(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))
-        payload["stereo"]["triangulation"]["primary_method"] = "bbox_center"
-        with self.assertRaisesRegex(ConfigError, "primary_method 只支持"):
+        triangulation = payload["stereo"]["triangulation"]
+        triangulation["primary_method"] = "bbox_center"
+        triangulation["candidate_methods"] = ["bbox_center", "circle_center"]
+        triangulation["fallback_methods"] = ["circle_center"]
+        _validate_semantics(ROOT, payload)
+
+    def test_computed_candidate_must_be_in_selection_order(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["fallback_methods"].remove(
+            "bbox_edges"
+        )
+        with self.assertRaisesRegex(ConfigError, "必须进入"):
             _validate_semantics(ROOT, payload)
 
     def test_recorded_profile_has_no_live_depth_candidates(self) -> None:
@@ -290,16 +268,6 @@ class ConfigTests(unittest.TestCase):
             max_points=12,
         )
         with self.assertRaisesRegex(ConfigError, "min_points"):
-            _validate_semantics(ROOT, payload)
-
-    def test_fallback_search_width_must_cover_both_margins(self) -> None:
-        resolved = load_profile("nx-rdk", project_root=ROOT)
-        payload = copy.deepcopy(dict(resolved.data))
-        payload["stereo"]["triangulation"]["fallback_search"].update(
-            margin_px=60,
-            max_width_px=100,
-        )
-        with self.assertRaisesRegex(ConfigError, "max_width_px"):
             _validate_semantics(ROOT, payload)
 
 

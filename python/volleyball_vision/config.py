@@ -283,16 +283,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
         errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
     if cameras["backend"] == "hik_mvs":
-        diagnostics = payload["diagnostics"]
-        if diagnostics["json_logs"]:
-            errors.append("当前旧 NX logger 尚不支持 diagnostics.json_logs=true")
-        if not diagnostics["processing_timing"]:
-            errors.append("当前旧 NX 管线固定启用 processing_timing，不能声明关闭")
-        tracking = payload["tracking"]
-        if not tracking["enabled"] or tracking["filter"] != "kalman_ca":
-            errors.append("当前旧 NX 混合深度固定使用启用的 tracking.filter=kalman_ca")
-        if payload["publisher"]["qos"] != "sensor_data":
-            errors.append("当前 NX 观测发布器固定使用 publisher.qos=sensor_data")
         if transport["interface"] not in {"usb3", "gige"}:
             errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
         if transport["grab_strategy"] != "one_by_one":
@@ -300,9 +290,9 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         if left["pixel_format"] != "bayer8" or right["pixel_format"] != "bayer8":
             errors.append("当前海康适配器固定输出 BayerRG8，左右 pixel_format 必须为 bayer8")
         if left["exposure_us"] != right["exposure_us"]:
-            errors.append("旧 NX 相机适配器只支持左右相同 exposure_us")
+            errors.append("当前海康适配器只支持左右相同 exposure_us")
         if left["gain_db"] != right["gain_db"]:
-            errors.append("旧 NX 相机适配器只支持左右相同 gain_db")
+            errors.append("当前海康适配器只支持左右相同 gain_db")
         expected_roi = {
             "x": 0,
             "y": 0,

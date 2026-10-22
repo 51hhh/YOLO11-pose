@@ -58,8 +58,10 @@ bool isValid(const ObservationMessageConfig& config) noexcept {
            config.class_id >= 0;
 }
 
-std::optional<std::uint8_t> legacyDepthMethodCode(
+std::optional<std::uint8_t> depthMethodWireCode(
     const core::StereoDepthMethodId& method) noexcept {
+    // 外部 ROS 消息的历史 codebook 不可重编号；其中部分保留值已不再是
+    // 当前主线可配置方法，但仍需避免把旧录制消息解释成另一种算法。
     const std::string_view value = method.value();
     if (value == "circle_center") return 1;
     if (value == "roi_multi_point") return 2;
@@ -161,7 +163,7 @@ ObservationMessageResult makeObservationMessage(
             "left/right capture timestamp mapping validity disagrees");
     }
 
-    const auto method_code = legacyDepthMethodCode(estimation.method);
+    const auto method_code = depthMethodWireCode(estimation.method);
     if (!method_code) {
         return failure(
             ObservationMessageError::unsupported_depth_method,

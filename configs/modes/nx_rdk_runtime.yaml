@@ -4,11 +4,6 @@ runtime:
     capacity: 3
     overflow_policy: drop_oldest
 
-tracking:
-  enabled: true
-  filter: kalman_ca
-  publish_filtered_as_measurement: false
-
 recording:
   enabled: false
   raw_frames: none
@@ -19,5 +14,4 @@ publisher:
   backend: ros2
   topic: /nx/ball/observation
   frame_id: nx_left_rectified_optical_frame
-  qos: sensor_data
 

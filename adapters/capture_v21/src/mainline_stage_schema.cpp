@@ -66,8 +66,6 @@ std::string_view memoryKind(ports::MemoryKind kind) noexcept {
         return "host_pinned";
     case ports::MemoryKind::cuda_device:
         return "cuda_device";
-    case ports::MemoryKind::vpi_image:
-        return "vpi_image";
     case ports::MemoryKind::external:
         return "external";
     }

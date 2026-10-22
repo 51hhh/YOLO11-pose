@@ -12,7 +12,7 @@ struct PinholeIntrinsics {
 };
 
 // 已校正、水平基线的双目模型。算法层只依赖这个值对象，不依赖
-// OpenCV/VPI 的矩阵或硬件句柄。
+// OpenCV 的矩阵或硬件句柄。
 struct RectifiedStereoCalibration {
     PinholeIntrinsics left;
     PinholeIntrinsics right;

@@ -15,7 +15,6 @@ from .capture import finalize_capture_stage, run_capture
 from .config import ConfigError, flatten, load_profile
 from .dataset import DatasetError, validate_dataset, validate_trial
 from .doctor import checks_as_dicts, run_doctor
-from .legacy_config import build_legacy_pipeline_config
 from .mainline_config import build_mainline_pipeline_config
 from .replay import run_replay
 from .runtime import run_runtime
@@ -75,14 +74,6 @@ def _config_diff(args: argparse.Namespace) -> int:
     return 0
 
 
-def _config_render_legacy(args: argparse.Namespace) -> int:
-    config = load_profile(args.profile, overrides=args.set)
-    payload = build_legacy_pipeline_config(config)
-    print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), end="")
-    print(f"# config_sha256: {config.fingerprint_sha256}", file=sys.stderr)
-    return 0
-
-
 def _config_render_mainline(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, overrides=args.set)
     payload = build_mainline_pipeline_config(
@@ -120,7 +111,6 @@ def _run(args: argparse.Namespace) -> int:
         config,
         generated_config=args.generated_config,
         dry_run=args.dry_run,
-        visualize=args.visualize,
     )
     if args.dry_run:
         print(f"DRY_RUN config={result.generated_config}")
@@ -145,7 +135,7 @@ def _load_conditions(path: str | None) -> dict[str, object]:
 
 def _capture(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, overrides=args.set)
-    # 预演只生成不可发布的 staging 与旧管线配置，不接触相机、GPIO 或模型文件。
+    # 预演只生成不可发布的 staging 与主线配置，不接触相机、GPIO 或模型文件。
     # 真采集仍必须通过完整 doctor 门禁。
     if not args.dry_run:
         checks = run_doctor(config)
@@ -283,12 +273,6 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("right")
     diff.set_defaults(handler=_config_diff)
 
-    render_legacy = config_commands.add_parser(
-        "render-legacy", help="查看主线配置投影到旧 NX 适配器后的 YAML"
-    )
-    _add_profile_arguments(render_legacy)
-    render_legacy.set_defaults(handler=_config_render_legacy)
-
     render_mainline = config_commands.add_parser(
         "render-mainline", help="查看投影到原生 NX 主线后的最小 YAML"
     )
@@ -314,11 +298,6 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument(
         "--generated-config",
         help="保留投影后的管线 YAML；为防误覆盖，路径必须不存在",
-    )
-    runtime.add_argument(
-        "--visualize",
-        action="store_true",
-        help="仅 legacy 回归管线显示叠加窗口（需要图形环境）",
     )
     runtime.add_argument("--dry-run", action="store_true", help="只生成配置并显示命令")
     runtime.set_defaults(handler=_run)

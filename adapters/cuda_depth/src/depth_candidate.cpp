@@ -32,8 +32,7 @@ bool isSupportedSelectionMethod(
     return value == "roi_multi_point" || value == "center_patch" ||
            value == "circle_center" || value == "radial_center" ||
            value == "edge_pair_center" || value == "edge_centroid" ||
-           value == "bbox_center" || value == "bbox_edges" ||
-           value == "epipolar_fallback";
+           value == "bbox_center" || value == "bbox_edges";
 }
 
 DepthCandidateSelection selectDepthCandidate(

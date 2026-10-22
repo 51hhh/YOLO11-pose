@@ -10,14 +10,6 @@ function(add_adapter_test target)
 endfunction()
 
 add_adapter_test(
-  capture_v21_stage_schema_tests
-  capture_v21_stage_schema_tests.cpp
-)
-target_link_libraries(capture_v21_stage_schema_tests PRIVATE
-  volleyball::capture_v21
-)
-
-add_adapter_test(
   mainline_stage_schema_tests
   mainline_stage_schema_tests.cpp
 )

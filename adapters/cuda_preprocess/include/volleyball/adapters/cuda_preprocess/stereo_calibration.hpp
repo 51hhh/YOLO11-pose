@@ -3,7 +3,7 @@
  * @brief 双目标定参数加载与校正映射生成
  *
  * 从 OpenCV YAML 标定文件加载内参、外参、校正矩阵,
- * 生成 CUDA/VPI Remap 可消费的 OpenCV 浮点映射。
+ * 生成 CUDA remap 可消费的 OpenCV 浮点映射。
  */
 
 #pragma once
@@ -71,7 +71,7 @@ public:
     }
 
     /**
-     * @brief 生成 OpenCV undistortRectifyMap (用于构建 VPI Remap LUT)
+     * @brief 生成 OpenCV undistortRectifyMap（用于 CUDA remap）
      * @param[out] map1L, map2L 左目映射表
      * @param[out] map1R, map2R 右目映射表
      * @param width, height 图像尺寸

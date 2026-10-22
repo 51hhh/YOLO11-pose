@@ -4,12 +4,12 @@
   "title": "Volleyball vision resolved runtime configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "tracking", "recording", "publisher", "diagnostics"],
+  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "recording", "publisher", "diagnostics"],
   "properties": {
     "schema_version": {"const": 1},
     "runtime": {
       "type": "object", "additionalProperties": false,
-      "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue", "threading"],
+      "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue"],
       "properties": {
         "mode": {"enum": ["runtime", "capture", "replay"]},
         "nominal_fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
@@ -21,15 +21,6 @@
           "properties": {
             "capacity": {"type": "integer", "minimum": 1, "maximum": 4096},
             "overflow_policy": {"enum": ["drop_oldest", "block"]}
-          }
-        },
-        "threading": {
-          "type": "object", "additionalProperties": false,
-          "required": ["capture_threads", "inference_threads", "writer_threads"],
-          "properties": {
-            "capture_threads": {"type": "integer", "minimum": 1, "maximum": 16},
-            "inference_threads": {"type": "integer", "minimum": 1, "maximum": 16},
-            "writer_threads": {"type": "integer", "minimum": 1, "maximum": 16}
           }
         }
       }
@@ -97,23 +88,14 @@
     },
     "adapters": {
       "type": "object", "additionalProperties": false,
-      "required": ["active_pipeline", "mainline_pipeline", "legacy_pipeline"],
+      "required": ["mainline_pipeline"],
       "properties": {
-        "active_pipeline": {"enum": ["mainline", "legacy"]},
         "mainline_pipeline": {
           "type": "object", "additionalProperties": false,
           "required": ["executable", "source_epoch_file"],
           "properties": {
             "executable": {"$ref": "#/$defs/path"},
             "source_epoch_file": {"$ref": "#/$defs/absolute_path"}
-          }
-        },
-        "legacy_pipeline": {
-          "type": "object", "additionalProperties": false,
-          "required": ["executable", "base_config"],
-          "properties": {
-            "executable": {"$ref": "#/$defs/path"},
-            "base_config": {"$ref": "#/$defs/path"}
           }
         }
       }
@@ -122,7 +104,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["backend", "output_resolution"],
       "properties": {
-        "backend": {"enum": ["cuda", "vpi", "opencv", "recorded"]},
+        "backend": {"enum": ["cuda", "opencv", "recorded"]},
         "output_resolution": {"$ref": "#/$defs/resolution"}
       }
     },
@@ -165,22 +147,22 @@
         },
         "triangulation": {
           "type": "object", "additionalProperties": false,
-          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "fallback_search", "circle_fit"],
+          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "circle_fit"],
           "properties": {
             "backend": {"enum": ["cuda", "opencv", "recorded"]},
-            "primary_method": {"enum": ["roi_multi_point", "circle_center", "bbox_center", "recorded"]},
+            "primary_method": {"enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "recorded"]},
             "candidate_methods": {
               "type": "array",
               "items": {
-                "enum": ["roi_multi_point", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "center_patch", "cuda_template_match", "epipolar_fallback"]
+                "enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]
               },
               "uniqueItems": true
             },
-            "fallback_methods": {"type": "array", "items": {"enum": ["epipolar_fallback", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
+            "fallback_methods": {"type": "array", "items": {"enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
             "propagate_covariance": {"type": "boolean"},
             "subpixel": {
               "type": "object", "additionalProperties": false,
-              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_disparity_delta_px", "max_disparity_delta_ratio", "max_depth_delta_m", "max_stddev_px", "time_budget_ms"],
+              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_disparity_delta_px", "max_disparity_delta_ratio", "max_depth_delta_m", "max_stddev_px"],
               "properties": {
                 "patch_radius": {"type": "integer", "minimum": 1},
                 "search_radius_px": {"type": "integer", "minimum": 1},
@@ -190,16 +172,7 @@
                 "max_disparity_delta_px": {"type": "number", "minimum": 0.25},
                 "max_disparity_delta_ratio": {"type": "number", "minimum": 0},
                 "max_depth_delta_m": {"type": "number", "exclusiveMinimum": 0.01},
-                "max_stddev_px": {"type": "number", "exclusiveMinimum": 0},
-                "time_budget_ms": {"type": "number", "exclusiveMinimum": 0}
-              }
-            },
-            "fallback_search": {
-              "type": "object", "additionalProperties": false,
-              "required": ["margin_px", "max_width_px"],
-              "properties": {
-                "margin_px": {"type": "integer", "minimum": 4},
-                "max_width_px": {"type": "integer", "minimum": 32}
+                "max_stddev_px": {"type": "number", "exclusiveMinimum": 0}
               }
             },
             "circle_fit": {
@@ -216,49 +189,33 @@
         "ball_diameter_m": {"type": "number", "exclusiveMinimum": 0}
       }
     },
-    "tracking": {
-      "type": "object", "additionalProperties": false,
-      "required": ["enabled", "filter", "publish_filtered_as_measurement"],
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "filter": {"enum": ["none", "kalman_ca", "student_t"]},
-        "publish_filtered_as_measurement": {"const": false}
-      }
-    },
     "recording": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "image_product", "image_format", "loss_policy", "atomic_publish", "verify_hashes"],
+      "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "loss_policy", "verify_hashes"],
       "properties": {
         "enabled": {"type": "boolean"},
         "dataset_root": {"$ref": "#/$defs/path"},
         "schema_version": {"const": "2.1.0"},
         "raw_frames": {"enum": ["none", "selected", "all"]},
-        "image_product": {"enum": ["rectified_gray8"]},
-        "image_format": {"enum": ["pgm"]},
         "loss_policy": {"enum": ["fail_trial", "mark_dropped", "allow"]},
-        "atomic_publish": {"const": true},
         "verify_hashes": {"type": "boolean"}
       }
     },
     "publisher": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "backend", "topic", "frame_id", "qos"],
+      "required": ["enabled", "backend", "topic", "frame_id"],
       "properties": {
         "enabled": {"type": "boolean"},
         "backend": {"enum": ["none", "ros2"]},
         "topic": {"type": "string"},
-        "frame_id": {"type": "string"},
-        "qos": {"enum": ["sensor_data", "reliable"]}
+        "frame_id": {"type": "string"}
       }
     },
     "diagnostics": {
       "type": "object", "additionalProperties": false,
-      "required": ["json_logs", "processing_timing", "metrics_interval_frames", "realtime_dump_enabled"],
+      "required": ["metrics_interval_frames"],
       "properties": {
-        "json_logs": {"type": "boolean"},
-        "processing_timing": {"type": "boolean"},
-        "metrics_interval_frames": {"type": "integer", "minimum": 1},
-        "realtime_dump_enabled": {"type": "boolean"}
+        "metrics_interval_frames": {"type": "integer", "minimum": 1}
       }
     }
   },

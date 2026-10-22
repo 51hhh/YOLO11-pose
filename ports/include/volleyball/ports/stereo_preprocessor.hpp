@@ -14,7 +14,7 @@ struct PreprocessResult {
     std::string message;
 };
 
-// 实现负责去 Bayer、双目标定 remap 以及灰度转换。CUDA/VPI 句柄和
+// 实现负责去 Bayer、双目标定 remap 以及灰度转换。CUDA 句柄和
 // stream 所有权仍由 adapter 管理，不得泄漏到服务层。
 class StereoPreprocessor {
 public:

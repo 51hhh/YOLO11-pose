@@ -435,7 +435,7 @@ void validate(const MainlineRuntimeConfig& value) {
         throw std::runtime_error("association configuration is invalid");
     }
     const KeySet supported_methods{
-        "roi_multi_point", "epipolar_fallback", "circle_center",
+        "roi_multi_point", "center_patch", "circle_center",
         "radial_center", "edge_pair_center", "edge_centroid",
         "bbox_center", "bbox_edges"};
     KeySet configured_methods;

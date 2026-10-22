@@ -38,7 +38,7 @@ __global__ void grayToRGBKernel(const unsigned char* __restrict__ gray,
     float dx = sx - x0;
     float dy = sy - y0;
 
-    // 使用 pitch 计算源地址 (VPI Image 可能有 padding)
+    // 使用 pitch 计算源地址，兼容带行填充的 CUDA 图像。
     float v00 = gray[y0 * srcPitch + x0];
     float v01 = gray[y0 * srcPitch + x1];
     float v10 = gray[y1 * srcPitch + x0];

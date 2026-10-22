@@ -22,15 +22,14 @@ chore(ci): 增加 CPU 契约门禁
 ## 分层规则
 
 - `libs/core` 只包含与平台无关的强类型事实、时钟和坐标语义。
-- `ports` 定义用例需要的接口，不包含 Hik/TensorRT/CUDA/VPI/ROS2 头文件。
+- `ports` 定义用例需要的接口，不包含 Hik/TensorRT/CUDA/ROS2 头文件。
 - `adapters` 实现硬件、推理、存储和中间件边界。
 - 用户流程统一由 `volleyball_vision.cli` 组装；若未来增加原生 C++ 应用，再建立 `apps/`，且其中不得实现立体匹配算法。
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
-- `legacy` 只允许兼容转换和可删除的过渡代码，不得反向被 core 依赖。
-- `tests/cpp/mainline` 不得包含硬件 SDK 或旧 NX 头文件；独立硬件 adapter 的 SDK 桩测试放入 `tests/cpp/adapters`，未迁出的兼容逻辑放入 `tests/cpp/legacy_nx`。
+- `tests/cpp/mainline` 不得包含硬件 SDK 头文件；独立硬件 adapter 的 SDK 桩测试放入 `tests/cpp/adapters`。
 - `tools` 只保留仓库级维护门禁和 `tools/hardware` 下的受测硬件验收程序；可复用用户流程必须成为 `volleyball` 子命令。
 - 说明文档集中在 `docs` 的已声明分组中；根目录只保留 `README.md` 与本文件，冻结数据契约可在契约目录就近保留一个 `README.md`。
-- Python 测试只进入 `tests/unit`、`tests/contract` 或共享夹具 `tests/support`；C++ 测试按 `mainline`、`adapters`、`hardware_tools`、`legacy_nx` 分组。
+- Python 测试只进入 `tests/unit`、`tests/contract` 或共享夹具 `tests/support`；C++ 测试按 `mainline`、`adapters`、`hardware_tools` 分组。
 
 ## 必跑检查
 

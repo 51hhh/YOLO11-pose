@@ -156,7 +156,7 @@ bool StereoCalibration::buildRemapMaps(
     P2_scaled_ = P2_use;
 
     // 使用 OpenCV initUndistortRectifyMap 生成映射表
-    // 输出 CV_32FC1 格式供 VPI 使用
+    // 输出 CV_32FC1 映射供 CUDA remap 使用。
     cv::initUndistortRectifyMap(K1_, D1_, R1_, P1_use,
                                 cv::Size(width, height),
                                 CV_32FC1, map1L, map2L);
