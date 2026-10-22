@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -126,9 +125,7 @@ def build_capture_calibration(
     cameras = config.data["cameras"]
     clock_domain = cameras["sync"]["clock_domain"]
     if created_at_utc is None:
-        created_at_utc = datetime.fromtimestamp(
-            source.stat().st_mtime, timezone.utc
-        ).isoformat().replace("+00:00", "Z")
+        created_at_utc = calibration_config["created_at_utc"]
     common = {
         "image_size_px": [stereo.image_width, stereo.image_height],
         "distortion_model": "rectified_pinhole",
@@ -187,7 +184,8 @@ def ensure_dataset_calibration(
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         existing = json.loads(destination.read_text(encoding="utf-8"))
-        # created_at_utc 来自源文件 mtime，除此之外任何变化都意味着标定 ID 被复用。
+        # created_at_utc 也是配置中的固定资产属性；任何变化都意味着
+        # 标定 ID 被复用。
         if existing != payload:
             raise DatasetError(f"同名标定已存在但内容不同，必须使用新 calibration_id: {destination}")
     else:

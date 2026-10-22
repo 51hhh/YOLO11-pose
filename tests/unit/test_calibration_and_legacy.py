@@ -22,10 +22,10 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertEqual((loaded.image_width, loaded.image_height), (1440, 1080))
         self.assertAlmostEqual(loaded.baseline_m, 0.8531543824782482)
         profile = load_profile("free-flight", project_root=ROOT)
-        converted = build_capture_calibration(
-            profile,
-            project_root=ROOT,
-            created_at_utc="2026-10-22T00:00:00Z",
+        converted = build_capture_calibration(profile, project_root=ROOT)
+        self.assertEqual(
+            converted["created_at_utc"],
+            profile.data["calibration"]["created_at_utc"],
         )
         self.assertEqual(converted["cameras"][0]["distortion_model"], "rectified_pinhole")
         self.assertEqual(

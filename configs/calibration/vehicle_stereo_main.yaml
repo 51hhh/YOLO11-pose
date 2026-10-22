@@ -1,5 +1,7 @@
 calibration:
   id: vehicle-stereo-main
+  # 标定资产的固定创建时间；不得使用 checkout 后的文件 mtime。
+  created_at_utc: "2026-07-14T19:08:55Z"
   file: NX_volleyball/calibration/stereo_calib.yaml
   format: opencv_yaml
   body_frame: base_link
