@@ -10,11 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  cpu-contracts:
+  python-contracts:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -26,16 +28,36 @@ jobs:
           volleyball config validate --profile nx-rdk
           volleyball config validate --profile free-flight
           volleyball config validate --profile replay
+      - name: Render auditable pipeline report
+        run: volleyball config pipeline-report --profile nx-rdk --format json
       - name: Run project Python tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m unittest discover -s tests -v
-      - name: Configure CPU C++ core
-        run: cmake --preset host-core-debug
-      - name: Build CPU C++ core
-        run: cmake --build --preset host-core-debug --parallel 2
-      - name: Run CPU C++ tests
-        run: ctest --preset host-core-debug
       - name: Audit repository metadata
         run: python tools/check_repository.py
+      - name: Reject whitespace errors in the pushed change set
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "$BASE_SHA^{commit}"; then
+            BASE_SHA="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          git diff --check "$BASE_SHA" HEAD --
+
+  cpp-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [host-core-debug, host-core-release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CPU C++ core
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build CPU C++ core
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 2
+      - name: Run CPU C++ tests
+        run: ctest --preset ${{ matrix.preset }}
 
