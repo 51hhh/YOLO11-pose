@@ -151,4 +151,5 @@ volleyball replay \
 - [采集契约](docs/capture.md)
 - [旧 NX 管线迁移](docs/migration.md)
 - [验收标准](docs/acceptance.md)
+- [架构决策记录](docs/adr/README.md)
 - [贡献与提交规范](CONTRIBUTING.md)

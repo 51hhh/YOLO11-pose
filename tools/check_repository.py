@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,7 @@ FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS = re.compile(
     r")\s*\.\s*(?:data|pBase|offsetBytes)\b",
     re.IGNORECASE,
 )
+MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
 
 def _git(*arguments: str) -> str:
@@ -69,6 +71,76 @@ def _git(*arguments: str) -> str:
         stderr=subprocess.PIPE,
     )
     return completed.stdout
+
+
+def _local_markdown_targets(
+    source: Path,
+) -> tuple[list[Path], list[str]]:
+    targets: list[Path] = []
+    errors: list[str] = []
+    text = source.read_text(encoding="utf-8")
+    for match in MARKDOWN_LINK.finditer(text):
+        raw = match.group(1).strip()
+        if raw.startswith("<") and raw.endswith(">"):
+            raw = raw[1:-1]
+        elif " " in raw:
+            raw = raw.split(" ", 1)[0]
+        if not raw or raw.startswith("#") or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", raw):
+            continue
+        destination = unquote(raw.split("#", 1)[0].split("?", 1)[0])
+        if not destination:
+            continue
+        target = (source.parent / destination).resolve()
+        try:
+            target.relative_to(ROOT)
+        except ValueError:
+            errors.append(
+                f"{source.relative_to(ROOT)}: 链接越出仓库: {raw}"
+            )
+            continue
+        if not target.exists():
+            errors.append(
+                f"{source.relative_to(ROOT)}: 目标不存在: {raw}"
+            )
+            continue
+        targets.append(target)
+    return targets, errors
+
+
+def _check_documentation(tracked: list[str]) -> list[str]:
+    markdown = {
+        (ROOT / path).resolve()
+        for path in tracked
+        if Path(path).suffix.lower() == ".md"
+    }
+    errors: list[str] = []
+    links: dict[Path, list[Path]] = {}
+    for source in sorted(markdown):
+        targets, link_errors = _local_markdown_targets(source)
+        links[source] = [target for target in targets if target in markdown]
+        errors.extend(link_errors)
+
+    entry = (ROOT / "README.md").resolve()
+    reachable: set[Path] = set()
+    pending = [entry]
+    while pending:
+        source = pending.pop()
+        if source in reachable:
+            continue
+        reachable.add(source)
+        pending.extend(links.get(source, ()))
+
+    orphaned = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in markdown - reachable
+        if path.is_relative_to(ROOT / "docs")
+    )
+    if orphaned:
+        errors.append(
+            "docs 中的文档必须能从根 README 导航到:\n    "
+            + "\n    ".join(orphaned)
+        )
+    return errors
 
 
 def main() -> int:
@@ -105,6 +177,13 @@ def main() -> int:
     ]
     if generated:
         errors.append("禁止跟踪 Python 缓存:\n    " + "\n    ".join(generated))
+
+    documentation_errors = _check_documentation(tracked)
+    if documentation_errors:
+        errors.append(
+            "文档导航或本地链接无效:\n    "
+            + "\n    ".join(documentation_errors)
+        )
 
     unexpected_tools = sorted(
         path for path in tracked
