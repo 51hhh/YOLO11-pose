@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import csv
 import json
 from pathlib import Path
@@ -289,14 +288,9 @@ class DatasetContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             trial = _write_valid_trial(Path(directory))
             detections_path = trial / "detections_2d.csv"
-            with detections_path.open(newline="", encoding="utf-8") as source:
-                rows = list(csv.DictReader(source))
-                fieldnames = list(rows[0])
+            fieldnames, rows = _read_csv(detections_path)
             rows[0]["selected"] = "false"
-            with detections_path.open("w", newline="", encoding="utf-8") as output:
-                writer = csv.DictWriter(output, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(rows)
+            _write_csv(detections_path, fieldnames, rows)
 
             with self.assertRaisesRegex(DatasetError, "selected.*accepted"):
                 validate_trial(trial, project_root=ROOT)
