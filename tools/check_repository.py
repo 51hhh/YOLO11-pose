@@ -111,6 +111,10 @@ FORBIDDEN_TEST_MODULE_IMPORT = re.compile(
     r"^\s*(?:from|import)\s+(?:tests\.)?(?:unit|contract)\.test_[A-Za-z0-9_]+",
     re.MULTILINE,
 )
+FORBIDDEN_MAINLINE_ADAPTER_INCLUDE = re.compile(
+    r'^\s*#\s*include\s*[<"]volleyball/adapters/(?!fake/)',
+    re.MULTILINE,
+)
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 CMAKE_SOURCE_GROUPS = (
     ("libs/core/src", "libs/core/CMakeLists.txt"),
@@ -325,6 +329,29 @@ def main() -> int:
         errors.append(
             "C++ 测试必须归入 mainline 或 legacy_nx:\n    "
             + "\n    ".join(flat_cpp_tests)
+        )
+
+    misplaced_adapter_tests: list[str] = []
+    for path in tracked:
+        if not path.startswith("tests/cpp/mainline/") or Path(path).suffix not in {
+            ".h",
+            ".hpp",
+            ".cc",
+            ".cpp",
+            ".cxx",
+        }:
+            continue
+        match = FORBIDDEN_MAINLINE_ADAPTER_INCLUDE.search(
+            (ROOT / path).read_text(encoding="utf-8")
+        )
+        if match:
+            misplaced_adapter_tests.append(
+                f"{path}: {match.group(0).strip()}"
+            )
+    if misplaced_adapter_tests:
+        errors.append(
+            "mainline 测试不得引用非 fake 适配器，请移入 tests/cpp/adapters:\n    "
+            + "\n    ".join(misplaced_adapter_tests)
         )
 
     flat_legacy_cpp_tests = sorted(
