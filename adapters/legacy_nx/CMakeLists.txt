@@ -474,18 +474,6 @@ if(USE_ROS2)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
-# ==================== 标定与硬件验收工具 ====================
-set(VOLLEYBALL_HARDWARE_TOOLS_DIR
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/hardware")
-if(NOT EXISTS "${VOLLEYBALL_HARDWARE_TOOLS_DIR}/CMakeLists.txt")
-  message(FATAL_ERROR
-    "Hardware tools are missing: ${VOLLEYBALL_HARDWARE_TOOLS_DIR}")
-endif()
-add_subdirectory(
-  "${VOLLEYBALL_HARDWARE_TOOLS_DIR}"
-  "${CMAKE_CURRENT_BINARY_DIR}/hardware_tools"
-)
-
 # ==================== 安装 ====================
 install(TARGETS stereo_pipeline DESTINATION bin)
 install(DIRECTORY config/ DESTINATION etc/stereo_3d_pipeline)

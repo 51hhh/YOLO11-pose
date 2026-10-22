@@ -48,6 +48,24 @@ class BuildContractTests(unittest.TestCase):
             runtime["adapters"]["mainline_pipeline"]["executable"],
             "build/nx-mainline-release/apps/nx_mainline/volleyball_nx_mainline",
         )
+        self.assertEqual(
+            nx_preset["cacheVariables"]["VOLLEYBALL_BUILD_HARDWARE_TOOLS"],
+            "ON",
+        )
+
+    def test_hardware_tools_are_owned_by_the_root_build(self) -> None:
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        legacy_cmake = (
+            ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        tools_cmake = (
+            ROOT / "tools" / "hardware" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("add_subdirectory(tools/hardware)", root_cmake)
+        self.assertNotIn("VOLLEYBALL_HARDWARE_TOOLS_DIR", legacy_cmake)
+        self.assertIn("volleyball::hik_mvs", tools_cmake)
+        self.assertIn("volleyball::gpio", tools_cmake)
 
     def test_nx_preset_requires_hardware_dependencies(self) -> None:
         presets = json.loads((ROOT / "CMakePresets.json").read_text(encoding="utf-8"))

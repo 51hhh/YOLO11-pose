@@ -6,6 +6,7 @@ option(VOLLEYBALL_BUILD_TESTS "构建无硬件单元测试" ON)
 option(VOLLEYBALL_BUILD_LEGACY "构建重构前的 NX CUDA 管线" OFF)
 option(VOLLEYBALL_BUILD_CUDA_ADAPTERS "构建可独立验证的 CUDA 适配器" OFF)
 option(VOLLEYBALL_BUILD_NX_MAINLINE "构建原生 Jetson Orin NX 主线应用" OFF)
+option(VOLLEYBALL_BUILD_HARDWARE_TOOLS "构建相机验收与双目标定工具" OFF)
 set(VOLLEYBALL_CUDA_ARCH "87" CACHE STRING "NX 管线 CUDA 架构")
 option(VOLLEYBALL_REQUIRE_ROS2 "NX 管线配置时必须找到 ROS2" ON)
 option(VOLLEYBALL_REQUIRE_HIK "NX 管线配置时必须找到海康 MVS SDK" ON)
@@ -17,6 +18,11 @@ if(VOLLEYBALL_BUILD_NX_MAINLINE)
   set(VOLLEYBALL_BUILD_HIK_MVS ON CACHE BOOL "" FORCE)
   set(VOLLEYBALL_GPIO_WITH_GPIOD ON CACHE BOOL "" FORCE)
   set(VOLLEYBALL_BUILD_ROS2_ADAPTER ON CACHE BOOL "" FORCE)
+  set(VOLLEYBALL_BUILD_HARDWARE_TOOLS ON CACHE BOOL "" FORCE)
+endif()
+
+if(VOLLEYBALL_BUILD_NX_MAINLINE OR VOLLEYBALL_BUILD_HARDWARE_TOOLS)
+  set(VOLLEYBALL_BUILD_HIK_MVS ON CACHE BOOL "" FORCE)
 
   find_path(VOLLEYBALL_HIK_MVS_SDK_INCLUDE_DIR MvCameraControl.h
     HINTS
@@ -31,6 +37,9 @@ if(VOLLEYBALL_BUILD_NX_MAINLINE)
       "${VOLLEYBALL_MVS_SDK_ROOT}/lib"
     REQUIRED
   )
+endif()
+
+if(VOLLEYBALL_BUILD_NX_MAINLINE)
   find_path(TENSORRT_INCLUDE_DIR NvInfer.h
     HINTS /usr/include/aarch64-linux-gnu /usr/include
     REQUIRED
@@ -72,6 +81,7 @@ add_subdirectory(adapters/cuda_depth)
 add_subdirectory(adapters/tensorrt)
 add_subdirectory(adapters/ros2)
 add_subdirectory(adapters/fake)
+add_subdirectory(tools/hardware)
 
 if(VOLLEYBALL_BUILD_NX_MAINLINE)
   add_subdirectory(apps/nx_mainline)
