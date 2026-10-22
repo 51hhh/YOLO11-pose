@@ -85,6 +85,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("VOLLEYBALL_HIK_MVS_SDK_LIBRARY", hik_cmake)
         self.assertIn("src/hikvision_camera.cpp", hik_cmake)
 
+    def test_legacy_pipeline_consumes_the_standalone_tensorrt_cuda_adapter(self) -> None:
+        legacy_cmake = (
+            ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        adapter_cmake = (
+            ROOT / "adapters" / "tensorrt" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("src/detect/detect_preprocess.cu", legacy_cmake)
+        self.assertNotIn("src/detect/dfl_postprocess.cu", legacy_cmake)
+        self.assertIn("volleyball::tensorrt_cuda", legacy_cmake)
+        self.assertIn("src/cuda/preprocess.cu", adapter_cmake)
+        self.assertIn("src/cuda/dfl_decode.cu", adapter_cmake)
+
     def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
         gpio_cmake = (
             ROOT / "adapters" / "gpio" / "CMakeLists.txt"

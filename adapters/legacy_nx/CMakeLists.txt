@@ -340,8 +340,7 @@ set(PIPELINE_SOURCES
 
 # CUDA 源文件
 set(CUDA_SOURCES
-  src/detect/detect_preprocess.cu
-  src/detect/dfl_postprocess.cu
+  src/rectify/bayer_to_bgr.cu
   src/fusion/depth_extract.cu
   src/stereo/roi_stereo_match.cu
   src/stereo/roi_circle_match.cu
@@ -384,6 +383,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 target_link_libraries(stereo_pipeline
   volleyball::tensorrt_contract
   volleyball::tensorrt_postprocess
+  volleyball::tensorrt_cuda
   # VPI
   vpi
   # TensorRT

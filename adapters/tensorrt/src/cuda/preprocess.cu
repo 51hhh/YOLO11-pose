@@ -1,5 +1,5 @@
 /**
- * @file detect_preprocess.cu
+ * @file preprocess.cu
  * @brief 检测预处理 CUDA Kernels
  *
  * 两个核心 Kernel:
@@ -8,6 +8,8 @@
  *
  * 这些 Kernel 运行在 DLA CUDA Stream 上。
  */
+
+#include "volleyball/adapters/tensorrt/cuda_kernels.hpp"
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
@@ -53,7 +55,6 @@ __global__ void grayToRGBKernel(const unsigned char* __restrict__ gray,
     dst[1 * planeSize + idx] = val;  // G
     dst[2 * planeSize + idx] = val;  // B
 }
-
 // ==================== Bayer RG8 → RGB float32 CHW ====================
 // 预留: 当相机切换为 Bayer 输出模式时启用此路径
 // (借用已有的 Bayer kernel 逻辑, 适配 pitch-based 输入)
@@ -259,55 +260,6 @@ __global__ void bgrToRGBLetterboxKernel(const unsigned char* __restrict__ bgr,
     dst[2 * planeSize + idx] = b;
 }
 
-// ==================== Bayer RGGB → BGR8 (全分辨率, bilinear) ====================
-// 用于 color pipeline: 产生 BGR8 interleaved 输出, 与 VPI remap 配合
-// 质量: bilinear 插值 (4邻域加权), 比 nearest-neighbor 好很多
-__global__ void bayerToBGR8_kernel(const unsigned char* __restrict__ bayer,
-                                    unsigned char* __restrict__ bgr,
-                                    int width, int height,
-                                    int bayer_pitch, int bgr_pitch)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= width || y >= height) return;
-
-    // Clamp-read helper (inline lambda not supported in old CUDA, use macro)
-    #define BGET(gy, gx) bayer[min(max(gy,0),height-1) * bayer_pitch + min(max(gx,0),width-1)]
-
-    float r, g, b;
-    int px = x & 1;
-    int py = y & 1;
-
-    if (py == 0 && px == 0) {
-        // R site: R direct, G = avg of 4 cardinal, B = avg of 4 diagonal
-        r = BGET(y, x);
-        g = ((float)BGET(y,x-1) + BGET(y,x+1) + BGET(y-1,x) + BGET(y+1,x)) * 0.25f;
-        b = ((float)BGET(y-1,x-1) + BGET(y-1,x+1) + BGET(y+1,x-1) + BGET(y+1,x+1)) * 0.25f;
-    } else if (py == 0 && px == 1) {
-        // Gr (green on R row): R from left/right, G direct, B from top/bottom
-        r = ((float)BGET(y,x-1) + BGET(y,x+1)) * 0.5f;
-        g = BGET(y, x);
-        b = ((float)BGET(y-1,x) + BGET(y+1,x)) * 0.5f;
-    } else if (py == 1 && px == 0) {
-        // Gb (green on B row): R from top/bottom, G direct, B from left/right
-        r = ((float)BGET(y-1,x) + BGET(y+1,x)) * 0.5f;
-        g = BGET(y, x);
-        b = ((float)BGET(y,x-1) + BGET(y,x+1)) * 0.5f;
-    } else {
-        // B site: R = avg of 4 diagonal, G = avg of 4 cardinal, B direct
-        r = ((float)BGET(y-1,x-1) + BGET(y-1,x+1) + BGET(y+1,x-1) + BGET(y+1,x+1)) * 0.25f;
-        g = ((float)BGET(y,x-1) + BGET(y,x+1) + BGET(y-1,x) + BGET(y+1,x)) * 0.25f;
-        b = BGET(y, x);
-    }
-
-    #undef BGET
-
-    int out = y * bgr_pitch + x * 3;
-    bgr[out + 0] = (unsigned char)__float2uint_rn(fminf(255.0f, fmaxf(0.0f, b)));
-    bgr[out + 1] = (unsigned char)__float2uint_rn(fminf(255.0f, fmaxf(0.0f, g)));
-    bgr[out + 2] = (unsigned char)__float2uint_rn(fminf(255.0f, fmaxf(0.0f, r)));
-}
-
 // ==================== C 接口 ====================
 
 extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
@@ -382,17 +334,4 @@ extern "C" void launchBGRToRGBLetterboxKernel(const unsigned char* bgr, float* d
                                                          srcW, srcH, srcStep,
                                                          dstW, dstH,
                                                          newW, newH, padX, padY);
-}
-
-extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
-                                   int width, int height,
-                                   int bayer_pitch, int bgr_pitch,
-                                   cudaStream_t stream)
-{
-    dim3 block(32, 32);
-    dim3 grid((width + block.x - 1) / block.x,
-              (height + block.y - 1) / block.y);
-    bayerToBGR8_kernel<<<grid, block, 0, stream>>>(bayer, bgr,
-                                                     width, height,
-                                                     bayer_pitch, bgr_pitch);
 }

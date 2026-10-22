@@ -1,5 +1,5 @@
 /**
- * @file dfl_postprocess.cu
+ * @file dfl_decode.cu
  * @brief DFL 6-tensor 后处理 CUDA Kernel
  *
  * 将 6-tensor DFL 解码 (softmax + dist2bbox + NMS) 从 CPU 移到 GPU:
@@ -10,6 +10,8 @@
  *
  * 预期加速: CPU ~0.3ms → GPU <0.05ms
  */
+
+#include "volleyball/adapters/tensorrt/cuda_kernels.hpp"
 
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>

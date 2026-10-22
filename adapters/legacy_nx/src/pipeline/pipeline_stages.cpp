@@ -1,18 +1,13 @@
 #include "pipeline.h"
 #include "pipeline_roi_match_helpers.h"
 #include "volleyball/logging/log.hpp"
+#include "../rectify/bayer_to_bgr.h"
 #include "../utils/vpi_plane_access.h"
 
 #include <vpi/algo/ConvertImageFormat.h>
 
 #include <cstdint>
 #include <chrono>
-
-// Custom CUDA Bayer -> BGR8 kernel in detect_preprocess.cu.
-extern "C" void launchBayerToBGR8(const unsigned char* bayer, unsigned char* bgr,
-                                   int width, int height,
-                                   int bayer_pitch, int bgr_pitch,
-                                   cudaStream_t stream);
 
 namespace stereo3d {
 

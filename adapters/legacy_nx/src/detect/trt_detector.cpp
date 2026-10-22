@@ -10,6 +10,7 @@
  */
 
 #include "trt_detector.h"
+#include "volleyball/adapters/tensorrt/cuda_kernels.hpp"
 #include "volleyball/adapters/tensorrt/engine_contract.hpp"
 #include "volleyball/adapters/tensorrt/postprocess.hpp"
 #include "volleyball/logging/log.hpp"
@@ -24,49 +25,6 @@
 #include <limits>
 #include <sstream>
 #include <utility>
-
-// CUDA 预处理 kernel (灰度 U8 → RGB float32 CHW)
-extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
-                                       int srcW, int srcH, int srcPitch,
-                                       int dstW, int dstH,
-                                       cudaStream_t stream);
-
-// Letterbox 预处理 kernel (保持宽高比 + 灰色填充)
-extern "C" void launchGrayToRGBLetterboxKernel(const unsigned char* gray, float* dst,
-                                                int srcW, int srcH, int srcPitch,
-                                                int dstW, int dstH,
-                                                int newW, int newH,
-                                                int padX, int padY,
-                                                cudaStream_t stream);
-
-extern "C" void launchBayerToRGBKernel(const unsigned char* bayer, float* dst,
-                                        int srcW, int srcH, int srcPitch,
-                                        int dstW, int dstH,
-                                        cudaStream_t stream);
-
-extern "C" void launchBayerToRGBLetterboxKernel(const unsigned char* bayer, float* dst,
-                                                 int srcW, int srcH, int srcPitch,
-                                                 int dstW, int dstH,
-                                                 int newW, int newH,
-                                                 int padX, int padY,
-                                                 cudaStream_t stream);
-
-extern "C" void launchBGRToRGBLetterboxKernel(const unsigned char* bgr, float* dst,
-                                               int srcW, int srcH, int srcStep,
-                                               int dstW, int dstH,
-                                               int newW, int newH,
-                                               int padX, int padY,
-                                               cudaStream_t stream);
-
-// DFL 后处理 kernel (GPU 加速 sigmoid + softmax + dist2bbox)
-extern "C" void launchDFLDecodeKernel(
-    const float* cls_data,
-    const float* bbox_data,
-    float* out_boxes,
-    int* out_count,
-    int H, int W, int nc, int reg_max,
-    int stride, float conf_thresh, int max_det,
-    cudaStream_t stream);
 
 namespace stereo3d {
 
