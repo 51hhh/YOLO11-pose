@@ -137,12 +137,14 @@
       "properties": {
         "association": {
           "type": "object", "additionalProperties": false,
-          "required": ["epipolar_tolerance_px", "max_size_ratio", "min_shifted_iou", "max_disparity_px", "bbox_disparity_consistency_ratio", "bbox_disparity_consistency_min_px", "bbox_disparity_penalty_scale", "record_rejected"],
+          "required": ["epipolar_tolerance_px", "adaptive_epipolar_height_ratio", "max_size_ratio", "min_shifted_iou", "max_disparity_px", "bbox_scale", "bbox_disparity_consistency_ratio", "bbox_disparity_consistency_min_px", "bbox_disparity_penalty_scale", "record_rejected"],
           "properties": {
             "epipolar_tolerance_px": {"type": "number", "minimum": 0},
+            "adaptive_epipolar_height_ratio": {"type": "number", "minimum": 0},
             "max_size_ratio": {"type": "number", "minimum": 1},
             "min_shifted_iou": {"type": "number", "minimum": 0, "maximum": 1},
             "max_disparity_px": {"type": "number", "exclusiveMinimum": 0},
+            "bbox_scale": {"type": "number", "exclusiveMinimum": 0},
             "bbox_disparity_consistency_ratio": {"type": "number", "minimum": 0.05},
             "bbox_disparity_consistency_min_px": {"type": "number", "minimum": 5.0},
             "bbox_disparity_penalty_scale": {"type": "number", "minimum": 0},

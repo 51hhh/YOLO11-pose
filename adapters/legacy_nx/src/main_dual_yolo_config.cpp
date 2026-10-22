@@ -145,6 +145,8 @@ void loadDualYoloConfig(const YAML::Node& dual, stereo3d::PipelineConfig& cfg) {
         cfg.dual_yolo.subpixel_time_budget_ms = dual["subpixel_time_budget_ms"].as<float>();
     if (dual["epipolar_y_tolerance"])
         cfg.dual_yolo.epipolar_y_tolerance = dual["epipolar_y_tolerance"].as<float>();
+    if (dual["adaptive_y_ratio"])
+        cfg.dual_yolo.adaptive_y_ratio = dual["adaptive_y_ratio"].as<float>();
     if (dual["feature_y_tolerance_px"])
         cfg.dual_yolo.feature_y_tolerance_px = dual["feature_y_tolerance_px"].as<float>();
     if (dual["feature_y_slope"])

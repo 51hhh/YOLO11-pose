@@ -255,7 +255,7 @@ StereoRoiPairGateConfig makeStereoRoiPairGateConfig(
     gate.max_disparity = config.max_disparity;
     gate.epipolar_y_tolerance = config.dual_yolo.epipolar_y_tolerance;
     gate.max_size_ratio = config.dual_yolo.max_size_ratio;
-    gate.adaptive_y_ratio = 0.35f;
+    gate.adaptive_y_ratio = config.dual_yolo.adaptive_y_ratio;
     gate.min_shifted_iou = config.dual_yolo.min_shifted_iou;
     return gate;
 }

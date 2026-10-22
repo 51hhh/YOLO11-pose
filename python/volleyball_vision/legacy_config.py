@@ -106,6 +106,9 @@ def build_legacy_pipeline_config(
             ],
             "center_refine": depth_projection["center_refine"],
             "epipolar_y_tolerance": association["epipolar_tolerance_px"],
+            "adaptive_y_ratio": association[
+                "adaptive_epipolar_height_ratio"
+            ],
             "max_size_ratio": association["max_size_ratio"],
             "min_shifted_iou": association["min_shifted_iou"],
             "bbox_disparity_consistency_ratio": association[
@@ -150,6 +153,7 @@ def build_legacy_pipeline_config(
             "min_depth": config.data["stereo"]["min_depth_m"],
             "max_depth": config.data["stereo"]["max_depth_m"],
             "object_diameter": config.data["stereo"]["ball_diameter_m"],
+            "bbox_scale": association["bbox_scale"],
         }
     )
     result["performance"].update(

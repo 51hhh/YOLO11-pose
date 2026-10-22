@@ -127,6 +127,70 @@ void testAssociationRejectsExhaustedPairIdRange() {
     check(batch.attempts.empty(), "pair ID exhaustion must emit no wrapped ID");
 }
 
+void testAssociationUsesPerDimensionSizeRatio() {
+    auto left = support::detection(
+        core::CameraRole::left, "left", 1, 700.0, 500.0, 0.9);
+    auto right = support::detection(
+        core::CameraRole::right, "right", 2, 650.0, 500.0, 0.9);
+    left.bounding_box = {660.0, 490.0, 80.0, 20.0};
+    right.bounding_box = {630.0, 480.0, 40.0, 40.0};
+    auto config = support::associationConfig();
+    config.max_size_ratio = 1.5;
+    const auto batch = algorithms::associateCandidates(
+        {left}, {right}, support::time(1000), support::time(1000), config);
+    check(batch.ok() && batch.attempts.size() == 1,
+          "size-ratio rejection must remain auditable");
+    check(
+        batch.attempts.front().attempt.reject_reason ==
+            core::AssociationRejectReason::size_ratio,
+        "equal-area boxes with incompatible width/height must be rejected");
+}
+
+void testAssociationUsesAdaptiveEpipolarTolerance() {
+    auto left = support::detection(
+        core::CameraRole::left, "left", 1, 700.0, 500.0, 0.9);
+    auto right = support::detection(
+        core::CameraRole::right, "right", 2, 650.0, 510.0, 0.9);
+    auto config = support::associationConfig();
+    config.epipolar_tolerance_px = 2.0;
+    config.adaptive_epipolar_height_ratio = 0.5;
+    const auto batch = algorithms::associateCandidates(
+        {left}, {right}, support::time(1000), support::time(1000), config);
+    check(
+        batch.best_accepted_index.has_value(),
+        "large ball boxes may use the configured adaptive epipolar tolerance");
+}
+
+void testAssociationRanksBboxConsistentDisparity() {
+    const auto left = support::detection(
+        core::CameraRole::left, "left", 1, 700.0, 500.0, 0.9);
+    const auto consistent = support::detection(
+        core::CameraRole::right, "right", 2, 540.0, 500.0, 0.9);
+    const auto inconsistent = support::detection(
+        core::CameraRole::right, "right", 3, 600.0, 500.0, 0.9);
+    auto config = support::associationConfig();
+    config.max_disparity_px = 300.0;
+    config.baseline_m = 0.8;
+    config.ball_diameter_m = 0.2;
+    config.bbox_scale = 1.0;
+    config.bbox_disparity_consistency_ratio = 0.05;
+    config.bbox_disparity_consistency_min_px = 1.0;
+    config.bbox_disparity_penalty_scale = 1.0;
+    const auto batch = algorithms::associateCandidates(
+        {left},
+        {inconsistent, consistent},
+        support::time(1000),
+        support::time(1000),
+        config);
+    check(batch.best_accepted_index.has_value(),
+          "bbox-consistent candidates must produce a selection");
+    check(
+        batch.best_accepted_index &&
+            batch.attempts[*batch.best_accepted_index]
+                    .attempt.right_candidate_id == consistent.candidate_id,
+        "bbox disparity is a ranking prior, not an unused configuration key");
+}
+
 void testTriangulationConfigurationValidation() {
     const auto inputs = ValidInputs{};
     check(
@@ -245,6 +309,9 @@ int main() {
     testCalibrationMustDescribeSharedRectifiedProjection();
     testInvalidAssociationConfigurationIsNotANoMatch();
     testAssociationRejectsExhaustedPairIdRange();
+    testAssociationUsesPerDimensionSizeRatio();
+    testAssociationUsesAdaptiveEpipolarTolerance();
+    testAssociationRanksBboxConsistentDisparity();
     testTriangulationConfigurationValidation();
     testRefinedDisparityTriangulatesIndependentEvidence();
     testRefinedDisparityRejectsInvalidUncertainty();

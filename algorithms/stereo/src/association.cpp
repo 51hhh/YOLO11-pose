@@ -11,14 +11,18 @@ double scoreOf(const core::Detection2D& detection) noexcept {
     return detection.score.value_or(0.0);
 }
 
-double sizeRatio(const core::BoundingBox2D& left,
-                 const core::BoundingBox2D& right) noexcept {
-    const double left_area = left.width * left.height;
-    const double right_area = right.width * right.height;
-    if (left_area <= 0.0 || right_area <= 0.0) {
+double dimensionRatio(double left, double right) noexcept {
+    if (left <= 0.0 || right <= 0.0) {
         return std::numeric_limits<double>::infinity();
     }
-    return std::max(left_area, right_area) / std::min(left_area, right_area);
+    return std::max(left / right, right / left);
+}
+
+double sizeRatio(const core::BoundingBox2D& left,
+                 const core::BoundingBox2D& right) noexcept {
+    return std::max(
+        dimensionRatio(left.width, right.width),
+        dimensionRatio(left.height, right.height));
 }
 
 double shiftedIou(const core::BoundingBox2D& left,
@@ -57,7 +61,12 @@ core::AssociationRejectReason classify(
     if (disparity > config.max_disparity_px) {
         return core::AssociationRejectReason::disparity_out_of_range;
     }
-    if (epipolar_error > config.epipolar_tolerance_px) {
+    const double adaptive_epipolar_tolerance = std::max(
+        config.epipolar_tolerance_px,
+        config.adaptive_epipolar_height_ratio * std::max(
+            left.bounding_box ? left.bounding_box->height : 0.0,
+            right.bounding_box ? right.bounding_box->height : 0.0));
+    if (epipolar_error > adaptive_epipolar_tolerance) {
         return core::AssociationRejectReason::epipolar_error;
     }
     if (!left.bounding_box || !right.bounding_box) {
@@ -76,18 +85,75 @@ core::AssociationRejectReason classify(
     return core::AssociationRejectReason::none;
 }
 
+double expectedDisparityFromBox(
+    const core::Detection2D& detection,
+    const AssociationConfig& config) noexcept {
+    if (!detection.bounding_box || detection.bounding_box->width <= 1.0 ||
+        config.baseline_m <= 0.0 || config.ball_diameter_m <= 0.0 ||
+        config.bbox_scale <= 0.0) {
+        return -1.0;
+    }
+    return std::clamp(
+        config.baseline_m * detection.bounding_box->width * config.bbox_scale /
+            config.ball_diameter_m,
+        1.0,
+        config.max_disparity_px);
+}
+
+double bboxDisparityPenalty(
+    const core::Detection2D& left,
+    const core::Detection2D& right,
+    double disparity,
+    const AssociationConfig& config) noexcept {
+    if (config.bbox_disparity_penalty_scale <= 0.0 || disparity <= 0.0) {
+        return 0.0;
+    }
+    const double left_expected = expectedDisparityFromBox(left, config);
+    const double right_expected = expectedDisparityFromBox(right, config);
+    double expected = -1.0;
+    if (left_expected > 0.0 && right_expected > 0.0) {
+        expected = 0.5 * (left_expected + right_expected);
+    } else if (left_expected > 0.0) {
+        expected = left_expected;
+    } else if (right_expected > 0.0) {
+        expected = right_expected;
+    }
+    if (expected <= 0.0) return 0.0;
+
+    const double tolerance = std::max(
+        config.bbox_disparity_consistency_min_px,
+        expected * config.bbox_disparity_consistency_ratio);
+    const double excess = std::abs(disparity - expected) - tolerance;
+    if (excess <= 0.0) return 0.0;
+    return config.bbox_disparity_penalty_scale * excess /
+           std::max(1.0, tolerance);
+}
+
 }  // namespace
 
 bool isValidAssociationConfig(const AssociationConfig& config) noexcept {
     return config.max_capture_delta_ns >= 0 &&
            std::isfinite(config.epipolar_tolerance_px) &&
            config.epipolar_tolerance_px >= 0.0 &&
+           std::isfinite(config.adaptive_epipolar_height_ratio) &&
+           config.adaptive_epipolar_height_ratio >= 0.0 &&
            std::isfinite(config.max_size_ratio) &&
            config.max_size_ratio >= 1.0 &&
            std::isfinite(config.min_shifted_iou) &&
            config.min_shifted_iou >= 0.0 && config.min_shifted_iou <= 1.0 &&
            std::isfinite(config.max_disparity_px) &&
-           config.max_disparity_px > 0.0;
+           config.max_disparity_px > 0.0 &&
+           std::isfinite(config.bbox_disparity_penalty_scale) &&
+           config.bbox_disparity_penalty_scale >= 0.0 &&
+           std::isfinite(config.bbox_disparity_consistency_ratio) &&
+           config.bbox_disparity_consistency_ratio > 0.0 &&
+           std::isfinite(config.bbox_disparity_consistency_min_px) &&
+           config.bbox_disparity_consistency_min_px > 0.0 &&
+           std::isfinite(config.bbox_scale) && config.bbox_scale > 0.0 &&
+           (config.bbox_disparity_penalty_scale == 0.0 ||
+            (std::isfinite(config.baseline_m) && config.baseline_m > 0.0 &&
+             std::isfinite(config.ball_diameter_m) &&
+             config.ball_diameter_m > 0.0));
 }
 
 AssociationBatch associateCandidates(
@@ -121,7 +187,8 @@ AssociationBatch associateCandidates(
         return output;
     }
     output.attempts.reserve(attempt_count);
-    double best_score = -std::numeric_limits<double>::infinity();
+    double best_semantic = -std::numeric_limits<double>::infinity();
+    double best_score = std::numeric_limits<double>::infinity();
     const bool capture_delta_valid = true;
     const std::int64_t capture_delta_ns =
         right_capture.nanoseconds - left_capture.nanoseconds;
@@ -157,16 +224,43 @@ AssociationBatch associateCandidates(
                 : core::AssociationDecision::rejected;
             attempt.reject_reason = rejection;
 
-            const double confidence =
-                0.5 * (scoreOf(left_candidate) + scoreOf(right_candidate));
-            const double normalized_epipolar = config.epipolar_tolerance_px > 0.0
-                ? epipolar_error / config.epipolar_tolerance_px
+            const double semantic_confidence = std::sqrt(std::max(
+                0.0,
+                scoreOf(left_candidate) * scoreOf(right_candidate)));
+            const double adaptive_epipolar_tolerance = std::max(
+                config.epipolar_tolerance_px,
+                config.adaptive_epipolar_height_ratio * std::max(
+                    left_candidate.bounding_box
+                        ? left_candidate.bounding_box->height
+                        : 0.0,
+                    right_candidate.bounding_box
+                        ? right_candidate.bounding_box->height
+                        : 0.0));
+            const double normalized_epipolar =
+                adaptive_epipolar_tolerance > 0.0
+                ? epipolar_error / adaptive_epipolar_tolerance
                 : epipolar_error;
-            const double score = confidence - 0.1 * normalized_epipolar;
-            output.attempts.push_back({attempt, score});
+            double score = normalized_epipolar;
+            if (left_candidate.bounding_box && right_candidate.bounding_box) {
+                const double width_ratio = dimensionRatio(
+                    left_candidate.bounding_box->width,
+                    right_candidate.bounding_box->width);
+                const double height_ratio = dimensionRatio(
+                    left_candidate.bounding_box->height,
+                    right_candidate.bounding_box->height);
+                score += std::abs(std::log(width_ratio)) +
+                         std::abs(std::log(height_ratio));
+            }
+            score -= 0.25 * scoreOf(right_candidate);
+            score += bboxDisparityPenalty(
+                left_candidate, right_candidate, disparity, config);
+            output.attempts.push_back({attempt, score, semantic_confidence});
             const std::size_t index = output.attempts.size() - 1;
             if (attempt.decision == core::AssociationDecision::accepted &&
-                score > best_score) {
+                (semantic_confidence > best_semantic ||
+                 (semantic_confidence == best_semantic &&
+                  score < best_score))) {
+                best_semantic = semantic_confidence;
                 best_score = score;
                 output.best_accepted_index = index;
             }

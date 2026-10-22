@@ -89,9 +89,11 @@ detector:
 stereo:
   association:
     epipolar_tolerance_px: 12.0
+    adaptive_epipolar_height_ratio: 0.35
     max_size_ratio: 2.0
     min_shifted_iou: 0.05
     max_disparity_px: 2048.0
+    bbox_scale: 0.95
     bbox_disparity_consistency_ratio: 0.30
     bbox_disparity_consistency_min_px: 45.0
     bbox_disparity_penalty_scale: 0.75

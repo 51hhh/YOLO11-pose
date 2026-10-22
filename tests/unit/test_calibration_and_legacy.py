@@ -172,6 +172,8 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
             "nx-rdk",
             project_root=ROOT,
             overrides=(
+                "stereo.association.adaptive_epipolar_height_ratio=0.27",
+                "stereo.association.bbox_scale=0.91",
                 "stereo.association.bbox_disparity_consistency_ratio=0.22",
                 "stereo.association.bbox_disparity_consistency_min_px=31.0",
                 "stereo.association.bbox_disparity_penalty_scale=0.61",
@@ -185,6 +187,8 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         )
         rendered = build_legacy_pipeline_config(profile, project_root=ROOT)
         dual = rendered["detector"]["dual_yolo"]
+        self.assertEqual(dual["adaptive_y_ratio"], 0.27)
+        self.assertEqual(rendered["fusion"]["bbox_scale"], 0.91)
         self.assertEqual(dual["bbox_disparity_consistency_ratio"], 0.22)
         self.assertEqual(dual["bbox_disparity_consistency_min_px"], 31.0)
         self.assertEqual(dual["bbox_disparity_penalty_scale"], 0.61)

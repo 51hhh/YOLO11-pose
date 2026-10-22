@@ -120,6 +120,7 @@ struct PipelineConfig {
         float subpixel_max_stddev_px = 1.0f; ///< 多点视差最大标准差
         float subpixel_time_budget_ms = 1.5f; ///< 每帧亚像素 CPU 预算, 0 表示不限制
         float epipolar_y_tolerance = 12.0f;///< 左右中心 y 允许差值 (px)
+        float adaptive_y_ratio = 0.35f;   ///< 按较大 bbox 高度放宽极线门限
         float feature_y_tolerance_px = 2.0f; ///< ROI 特征点严格 y 残差门限
         float feature_y_slope = 0.0f;        ///< 可选 epipolar y 线性补偿斜率
         float feature_y_offset_px = 0.0f;    ///< 可选 epipolar y 固定补偿
