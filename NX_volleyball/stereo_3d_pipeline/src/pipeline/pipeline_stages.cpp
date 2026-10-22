@@ -221,23 +221,38 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
     NVTX_RANGE_POP();
 }
 
-void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
+bool Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     NVTX_RANGE("Stage1_Detect");
     slot.detection_submitted = false;
     slot.right_detection_submitted = false;
+    slot.detect_done_event_recorded = false;
+    slot.detect_right_done_event_recorded = false;
+
+    auto fail = [&](const char* message) {
+        LOG_ERROR("stage1_detect: %s (frame=%d slot=%d)",
+                  message, slot.frame_id, slot_index);
+        slot.grab_failed = true;
+        NVTX_RANGE_POP();
+        return false;
+    };
 
     auto* det = getDetector(slot.frame_id);
     auto stream = getDLAStream(slot.frame_id);
-    cudaStreamWaitEvent(stream, slot.evtRectDone, 0);
+    if (!det || !stream) {
+        return fail("left detector or CUDA stream is null");
+    }
+    if (!checkCudaFrame(cudaStreamWaitEvent(stream, slot.evtRectDone, 0),
+                        slot, "left detector wait for rectification")) {
+        NVTX_RANGE_POP();
+        return false;
+    }
 
     // BGR mode uses rectified BGR; gray mode uses rectified gray.
     const auto& leftDetectGpu = leftDetectorUsesBGR()
         ? slot.rectBGR_L_gpu
         : slot.rectGray_L_gpu;
     if (!leftDetectGpu.data || leftDetectGpu.pitchBytes <= 0) {
-        LOG_WARN("stage1_detect: invalid left detect CUDA pointer");
-        NVTX_RANGE_POP();
-        return;
+        return fail("invalid left detect CUDA pointer");
     }
 
     const bool submitted = det->enqueue(slot_index, leftDetectGpu.data,
@@ -246,24 +261,31 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
                                         stream);
 
     if (!submitted) {
-        LOG_WARN("stage1_detect: left TRT enqueue failed");
-        NVTX_RANGE_POP();
-        return;
+        // enqueue() 可能在推理已入队、后续 D2H 提交失败后返回 false。
+        // 此时不能立刻复用该 slot 的 TensorRT 缓冲。
+        checkCudaFrame(cudaStreamSynchronize(stream), slot,
+                       "drain left detector after enqueue failure");
+        return fail("left TRT enqueue failed");
     }
     slot.detection_submitted = true;
 
     if (dualYoloEnabled() && slot.is_detect_frame) {
         auto* detR = getRightDetector();
         auto streamR = getRightDLAStream(slot.frame_id);
-        cudaStreamWaitEvent(streamR, slot.evtRectDone, 0);
+        if (!detR || !streamR) {
+            return fail("right detector or CUDA stream is null");
+        }
+        if (!checkCudaFrame(cudaStreamWaitEvent(streamR, slot.evtRectDone, 0),
+                            slot, "right detector wait for rectification")) {
+            NVTX_RANGE_POP();
+            return false;
+        }
 
         const auto& rightDetectGpu = rightDetectorUsesBGR()
             ? slot.rectBGR_R_gpu
             : slot.rectGray_R_gpu;
         if (!rightDetectGpu.data || rightDetectGpu.pitchBytes <= 0) {
-            LOG_WARN("stage1_detect: invalid right detect CUDA pointer");
-            NVTX_RANGE_POP();
-            return;
+            return fail("invalid right detect CUDA pointer");
         }
 
         const bool submittedR = detR->enqueue(slot_index, rightDetectGpu.data,
@@ -273,39 +295,58 @@ void Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
                                               streamR);
 
         if (!submittedR) {
-            LOG_WARN("stage1_detect: right TRT enqueue failed");
-            NVTX_RANGE_POP();
-            return;
+            checkCudaFrame(cudaStreamSynchronize(streamR), slot,
+                           "drain right detector after enqueue failure");
+            return fail("right TRT enqueue failed");
         }
         slot.right_detection_submitted = true;
     }
     NVTX_RANGE_POP();
+    return true;
 }
 
-void Pipeline::stage2_stereo(FrameSlot& slot) {
+bool Pipeline::stage2_stereo(FrameSlot& slot) {
     NVTX_RANGE("Stage2_Stereo");
 
+    bool submitted = false;
     switch (config_.disparity_strategy) {
         case DisparityStrategy::FULL_FRAME:
-            stereo_->compute(streams_.vpiStreamGPU,
-                             slot.rectGray_vpiL, slot.rectGray_vpiR,
-                             slot.disparityMap, slot.confidenceMap);
+            submitted = stereo_->compute(
+                streams_.vpiStreamGPU,
+                slot.rectGray_vpiL, slot.rectGray_vpiR,
+                slot.disparityMap, slot.confidenceMap);
             break;
 
         case DisparityStrategy::HALF_RESOLUTION:
-            stereo_->computeHalfRes(streams_.vpiStreamGPU,
-                                    slot.rectGray_vpiL, slot.rectGray_vpiR,
-                                    slot.disparityMap, slot.confidenceMap);
+            submitted = stereo_->computeHalfRes(
+                streams_.vpiStreamGPU,
+                slot.rectGray_vpiL, slot.rectGray_vpiR,
+                slot.disparityMap, slot.confidenceMap);
             break;
 
         case DisparityStrategy::ROI_ONLY:
             // ROI mode uses separate ROI matcher in pipelineLoopROI stage2.
             LOG_ERROR("stage2_stereo called in ROI_ONLY mode - this is a bug");
-            return;
+            slot.grab_failed = true;
+            NVTX_RANGE_POP();
+            return false;
     }
 
     // Downstream Stage3 syncs vpiStreamGPU before fusion.
+    if (!submitted) {
+        LOG_ERROR("stage2_stereo: VPI submit failed (frame=%d)", slot.frame_id);
+        slot.grab_failed = true;
+        // HALF_RESOLUTION 可能在前几个 submit 成功、后续 submit 失败。
+        // 失败路径也必须排空 stream，避免 slot 图像仍被 VPI 使用时复用。
+        const VPIStatus drain_status = vpiStreamSync(streams_.vpiStreamGPU);
+        if (drain_status != VPI_SUCCESS) {
+            LOG_ERROR("stage2_stereo: failed to drain VPI stream "
+                      "after submit error (frame=%d status=%d)",
+                      slot.frame_id, (int)drain_status);
+        }
+    }
     NVTX_RANGE_POP();
+    return submitted;
 }
 
 void Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {

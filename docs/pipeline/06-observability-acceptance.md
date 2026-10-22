@@ -74,6 +74,9 @@ fusion/callback
 - 左右计数器一致，时间字段不倒退；
 - callback 前完成图像深拷贝；
 - raw lock/unlock、VPI submit/sync 或 CUDA 前处理失败均形成失败帧，不能复用旧像素伪造成功帧；
+- TensorRT enqueue、CUDA event record/wait/sync 和 full-frame VPI Stereo 任一错误均形成失败帧；event 未成功记录时不得查询或等待旧槽位 event；
+- 注入 Stage 1 失败时，已入队 GPU 工作完成排空、失败回调恰好一次，v2.1 recorder 以 `fail_trial` 结束而不是写出正常空检测；
+- ROI Phase C 的失败/stale-drop 分支之后 Phase D 仍执行，异步 grab 请求没有遗留；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；
@@ -102,6 +105,7 @@ GPU 浮点/算法版本可能导致微小差异，回归应按字段设置容差
 - 90 Hz 曝光、GPIO 边沿和 FrameSpecInfo 之间的固定延迟/抖动；
 - async ROI 在真实球速与检测密度下的截止线分布；
 - TNR 路径的 Bayer 语义和视觉效果；当前关闭，不属于验收通过项。
+- 本次开发环境和已授权 A800 主机均无 VPI/JetPack，因而 CUDA/VPI/TensorRT 目标源的最终编译与上述故障注入仍必须在 Orin NX 完成。
 
 ## 执行命令
 

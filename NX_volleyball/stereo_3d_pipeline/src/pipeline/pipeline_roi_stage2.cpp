@@ -355,6 +355,12 @@ void Pipeline::publishRoiResultCallback(FrameSlot& slot) {
 }
 
 void Pipeline::publishRoiFrameCallbacks(FrameSlot& slot) {
+    if (slot.roi_callbacks_published) {
+        LOG_WARN("[Pipeline] suppress duplicate ROI callbacks: frame=%d",
+                 slot.frame_id);
+        return;
+    }
+    slot.roi_callbacks_published = true;
     publishRoiResultCallback(slot);
     if (frame_callback_) {
         ScopedTimer tfc("Stage2_FrameCB");

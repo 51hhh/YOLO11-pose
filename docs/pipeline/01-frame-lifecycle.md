@@ -47,6 +47,7 @@ slot_index = frame_id % 3
 - 校正后的左右 BGR 和 Gray；
 - 左右检测候选、全部配对尝试和 3D 结果；
 - `evtRectDone`、左右 `evtDetectDone` 和 `evtStereoDone`；
+- 与左右 detect event 配对的 `*_event_recorded` 状态；event 随槽位复用，只有本帧成功 record 后才允许 wait，不能把上一轮 event 当成本帧完成；
 - 触发、设备、USB 到达和配对残差元数据。
 
 原始 VPI 图像严格按 profile 的宽高预分配。海康相机打开时必须成功回读左右两侧的 `Width/Height/OffsetX/OffsetY`，并与 profile 的完整画面、零偏移契约一致；不能读取时不会退回配置值继续运行。每次 SDK payload 写入槽位前还会检查实际宽高和目标 pitch。任一项变化时先归还 SDK buffer，再让该帧明确失败，绝不把未知尺寸数据复制进既有 VPI 缓冲。
@@ -66,6 +67,8 @@ slot_index = frame_id % 3
 2. Phase B 对上一轮已经校正的帧提交左右 YOLO；
 3. Phase C 等更早一帧的 YOLO，提交异步 ROI Stage 2；
 4. Phase D 等当前 grab 完成并提交 Bayer、校正和灰度转换。
+
+Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 或空结果都只能结束当前融合块，不能直接 `continue` 外层循环。Phase D 是每一轮的必达清理点：它必须收割当前异步抓帧并推进 `next_grab_frame`，否则下一轮可能覆盖尚未完成的请求或把 payload 写进错误槽位。
 
 当前投影中 C++ SOT tracker 为关闭，因此每帧都是 YOLO 检测帧。实时 profile 允许：
 
@@ -100,7 +103,10 @@ slot_index = frame_id % 3
 
 ## 失败帧与排空
 
-- FrameCounter 无法对齐、抓取失败或 Stage 0 失败时设置 `grab_failed`；
+- `grab_failed` 是为兼容旧回调保留的“本帧不可发布为有效观测”总门控：FrameCounter 无法对齐、抓取/Stage 0、TensorRT/CUDA 同步或 VPI Stereo 失败都会设置它；不能按字段名把它仅解释为相机抓取失败；
+- TensorRT `enqueue` 失败时仍可能已有预处理、推理或 D2H 工作进入 stream，失败路径必须先排空对应 stream；
+- detect event 记录失败时禁止等待槽位中旧 event，改为直接同步真正的源 stream，并把本帧交给 fail-trial；
+- ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；
 - 采集模式仍会触发帧回调，让 fail-trial 录制器立即停止，而不是静默制造序号缺口；
 - 停止时先让 pipeline 排空已提交的工作，再关闭 ROI/P2 worker 和 grab 线程，最后同步所有 stream 并停止 PWM/相机；
 - 实时模式的主动丢弃必须有性能计数，采集模式的任何丢弃都不允许发布完整 trial。

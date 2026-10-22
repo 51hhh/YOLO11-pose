@@ -153,6 +153,12 @@ struct FrameSlot {
     std::vector<StereoRoiPairAttempt> stereo_pair_attempts;
     bool detection_submitted = false;      ///< 本帧是否真正提交过左目 YOLO
     bool right_detection_submitted = false; ///< 本帧是否提交过右目 YOLO
+    // CUDA event 会随 ring slot 复用。只有本帧成功 record 后下游才允许
+    // wait；否则等待旧帧留下的 event 会把推理失败伪装成正常空检测。
+    bool detect_done_event_recorded = false;
+    bool detect_right_done_event_recorded = false;
+    // ROI 路径的失败帧可能在提交阶段和融合阶段都被看见，回调必须恰好一次。
+    bool roi_callbacks_published = false;
 
     // =========== SOT Tracker 补帧 ===========
     SOTResult sot_bbox_result;            ///< SOT tracker 输出
@@ -263,6 +269,9 @@ struct FrameSlot {
         stereo_pair_attempts.clear();
         detection_submitted = false;
         right_detection_submitted = false;
+        detect_done_event_recorded = false;
+        detect_right_done_event_recorded = false;
+        roi_callbacks_published = false;
         results.clear();
         sot_bbox_result = SOTResult();
         bbox_source = BboxSource::NONE;
@@ -308,6 +317,9 @@ struct FrameSlot {
         stereo_pair_attempts.clear();
         detection_submitted = false;
         right_detection_submitted = false;
+        detect_done_event_recorded = false;
+        detect_right_done_event_recorded = false;
+        roi_callbacks_published = false;
         results.clear();
         sot_bbox_result = SOTResult();
         bbox_source = BboxSource::NONE;

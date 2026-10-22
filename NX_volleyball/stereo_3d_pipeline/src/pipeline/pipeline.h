@@ -131,8 +131,8 @@ private:
 
     // ===== Stage 函数 =====
     void stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded = false);
-    void stage1_detect(FrameSlot& slot, int slot_index);
-    void stage2_stereo(FrameSlot& slot);
+    bool stage1_detect(FrameSlot& slot, int slot_index);
+    bool stage2_stereo(FrameSlot& slot);
     void stage3_fuse(FrameSlot& slot, int slot_index);
 
     // ROI 模式专用 Stage
@@ -152,8 +152,11 @@ private:
     bool leftDetectorUsesBGR() const;
     bool rightDetectorUsesBGR() const;
     bool colorPipelineEnabled() const;
-    void recordDetectDoneEvents(FrameSlot& slot) const;
-    void waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const;
+    bool checkCudaFrame(cudaError_t status, FrameSlot& slot,
+                        const char* operation) const;
+    bool recordDetectDoneEvents(FrameSlot& slot) const;
+    bool waitDetectDone(cudaStream_t stream, FrameSlot& slot) const;
+    bool synchronizeDetectDone(FrameSlot& slot, const char* operation) const;
     bool detectEventsReady(const FrameSlot& slot) const;
     float activeDisparityOffset() const;
     void collectRightDetections(FrameSlot& slot, int slot_index);

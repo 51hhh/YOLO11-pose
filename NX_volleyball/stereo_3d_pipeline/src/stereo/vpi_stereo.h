@@ -44,9 +44,9 @@ public:
      * @param disparity 视差图输出 (S16, Q10.5)
      * @param confidence 置信度图输出 (U16)
      */
-    void compute(VPIStream stream,
-                 VPIImage rectL, VPIImage rectR,
-                 VPIImage disparity, VPIImage confidence);
+    [[nodiscard]] bool compute(VPIStream stream,
+                               VPIImage rectL, VPIImage rectR,
+                               VPIImage disparity, VPIImage confidence);
 
     /**
      * @brief 半分辨率视差 (策略 B: 降采样 → 视差 → 还原)
@@ -54,9 +54,10 @@ public:
      * 内部自动降采样到 width/2 x height/2,
      * 视差值 ×2 还原到原始分辨率尺度。
      */
-    void computeHalfRes(VPIStream stream,
-                        VPIImage rectL, VPIImage rectR,
-                        VPIImage disparity, VPIImage confidence);
+    [[nodiscard]] bool computeHalfRes(VPIStream stream,
+                                      VPIImage rectL, VPIImage rectR,
+                                      VPIImage disparity,
+                                      VPIImage confidence);
 
     int getMaxDisparity() const { return maxDisparity_; }
 

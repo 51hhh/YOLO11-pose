@@ -45,19 +45,23 @@ void Pipeline::pipelineLoop() {
             // 等 Detect 完成
             {
                 ScopedTimer tw("Stage3_WaitDetect");
-                waitDetectDone(streams_.cudaStreamFuse, slot);
-                cudaStreamSynchronize(streams_.cudaStreamFuse);
+                synchronizeDetectDone(slot, "synchronize Stage3 detect dependencies");
                 globalPerf().record("Stage3_WaitDetect", tw.elapsedMs());
             }
 
             // 等 Stereo 完成（VPI stream 级同步，放在 Stage3 前，避免阻塞 Stage1/2 提交）
-            {
+            if (!slot.grab_failed) {
                 ScopedTimer tws("Stage3_WaitStereo");
-                vpiStreamSync(streams_.vpiStreamGPU);
+                const VPIStatus status = vpiStreamSync(streams_.vpiStreamGPU);
+                if (status != VPI_SUCCESS) {
+                    LOG_ERROR("[Pipeline] Stage3 stereo sync failed: frame=%d status=%d",
+                              slot.frame_id, (int)status);
+                    slot.grab_failed = true;
+                }
                 globalPerf().record("Stage3_WaitStereo", tws.elapsedMs());
             }
 
-            {
+            if (!slot.grab_failed) {
                 ScopedTimer t3("Stage3_Fuse");
                 stage3_fuse(slot, slot_idx);
                 globalPerf().record("Stage3_Fuse", t3.elapsedMs());
@@ -122,23 +126,33 @@ void Pipeline::pipelineLoop() {
                 next_fuse_frame = next_detect_frame;
             } else {
                 // 等待 VPI remap 完成 (stage0 异步提交)
-                vpiStreamSync(streams_.vpiStreamPVA);
-                cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
+                const VPIStatus rect_status = vpiStreamSync(streams_.vpiStreamPVA);
+                if (rect_status != VPI_SUCCESS) {
+                    LOG_ERROR("[Pipeline] rectification sync failed before Stage1: "
+                              "frame=%d status=%d",
+                              slot.frame_id, (int)rect_status);
+                    slot.grab_failed = true;
+                }
+                if (!slot.grab_failed) {
+                    checkCudaFrame(
+                        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
+                        slot, "record rectification completion event");
+                }
+                if (!slot.grab_failed) {
+                    checkCudaFrame(
+                        cudaStreamWaitEvent(streams_.cudaStreamGPU,
+                                            slot.evtRectDone, 0),
+                        slot, "GPU stage wait for rectification");
+                }
 
-                // DLA/GPU 都等 rect 完成后开始
-                cudaStreamWaitEvent(getDLAStream(slot.frame_id),
-                                    slot.evtRectDone, 0);
-                cudaStreamWaitEvent(streams_.cudaStreamGPU,
-                                    slot.evtRectDone, 0);
-
-                {
+                if (!slot.grab_failed) {
                     ScopedTimer t1("Stage1_DetectSubmit");
                     stage1_detect(slot, slot_idx);
                     globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
                 }
                 recordDetectDoneEvents(slot);
 
-                {
+                if (!slot.grab_failed) {
                     ScopedTimer t2("Stage2_StereoSubmit");
                     stage2_stereo(slot);
                     globalPerf().record("Stage2_StereoSubmit", t2.elapsedMs());
@@ -164,7 +178,11 @@ void Pipeline::pipelineLoop() {
 
     // ===== 排空阶段 =====
     // 同步最后的 VPI remap
-    vpiStreamSync(streams_.vpiStreamPVA);
+    const VPIStatus drain_rect_status = vpiStreamSync(streams_.vpiStreamPVA);
+    if (drain_rect_status != VPI_SUCCESS) {
+        LOG_ERROR("[Pipeline] final rectification drain failed: status=%d",
+                  (int)drain_rect_status);
+    }
 
     // 1) 提交所有已抓取但尚未提交 detect/stereo 的帧
     while (next_detect_frame < next_grab_frame) {
@@ -178,13 +196,16 @@ void Pipeline::pipelineLoop() {
             continue;
         }
 
-        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-        cudaStreamWaitEvent(getDLAStream(slot.frame_id), slot.evtRectDone, 0);
-        cudaStreamWaitEvent(streams_.cudaStreamGPU, slot.evtRectDone, 0);
-
-        stage1_detect(slot, slot_idx);
+        checkCudaFrame(cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
+                       slot, "record final rectification completion event");
+        if (!slot.grab_failed) {
+            checkCudaFrame(cudaStreamWaitEvent(streams_.cudaStreamGPU,
+                                               slot.evtRectDone, 0),
+                           slot, "final GPU stage wait for rectification");
+        }
+        if (!slot.grab_failed) stage1_detect(slot, slot_idx);
         recordDetectDoneEvents(slot);
-        stage2_stereo(slot);
+        if (!slot.grab_failed) stage2_stereo(slot);
 
         next_detect_frame++;
     }
@@ -194,11 +215,17 @@ void Pipeline::pipelineLoop() {
         int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
 
-        waitDetectDone(streams_.cudaStreamFuse, slot);
-        cudaStreamSynchronize(streams_.cudaStreamFuse);
-        vpiStreamSync(streams_.vpiStreamGPU);
+        synchronizeDetectDone(slot, "synchronize final detect dependencies");
+        if (!slot.grab_failed) {
+            const VPIStatus status = vpiStreamSync(streams_.vpiStreamGPU);
+            if (status != VPI_SUCCESS) {
+                LOG_ERROR("[Pipeline] final stereo sync failed: frame=%d status=%d",
+                          slot.frame_id, (int)status);
+                slot.grab_failed = true;
+            }
+        }
 
-        stage3_fuse(slot, slot_idx);
+        if (!slot.grab_failed) stage3_fuse(slot, slot_idx);
         if (result_callback_) {
             result_callback_(slot.frame_id,
                              slot.results,
@@ -240,8 +267,9 @@ void Pipeline::pipelineLoopROI() {
             slot.grab_failed = true;
             return false;
         }
-        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-        return true;
+        return checkCudaFrame(
+            cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
+            slot, "record ROI rectification completion event");
     };
 
     auto newer_yolo_ready = [&](int frame_id) -> bool {
@@ -313,9 +341,6 @@ void Pipeline::pipelineLoopROI() {
         if (slot.grab_failed) {
             publishRoiFrameCallbacks(slot);
         } else if (sync_rect_for_detect(slot, slot_idx)) {
-            auto dlaStream = getDLAStream(slot.frame_id);
-            cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
-
             ScopedTimer t1("Stage1_DetectSubmit");
             stage1_detect(slot, slot_idx);
             const double stage1_ms = t1.elapsedMs();
@@ -373,15 +398,7 @@ void Pipeline::pipelineLoopROI() {
 
                 if (is_detect) {
                     // ---- YOLO 检测帧 ----
-                    if (!sync_rect_for_detect(slot, slot_idx)) {
-                        next_detect_frame++;
-                        continue;
-                    }
-
-                    auto dlaStream = getDLAStream(slot.frame_id);
-                    cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
-
-                    {
+                    if (sync_rect_for_detect(slot, slot_idx)) {
                         ScopedTimer t1("Stage1_DetectSubmit");
                         stage1_detect(slot, slot_idx);
                         const double stage1_ms = t1.elapsedMs();
@@ -391,13 +408,24 @@ void Pipeline::pipelineLoopROI() {
                                      slot.frame_id, slot_idx, stage1_ms,
                                      slot.right_detection_submitted ? 1 : 0);
                         }
+                        recordDetectDoneEvents(slot);
                     }
-                    recordDetectDoneEvents(slot);
                 } else {
                     // ---- Tracker 填充帧 ----
                     // 等 rectify 完成 (tracker 需要 rectified BGR)
-                    vpiStreamSync(streams_.vpiStreamPVA);
-                    cudaStreamSynchronize(streams_.cudaStreamGPU);
+                    const VPIStatus tracker_rect_status =
+                        vpiStreamSync(streams_.vpiStreamPVA);
+                    if (tracker_rect_status != VPI_SUCCESS) {
+                        LOG_ERROR("[Pipeline] tracker rectification sync failed: "
+                                  "frame=%d status=%d",
+                                  slot.frame_id, (int)tracker_rect_status);
+                        slot.grab_failed = true;
+                    }
+                    if (!slot.grab_failed) {
+                        checkCudaFrame(
+                            cudaStreamSynchronize(streams_.cudaStreamGPU), slot,
+                            "synchronize tracker input stream");
+                    }
 
                     // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
                     // 防止YOLO+tracker并行运行导致功率爆口
@@ -405,20 +433,31 @@ void Pipeline::pipelineLoopROI() {
                     // 等待检测完成
                     {
                         ScopedTimer tw("Stage1_WaitYOLOComplete");
-                        cudaStreamSynchronize(streams_.cudaStreamDLA);
-                        if (dualYoloEnabled()) {
-                            cudaStreamSynchronize(streams_.cudaStreamDLA_R);
+                        if (!slot.grab_failed) {
+                            checkCudaFrame(
+                                cudaStreamSynchronize(streams_.cudaStreamDLA), slot,
+                                "synchronize previous left YOLO before tracker");
+                        }
+                        if (!slot.grab_failed && dualYoloEnabled()) {
+                            checkCudaFrame(
+                                cudaStreamSynchronize(streams_.cudaStreamDLA_R), slot,
+                                "synchronize previous right YOLO before tracker");
                         }
                         globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
                     }
 
-                    {
+                    if (!slot.grab_failed) {
                         ScopedTimer tt("Stage1_TrackerInfill");
                         tracker_infill(slot);
                         globalPerf().record("Stage1_TrackerInfill", tt.elapsedMs());
                     }
                     // 标记 "detect done" 让 Phase C 的等待逻辑兼容
-                    cudaEventRecord(slot.evtDetectDone, streams_.cudaStreamGPU);
+                    if (!slot.grab_failed && checkCudaFrame(
+                            cudaEventRecord(slot.evtDetectDone,
+                                            streams_.cudaStreamGPU),
+                            slot, "record tracker completion event")) {
+                        slot.detect_done_event_recorded = true;
+                    }
                 }
                 next_detect_frame++;
             }
@@ -435,9 +474,20 @@ void Pipeline::pipelineLoopROI() {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
             auto& slot = slots_[slot_idx];
 
+            // Phase A 已发起本轮异步抓帧，因此这里不能 continue 外层
+            // while；局部 break 只结束本帧融合，Phase D 始终负责收割抓帧。
+            do {
             if (slot.grab_failed) {
+                if (slot.detection_submitted ||
+                    slot.right_detection_submitted ||
+                    slot.detect_done_event_recorded ||
+                    slot.detect_right_done_event_recorded) {
+                    synchronizeDetectDone(
+                        slot, "synchronize failed ROI detect dependencies");
+                }
+                publishRoiFrameCallbacks(slot);
                 next_fuse_frame++;
-                continue;
+                break;
             }
 
             if (config_.drop_stale_roi_frames &&
@@ -454,14 +504,20 @@ void Pipeline::pipelineLoopROI() {
                 }
                 expireAsyncRoiBefore(next_fuse_frame + 1);
                 next_fuse_frame++;
-                continue;
+                break;
             }
 
             {
                 ScopedTimer tw("Stage2_WaitDetect");
-                waitDetectDone(streams_.cudaStreamFuse, slot);
-                cudaStreamSynchronize(streams_.cudaStreamFuse);
+                synchronizeDetectDone(
+                    slot, "synchronize ROI Stage2 detect dependencies");
                 globalPerf().record("Stage2_WaitDetect", tw.elapsedMs());
+            }
+
+            if (slot.grab_failed) {
+                publishRoiFrameCallbacks(slot);
+                next_fuse_frame++;
+                break;
             }
 
             if (slot.is_detect_frame) {
@@ -470,9 +526,13 @@ void Pipeline::pipelineLoopROI() {
                 {
                     ScopedTimer tw("Stage2_WaitYOLOComplete");
                     auto dlaStream = getDLAStream(slot.frame_id);
-                    cudaStreamSynchronize(dlaStream);
+                    checkCudaFrame(cudaStreamSynchronize(dlaStream), slot,
+                                   "synchronize left YOLO before collect");
                     if (dualYoloEnabled() && slot.right_detection_submitted) {
-                        cudaStreamSynchronize(getRightDLAStream(slot.frame_id));
+                        checkCudaFrame(
+                            cudaStreamSynchronize(
+                                getRightDLAStream(slot.frame_id)),
+                            slot, "synchronize right YOLO before collect");
                     }
                     const double wait_yolo_ms = tw.elapsedMs();
                     globalPerf().record("Stage2_WaitYOLOComplete", wait_yolo_ms);
@@ -481,6 +541,12 @@ void Pipeline::pipelineLoopROI() {
                                  slot.frame_id, slot_idx, wait_yolo_ms,
                                  slot.right_detection_submitted ? 1 : 0);
                     }
+                }
+
+                if (slot.grab_failed) {
+                    publishRoiFrameCallbacks(slot);
+                    next_fuse_frame++;
+                    break;
                 }
 
                 bool publish_now = true;
@@ -534,6 +600,7 @@ void Pipeline::pipelineLoopROI() {
             }
 
             next_fuse_frame++;
+            } while (false);
         }
 
         // ====================================================================
@@ -570,7 +637,11 @@ void Pipeline::pipelineLoopROI() {
     }
 
     // ===== 排空 =====
-    vpiStreamSync(streams_.vpiStreamPVA);
+    const VPIStatus roi_drain_status = vpiStreamSync(streams_.vpiStreamPVA);
+    if (roi_drain_status != VPI_SUCCESS) {
+        LOG_ERROR("[Pipeline] ROI final rectification drain failed: status=%d",
+                  (int)roi_drain_status);
+    }
     drain_async_outputs();
 
     while (next_detect_frame < next_grab_frame) {
@@ -585,10 +656,13 @@ void Pipeline::pipelineLoopROI() {
             next_detect_frame++;
             continue;
         }
-        auto dlaStream = getDLAStream(slot.frame_id);
-        cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
         stage1_detect(slot, slot_idx);
         recordDetectDoneEvents(slot);
+        if (slot.grab_failed) {
+            synchronizeDetectDone(
+                slot, "synchronize failed final ROI detect dependencies");
+            publishRoiFrameCallbacks(slot);
+        }
         next_detect_frame++;
     }
 
@@ -596,11 +670,23 @@ void Pipeline::pipelineLoopROI() {
         int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
         if (slot.grab_failed) {
+            if (slot.detection_submitted ||
+                slot.right_detection_submitted ||
+                slot.detect_done_event_recorded ||
+                slot.detect_right_done_event_recorded) {
+                synchronizeDetectDone(
+                    slot, "synchronize failed ROI drain dependencies");
+            }
+            publishRoiFrameCallbacks(slot);
             next_fuse_frame++;
             continue;
         }
-        waitDetectDone(streams_.cudaStreamFuse, slot);
-        cudaStreamSynchronize(streams_.cudaStreamFuse);
+        synchronizeDetectDone(slot, "synchronize ROI drain dependencies");
+        if (slot.grab_failed) {
+            publishRoiFrameCallbacks(slot);
+            next_fuse_frame++;
+            continue;
+        }
         stage2_roi_match_fuse(slot, slot_idx);
         publishRoiFrameCallbacks(slot);
         account_output_frame(slot.frame_id);

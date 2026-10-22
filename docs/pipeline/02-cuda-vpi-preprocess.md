@@ -28,6 +28,8 @@
 
 Stage 0 对每个 VPI lock/unlock、submit 和 stream sync 检查返回状态；`VPIRectifier` 也把左右 remap 的提交结果返回给调用方。任一步失败时不会记录 `evtRectDone`，更不会把旧槽位像素送进 TensorRT。初始化日志只能证明 payload 创建成功，逐帧返回状态和后续同步共同证明该帧执行成功。
 
+保留的 full/half-resolution VPI Stereo 路径也遵守同一规则：创建参数初始化、提交参数初始化、左右 rescale、disparity submit 和上采样逐项检查 `VPIStatus`。半分辨率链中途失败时会同步排空 `vpiStreamGPU` 后再允许槽位复用。当前 `nx-rdk/free-flight` 走 `ROI_ONLY`，所以这项是关闭支路的正确性保护，不是其已在实机启用的证据。
+
 ## 图像资源与内存域
 
 | 资源 | 格式 | 生产者 | 主要消费者 | 当前启用 |
@@ -49,6 +51,8 @@ Stage 0 涉及：
 - `vpiStreamPVA`：remap 和 BGR→Gray；当前 payload/backend 选择为 CUDA；
 - `cudaStreamGPU`：在 VPI stream 已同步后记录 `evtRectDone`；
 - 左右 TensorRT stream 等待 `evtRectDone`。
+
+每个 detect event 另有本帧有效位。正常路径是“TensorRT preprocess/infer/decode/D2H 入队 → 在同一 stream 记录 event → fuse stream 等 event → 同步 fuse stream → CPU collect”。如果 enqueue 或 event API 失败，本帧立即失效；代码不会从上一次 ring-slot 复用留下的 host 输出构造空检测或旧检测。
 
 当前存在两个明确硬屏障：
 

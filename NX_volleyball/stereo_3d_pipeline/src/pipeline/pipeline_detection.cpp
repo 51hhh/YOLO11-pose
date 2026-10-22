@@ -66,26 +66,103 @@ float Pipeline::activeDisparityOffset() const {
         : 0.0f;
 }
 
-void Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {
-    // 左目 lock/enqueue 失败时也要刷新 event，否则下游可能等待到旧 slot 事件。
-    cudaEventRecord(slot.evtDetectDone,
-                    slot.detection_submitted
-                        ? getDLAStream(slot.frame_id)
-                        : streams_.cudaStreamGPU);
-    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
-        cudaEventRecord(slot.evtDetectRightDone, getRightDLAStream(slot.frame_id));
-    }
+bool Pipeline::checkCudaFrame(cudaError_t status, FrameSlot& slot,
+                              const char* operation) const {
+    if (status == cudaSuccess) return true;
+    LOG_ERROR("[Pipeline] %s failed: frame=%d err=%s",
+              operation, slot.frame_id, cudaGetErrorString(status));
+    slot.grab_failed = true;
+    return false;
 }
 
-void Pipeline::waitDetectDone(cudaStream_t stream, const FrameSlot& slot) const {
-    cudaStreamWaitEvent(stream, slot.evtDetectDone, 0);
-    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
-        cudaStreamWaitEvent(stream, slot.evtDetectRightDone, 0);
+bool Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {
+    slot.detect_done_event_recorded = false;
+    slot.detect_right_done_event_recorded = false;
+    bool ok = true;
+
+    // 左目 lock/enqueue 失败时也要刷新 event，否则下游可能等待到旧 slot 事件。
+    const cudaError_t left_status = cudaEventRecord(
+        slot.evtDetectDone,
+        slot.detection_submitted
+            ? getDLAStream(slot.frame_id)
+            : streams_.cudaStreamGPU);
+    if (checkCudaFrame(left_status, slot, "record left detect completion event")) {
+        slot.detect_done_event_recorded = true;
+    } else {
+        ok = false;
     }
+
+    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
+        const cudaError_t right_status = cudaEventRecord(
+            slot.evtDetectRightDone, getRightDLAStream(slot.frame_id));
+        if (checkCudaFrame(right_status, slot,
+                           "record right detect completion event")) {
+            slot.detect_right_done_event_recorded = true;
+        } else {
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+bool Pipeline::waitDetectDone(cudaStream_t stream, FrameSlot& slot) const {
+    bool ok = true;
+    auto wait_or_fallback_sync = [&](bool source_may_have_work, bool recorded,
+                                     cudaEvent_t event,
+                                     cudaStream_t source_stream,
+                                     const char* wait_operation,
+                                     const char* sync_operation) {
+        if (recorded) {
+            if (!checkCudaFrame(cudaStreamWaitEvent(stream, event, 0),
+                                slot, wait_operation)) {
+                ok = false;
+            } else {
+                return;
+            }
+        }
+
+        // event 未由本帧成功记录时绝不能等待旧 event。若已有推理提交，
+        // 直接同步源 stream，确保 ring slot 的缓冲不会在 GPU 仍使用时复用。
+        if (source_may_have_work &&
+            !checkCudaFrame(cudaStreamSynchronize(source_stream),
+                            slot, sync_operation)) {
+            ok = false;
+        }
+        if (!recorded) ok = false;
+    };
+
+    wait_or_fallback_sync(
+        slot.detection_submitted || slot.detect_done_event_recorded,
+        slot.detect_done_event_recorded,
+        slot.evtDetectDone,
+        slot.detection_submitted
+            ? getDLAStream(slot.frame_id)
+            : streams_.cudaStreamGPU,
+        "wait for left detect completion event",
+        "fallback synchronize left detector stream");
+
+    if (dualYoloEnabled() && slot.is_detect_frame &&
+        slot.right_detection_submitted) {
+        wait_or_fallback_sync(
+            true, slot.detect_right_done_event_recorded,
+            slot.evtDetectRightDone, getRightDLAStream(slot.frame_id),
+            "wait for right detect completion event",
+            "fallback synchronize right detector stream");
+    }
+    return ok;
+}
+
+bool Pipeline::synchronizeDetectDone(FrameSlot& slot,
+                                     const char* operation) const {
+    const bool wait_ok = waitDetectDone(streams_.cudaStreamFuse, slot);
+    const bool sync_ok = checkCudaFrame(
+        cudaStreamSynchronize(streams_.cudaStreamFuse), slot, operation);
+    return wait_ok && sync_ok;
 }
 
 bool Pipeline::detectEventsReady(const FrameSlot& slot) const {
-    if (!slot.is_detect_frame || !slot.detection_submitted) {
+    if (!slot.is_detect_frame || !slot.detection_submitted ||
+        !slot.detect_done_event_recorded) {
         return false;
     }
 
@@ -100,7 +177,8 @@ bool Pipeline::detectEventsReady(const FrameSlot& slot) const {
     }
 
     if (dualYoloEnabled()) {
-        if (!slot.right_detection_submitted) {
+        if (!slot.right_detection_submitted ||
+            !slot.detect_right_done_event_recorded) {
             return false;
         }
         err = cudaEventQuery(slot.evtDetectRightDone);

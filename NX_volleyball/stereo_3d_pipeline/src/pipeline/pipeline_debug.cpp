@@ -117,13 +117,18 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
         cleanup();
         return false;
     }
-    cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
-
-    stage1_detect(slot, 0);
-    recordDetectDoneEvents(slot);
-    cudaStreamSynchronize(getDLAStream(slot.frame_id));
-    if (slot.right_detection_submitted) {
-        cudaStreamSynchronize(getRightDLAStream(slot.frame_id));
+    const bool rect_event_ok = checkCudaFrame(
+        cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
+        slot, "record debug rectification completion event");
+    const bool detect_ok = rect_event_ok && stage1_detect(slot, 0);
+    // 即使 enqueue 中途失败，也必须记录/同步已经提交的部分工作后才能复用槽位。
+    const bool detect_event_ok = recordDetectDoneEvents(slot);
+    const bool detect_sync_ok = synchronizeDetectDone(
+        slot, "synchronize debug detector dependencies");
+    if (!detect_ok || !detect_event_ok || !detect_sync_ok) {
+        LOG_ERROR("Feature match debug: detector submission or synchronization failed");
+        cleanup();
+        return false;
     }
 
     collectRoiDetections(slot, 0);
