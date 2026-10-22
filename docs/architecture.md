@@ -51,6 +51,8 @@ NX GPIO 上升沿 ────────┐
 
 `StereoPipelineRunner` 负责一个 trial 的平台无关生命周期。它从 `CameraSource` 逐项读取配对帧，把帧交给 `StereoObservationService`，并区分正常流结束、可容忍的连续超时、超时越限、数据源错误和源协议错误。只有 `end_of_stream` 能触发 `finalize`；其他终止路径统一 `abort`，同一 runner 不能运行第二次。相机线程、SDK 句柄、GPU 缓冲和 detector 资源仍属于 adapter，runner 不接管硬件所有权，也不是实机可执行入口。
 
+`runManagedStereoTrial` 在 runner 外层管理一次实机启停：只接受尚未启动的 `ManagedCameraSource` 与 `TriggerController`，先让相机进入抓取状态，再启动 GPIO；任一路径退出时先停 GPIO，再停相机。启动函数返回成功但状态未改变也会被视为协议错误。它不会接管调用方已启动的硬件，避免失败清理误停另一条采集任务。该服务补齐的是可测试的生命周期边界；配置装配、信号处理和原生可执行入口仍属于待建立的应用层。
+
 `accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。数据校验还要求每个 accepted 配对与唯一轨迹样本的帧引用、3D、协方差和误差数值一致，因此不会出现“接受配对存在但对应 3D 缺失或被替换”的原始数据。
 
 检测器输出还必须声明与输入完全相同的相机、角色和帧号，候选 ID 在单帧内唯一，候选的 pipeline ID 与批次一致。候选传入的 `selected` 值不受信任；服务先全部清零，只在直接 3D 成功后标记最终左右候选，防止 detector 内部临时选择污染原始契约。

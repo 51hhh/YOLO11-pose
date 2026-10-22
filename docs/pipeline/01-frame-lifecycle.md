@@ -4,6 +4,8 @@
 
 一帧的物理起点是一次 NX GPIO 上升沿，逻辑身份是相机 payload 内的 `FrameCounter`，不是 USB 到达顺序。其逻辑终点是结果回调完成；若启用 v2.1 采集，还必须等录制器复制所需图像和元数据后，三缓冲槽才可以安全复用。
 
+新主线通过 `ManagedCameraSource`、`TriggerController` 和 `runManagedStereoTrial` 固化进程级顺序：相机抓取成功并回报 started 后才能启动 GPIO，任何正常或异常退出都先停止 GPIO 再停止相机。当前旧 NX 管线仍承载实际 CUDA/VPI 帧槽和回调，以下资源细节描述该兼容实现。
+
 ```text
 触发计划
   -> GPIO 写高及边沿时间戳
