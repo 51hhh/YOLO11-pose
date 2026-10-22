@@ -1,5 +1,5 @@
 /**
- * @file trt_detector.cpp
+ * @file runtime.cpp
  * @brief TensorRT 检测器实现 (NVDLA + GPU Fallback + INT8)
  *
  * Engine 构建时通过 trtexec 指定 DLA:
@@ -9,10 +9,8 @@
  * 运行时通过反序列化 engine 直接推理。
  */
 
-#include "trt_detector.h"
+#include "volleyball/adapters/tensorrt/runtime.hpp"
 #include "volleyball/adapters/tensorrt/cuda_kernels.hpp"
-#include "volleyball/adapters/tensorrt/engine_contract.hpp"
-#include "volleyball/adapters/tensorrt/postprocess.hpp"
 #include "volleyball/logging/log.hpp"
 
 #include <NvInfer.h>
@@ -26,17 +24,9 @@
 #include <sstream>
 #include <utility>
 
-namespace stereo3d {
+namespace volleyball::adapters::tensorrt {
 
-using volleyball::adapters::tensorrt::DetectorEngineContract;
-using volleyball::adapters::tensorrt::DetectorTensorSpec;
-using volleyball::adapters::tensorrt::DflScaleView;
-using volleyball::adapters::tensorrt::PostprocessConfig;
-using volleyball::adapters::tensorrt::SingleOutputView;
-using volleyball::adapters::tensorrt::decodeDflOutputs;
-using volleyball::adapters::tensorrt::decodeSingleOutput;
-using volleyball::adapters::tensorrt::nonMaxSuppression;
-using volleyball::adapters::tensorrt::validateDetectorEngineContract;
+namespace {
 
 // TensorRT Logger
 static class : public nvinfer1::ILogger {
@@ -53,9 +43,11 @@ bool checkCudaSubmit(cudaError_t err, const char* op) {
     return false;
 }
 
-TRTDetector::TRTDetector() = default;
+}  // namespace
 
-TRTDetector::~TRTDetector() {
+TensorRtRuntime::TensorRtRuntime() = default;
+
+TensorRtRuntime::~TensorRtRuntime() {
     freeBuffers();
 #if NV_TENSORRT_MAJOR >= 10
     // TensorRT 10.x: 使用 delete
@@ -80,9 +72,13 @@ TRTDetector::~TRTDetector() {
 #endif
 }
 
-bool TRTDetector::init(const std::string& engineFile, bool useDLA, int dlaCore,
-                       float confThreshold, float nmsThreshold,
-                       const std::string& inputFormat) {
+bool TensorRtRuntime::init(
+    const std::string& engineFile,
+    bool useDLA,
+    int dlaCore,
+    float confThreshold,
+    float nmsThreshold,
+    const std::string& inputFormat) {
     useDLA_        = useDLA;
     dlaCore_       = dlaCore;
     confThreshold_ = confThreshold;
@@ -118,7 +114,7 @@ bool TRTDetector::init(const std::string& engineFile, bool useDLA, int dlaCore,
     return true;
 }
 
-bool TRTDetector::loadEngine(const std::string& path) {
+bool TensorRtRuntime::loadEngine(const std::string& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         LOG_ERROR("Cannot open engine file: %s", path.c_str());
@@ -221,7 +217,7 @@ bool TRTDetector::loadEngine(const std::string& path) {
     return true;
 }
 
-bool TRTDetector::allocateBuffers() {
+bool TensorRtRuntime::allocateBuffers() {
     size_t inputBytes  = 3 * inputSize_ * inputSize_ * sizeof(float);
 
     cudaError_t err;
@@ -300,7 +296,7 @@ bool TRTDetector::allocateBuffers() {
     return true;
 }
 
-void TRTDetector::freeBuffers() {
+void TensorRtRuntime::freeBuffers() {
     for (auto& b : buffers_) {
         if (b.inputDevice)  { cudaFree(b.inputDevice);   b.inputDevice = nullptr; }
         if (b.outputDevice) { cudaFree(b.outputDevice);  b.outputDevice = nullptr; }
@@ -318,7 +314,7 @@ void TRTDetector::freeBuffers() {
     }
 }
 
-std::vector<Detection> TRTDetector::detect(const void* gpuImageU8, int pitch,
+std::vector<Detection> TensorRtRuntime::detect(const void* gpuImageU8, int pitch,
                                            int width, int height,
                                            cudaStream_t stream)
 {
@@ -333,14 +329,14 @@ std::vector<Detection> TRTDetector::detect(const void* gpuImageU8, int pitch,
     return collect(0, width, height);
 }
 
-bool TRTDetector::enqueue(int slotId,
+bool TensorRtRuntime::enqueue(int slotId,
                           const void* gpuImageU8, int pitch,
                           int width, int height,
                           cudaStream_t stream)
 {
-    if (slotId < 0 || slotId >= RING_BUFFER_SIZE) {
+    if (slotId < 0 || slotId >= kBufferCount) {
         LOG_ERROR("[TRT] Invalid ring slot id: %d (expected 0..%d)",
-                  slotId, RING_BUFFER_SIZE - 1);
+                  slotId, kBufferCount - 1);
         return false;
     }
     int sid = slotId;
@@ -464,10 +460,13 @@ bool TRTDetector::enqueue(int slotId,
     return true;
 }
 
-std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {
-    if (slotId < 0 || slotId >= RING_BUFFER_SIZE) {
+std::vector<Detection> TensorRtRuntime::collect(
+    int slotId,
+    int width,
+    int height) {
+    if (slotId < 0 || slotId >= kBufferCount) {
         LOG_ERROR("[TRT] Invalid collect ring slot id: %d (expected 0..%d)",
-                  slotId, RING_BUFFER_SIZE - 1);
+                  slotId, kBufferCount - 1);
         return {};
     }
     int sid = slotId;
@@ -523,7 +522,7 @@ std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {
     }
 }
 
-void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
+void TensorRtRuntime::preprocessGPU(const void* gpuImageU8, int pitch,
                                 int srcWidth, int srcHeight,
                                 void* inputBufferDevice,
                                 cudaStream_t stream)
@@ -600,7 +599,8 @@ void TRTDetector::preprocessGPU(const void* gpuImageU8, int pitch,
     }
 }
 
-std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
+std::vector<Detection> TensorRtRuntime::postprocess(
+    const float* outputBufferHost,
                                                 float scaleX, float scaleY) {
     const auto dimensions = engine_->getTensorShape(outputTensorName_.c_str());
     const SingleOutputView output{
@@ -624,7 +624,8 @@ std::vector<Detection> TRTDetector::postprocess(const float* outputBufferHost,
     return result.detections;
 }
 
-std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
+std::vector<Detection> TensorRtRuntime::collectGPUDFLResults(
+    const BufferSet& buf) {
     // GPU DFL kernel already ran in enqueue(), results in dflOutHost
     constexpr int MAX_DFL_DET = 512;
     int count = std::clamp(*buf.dflCountHost, 0, MAX_DFL_DET);
@@ -656,7 +657,7 @@ std::vector<Detection> TRTDetector::collectGPUDFLResults(const BufferSet& buf) {
     return nonMaxSuppression(raw_dets, nmsThreshold_);
 }
 
-std::vector<Detection> TRTDetector::postprocessMultiScale(
+std::vector<Detection> TensorRtRuntime::postprocessMultiScale(
     const BufferSet& buf, float scaleX, float scaleY)
 {
     std::vector<DflScaleView> scales;
@@ -705,4 +706,4 @@ std::vector<Detection> TRTDetector::postprocessMultiScale(
     return result.detections;
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::tensorrt

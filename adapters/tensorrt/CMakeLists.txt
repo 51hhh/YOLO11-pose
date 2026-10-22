@@ -29,4 +29,25 @@ if(CMAKE_CUDA_COMPILER)
     CUDA_STANDARD_REQUIRED ON
     CUDA_SEPARABLE_COMPILATION ON
   )
+
+  if(TENSORRT_INCLUDE_DIR AND NVINFER AND TARGET volleyball::logging)
+    add_library(volleyball_tensorrt_runtime
+      src/runtime.cpp
+    )
+    add_library(volleyball::tensorrt_runtime ALIAS volleyball_tensorrt_runtime)
+
+    target_include_directories(volleyball_tensorrt_runtime PUBLIC
+      include
+      "${TENSORRT_INCLUDE_DIR}"
+    )
+    target_link_libraries(volleyball_tensorrt_runtime PUBLIC
+      volleyball::tensorrt_contract
+      volleyball::tensorrt_postprocess
+      volleyball::tensorrt_cuda
+      volleyball::logging
+      "${NVINFER}"
+      CUDA::cudart
+    )
+    target_compile_features(volleyball_tensorrt_runtime PUBLIC cxx_std_17)
+  endif()
 endif()

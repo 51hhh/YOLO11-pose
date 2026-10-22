@@ -95,9 +95,11 @@ class BuildContractTests(unittest.TestCase):
 
         self.assertNotIn("src/detect/detect_preprocess.cu", legacy_cmake)
         self.assertNotIn("src/detect/dfl_postprocess.cu", legacy_cmake)
-        self.assertIn("volleyball::tensorrt_cuda", legacy_cmake)
+        self.assertNotIn("src/detect/trt_detector.cpp", legacy_cmake)
+        self.assertIn("volleyball::tensorrt_runtime", legacy_cmake)
         self.assertIn("src/cuda/preprocess.cu", adapter_cmake)
         self.assertIn("src/cuda/dfl_decode.cu", adapter_cmake)
+        self.assertIn("src/runtime.cpp", adapter_cmake)
 
     def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
         gpio_cmake = (

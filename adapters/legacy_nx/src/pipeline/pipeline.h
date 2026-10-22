@@ -65,6 +65,10 @@ namespace stereo3d {
 
 class NeuralFeatureMatcher;
 
+static_assert(
+    RING_BUFFER_SIZE == TRTDetector::kBufferCount,
+    "legacy frame ring and TensorRT runtime buffer counts must match");
+
 /**
  * @brief 四级流水线主类
  */

@@ -65,12 +65,6 @@ add_subdirectory(
   "${CMAKE_CURRENT_BINARY_DIR}/mainline_ports"
   EXCLUDE_FROM_ALL
 )
-add_subdirectory(
-  "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}"
-  "${CMAKE_CURRENT_BINARY_DIR}/mainline_tensorrt"
-  EXCLUDE_FROM_ALL
-)
-
 # ==================== ROS2 ament_cmake ====================
 option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
 find_package(ament_cmake QUIET)
@@ -188,6 +182,14 @@ if(NOT TENSORRT_INCLUDE_DIR OR NOT NVINFER)
   message(FATAL_ERROR "TensorRT not found")
 endif()
 message(STATUS "TensorRT: ${NVINFER}")
+
+# TensorRT adapter 的 runtime 目标需要父工程先解析 CUDA/TensorRT 依赖；
+# 纯 CXX 根工程仍会在自己的构建中只生成无 SDK 契约目标。
+add_subdirectory(
+  "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_tensorrt"
+  EXCLUDE_FROM_ALL
+)
 
 # 海康 MVS SDK
 option(REQUIRE_HIK "Fail configuration when Hikvision MVS SDK is unavailable" OFF)
@@ -324,7 +326,6 @@ set(PIPELINE_SOURCES
   src/stereo/neural_feature_matcher_xfeat.cpp
   src/stereo/neural_feature_matcher_direct.cpp
   src/stereo/neural_feature_matcher_fused.cpp
-  src/detect/trt_detector.cpp
   src/fusion/coordinate_3d.cpp
   src/fusion/hybrid_depth_candidate_copy.cpp
   src/fusion/hybrid_depth.cpp
@@ -381,9 +382,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 
 # ==================== 链接 ====================
 target_link_libraries(stereo_pipeline
-  volleyball::tensorrt_contract
-  volleyball::tensorrt_postprocess
-  volleyball::tensorrt_cuda
+  volleyball::tensorrt_runtime
   # VPI
   vpi
   # TensorRT
