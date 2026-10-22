@@ -57,7 +57,7 @@ python3 tools/check_repository.py
 | `adapters/capture_v21/` | 与硬件无关的主线 v6 staging 原子写入适配器；最终格式仍是 v2.1 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
-| `adapters/tensorrt/` | TensorRT 检测适配器边界；当前先集中无 SDK 的 engine I/O 契约 |
+| `adapters/tensorrt/` | TensorRT 检测适配器边界；集中 engine I/O 契约、检测值类型和 CPU 后处理/NMS |
 | `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |
 | `python/volleyball_vision/` | 配置、v4/v6 staging 校验与 v2.1 发布、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
