@@ -4,7 +4,9 @@
 
 平台无关主线已经用 `StereoPreprocessor` 明确表达本阶段：输入是带完整采集事实的原始 `StereoFrame`，输出是只引用来源帧身份的 `RectifiedStereoFrame`。服务会检查左右身份没有交换、图像尺寸与原始 ROI 一致，并要求同时得到 BGR8 detector 输入与 Gray8 几何输入；预处理失败不会退化为普通漏检。
 
-本页后续描述的是 `adapters/legacy_nx` 中已经存在的 CUDA/VPI 实现和实机资源生命周期。它尚未迁成新 `StereoPreprocessor` adapter，所以“端口契约已测试”与“新主线已在 Orin NX 执行该实现”是两个不同状态。
+`adapters/cuda_preprocess` 现已实现该端口。初始化时从标定生成紧密的左右 x/y 浮点映射并一次上传；每个有界槽位持有 pinned Bayer staging、CUDA raw、临时 BGR、校正 BGR 和校正 Gray。左右图在两条独立非阻塞 CUDA stream 上提交，输出通过共享槽位保持设备内存有效。当前端口没有 readiness event，因此 `prepare()` 必须在返回前同步两条 stream，之后 TensorRT 的独立 stream 才可安全读取。
+
+该新适配器已在普通 GPU 上通过像素、身份、缓冲池耗尽和跨适配器生命周期测试，也会被 NX 目标编译；但原生主线入口尚未实例化它。下文其余内容描述当前实机仍在运行的 `adapters/legacy_nx` CUDA/VPI 路径。“新适配器测试通过”与“新主线已在 Orin NX 运行并达到 90 Hz”仍是两个不同状态。
 
 ## 当前输入与输出
 
