@@ -163,6 +163,13 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "every left/right candidate combination must be retained");
     check(writer.frames().size() == 2, "both camera facts must be written");
     check(writer.detections().size() == 4, "all detector candidates must be written");
+    check(
+        std::count_if(
+            writer.detections().begin(), writer.detections().end(),
+            [](const core::Detection2D& candidate) {
+                return candidate.selected;
+            }) == 2,
+        "only the two candidates behind the direct observation may be selected");
     check(writer.associations().size() == 4, "all pair attempts must be written");
     check(
         std::count_if(
@@ -232,6 +239,13 @@ void testTriangulationFailureRejectsSelectedPair() {
         "triangulation failure must rewrite final pair semantics");
     check(writer.observations().empty(),
           "triangulation failure must not write a direct observation");
+    check(
+        std::none_of(
+            writer.detections().begin(), writer.detections().end(),
+            [](const core::Detection2D& candidate) {
+                return candidate.selected;
+            }),
+        "failed triangulation must leave every candidate unselected");
 }
 
 void testObservationGateRejectsSelectedPair() {
@@ -277,6 +291,65 @@ void testDetectorFailureAbortsTrial() {
           "aborted service must not publish a trial");
 }
 
+void testMalformedDetectorBatchAbortsTrial() {
+    auto wrong_frame =
+        detection(core::CameraRole::left, "other-left", 0, 700.0, 500.0, 0.95);
+    StaticDetector left({wrong_frame});
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::detector_error,
+          "candidate from another frame/camera must be rejected");
+    check(!writer.abortReason().empty(),
+          "malformed detector output must abort the partial trial");
+}
+
+void testDuplicateCandidateIdsAbortTrial() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+        detection(core::CameraRole::left, "left", 0, 695.0, 500.0, 0.80),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::detector_error,
+          "duplicate candidate IDs in one frame must be rejected");
+    check(!writer.abortReason().empty(),
+          "duplicate candidate IDs must abort the partial trial");
+}
+
+void testServiceOwnsSelectedFlags() {
+    auto left_candidate =
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95);
+    auto right_candidate =
+        detection(core::CameraRole::right, "right", 0, 650.0, 700.0, 0.95);
+    left_candidate.selected = true;
+    right_candidate.selected = true;
+    StaticDetector left({left_candidate});
+    StaticDetector right({right_candidate});
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::no_match,
+          "epipolar mismatch fixture must not produce an observation");
+    check(
+        std::none_of(
+            writer.detections().begin(), writer.detections().end(),
+            [](const core::Detection2D& candidate) {
+                return candidate.selected;
+            }),
+        "detector-provided selected flags must not leak into raw evidence");
+}
+
 void testArrivalOrderNeverDefinesStereoIdentity() {
     StaticDetector left({
         detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
@@ -302,6 +375,9 @@ int main() {
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
     testDetectorFailureAbortsTrial();
+    testMalformedDetectorBatchAbortsTrial();
+    testDuplicateCandidateIdsAbortTrial();
+    testServiceOwnsSelectedFlags();
     testArrivalOrderNeverDefinesStereoIdentity();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";

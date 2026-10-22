@@ -1,6 +1,7 @@
 #include "volleyball/services/stereo_observation_service.hpp"
 
 #include <cmath>
+#include <unordered_set>
 #include <utility>
 
 namespace volleyball::services {
@@ -14,10 +15,10 @@ bool writeAccepted(const ports::WriteResult& result, std::string& error) {
     return false;
 }
 
-const core::Detection2D* findCandidate(
-    const std::vector<core::Detection2D>& candidates,
+core::Detection2D* findCandidate(
+    std::vector<core::Detection2D>& candidates,
     core::CandidateId candidate_id) noexcept {
-    for (const auto& candidate : candidates) {
+    for (auto& candidate : candidates) {
         if (candidate.candidate_id == candidate_id) {
             return &candidate;
         }
@@ -63,6 +64,37 @@ bool StereoObservationService::appendAssociations(
     std::string& error) {
     for (const auto& scored : associations) {
         if (!writeAccepted(writer_.append(scored.attempt), error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool StereoObservationService::validateDetectionBatch(
+    const ports::DetectionBatch& batch,
+    const core::CameraFrameRecord& frame,
+    std::string& error) const {
+    const bool batch_matches_frame =
+        batch.frame.camera_id == frame.camera_id &&
+        batch.frame.role == frame.role &&
+        batch.frame.frame_index == frame.frame_index;
+    if (!batch_matches_frame || batch.pipeline_id.empty()) {
+        error = "detector batch does not identify its input frame/pipeline";
+        return false;
+    }
+
+    std::unordered_set<core::CandidateId> candidate_ids;
+    for (const auto& candidate : batch.candidates) {
+        if (!core::validate(candidate) ||
+            candidate.frame.camera_id != batch.frame.camera_id ||
+            candidate.frame.role != batch.frame.role ||
+            candidate.frame.frame_index != batch.frame.frame_index ||
+            candidate.source_pipeline != batch.pipeline_id) {
+            error = "detector candidate does not belong to its declared batch";
+            return false;
+        }
+        if (!candidate_ids.insert(candidate.candidate_id).second) {
+            error = "detector candidate IDs must be unique within one frame";
             return false;
         }
     }
@@ -116,9 +148,17 @@ StereoProcessResult StereoObservationService::process(
             ProcessStatus::detector_error,
             message.empty() ? "stereo detector failed" : message);
     }
-    if (!appendDetections(left_result.batch.candidates, error) ||
-        !appendDetections(right_result.batch.candidates, error)) {
-        return fail(ProcessStatus::write_error, std::move(error));
+    if (!validateDetectionBatch(
+            left_result.batch, frame.left.metadata, error) ||
+        !validateDetectionBatch(
+            right_result.batch, frame.right.metadata, error)) {
+        return fail(ProcessStatus::detector_error, std::move(error));
+    }
+    for (auto& candidate : left_result.batch.candidates) {
+        candidate.selected = false;
+    }
+    for (auto& candidate : right_result.batch.candidates) {
+        candidate.selected = false;
     }
 
     auto associations = algorithms::stereo::associateCandidates(
@@ -129,8 +169,13 @@ StereoProcessResult StereoObservationService::process(
         config_.association,
         next_pair_id_);
     next_pair_id_ += associations.attempts.size();
+    auto appendEvidence = [&]() {
+        return appendDetections(left_result.batch.candidates, error) &&
+               appendDetections(right_result.batch.candidates, error) &&
+               appendAssociations(associations.attempts, error);
+    };
     if (!associations.best_accepted_index) {
-        if (!appendAssociations(associations.attempts, error)) {
+        if (!appendEvidence()) {
             return fail(ProcessStatus::write_error, std::move(error));
         }
         return {
@@ -152,9 +197,9 @@ StereoProcessResult StereoObservationService::process(
     }
 
     auto& selected = associations.attempts[selected_index].attempt;
-    const auto* left_candidate = findCandidate(
+    auto* left_candidate = findCandidate(
         left_result.batch.candidates, selected.left_candidate_id);
-    const auto* right_candidate = findCandidate(
+    auto* right_candidate = findCandidate(
         right_result.batch.candidates, selected.right_candidate_id);
     if (!left_candidate || !right_candidate) {
         return fail(ProcessStatus::invalid_input, "selected candidate disappeared");
@@ -170,7 +215,7 @@ StereoProcessResult StereoObservationService::process(
         selected.decision = core::AssociationDecision::rejected;
         selected.reject_reason =
             core::AssociationRejectReason::triangulation_failure;
-        if (!appendAssociations(associations.attempts, error)) {
+        if (!appendEvidence()) {
             return fail(ProcessStatus::write_error, std::move(error));
         }
         return {
@@ -183,7 +228,7 @@ StereoProcessResult StereoObservationService::process(
     if (!passesGate(*triangulated.observation)) {
         selected.decision = core::AssociationDecision::rejected;
         selected.reject_reason = core::AssociationRejectReason::quality_gate;
-        if (!appendAssociations(associations.attempts, error)) {
+        if (!appendEvidence()) {
             return fail(ProcessStatus::write_error, std::move(error));
         }
         return {
@@ -193,7 +238,9 @@ StereoProcessResult StereoObservationService::process(
             "triangulated observation failed quality gate",
         };
     }
-    if (!appendAssociations(associations.attempts, error)) {
+    left_candidate->selected = true;
+    right_candidate->selected = true;
+    if (!appendEvidence()) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
     const auto& observation = *triangulated.observation;

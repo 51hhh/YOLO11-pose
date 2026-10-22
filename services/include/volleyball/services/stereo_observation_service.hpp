@@ -71,6 +71,10 @@ private:
     [[nodiscard]] bool appendAssociations(
         const std::vector<algorithms::stereo::ScoredAssociation>& associations,
         std::string& error);
+    [[nodiscard]] bool validateDetectionBatch(
+        const ports::DetectionBatch& batch,
+        const core::CameraFrameRecord& frame,
+        std::string& error) const;
     [[nodiscard]] bool passesGate(
         const core::TriangulatedObservation& observation) const noexcept;
 

@@ -47,6 +47,8 @@ NX GPIO 上升沿 ────────┐
 
 `accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。因此不会出现“接受配对存在但对应 3D 缺失”的原始数据。
 
+检测器输出还必须声明与输入完全相同的相机、角色和帧号，候选 ID 在单帧内唯一，候选的 pipeline ID 与批次一致。候选传入的 `selected` 值不受信任；服务先全部清零，只在直接 3D 成功后标记最终左右候选，防止 detector 内部临时选择污染原始契约。
+
 ### Adapters 与 Apps
 
 `adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，并由根工程 ExternalProject 隔离构建。
