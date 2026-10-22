@@ -80,12 +80,13 @@
 根配置不是逐键一一映射旧 C++ 配置，目前需要特别关注：
 
 - 根层 `tracking.enabled=true` 不会打开旧 C++ `tracker.enabled`；最终投影仍为 false；
-- 根层 `primary_method/fallback_methods` 没有逐项关闭旧基础配置继承的候选；
+- 根层 `candidate_methods` 会完整重写旧 `depth_modes`，不再继承模板中的隐藏候选；
+- `primary_method/fallback_methods` 会在投影前校验旧选择器是否能忠实实现；当前只允许两个实时首选和固定相对回退顺序；
 - 根层 subpixel、关联、相机、模型、校正和发布参数会明确投影；
 - 采集专用的同步/no-drop 覆盖只在带 `capture_stage` 构建配置时发生；
 - 旧 `pipeline_dual_yolo_roi.yaml` 中例如 XFeat 的状态不代表主线状态。
 
-任何启用项变更都应先加入主配置 schema 和 adapter 映射测试，再修改旧 YAML；否则 `config render` 与实际 C++ 行为可能分叉。
+任何新候选仍应先加入主配置 schema、候选到旧 mode 的唯一映射及 adapter 测试，再修改旧 YAML；否则正式 profile 不会启用它。
 
 ## 推荐的数据流边界
 

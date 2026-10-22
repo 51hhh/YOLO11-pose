@@ -62,6 +62,22 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 | 队列 | `runtime.queue.*` | 实时追求低延迟，采集追求不丢帧 |
 | 检测 | `detector.*` | 模型、输入尺寸、阈值与中心方法 |
 | 配对 | `stereo.association.*` | 极线、尺寸、视差和 IoU 门限 |
-| 深度 | `stereo.triangulation.*` | 主方法、回退、亚像素与时间预算 |
+| 深度 | `stereo.triangulation.*` | 计算候选集合、主方法、回退顺序、亚像素与时间预算 |
 | 录制 | `recording.*` | schema、原图、失败策略、哈希校验 |
+
+### 深度候选与最终选择
+
+三类字段不能混用：
+
+- `candidate_methods`：本次运行会实际计算的候选；
+- `primary_method`：最终直接深度首先尝试的方法；
+- `fallback_methods`：首选失败后的发布顺序，必须是候选集合的子集。
+
+旧 NX 当前只支持 `roi_multi_point` 或 `circle_center` 作为首选，并按
+`epipolar_fallback -> circle_center -> radial_center -> edge_pair_center -> edge_centroid -> bbox_center -> bbox_edges`
+的固定相对顺序扫描回退。配置可以删去其中任意项，但不能伪造旧选择器无法执行的顺序。
+加载器会在启动前拒绝不忠实的配置。
+
+生成旧 YAML 时，适配器先关闭基础模板中的全部 `depth_modes`，再只开启
+`candidate_methods` 显式列出的模式。因此修改旧模板或新增旧开关不会静默改变正式 profile。
 

@@ -16,6 +16,8 @@ from typing import Any, Iterable, Mapping
 import jsonschema
 import yaml
 
+from .triangulation_config import triangulation_semantic_errors
+
 
 class ConfigError(ValueError):
     """配置文件、合并或语义不满足契约。"""
@@ -226,6 +228,10 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         errors.append("曝光时间必须小于帧周期")
     if payload["stereo"]["min_depth_m"] >= payload["stereo"]["max_depth_m"]:
         errors.append("stereo.min_depth_m 必须小于 stereo.max_depth_m")
+    for error in triangulation_semantic_errors(
+        payload["stereo"]["triangulation"]
+    ):
+        errors.append(f"stereo.triangulation: {error}")
     if payload["recording"]["schema_version"] != "2.1.0":
         errors.append("新采集只允许 recording.schema_version=2.1.0")
     mode = payload["runtime"]["mode"]

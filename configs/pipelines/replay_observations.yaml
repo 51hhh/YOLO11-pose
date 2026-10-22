@@ -5,4 +5,6 @@ stereo:
   triangulation:
     backend: recorded
     primary_method: recorded
+    candidate_methods: []
+    fallback_methods: []
 

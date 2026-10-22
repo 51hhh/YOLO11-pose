@@ -10,6 +10,7 @@ import yaml
 
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .model_manifest import resolve_model
+from .triangulation_config import legacy_depth_projection
 
 
 def build_legacy_pipeline_config(
@@ -76,8 +77,22 @@ def build_legacy_pipeline_config(
     association = config.data["stereo"]["association"]
     triangulation = config.data["stereo"]["triangulation"]
     dual = result["detector"]["dual_yolo"]
+    try:
+        depth_projection = legacy_depth_projection(
+            triangulation,
+            dual["depth_modes"],
+        )
+    except (KeyError, ValueError) as error:
+        raise ConfigError(f"无法投影旧 NX 深度候选: {error}") from error
+    dual["depth_modes"] = depth_projection["depth_modes"]
     dual.update(
         {
+            "depth_solver": depth_projection["depth_solver"],
+            "subpixel_enabled": depth_projection["subpixel_enabled"],
+            "fallback_epipolar_search": depth_projection[
+                "fallback_epipolar_search"
+            ],
+            "center_refine": depth_projection["center_refine"],
             "epipolar_y_tolerance": association["epipolar_tolerance_px"],
             "max_size_ratio": association["max_size_ratio"],
             "min_shifted_iou": association["min_shifted_iou"],

@@ -101,6 +101,39 @@ class ConfigTests(unittest.TestCase):
             ROOT,
         )
 
+    def test_fallback_method_must_be_an_enabled_candidate(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["candidate_methods"].remove(
+            "bbox_edges"
+        )
+        with self.assertRaisesRegex(ConfigError, "fallback_methods 必须是"):
+            _validate_semantics(ROOT, payload)
+
+    def test_legacy_fallback_order_must_be_representable(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["fallback_methods"] = [
+            "bbox_center",
+            "circle_center",
+        ]
+        with self.assertRaisesRegex(ConfigError, "固定相对顺序"):
+            _validate_semantics(ROOT, payload)
+
+    def test_live_primary_must_be_supported_by_legacy_selector(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["primary_method"] = "bbox_center"
+        with self.assertRaisesRegex(ConfigError, "primary_method 只支持"):
+            _validate_semantics(ROOT, payload)
+
+    def test_recorded_profile_has_no_live_depth_candidates(self) -> None:
+        resolved = load_profile("replay", project_root=ROOT)
+        triangulation = resolved.data["stereo"]["triangulation"]
+        self.assertEqual(triangulation["primary_method"], "recorded")
+        self.assertEqual(triangulation["candidate_methods"], [])
+        self.assertEqual(triangulation["fallback_methods"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

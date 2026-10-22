@@ -146,11 +146,18 @@
         },
         "triangulation": {
           "type": "object", "additionalProperties": false,
-          "required": ["backend", "primary_method", "fallback_methods", "propagate_covariance", "subpixel"],
+          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel"],
           "properties": {
             "backend": {"enum": ["cuda", "opencv", "recorded"]},
             "primary_method": {"enum": ["roi_multi_point", "circle_center", "bbox_center", "recorded"]},
-            "fallback_methods": {"type": "array", "items": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
+            "candidate_methods": {
+              "type": "array",
+              "items": {
+                "enum": ["roi_multi_point", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "center_patch", "cuda_template_match", "epipolar_fallback"]
+              },
+              "uniqueItems": true
+            },
+            "fallback_methods": {"type": "array", "items": {"enum": ["epipolar_fallback", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
             "propagate_covariance": {"type": "boolean"},
             "subpixel": {
               "type": "object", "additionalProperties": false,

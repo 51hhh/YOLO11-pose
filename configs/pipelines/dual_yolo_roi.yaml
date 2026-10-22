@@ -20,7 +20,9 @@ stereo:
   triangulation:
     backend: cuda
     primary_method: roi_multi_point
-    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    # 会实际计算的候选集合；与最终回退顺序分开，禁止从旧模板继承隐藏开关。
+    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges, center_patch, cuda_template_match, epipolar_fallback]
+    fallback_methods: [epipolar_fallback, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     propagate_covariance: true
     subpixel:
       patch_radius: 5

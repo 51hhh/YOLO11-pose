@@ -87,6 +87,53 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
         self.assertFalse(rendered["capture_v21"]["enabled"])
 
+        enabled_depth_modes = {
+            name
+            for name, enabled in rendered["detector"]["dual_yolo"][
+                "depth_modes"
+            ].items()
+            if enabled
+        }
+        self.assertEqual(
+            enabled_depth_modes,
+            {
+                "bbox_pair",
+                "bbox_edges",
+                "circle_center",
+                "roi_edge_centroid",
+                "roi_radial_center",
+                "roi_edge_pair_center",
+                "roi_cuda_template_match",
+                "roi_center_patch",
+                "roi_subpixel",
+                "epipolar_fallback",
+            },
+        )
+        self.assertEqual(
+            rendered["detector"]["dual_yolo"]["depth_solver"],
+            "roi_subpixel_match",
+        )
+
+    def test_candidate_override_fully_replaces_legacy_template_modes(self) -> None:
+        profile = load_profile(
+            "nx-rdk",
+            project_root=ROOT,
+            overrides=(
+                "stereo.triangulation.primary_method=circle_center",
+                "stereo.triangulation.candidate_methods=[circle_center,bbox_center]",
+                "stereo.triangulation.fallback_methods=[bbox_center]",
+            ),
+        )
+        rendered = build_legacy_pipeline_config(profile, project_root=ROOT)
+        dual = rendered["detector"]["dual_yolo"]
+        enabled_depth_modes = {
+            name for name, enabled in dual["depth_modes"].items() if enabled
+        }
+        self.assertEqual(enabled_depth_modes, {"circle_center", "bbox_pair"})
+        self.assertEqual(dual["depth_solver"], "circle_center")
+        self.assertFalse(dual["subpixel_enabled"])
+        self.assertFalse(dual["fallback_epipolar_search"])
+
 
 if __name__ == "__main__":
     unittest.main()
