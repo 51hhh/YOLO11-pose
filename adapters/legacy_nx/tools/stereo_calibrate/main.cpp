@@ -377,9 +377,9 @@ int main(int argc, char* argv[]) {
         cv::destroyAllWindows();
     }
 
-    printf("\nCalibration complete!\n");
-    printf("Copy to pipeline config directory:\n");
-    printf("  cp %s calibration/stereo_calib.yaml\n", args.output.c_str());
+    printf("\nCalibration candidate written to: %s\n", args.output.c_str());
+    printf("Validate known distances and review it before replacing ");
+    printf("configs/calibration/stereo_calib.yaml.\n");
 
     return 0;
 }
