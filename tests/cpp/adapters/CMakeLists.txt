@@ -128,6 +128,14 @@ target_link_libraries(
   ros2_source_epoch_tests PRIVATE volleyball::ros2_epoch
 )
 
+add_adapter_test(
+  cuda_depth_candidate_tests
+  cuda_depth_candidate_tests.cpp
+)
+target_link_libraries(
+  cuda_depth_candidate_tests PRIVATE volleyball::cuda_depth_selection
+)
+
 if(TARGET volleyball::stereo_calibration)
   add_adapter_test(
     stereo_calibration_tests
