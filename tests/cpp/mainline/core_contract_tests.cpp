@@ -43,6 +43,20 @@ core::CameraFrameRecord validFrame() {
     return frame;
 }
 
+core::Detection2D validDetection() {
+    core::Detection2D detection;
+    detection.frame = {core::CameraId{"left-serial"}, core::CameraRole::left, 42};
+    detection.candidate_id = 3;
+    detection.center_px = {700.0, 500.0};
+    detection.radius_px = 20.0;
+    detection.bounding_box = {680.0, 480.0, 40.0, 40.0};
+    detection.pixel_velocity_pxps = core::Vec2{10.0, -5.0};
+    detection.score = 0.9;
+    detection.covariance_px2 = core::Covariance2D{{0.25, 0.0, 0.25}};
+    detection.source_pipeline = core::PipelineId{"detector"};
+    return detection;
+}
+
 void testClockMappingPreservesEpochPrecision() {
     core::ClockMapping mapping;
     mapping.id = core::MappingId{"camera-to-system-0"};
@@ -129,6 +143,36 @@ void testAssociationValidation() {
         "association timestamps must not be negative");
 }
 
+void testDetectionValidation() {
+    auto detection = validDetection();
+    check(static_cast<bool>(core::validate(detection)), "valid detection must pass");
+
+    detection.pixel_velocity_pxps->x =
+        std::numeric_limits<double>::quiet_NaN();
+    check(
+        core::validate(detection).error == core::DomainError::invalid_numeric_value,
+        "non-finite pixel velocity must fail");
+
+    detection = validDetection();
+    detection.bounding_box->width = 0.0;
+    check(
+        core::validate(detection).error == core::DomainError::invalid_numeric_value,
+        "zero-width bounding box must fail");
+
+    detection = validDetection();
+    detection.covariance_px2 = core::Covariance2D{{1.0, 2.0, 1.0}};
+    check(
+        core::validate(detection).error == core::DomainError::invalid_numeric_value,
+        "non-PSD 2D covariance must fail");
+
+    detection = validDetection();
+    detection.covariance_px2 =
+        core::Covariance2D{{9.0e307, 1.0e308, 9.0e307}};
+    check(
+        core::validate(detection).error == core::DomainError::invalid_numeric_value,
+        "large finite covariance must be normalized before the PSD check");
+}
+
 void testWriterSeparatesRawAndDerivedTypes() {
     fake::InMemoryTrialWriter writer;
     const auto result = writer.append(validFrame());
@@ -155,6 +199,13 @@ void testTriangulatedObservationValidation() {
     check(
         core::validate(observation).error == core::DomainError::invalid_numeric_value,
         "non-finite direct observation must fail");
+
+    observation.position_m.z = 3.0;
+    observation.covariance_m2 =
+        core::Covariance3D{{1.0, 2.0, 0.0, 1.0, 0.0, 1.0}};
+    check(
+        core::validate(observation).error == core::DomainError::invalid_numeric_value,
+        "non-PSD 3D covariance must fail");
 }
 
 }  // namespace
@@ -164,6 +215,7 @@ int main() {
     testClockMappingRejectsInvalidInputs();
     testFrameValidation();
     testAssociationValidation();
+    testDetectionValidation();
     testWriterSeparatesRawAndDerivedTypes();
     testTriangulatedObservationValidation();
     if (failures != 0) {

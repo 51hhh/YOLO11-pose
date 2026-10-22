@@ -183,16 +183,20 @@ def _covariance3(
     if values is None:
         return None
     xx, xy, xz, yy, yz, zz = values
-    scale = max(max(abs(value) for value in values), 1.0e-12)
+    scale = max(abs(value) for value in values)
     if min(xx, yy, zz) < 0.0:
         raise DatasetError(f"{prefix}: 3D 协方差对角线不得为负")
-    tolerance_2 = 1.0e-9 * scale**2
+    if scale == 0.0:
+        return (xx, xy, xz, yy, yz, zz)
+    xx, xy, xz, yy, yz, zz = (
+        value / scale for value in (xx, xy, xz, yy, yz, zz)
+    )
     second_order_minors = (
         xx * yy - xy * xy,
         xx * zz - xz * xz,
         yy * zz - yz * yz,
     )
-    if min(second_order_minors) < -tolerance_2:
+    if min(second_order_minors) < -1.0e-9:
         raise DatasetError(f"{prefix}: 3D 协方差不是半正定矩阵")
     determinant = (
         xx * yy * zz
@@ -201,9 +205,40 @@ def _covariance3(
         - yy * xz * xz
         - zz * xy * xy
     )
-    if determinant < -(1.0e-9 * scale**3):
+    if determinant < -1.0e-9:
         raise DatasetError(f"{prefix}: 3D 协方差不是半正定矩阵")
-    return (xx, xy, xz, yy, yz, zz)
+    return (
+        values[0],
+        values[1],
+        values[2],
+        values[3],
+        values[4],
+        values[5],
+    )
+
+
+def _covariance2(
+    row: Mapping[str, str],
+    *,
+    prefix: str,
+) -> tuple[float, float, float] | None:
+    fields = ("cov_uu_px2", "cov_uv_px2", "cov_vv_px2")
+    values = _optional_finite_group(row, fields, prefix=prefix)
+    if values is None:
+        return None
+    uu, uv, vv = values
+    if uu < 0.0 or vv < 0.0:
+        raise DatasetError(f"{prefix}: 2D 协方差对角线不得为负")
+    scale = max(abs(value) for value in values)
+    if scale > 0.0:
+        normalized_uu = uu / scale
+        normalized_uv = uv / scale
+        normalized_vv = vv / scale
+    else:
+        normalized_uu = normalized_uv = normalized_vv = 0.0
+    if normalized_uu * normalized_vv - normalized_uv * normalized_uv < -1.0e-9:
+        raise DatasetError(f"{prefix}: 2D 协方差不是半正定矩阵")
+    return (uu, uv, vv)
 
 
 def _same_measurement(
@@ -388,6 +423,13 @@ def _validate_trial_tables(
             raise DatasetError(f"{prefix}: capture_timestamp_ns 必须严格递增")
         last_frame_index[camera_id] = frame_index
         last_capture_ns[camera_id] = capture_ns
+        roi_values = tuple(
+            _integer(row[name], field_name=f"{prefix}.{name}")
+            for name in ("roi_x", "roi_y", "roi_width", "roi_height")
+        )
+        assert all(value is not None for value in roi_values)
+        if roi_values[2] == 0 or roi_values[3] == 0:
+            raise DatasetError(f"{prefix}: ROI 宽高必须大于 0")
         timestamps = [
             _integer(row[name], field_name=f"{prefix}.{name}", allow_blank=name not in {"hardware_timestamp_ns", "capture_timestamp_ns"})
             for name in ("exposure_start_ns", "capture_timestamp_ns", "receive_timestamp_ns", "inference_done_timestamp_ns")
@@ -449,6 +491,62 @@ def _validate_trial_tables(
             raise DatasetError(f"{prefix}: 重复候选 ID")
         if row["source"] not in pipeline_ids:
             raise DatasetError(f"{prefix}: source 未引用已指纹的感知流水线")
+        frame_row = frames[(camera_id, frame_index)]
+        if _boolean(
+            frame_row["dropped"],
+            field_name=f"{prefix}.source_frame_dropped",
+        ):
+            raise DatasetError(f"{prefix}: 检测不得引用 dropped 帧")
+        width = int(frame_row["roi_width"])
+        height = int(frame_row["roi_height"])
+        u_px = _finite(row["u_px"], field_name=f"{prefix}.u_px")
+        v_px = _finite(row["v_px"], field_name=f"{prefix}.v_px")
+        assert u_px is not None and v_px is not None
+        if not 0.0 <= u_px < width or not 0.0 <= v_px < height:
+            raise DatasetError(f"{prefix}: 检测中心必须位于来源图像内")
+        radius = _finite(
+            row["radius_px"],
+            field_name=f"{prefix}.radius_px",
+            allow_blank=True,
+        )
+        if radius is not None and (
+            radius <= 0.0 or radius > max(width, height)
+        ):
+            raise DatasetError(f"{prefix}: radius_px 必须大于 0 且不超过图像尺度")
+        bounding_box = _optional_finite_group(
+            row,
+            ("bbox_x", "bbox_y", "bbox_w", "bbox_h"),
+            prefix=prefix,
+        )
+        if bounding_box is not None:
+            bbox_x, bbox_y, bbox_w, bbox_h = bounding_box
+            if (
+                bbox_w <= 0.0
+                or bbox_h <= 0.0
+                or bbox_w > width
+                or bbox_h > height
+            ):
+                raise DatasetError(
+                    f"{prefix}: bbox 宽高必须大于 0 且不超过图像尺寸"
+                )
+            if not (
+                bbox_x < width
+                and bbox_y < height
+                and bbox_x + bbox_w > 0.0
+                and bbox_y + bbox_h > 0.0
+            ):
+                raise DatasetError(f"{prefix}: bbox 必须与来源图像相交")
+            if not (
+                bbox_x <= u_px <= bbox_x + bbox_w
+                and bbox_y <= v_px <= bbox_y + bbox_h
+            ):
+                raise DatasetError(f"{prefix}: 检测中心必须位于 bbox 内")
+        _optional_finite_group(
+            row,
+            ("du_dt_pxps", "dv_dt_pxps"),
+            prefix=prefix,
+        )
+        _covariance2(row, prefix=prefix)
         score = _finite(row["score"], field_name=f"{prefix}.score", allow_blank=True)
         if score is not None and not 0.0 <= score <= 1.0:
             raise DatasetError(f"{prefix}: score 必须在 [0,1]")

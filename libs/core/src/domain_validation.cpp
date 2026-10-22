@@ -34,6 +34,59 @@ bool finite(const Covariance3D& covariance) noexcept {
         [](double value) { return std::isfinite(value); });
 }
 
+bool positiveSemidefinite(const Covariance2D& covariance) noexcept {
+    if (!finite(covariance)) {
+        return false;
+    }
+    const auto& values = covariance.upper;
+    const double uu = values[0];
+    const double uv = values[1];
+    const double vv = values[2];
+    if (uu < 0.0 || vv < 0.0) {
+        return false;
+    }
+    const double scale = std::max({std::abs(uu), std::abs(uv), std::abs(vv)});
+    if (scale == 0.0) {
+        return true;
+    }
+    const double normalized_uu = uu / scale;
+    const double normalized_uv = uv / scale;
+    const double normalized_vv = vv / scale;
+    return normalized_uu * normalized_vv -
+               normalized_uv * normalized_uv >=
+           -1.0e-9;
+}
+
+bool positiveSemidefinite(const Covariance3D& covariance) noexcept {
+    if (!finite(covariance)) {
+        return false;
+    }
+    const auto& values = covariance.upper;
+    const double scale = std::max({
+        std::abs(values[0]), std::abs(values[1]), std::abs(values[2]),
+        std::abs(values[3]), std::abs(values[4]), std::abs(values[5]),
+    });
+    if (scale == 0.0) {
+        return true;
+    }
+    const double xx = values[0] / scale;
+    const double xy = values[1] / scale;
+    const double xz = values[2] / scale;
+    const double yy = values[3] / scale;
+    const double yz = values[4] / scale;
+    const double zz = values[5] / scale;
+    if (xx < 0.0 || yy < 0.0 || zz < 0.0 ||
+        xx * yy - xy * xy < -1.0e-9 ||
+        xx * zz - xz * xz < -1.0e-9 ||
+        yy * zz - yz * yz < -1.0e-9) {
+        return false;
+    }
+    const double determinant =
+        xx * yy * zz + 2.0 * xy * xz * yz - xx * yz * yz -
+        yy * xz * xz - zz * xy * xy;
+    return determinant >= -1.0e-9;
+}
+
 }  // namespace
 
 DomainValidationResult validate(const CameraFrameRecord& frame) noexcept {
@@ -101,12 +154,15 @@ DomainValidationResult validate(const Detection2D& detection) noexcept {
             "detection camera and pipeline identifiers are required");
     }
     if (!isFinite(detection.center_px) ||
+        (detection.pixel_velocity_pxps &&
+         !isFinite(*detection.pixel_velocity_pxps)) ||
         (detection.radius_px &&
-         (!std::isfinite(*detection.radius_px) || *detection.radius_px < 0.0)) ||
+         (!std::isfinite(*detection.radius_px) || *detection.radius_px <= 0.0)) ||
         (detection.score &&
          (!std::isfinite(*detection.score) || *detection.score < 0.0 ||
           *detection.score > 1.0)) ||
-        (detection.covariance_px2 && !finite(*detection.covariance_px2))) {
+        (detection.covariance_px2 &&
+         !positiveSemidefinite(*detection.covariance_px2))) {
         return failure(
             DomainError::invalid_numeric_value,
             "detection numeric values are invalid");
@@ -116,8 +172,8 @@ DomainValidationResult validate(const Detection2D& detection) noexcept {
          !std::isfinite(detection.bounding_box->y) ||
          !std::isfinite(detection.bounding_box->width) ||
          !std::isfinite(detection.bounding_box->height) ||
-         detection.bounding_box->width < 0.0 ||
-         detection.bounding_box->height < 0.0)) {
+         detection.bounding_box->width <= 0.0 ||
+         detection.bounding_box->height <= 0.0)) {
         return failure(
             DomainError::invalid_numeric_value,
             "detection bounding box is invalid");
@@ -164,7 +220,8 @@ DomainValidationResult validate(
             "observation clock and coordinate frame are required");
     }
     if (!isFinite(observation.position_m) ||
-        (observation.covariance_m2 && !finite(*observation.covariance_m2)) ||
+        (observation.covariance_m2 &&
+         !positiveSemidefinite(*observation.covariance_m2)) ||
         (observation.confidence &&
          (!std::isfinite(*observation.confidence) ||
           *observation.confidence < 0.0 || *observation.confidence > 1.0)) ||

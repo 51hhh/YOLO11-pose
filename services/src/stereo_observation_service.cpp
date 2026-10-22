@@ -62,6 +62,31 @@ bool imageMatchesMetadata(const ports::CapturedFrame& frame) noexcept {
     return frame.image->sizeBytes() >= stride * height;
 }
 
+bool detectionInsideImage(
+    const core::Detection2D& detection,
+    const core::CameraFrameRecord& frame) noexcept {
+    const double width = static_cast<double>(frame.roi.width);
+    const double height = static_cast<double>(frame.roi.height);
+    if (detection.center_px.x < 0.0 || detection.center_px.x >= width ||
+        detection.center_px.y < 0.0 || detection.center_px.y >= height) {
+        return false;
+    }
+    if (detection.radius_px &&
+        *detection.radius_px > std::max(width, height)) {
+        return false;
+    }
+    if (!detection.bounding_box) {
+        return true;
+    }
+    const auto& box = *detection.bounding_box;
+    return box.width <= width && box.height <= height && box.x < width &&
+           box.y < height && box.x + box.width > 0.0 &&
+           box.y + box.height > 0.0 && detection.center_px.x >= box.x &&
+           detection.center_px.x <= box.x + box.width &&
+           detection.center_px.y >= box.y &&
+           detection.center_px.y <= box.y + box.height;
+}
+
 }  // namespace
 
 StereoObservationService::StereoObservationService(
@@ -127,8 +152,11 @@ bool StereoObservationService::validateDetectionBatch(
             candidate.frame.camera_id != batch.frame.camera_id ||
             candidate.frame.role != batch.frame.role ||
             candidate.frame.frame_index != batch.frame.frame_index ||
-            candidate.source_pipeline != batch.pipeline_id) {
-            error = "detector candidate does not belong to its declared batch";
+            candidate.source_pipeline != batch.pipeline_id ||
+            !detectionInsideImage(candidate, frame)) {
+            error =
+                "detector candidate is invalid, out of image, or does not "
+                "belong to its declared batch";
             return false;
         }
         if (!candidate_ids.insert(candidate.candidate_id).second) {

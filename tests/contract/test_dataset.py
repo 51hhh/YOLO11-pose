@@ -295,6 +295,63 @@ class DatasetContractTests(unittest.TestCase):
             with self.assertRaisesRegex(DatasetError, "selected.*accepted"):
                 validate_trial(trial, project_root=ROOT)
 
+    def test_validator_rejects_invalid_detection_values(self) -> None:
+        cases = (
+            ("u_px", "nan", "必须为有限数"),
+            ("u_px", "1440", "来源图像内"),
+            ("radius_px", "0", "radius_px 必须大于 0"),
+            ("radius_px", "2000", "不超过图像尺度"),
+            ("bbox_w", "0", "bbox 宽高必须大于 0"),
+            ("bbox_w", "2000", "不超过图像尺寸"),
+            ("bbox_x", "800", "检测中心必须位于 bbox 内"),
+            ("cov_uv_px2", "2", "2D 协方差不是半正定"),
+        )
+        for field, replacement, message in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                trial = _write_valid_trial(Path(directory))
+                path = trial / "detections_2d.csv"
+                fieldnames, rows = _read_csv(path)
+                rows[0][field] = replacement
+                _write_csv(path, fieldnames, rows)
+                with self.assertRaisesRegex(DatasetError, message):
+                    validate_trial(trial, project_root=ROOT)
+
+    def test_validator_requires_complete_pixel_velocity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            path = trial / "detections_2d.csv"
+            fieldnames, rows = _read_csv(path)
+            rows[0]["du_dt_pxps"] = "1.0"
+            _write_csv(path, fieldnames, rows)
+            with self.assertRaisesRegex(DatasetError, "必须整组填写或留空"):
+                validate_trial(trial, project_root=ROOT)
+
+    def test_validator_normalizes_large_covariance_before_psd_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            path = trial / "detections_2d.csv"
+            fieldnames, rows = _read_csv(path)
+            rows[0]["cov_uu_px2"] = "9e307"
+            rows[0]["cov_uv_px2"] = "1e308"
+            rows[0]["cov_vv_px2"] = "9e307"
+            _write_csv(path, fieldnames, rows)
+            with self.assertRaisesRegex(DatasetError, "不是半正定"):
+                validate_trial(trial, project_root=ROOT)
+
+    def test_validator_rejects_detection_on_dropped_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = _write_valid_trial(Path(directory))
+            path = trial / "camera_frames.csv"
+            fieldnames, rows = _read_csv(path)
+            rows[0]["dropped"] = "true"
+            rows[0]["drop_reason"] = "injected drop"
+            _write_csv(path, fieldnames, rows)
+            with self.assertRaisesRegex(DatasetError, "不得引用 dropped 帧"):
+                validate_trial(trial, project_root=ROOT)
+
     def test_validator_binds_trajectory_values_to_accepted_pair(self) -> None:
         cases = (
             ("x_m", "0.2", "3D 位置"),

@@ -242,6 +242,23 @@ void testDuplicateCandidateIdsAbortTrial() {
           "duplicate candidate IDs must abort the partial trial");
 }
 
+void testDetectorCandidateMustIntersectItsSourceImage() {
+    auto outside =
+        detection(core::CameraRole::left, "left", 0, -1.0, 500.0, 0.95);
+    StaticDetector left({outside});
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(serviceConfig(), left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::detector_error,
+          "candidate center outside its source image must be rejected");
+    check(!writer.abortReason().empty(),
+          "out-of-image detector output must abort the partial trial");
+}
+
 void testServiceOwnsSelectedFlags() {
     auto left_candidate =
         detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95);
@@ -385,6 +402,7 @@ int main() {
     testExplicitAbortClosesServiceExactlyOnce();
     testMalformedDetectorBatchAbortsTrial();
     testDuplicateCandidateIdsAbortTrial();
+    testDetectorCandidateMustIntersectItsSourceImage();
     testServiceOwnsSelectedFlags();
     testArrivalOrderNeverDefinesStereoIdentity();
     testCaptureDeltaUsesConfiguredTemporalGate();
