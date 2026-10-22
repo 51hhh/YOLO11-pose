@@ -127,6 +127,7 @@ add_legacy_nx_test(
   capture_chessboard_output_tests
   capture_chessboard_output_tests.cpp
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/capture_chessboard/output.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/common/atomic_file.cpp
 )
 target_include_directories(
   capture_chessboard_output_tests PRIVATE

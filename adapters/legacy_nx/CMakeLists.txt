@@ -357,6 +357,7 @@ if(HIK_FOUND)
     tools/capture_chessboard/main.cpp
     tools/capture_chessboard/args.cpp
     tools/capture_chessboard/output.cpp
+    tools/common/atomic_file.cpp
     src/capture/hikvision_camera.cpp
     src/capture/pwm_trigger.cpp
   )

@@ -43,7 +43,7 @@ src/ros/      ROS2 发布适配
 src/diagnostics/ 可选实时调试 artifact 写出
 src/ui/       本地显示与点击测距叠加
 src/utils/    VPI 图像访问、日志和性能计数等底层工具
-tools/        按可执行程序分目录的标定与硬件诊断入口
+tools/        按可执行程序分目录的标定与硬件诊断入口及 common 文件提交边界
 ```
 
 适配器的纯逻辑测试和 SDK/CUDA/VPI 桩统一位于根目录 `tests/cpp/legacy_nx/`，由主机 Debug/Release 预设执行；本目录不再保留第二套测试入口。
