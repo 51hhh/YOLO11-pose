@@ -31,6 +31,7 @@
 #include <fstream>
 #include <cstdint>
 #include <algorithm>
+#include <limits>
 #include <memory>
 
 namespace fs = std::filesystem;
@@ -118,8 +119,16 @@ int main(int argc, char* argv[]) {
     const int W = camera.width();
     const int H = camera.height();
 
-    std::vector<uint8_t> bufL(W * H);
-    std::vector<uint8_t> bufR(W * H);
+    const auto width = static_cast<std::size_t>(W);
+    const auto height = static_cast<std::size_t>(H);
+    if (W <= 0 || H <= 0 ||
+        width > std::numeric_limits<std::size_t>::max() / height) {
+        fprintf(stderr, "[ERROR] Invalid camera buffer geometry: %dx%d\n", W, H);
+        return 1;
+    }
+    const std::size_t frame_bytes = width * height;
+    std::vector<uint8_t> bufL(frame_bytes);
+    std::vector<uint8_t> bufR(frame_bytes);
 
     // Keep failed hardware initialization side-effect free. Recheck the
     // destination immediately before the first filesystem write to narrow the
