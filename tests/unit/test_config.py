@@ -148,6 +148,52 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
+    def test_live_model_manifest_must_match_runtime_contract(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            (
+                "input_resolution",
+                lambda value: value["detector"].update(input_resolution=[320, 320]),
+            ),
+            (
+                "input_format",
+                lambda value: value["detector"].update(input_format="gray8"),
+            ),
+            (
+                "target",
+                lambda value: value["platform"].update(id="another-jetson"),
+            ),
+            (
+                "accelerator",
+                lambda value: value["platform"].update(accelerator="cuda_dla"),
+            ),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
+    def test_hik_adapter_rejects_unprojected_tracking_and_qos(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            (
+                "kalman_ca",
+                lambda value: value["tracking"].update(enabled=False, filter="none"),
+            ),
+            (
+                "sensor_data",
+                lambda value: value["publisher"].update(qos="reliable"),
+            ),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),

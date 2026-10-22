@@ -11,5 +11,6 @@ models:
     input_format: bgr8
     precision: fp16
     target: jetson-orin-nx
+    accelerator: cuda
     note: 在 NX 上通过 doctor 生成并固定 SHA-256，未固定前不得用于可发布数据集。
 

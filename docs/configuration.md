@@ -27,6 +27,7 @@ volleyball config diff nx-rdk free-flight
 - 私有序列号或本机路径放入未提交的 `configs/local.yaml`；
 - `--set` 只能覆盖已存在的键，防止拼写错误静默生成无效配置；
 - 模型必须登记在 `models/manifest.yaml`，实机采集前固定 SHA-256；
+- 模型清单的 artifact 格式、输入尺寸/格式、目标平台和 accelerator 必须与 live profile 完全一致；
 - TensorRT engine 反序列化后的实际输入尺寸和 I/O 布局必须通过检测器契约，且与 profile 一致；
 - 标定必须有稳定 `calibration_id` 和 `created_at_utc`，不得用文件 mtime 充当版本；
 - 单位写入键名或契约，时间统一为整数纳秒，物理量使用 SI。
@@ -73,6 +74,8 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 | 录制 | `recording.*` | schema、原图、失败策略、哈希校验 |
 
 `diagnostics.metrics_interval_frames` 会投影为旧管线的 `performance.log_interval`。当前旧 logger 输出带单调时钟、线程和级别前缀的文本，不是逐行 JSON，因此主线固定 `diagnostics.json_logs=false`；把它改成 `true` 会在配置校验阶段被拒绝。性能计时当前是管线固有观测能力，也不能用配置伪装为已关闭。
+
+旧 ROI 管线当前固定初始化 3D `kalman_ca` 混合深度跟踪，NX 原始观测 publisher 固定使用 keep-last/best-effort 的 sensor-data QoS。因此 live profile 只接受 `tracking.enabled=true`、`tracking.filter=kalman_ca` 和 `publisher.qos=sensor_data`。这里的根层 tracking 与已关闭的旧 C++ 图像 SOT `tracker.enabled` 不是同一个功能。
 
 ### 深度候选与最终选择
 

@@ -23,6 +23,8 @@
 
 启动时不会只凭文件扩展名假定 engine 可用。反序列化后必须满足当前实现的 I/O 契约：恰好一个静态 float32 NCHW `[1,3,S,S]` 正方形输入；输出必须是受后处理支持的 `[1,C,N]` / `[1,N,C]` pre-NMS、`[1,N,6]` post-NMS，或三尺度成对的 6 个 NHWC DFL tensor。动态 shape、矩形输入、多输入、额外未绑定输出、非 float32 以及不完整 DFL 尺度会直接阻止启动。左右 engine 的实际 `S` 还必须分别等于 profile 的 `detector.input_resolution`，因此配置、模型清单和运行 engine 不会静默分叉。
 
+在 engine 文件被读取之前，配置加载器还会核对模型清单中的 artifact 格式、输入尺寸/颜色格式、目标平台和 accelerator。当前清单明确是 Orin NX CUDA FP16 engine；把 profile 改成 DLA 不会只改一个布尔值后继续使用这份 GPU engine，而会在配置阶段被拒绝。
+
 `evtDetectDone` 在预处理、推理和所需 D2H 操作都排入同一 stream 后记录。Stage 2 等待 event 和 stream 完成后才读取 host 输出。
 
 ## 从检测框到左右候选

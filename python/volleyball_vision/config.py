@@ -280,6 +280,11 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("当前旧 NX logger 尚不支持 diagnostics.json_logs=true")
         if not diagnostics["processing_timing"]:
             errors.append("当前旧 NX 管线固定启用 processing_timing，不能声明关闭")
+        tracking = payload["tracking"]
+        if not tracking["enabled"] or tracking["filter"] != "kalman_ca":
+            errors.append("当前旧 NX 混合深度固定使用启用的 tracking.filter=kalman_ca")
+        if payload["publisher"]["qos"] != "sensor_data":
+            errors.append("当前 NX 观测发布器固定使用 publisher.qos=sensor_data")
         if transport["interface"] not in {"usb3", "gige"}:
             errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
         if transport["grab_strategy"] != "one_by_one":
@@ -328,6 +333,28 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     models = manifest.get("models", {})
     if model_id not in models:
         errors.append(f"detector.model_id {model_id!r} 未在 models/manifest.yaml 定义")
+    elif mode in {"runtime", "capture"}:
+        entry = models[model_id]
+        if not isinstance(entry, Mapping):
+            errors.append(f"模型清单 {model_id!r} 必须是对象")
+        else:
+            expected_format = {
+                "tensorrt": "tensorrt_engine",
+                "onnxruntime": "onnx",
+            }.get(detector["backend"])
+            checks = (
+                ("artifact_format", expected_format),
+                ("input_resolution", detector["input_resolution"]),
+                ("input_format", detector["input_format"]),
+                ("target", payload["platform"]["id"]),
+                ("accelerator", payload["platform"]["accelerator"]),
+            )
+            for field, expected in checks:
+                if entry.get(field) != expected:
+                    errors.append(
+                        f"模型清单 {model_id}.{field}={entry.get(field)!r} "
+                        f"与运行配置 {expected!r} 不一致"
+                    )
     if errors:
         raise ConfigError("配置语义校验失败:\n" + "\n".join(f"  - {e}" for e in errors))
 
