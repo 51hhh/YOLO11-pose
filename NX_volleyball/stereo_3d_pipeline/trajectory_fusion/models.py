@@ -4,19 +4,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Any, Dict
 
-import torch
-from torch import nn
-from torch.nn import functional as F
+try:
+    import torch
+    from torch import nn
+    from torch.nn import functional as F
+except ImportError:  # 数据校验不应被可选训练依赖阻断
+    torch = None
+    F = None
+
+    class _OptionalTorchModule:
+        """仅保证无 PyTorch 环境下可导入非神经网络工具。"""
+
+    class _OptionalNN:
+        Module = _OptionalTorchModule
+
+    nn = _OptionalNN()
+
+
+def _require_torch() -> None:
+    if torch is None:
+        raise ModuleNotFoundError(
+            "PyTorch is required for neural reliability model execution; "
+            "CSV validation and classical fusion remain available without it"
+        )
 
 
 @dataclass
 class ReliabilityOutput:
-    log_sigma: torch.Tensor
-    bias: torch.Tensor
-    outlier_logit: torch.Tensor
-    common_log_sigma: torch.Tensor
+    log_sigma: Any
+    bias: Any
+    outlier_logit: Any
+    common_log_sigma: Any
 
 
 class MeasurementReliabilityNet(nn.Module):
@@ -36,6 +56,7 @@ class MeasurementReliabilityNet(nn.Module):
         min_sigma: float = 0.01,
         max_sigma: float = 5.0,
     ) -> None:
+        _require_torch()
         super().__init__()
         self.num_methods = num_methods
         self.measurement_dim = measurement_dim
@@ -89,6 +110,7 @@ class MeasurementReliabilityNet(nn.Module):
 def reliability_weight(output: ReliabilityOutput, valid: torch.Tensor) -> torch.Tensor:
     """Convert predicted uncertainty/outlier probability to fusion weights."""
 
+    _require_torch()
     sigma2 = torch.exp(2.0 * output.log_sigma)
     inlier_prob = 1.0 - torch.sigmoid(output.outlier_logit)
     return valid.unsqueeze(-1) * inlier_prob / (sigma2 + 1e-8)
@@ -107,6 +129,7 @@ def weighted_depth_consensus(
     return shape:       [batch, time, 1]
     """
 
+    _require_torch()
     corrected = measurements.unsqueeze(-1) - output.bias
     weights = reliability_weight(output, valid)
     numerator = (weights * corrected).sum(dim=2)
@@ -126,6 +149,7 @@ class TinyCausalFusionHead(nn.Module):
     """
 
     def __init__(self, input_dim: int, num_methods: int, hidden_dim: int = 48) -> None:
+        _require_torch()
         super().__init__()
         self.num_methods = num_methods
         self.net = nn.Sequential(
