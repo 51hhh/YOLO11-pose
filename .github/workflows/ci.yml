@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Python contract tools
+        run: python -m pip install -e '.[test]'
+      - name: Validate checked-in profiles
+        run: |
+          volleyball config validate --profile nx-rdk
+          volleyball config validate --profile free-flight
+          volleyball config validate --profile replay
+      - name: Run project Python tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -v
+      - name: Run legacy CPU trajectory tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s NX_volleyball/stereo_3d_pipeline/trajectory_fusion/tests -v
+      - name: Configure CPU C++ core
+        run: cmake --preset host-core-debug
+      - name: Build CPU C++ core
+        run: cmake --build --preset host-core-debug --parallel 2
+      - name: Run CPU C++ tests
+        run: ctest --preset host-core-debug
+      - name: Audit repository metadata
+        run: python tools/check_repository.py
+
