@@ -11,7 +11,7 @@
 
 #include "trt_detector.h"
 #include "trt_engine_contract.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <NvInfer.h>
 #include <cuda_runtime.h>

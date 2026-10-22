@@ -17,6 +17,13 @@ if(NOT EXISTS
     "Mainline GPIO adapter not found next to legacy_nx: "
     "${VOLLEYBALL_GPIO_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_LOGGING_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/logging")
+if(NOT EXISTS
+   "${VOLLEYBALL_LOGGING_DIR}/include/volleyball/logging/log.hpp")
+  message(FATAL_ERROR
+    "Mainline logging component not found: ${VOLLEYBALL_LOGGING_DIR}")
+endif()
 
 # ==================== ROS2 ament_cmake ====================
 option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
@@ -194,6 +201,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/src
   ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/include
   ${VOLLEYBALL_GPIO_ADAPTER_DIR}/include
+  ${VOLLEYBALL_LOGGING_DIR}/include
   ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}

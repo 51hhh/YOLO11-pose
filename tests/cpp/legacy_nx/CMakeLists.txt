@@ -1,8 +1,13 @@
 set(LEGACY_NX_SOURCE_DIR "${PROJECT_SOURCE_DIR}/adapters/legacy_nx/src")
+set(VOLLEYBALL_LOGGING_INCLUDE_DIR
+  "${PROJECT_SOURCE_DIR}/libs/logging/include")
 
 function(add_legacy_nx_test target)
   add_executable(${target} ${ARGN})
-  target_include_directories(${target} PRIVATE "${LEGACY_NX_SOURCE_DIR}")
+  target_include_directories(${target} PRIVATE
+    "${LEGACY_NX_SOURCE_DIR}"
+    "${VOLLEYBALL_LOGGING_INCLUDE_DIR}"
+  )
   target_compile_features(${target} PRIVATE cxx_std_17)
   target_compile_options(${target} PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>

@@ -78,6 +78,7 @@ ALLOWED_LEGACY_CONFIG_FILES = {
 
 PURE_CPP_LAYERS = (
     "libs/core",
+    "libs/logging",
     "ports",
     "algorithms",
     "services",

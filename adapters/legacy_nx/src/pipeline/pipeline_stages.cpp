@@ -1,6 +1,6 @@
 #include "pipeline.h"
 #include "pipeline_roi_match_helpers.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/vpi_plane_access.h"
 
 #include <vpi/algo/ConvertImageFormat.h>

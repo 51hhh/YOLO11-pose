@@ -8,7 +8,7 @@
  */
 
 #include "pipeline.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/vpi_plane_access.h"
 
 namespace stereo3d {

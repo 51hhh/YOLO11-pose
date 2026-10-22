@@ -3,7 +3,7 @@
 
 #include "neural_feature_matcher.h"
 
-#include "utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <algorithm>
 #include <array>

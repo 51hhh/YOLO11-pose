@@ -1,6 +1,6 @@
 #include "dual_yolo_depth_gpu.h"
 
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/profiler.h"
 
 #include <algorithm>

@@ -4,7 +4,7 @@
  */
 
 #include "mixformer_trt.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <NvInfer.h>
 #include <cuda_runtime.h>

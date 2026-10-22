@@ -10,7 +10,7 @@
 
 #include "hikvision_camera.h"
 #include "hikvision_camera_helpers.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "MvCameraControl.h"
 
 #include <algorithm>

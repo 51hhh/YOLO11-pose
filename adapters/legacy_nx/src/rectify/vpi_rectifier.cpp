@@ -9,7 +9,7 @@
 
 #include "vpi_rectifier.h"
 #include "../calibration/stereo_calibration.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <vpi/Image.h>
 #include <vpi/Stream.h>

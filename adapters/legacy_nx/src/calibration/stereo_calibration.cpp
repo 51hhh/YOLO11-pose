@@ -4,7 +4,7 @@
  */
 
 #include "stereo_calibration.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include <fstream>
 
 namespace stereo3d {

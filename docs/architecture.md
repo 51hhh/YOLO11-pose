@@ -24,6 +24,8 @@ NX GPIO 上升沿 ────────┐
 
 `libs/core` 只定义事实类型及其不变量：相机帧、2D 候选、关联尝试、直接 3D 观测、时钟、坐标系和标定。它不认识 MVS、OpenCV、CUDA、TensorRT、ROS2 或磁盘格式。
 
+`libs/logging` 只提供适配器共用的轻量日志接口，不保存流水线状态，也不参与数据契约。它独立于 `legacy_nx`，避免已提取的适配器反向依赖旧目录。
+
 关键类型刻意分开：
 
 - `TriangulatedObservation` 是直接测量；

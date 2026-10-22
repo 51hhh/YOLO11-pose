@@ -20,7 +20,7 @@
 #include "../stereo/neural_feature_matcher.h"
 #include "../track/nanotrack_trt.h"
 #include "../track/mixformer_trt.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include <vpi/algo/ConvertImageFormat.h>
 #include <algorithm>
 #include <cctype>

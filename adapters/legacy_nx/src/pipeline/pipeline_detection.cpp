@@ -1,6 +1,6 @@
 #include "pipeline.h"
 #include "pipeline_depth_modes.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <algorithm>
 

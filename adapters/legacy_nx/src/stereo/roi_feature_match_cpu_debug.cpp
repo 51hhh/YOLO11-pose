@@ -2,7 +2,7 @@
 
 #include "roi_feature_match_common.h"
 #include "roi_patch_match_cpu.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "roi_feature_match_cpu_helpers.h"
 
 #include <opencv2/imgproc.hpp>

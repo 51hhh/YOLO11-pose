@@ -4,7 +4,7 @@
  */
 
 #include "roi_stereo_matcher.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include <algorithm>
 #include <cmath>
 

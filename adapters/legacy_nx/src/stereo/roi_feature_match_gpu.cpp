@@ -2,7 +2,7 @@
 
 #include "roi_feature_match_common.h"
 #include "roi_feature_match_gpu_reduce.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>

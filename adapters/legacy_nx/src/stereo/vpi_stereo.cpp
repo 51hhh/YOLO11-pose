@@ -9,7 +9,7 @@
  */
 
 #include "vpi_stereo.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <vpi/Image.h>
 #include <vpi/Stream.h>

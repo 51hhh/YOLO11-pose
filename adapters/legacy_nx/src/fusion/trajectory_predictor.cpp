@@ -12,7 +12,7 @@
  */
 
 #include "trajectory_predictor.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <algorithm>
 #include <cmath>

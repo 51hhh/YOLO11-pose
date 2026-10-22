@@ -4,7 +4,7 @@
  */
 
 #include "coordinate_3d.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <cuda_runtime.h>
 #include <cmath>

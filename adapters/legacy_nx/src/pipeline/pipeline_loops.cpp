@@ -4,7 +4,7 @@
  */
 
 #include "pipeline.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <chrono>
 #include <cuda_runtime.h>

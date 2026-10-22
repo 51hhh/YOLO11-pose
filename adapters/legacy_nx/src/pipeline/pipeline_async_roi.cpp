@@ -8,7 +8,7 @@
 #include "../stereo/roi_feature_match_gpu.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../stereo/roi_feature_validation.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <algorithm>
 #include <array>

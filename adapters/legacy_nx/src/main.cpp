@@ -7,7 +7,7 @@
 
 #include "pipeline/pipeline.h"
 #include "fusion/trajectory_predictor.h"
-#include "utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "diagnostics/realtime_debug_dump.h"
 #include "main_cli_options.h"
 #include "main_config_loaders.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "MvCameraControl.h"
 
 #include <algorithm>

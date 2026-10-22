@@ -15,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(libs/core)
+add_subdirectory(libs/logging)
 add_subdirectory(ports)
 add_subdirectory(algorithms/stereo)
 add_subdirectory(services)

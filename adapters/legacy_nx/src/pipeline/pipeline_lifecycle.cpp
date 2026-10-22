@@ -1,7 +1,7 @@
 #include "pipeline.h"
 #include "exposure_timestamp.h"
 #include "../stereo/neural_feature_matcher.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/vpi_plane_access.h"
 
 #include <cstdint>

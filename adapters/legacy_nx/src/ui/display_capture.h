@@ -1,7 +1,7 @@
 #pragma once
 
 #include "display_types.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/vpi_image_copy.h"
 
 #include <opencv2/opencv.hpp>

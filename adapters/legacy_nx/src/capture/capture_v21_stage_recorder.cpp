@@ -3,7 +3,7 @@
 #include "volleyball/adapters/capture_v21/stage_schema.hpp"
 
 #include "../stereo/depth_match_contract.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 #include "../utils/vpi_image_copy.h"
 
 #include <algorithm>

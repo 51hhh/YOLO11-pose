@@ -47,6 +47,7 @@ python3 tools/check_repository.py
 | 路径 | 职责 |
 |---|---|
 | `libs/core/` | 强类型领域事实、时钟和坐标语义；不得依赖硬件 SDK |
+| `libs/logging/` | 跨适配器复用的轻量日志接口；不拥有业务状态 |
 | `ports/` | 相机、检测器、写入器和发布器接口 |
 | `algorithms/stereo/` | 纯双目关联、三角化和协方差传播 |
 | `services/` | 将端口与算法编排为观测用例 |

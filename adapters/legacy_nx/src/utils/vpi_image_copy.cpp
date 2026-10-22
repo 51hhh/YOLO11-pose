@@ -1,6 +1,6 @@
 #include "vpi_image_copy.h"
 
-#include "logger.h"
+#include "volleyball/logging/log.hpp"
 #include "vpi_plane_access.h"
 
 #include <cuda_runtime.h>

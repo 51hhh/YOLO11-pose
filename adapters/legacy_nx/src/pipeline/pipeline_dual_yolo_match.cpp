@@ -16,7 +16,7 @@
 #include "../stereo/roi_feature_validation.h"
 #include "../stereo/roi_geometry_cpu.h"
 #include "../stereo/roi_patch_match_cpu.h"
-#include "../utils/logger.h"
+#include "volleyball/logging/log.hpp"
 
 #include <algorithm>
 #include <array>
