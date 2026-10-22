@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<DetectionResult> results(n);
     std::string parallel_error;
-    if (!legacy_nx_tools::runIndexedTasks(
+    if (!volleyball::tools::hardware::runIndexedTasks(
             n,
             static_cast<std::size_t>(jobs),
             [&](std::size_t index) {
@@ -208,7 +208,7 @@ int main(int argc, char* argv[]) {
 
     double rmsL = 0.0;
     double rmsR = 0.0;
-    if (!legacy_nx_tools::runIndexedTasks(
+    if (!volleyball::tools::hardware::runIndexedTasks(
             2,
             2,
             [&](std::size_t index) {
@@ -398,7 +398,7 @@ int main(int argc, char* argv[]) {
         }
 
         std::string publish_error;
-        if (!legacy_nx_tools::publishFileNoReplace(
+        if (!volleyball::tools::hardware::publishFileNoReplace(
                 temporary_path, output_path, publish_error)) {
             error.clear();
             fs::remove(temporary_path, error);

@@ -1,10 +1,10 @@
-#ifndef VOLLEYBALL_LEGACY_NX_TOOLS_ATOMIC_FILE_H_
-#define VOLLEYBALL_LEGACY_NX_TOOLS_ATOMIC_FILE_H_
+#ifndef VOLLEYBALL_TOOLS_HARDWARE_ATOMIC_FILE_H_
+#define VOLLEYBALL_TOOLS_HARDWARE_ATOMIC_FILE_H_
 
 #include <filesystem>
 #include <string>
 
-namespace legacy_nx_tools {
+namespace volleyball::tools::hardware {
 
 /**
  * 在同一文件系统内把临时文件发布为最终文件，且绝不覆盖已有目标。
@@ -15,6 +15,6 @@ namespace legacy_nx_tools {
     const std::filesystem::path& final_path,
     std::string& error_message);
 
-}  // namespace legacy_nx_tools
+}  // namespace volleyball::tools::hardware
 
-#endif  // VOLLEYBALL_LEGACY_NX_TOOLS_ATOMIC_FILE_H_
+#endif  // VOLLEYBALL_TOOLS_HARDWARE_ATOMIC_FILE_H_

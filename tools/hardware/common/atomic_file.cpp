@@ -11,7 +11,7 @@
 #include <unistd.h>
 #endif
 
-namespace legacy_nx_tools {
+namespace volleyball::tools::hardware {
 
 bool publishFileNoReplace(
     const std::filesystem::path& temporary_path,
@@ -58,4 +58,4 @@ bool publishFileNoReplace(
 #endif
 }
 
-}  // namespace legacy_nx_tools
+}  // namespace volleyball::tools::hardware

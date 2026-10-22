@@ -1,11 +1,11 @@
-#ifndef VOLLEYBALL_LEGACY_NX_TOOLS_PARALLEL_TASKS_H_
-#define VOLLEYBALL_LEGACY_NX_TOOLS_PARALLEL_TASKS_H_
+#ifndef VOLLEYBALL_TOOLS_HARDWARE_PARALLEL_TASKS_H_
+#define VOLLEYBALL_TOOLS_HARDWARE_PARALLEL_TASKS_H_
 
 #include <cstddef>
 #include <functional>
 #include <string>
 
-namespace legacy_nx_tools {
+namespace volleyball::tools::hardware {
 
 using IndexedTask = std::function<void(std::size_t index)>;
 
@@ -20,6 +20,6 @@ using IndexedTask = std::function<void(std::size_t index)>;
     const IndexedTask& task,
     std::string& error_message);
 
-}  // namespace legacy_nx_tools
+}  // namespace volleyball::tools::hardware
 
-#endif  // VOLLEYBALL_LEGACY_NX_TOOLS_PARALLEL_TASKS_H_
+#endif  // VOLLEYBALL_TOOLS_HARDWARE_PARALLEL_TASKS_H_

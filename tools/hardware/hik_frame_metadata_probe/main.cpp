@@ -131,7 +131,8 @@ int main(int argc, char** argv) {
         hik_metadata_probe::FrameMeta left_meta;
         hik_metadata_probe::FrameMeta right_meta;
         std::string worker_error;
-        const bool workers_ok = legacy_nx_tools::runIndexedTasks(
+        const bool workers_ok =
+            volleyball::tools::hardware::runIndexedTasks(
             2,
             2,
             [&](std::size_t camera_index) {

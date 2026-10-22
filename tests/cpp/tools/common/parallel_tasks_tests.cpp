@@ -22,7 +22,7 @@ void testEveryIndexRunsOnce() {
     std::vector<std::atomic<int>> visits(257);
     for (auto& visit : visits) visit.store(0);
     std::string error;
-    check(legacy_nx_tools::runIndexedTasks(
+    check(volleyball::tools::hardware::runIndexedTasks(
               visits.size(),
               7,
               [&](std::size_t index) { visits[index].fetch_add(1); },
@@ -36,7 +36,7 @@ void testEveryIndexRunsOnce() {
 
 void testTaskExceptionIsContained() {
     std::string error;
-    check(!legacy_nx_tools::runIndexedTasks(
+    check(!volleyball::tools::hardware::runIndexedTasks(
               32,
               4,
               [](std::size_t index) {
@@ -50,13 +50,13 @@ void testTaskExceptionIsContained() {
 
 void testInvalidInvocationFailsClosed() {
     std::string error;
-    check(!legacy_nx_tools::runIndexedTasks(
+    check(!volleyball::tools::hardware::runIndexedTasks(
               1, 0, [](std::size_t) {}, error),
           "zero workers must be rejected");
-    check(!legacy_nx_tools::runIndexedTasks(
-              1, 1, legacy_nx_tools::IndexedTask{}, error),
+    check(!volleyball::tools::hardware::runIndexedTasks(
+              1, 1, volleyball::tools::hardware::IndexedTask{}, error),
           "empty task callback must be rejected");
-    check(legacy_nx_tools::runIndexedTasks(
+    check(volleyball::tools::hardware::runIndexedTasks(
               0, 1, [](std::size_t) {}, error),
           "empty work set must finish successfully");
 }

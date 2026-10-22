@@ -145,13 +145,13 @@ bool publishPair(
         return false;
     }
 
-    if (!legacy_nx_tools::publishFileNoReplace(
+    if (!volleyball::tools::hardware::publishFileNoReplace(
             partial_left, final_left, error_message)) {
         removeIfPresent(partial_left);
         removeIfPresent(partial_right);
         return false;
     }
-    if (!legacy_nx_tools::publishFileNoReplace(
+    if (!volleyball::tools::hardware::publishFileNoReplace(
             partial_right, final_right, error_message)) {
         std::string cleanup_error;
         removeIfPresent(final_left, &cleanup_error);

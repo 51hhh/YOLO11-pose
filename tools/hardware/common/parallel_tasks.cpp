@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace legacy_nx_tools {
+namespace volleyball::tools::hardware {
 
 bool runIndexedTasks(
     std::size_t item_count,
@@ -73,4 +73,4 @@ bool runIndexedTasks(
     return error_message.empty();
 }
 
-}  // namespace legacy_nx_tools
+}  // namespace volleyball::tools::hardware
