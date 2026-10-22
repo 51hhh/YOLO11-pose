@@ -20,8 +20,19 @@ int main() {
     VPIImagePlanePitchLinear plane{};
 
     stereo3d::setVpiPlaneData(plane, storage);
+    plane.width = 4;
+    plane.height = 3;
+    plane.pitchBytes = 8;
     check(stereo3d::vpiPlaneData(plane) == storage,
           "set/get must preserve the plane base address");
+    check(stereo3d::vpiPlaneCovers(plane, 4, 3, 8),
+          "valid extent must cover the requested image");
+    check(!stereo3d::vpiPlaneCovers(plane, 5, 3, 8),
+          "narrow planes must be rejected");
+    check(!stereo3d::vpiPlaneCovers(plane, 4, 4, 8),
+          "short planes must be rejected");
+    check(!stereo3d::vpiPlaneCovers(plane, 4, 3, 9),
+          "short pitches must be rejected");
 
 #if NV_VPI_VERSION_MAJOR >= 4
     plane.offsetBytes = 5;

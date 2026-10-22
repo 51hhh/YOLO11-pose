@@ -46,6 +46,20 @@ inline void setVpiPlaneData(VPIImagePlanePitchLinear& plane, void* data) {
 #endif
 }
 
+inline bool vpiPlaneCovers(const VPIImagePlanePitchLinear& plane,
+                           int minimum_width,
+                           int minimum_height,
+                           int minimum_row_bytes) {
+    if (minimum_width <= 0 || minimum_height <= 0 ||
+        minimum_row_bytes <= 0) {
+        return false;
+    }
+    return vpiPlaneData(plane) != nullptr &&
+           plane.width >= minimum_width &&
+           plane.height >= minimum_height &&
+           plane.pitchBytes >= minimum_row_bytes;
+}
+
 }  // namespace stereo3d
 
 #endif  // STEREO_3D_PIPELINE_VPI_PLANE_ACCESS_H_

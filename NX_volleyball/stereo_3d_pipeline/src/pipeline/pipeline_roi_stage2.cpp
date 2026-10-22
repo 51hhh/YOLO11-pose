@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cmath>
+#include <exception>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -496,7 +497,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     slot.p2_valid_direct_pair_count = p2_decision.valid_direct_pair_count;
     const FrameMetadata frame_metadata = makeFrameMetadata(slot);
     enqueueP2FeatureDiagnosticJobs(frame_metadata, p2_feature_jobs);
-    VPIImageData hostDataL, hostDataR;
+    VPIImageData hostDataL{}, hostDataR{};
     bool lockedL = false;
     bool lockedR = false;
     if (need_host_images) {
@@ -510,10 +511,21 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                              &hostDataR);
         lockedL = stL == VPI_SUCCESS;
         lockedR = stR == VPI_SUCCESS;
-        if (!lockedL || !lockedR) {
-            LOG_ERROR("[Pipeline] ROI host image lock failed: "
-                      "frame=%d left=%d right=%d",
-                      slot.frame_id, (int)stL, (int)stR);
+        const auto& plane_l = hostDataL.buffer.pitch.planes[0];
+        const auto& plane_r = hostDataR.buffer.pitch.planes[0];
+        const bool valid_l = lockedL &&
+            vpiPlaneCovers(plane_l, input.width, input.height, input.width);
+        const bool valid_r = lockedR &&
+            vpiPlaneCovers(plane_r, input.width, input.height, input.width);
+        if (!valid_l || !valid_r) {
+            LOG_ERROR("[Pipeline] ROI host image view failed: frame=%d "
+                      "left_status=%d left=%dx%d/%d "
+                      "right_status=%d right=%dx%d/%d expected=%dx%d",
+                      slot.frame_id,
+                      (int)stL, plane_l.width, plane_l.height,
+                      plane_l.pitchBytes,
+                      (int)stR, plane_r.width, plane_r.height,
+                      plane_r.pitchBytes, input.width, input.height);
             if (lockedL) {
                 const VPIStatus unlock = vpiImageUnlock(slot.rectGray_vpiL);
                 if (unlock != VPI_SUCCESS) {
@@ -544,9 +556,18 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     }
 
     RoiStage2Output output;
-    {
+    bool core_ok = true;
+    try {
         std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
         output = runRoiStage2Core(input);
+    } catch (const std::exception& error) {
+        LOG_ERROR("[Pipeline] ROI Stage2 failed: frame=%d error=%s",
+                  slot.frame_id, error.what());
+        core_ok = false;
+    } catch (...) {
+        LOG_ERROR("[Pipeline] ROI Stage2 failed: frame=%d unknown error",
+                  slot.frame_id);
+        core_ok = false;
     }
 
     bool unlock_ok = true;
@@ -568,7 +589,7 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             unlock_ok = false;
         }
     }
-    if (!unlock_ok) {
+    if (!core_ok || !unlock_ok) {
         slot.grab_failed = true;
         NVTX_RANGE_POP();
         return;

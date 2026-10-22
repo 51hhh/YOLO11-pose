@@ -277,12 +277,26 @@ void Pipeline::grabLoop() {
         GrabResult resL, resR;
         bool ok = false;
         if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
-            ok = camera_->grabFramePair(
-                vpiPlaneData(imgDataL.buffer.pitch.planes[0]),
-                vpiPlaneData(imgDataR.buffer.pitch.planes[0]),
-                imgDataL.buffer.pitch.planes[0].pitchBytes,
-                imgDataR.buffer.pitch.planes[0].pitchBytes,
-                1000, resL, resR);
+            const auto& plane_l = imgDataL.buffer.pitch.planes[0];
+            const auto& plane_r = imgDataR.buffer.pitch.planes[0];
+            const bool views_valid =
+                vpiPlaneCovers(plane_l, config_.camera.width,
+                               config_.camera.height, config_.camera.width) &&
+                vpiPlaneCovers(plane_r, config_.camera.width,
+                               config_.camera.height, config_.camera.width);
+            if (!views_valid) {
+                LOG_ERROR("[Pipeline] invalid async raw host view: "
+                          "L=%dx%d/%d R=%dx%d/%d expected=%dx%d",
+                          plane_l.width, plane_l.height, plane_l.pitchBytes,
+                          plane_r.width, plane_r.height, plane_r.pitchBytes,
+                          config_.camera.width, config_.camera.height);
+            } else {
+                ok = camera_->grabFramePair(
+                    vpiPlaneData(imgDataL.buffer.pitch.planes[0]),
+                    vpiPlaneData(imgDataR.buffer.pitch.planes[0]),
+                    plane_l.pitchBytes, plane_r.pitchBytes,
+                    1000, resL, resR);
+            }
             const uint64_t fallback_capture_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();

@@ -74,6 +74,8 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 
 异步抓帧是严格 single-flight 握手。`stop()` 只停止接受新请求，不把已经接受的请求伪装成“已完成”：grab 线程仍会完成当前 raw 写入、解除左右 host lock 并发布真实结果，`waitGrab()` 才能返回。若停止发生在新请求被接受前，该请求被拒绝且不会生成一个没有 payload 的虚假帧。这样 Stage 0、槽位排空和相机写线程不会同时访问同一 raw image。
 
+相机写入前不仅检查 VPI lock 状态，还验证左右 host plane 的地址、宽高和 pitch 至少覆盖配置的 Bayer 帧；lock 成功但 view 不完整仍是抓帧失败，不能调用 MVS SDK 写入未知容量的缓冲区。
+
 显示、实时诊断、基线片段、特征调试和 v2.1 采集需要把 VPI 图像复制到 CPU。它们统一经 `vpi_image_copy` 执行同步复制：VPI read lock 必须覆盖整个 OpenCV/CUDA copy，且无论尺寸校验、分配、拷贝还是解锁失败，输出 `cv::Mat` 都被清空并向调用方返回失败。诊断支路不能缓存 VPI 指针，也不能把半张图当成有效帧。
 
 当前投影中 C++ SOT tracker 为关闭，因此每帧都是 YOLO 检测帧。实时 profile 允许：
