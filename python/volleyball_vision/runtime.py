@@ -1,7 +1,4 @@
-"""实时 NX 管线的单一启动入口。
-
-主线配置始终先投影为一份可审计的旧 NX YAML，再启动适配器。
-"""
+"""实时 NX 管线的单一启动入口。"""
 
 from __future__ import annotations
 
@@ -13,7 +10,7 @@ import tempfile
 
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError
-from .legacy_config import write_legacy_pipeline_config
+from .pipeline_adapter import pipeline_command, write_pipeline_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,33 +39,13 @@ def _write_generated_config(
 ) -> Path:
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        return write_legacy_pipeline_config(
+        return write_pipeline_config(
             destination,
             config,
             project_root=root,
         )
     except OSError as error:
         raise DatasetError(f"无法写入生成配置 {destination}: {error}") from error
-
-
-def _command(
-    root: Path,
-    config: ResolvedConfig,
-    generated_config: Path,
-    *,
-    visualize: bool,
-) -> tuple[str, ...]:
-    executable = (
-        root / config.data["adapters"]["legacy_pipeline"]["executable"]
-    ).resolve()
-    command = (
-        str(executable),
-        "--config",
-        str(generated_config),
-    )
-    if visualize:
-        command += ("--visualize",)
-    return command
 
 
 def run_runtime(
@@ -85,13 +62,15 @@ def run_runtime(
     if generated_config is not None:
         output = Path(generated_config).resolve()
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, visualize=visualize)
+        command = pipeline_command(
+            root, config, written, visualize=visualize
+        )
         if dry_run:
             return RuntimeLaunchResult(command, written, True, None)
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
             raise DatasetError(
-                f"NX 实时管线退出码为 {completed.returncode}，"
+                f"NX 感知管线退出码为 {completed.returncode}，"
                 f"生成配置保留在 {written}"
             )
         return RuntimeLaunchResult(command, written, False, completed.returncode)
@@ -100,14 +79,18 @@ def run_runtime(
         directory = Path(tempfile.mkdtemp(prefix="volleyball-runtime-"))
         output = directory / f"{config.profile}-{config.fingerprint_sha256[:12]}.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, visualize=visualize)
+        command = pipeline_command(
+            root, config, written, visualize=visualize
+        )
         return RuntimeLaunchResult(command, written, True, None)
 
     with tempfile.TemporaryDirectory(prefix="volleyball-runtime-") as directory:
         output = Path(directory) / "pipeline.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written, visualize=visualize)
+        command = pipeline_command(
+            root, config, written, visualize=visualize
+        )
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
-            raise DatasetError(f"NX 实时管线退出码为 {completed.returncode}")
+            raise DatasetError(f"NX 感知管线退出码为 {completed.returncode}")
         return RuntimeLaunchResult(command, written, False, completed.returncode)

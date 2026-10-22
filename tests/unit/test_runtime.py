@@ -37,7 +37,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(destination.is_file())
             self.assertIn("DRY_RUN", output.getvalue())
 
-    def test_dry_run_writes_auditable_legacy_projection(self) -> None:
+    def test_dry_run_writes_auditable_mainline_projection(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "pipeline.yaml"
@@ -55,14 +55,24 @@ class RuntimeTests(unittest.TestCase):
             )
             rendered = yaml.safe_load(destination.read_text(encoding="utf-8"))
             self.assertNotIn("recording", rendered)
-            self.assertFalse(rendered["capture_v21"]["enabled"])
-            self.assertTrue(rendered["ros2"]["enable"])
+            self.assertEqual(rendered["runtime"]["mode"], "runtime")
+            self.assertIsNone(rendered["runtime"]["capture_stage"])
+            self.assertTrue(rendered["publisher"]["enabled"])
+            self.assertEqual(
+                Path(result.command[0]),
+                ROOT
+                / "build"
+                / "nx-mainline-release"
+                / "apps"
+                / "nx_mainline"
+                / "volleyball_nx_mainline",
+            )
 
-    def test_visualize_is_forwarded_through_unified_cli(self) -> None:
+    def test_mainline_rejects_legacy_only_visualization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "pipeline.yaml"
-            output = io.StringIO()
-            with redirect_stdout(output):
+            error = io.StringIO()
+            with redirect_stderr(error):
                 returncode = main(
                     (
                         "run",
@@ -74,8 +84,31 @@ class RuntimeTests(unittest.TestCase):
                         "--dry-run",
                     )
                 )
+            self.assertEqual(returncode, 2)
+            self.assertIn("原生 mainline 不提供 GUI", error.getvalue())
+
+    def test_legacy_visualize_remains_available_for_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "pipeline.yaml"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                returncode = main(
+                    (
+                        "run",
+                        "--profile",
+                        "nx-rdk",
+                        "--set",
+                        "adapters.active_pipeline=legacy",
+                        "--generated-config",
+                        str(destination),
+                        "--visualize",
+                        "--dry-run",
+                    )
+                )
             self.assertEqual(returncode, 0)
-            self.assertIn(f"--config {destination} --visualize", output.getvalue())
+            self.assertIn(
+                f"--config {destination} --visualize", output.getvalue()
+            )
 
     def test_generated_config_never_overwrites_existing_file(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
@@ -132,12 +165,14 @@ class RuntimeTests(unittest.TestCase):
                 (stages[0] / "pipeline.yaml").read_text(encoding="utf-8")
             )
             self.assertTrue(context["planning_only"])
+            self.assertEqual(context["stage_schema_version"], 6)
             self.assertIsNone(
                 context["perception_pipeline"]["weights_sha256"]
             )
-            self.assertTrue(rendered["capture_v21"]["enabled"])
-            self.assertFalse(rendered["performance"]["async_roi_stage2"])
-            self.assertFalse(rendered["performance"]["drop_stale_roi_frames"])
+            self.assertEqual(rendered["runtime"]["mode"], "capture")
+            self.assertEqual(rendered["runtime"]["frame_limit"], 270)
+            self.assertEqual(rendered["runtime"]["capture_stage"], str(stages[0]))
+            self.assertFalse(rendered["publisher"]["enabled"])
 
     def test_capture_rejects_non_capture_profile_before_writing_stage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

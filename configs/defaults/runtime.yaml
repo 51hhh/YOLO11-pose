@@ -68,7 +68,7 @@ calibration:
   world_frame: world
 
 adapters:
-  active_pipeline: legacy
+  active_pipeline: mainline
   mainline_pipeline:
     executable: build/nx-mainline-release/apps/nx_mainline/volleyball_nx_mainline
     source_epoch_file: /run/volleyball/nx_source_epoch

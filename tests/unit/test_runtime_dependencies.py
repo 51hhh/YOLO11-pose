@@ -59,6 +59,27 @@ class RuntimeDependencyTests(unittest.TestCase):
 
         self.assertTrue(all(probe.available for probe in probes))
 
+    def test_mainline_sdk_contract_excludes_vpi_and_legacy_plugins(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = (
+                "usr/include/aarch64-linux-gnu/NvInfer.h",
+                "usr/lib/aarch64-linux-gnu/libnvinfer.so",
+                "usr/include/opencv4/opencv2/core.hpp",
+                "usr/lib/aarch64-linux-gnu/libopencv_core.so",
+                "usr/lib/aarch64-linux-gnu/libopencv_calib3d.so",
+            )
+            for relative in files:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+            probes = probe_live_sdk_dependencies(root, pipeline="mainline")
+
+        by_name = {probe.name: probe for probe in probes}
+        self.assertEqual(set(by_name), {"tensorrt_sdk", "opencv_sdk"})
+        self.assertTrue(all(probe.available for probe in probes))
+
     def test_dynamic_linkage_rejects_unresolved_library(self) -> None:
         def runner(_command: object) -> tuple[int, str]:
             return 0, "libnvinfer.so.8 => not found\n"

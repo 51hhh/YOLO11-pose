@@ -26,6 +26,29 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BuildContractTests(unittest.TestCase):
+    def test_native_mainline_is_the_default_runtime_and_build_target(self) -> None:
+        presets = json.loads((ROOT / "CMakePresets.json").read_text(encoding="utf-8"))
+        nx_preset = next(
+            preset
+            for preset in presets["configurePresets"]
+            if preset["name"] == "nx-mainline-release"
+        )
+        runtime = yaml.safe_load(
+            (ROOT / "configs" / "defaults" / "runtime.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            nx_preset["cacheVariables"]["VOLLEYBALL_BUILD_NX_MAINLINE"],
+            "ON",
+        )
+        self.assertEqual(runtime["adapters"]["active_pipeline"], "mainline")
+        self.assertEqual(
+            runtime["adapters"]["mainline_pipeline"]["executable"],
+            "build/nx-mainline-release/apps/nx_mainline/volleyball_nx_mainline",
+        )
+
     def test_nx_preset_requires_hardware_dependencies(self) -> None:
         presets = json.loads((ROOT / "CMakePresets.json").read_text(encoding="utf-8"))
         nx_preset = next(

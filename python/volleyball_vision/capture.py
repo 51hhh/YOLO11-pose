@@ -1,4 +1,4 @@
-"""v2.1 实机采集编排与旧 NX 管线 staging 适配。"""
+"""v2.1 实机采集编排与 NX staging 适配。"""
 
 from __future__ import annotations
 
@@ -23,9 +23,15 @@ from .capture_stage_io import (
 )
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
-from .legacy_config import write_legacy_pipeline_config
+from .mainline_capture import build_mainline_capture_context
 from .mainline_stage_contract import MAINLINE_STAGE_SCHEMA_VERSION
 from .model_manifest import resolve_model, sha256_file
+from .pipeline_adapter import (
+    PIPELINE_MAINLINE,
+    active_pipeline,
+    pipeline_command,
+    write_pipeline_config,
+)
 from .timebase import (
     fit_affine_clock_mapping as _fit_clock_mapping,
     integer_midpoint_ns,
@@ -933,7 +939,12 @@ def run_capture(
     stage = Path(tempfile.mkdtemp(prefix=f"{trial_id}-", dir=staging_root))
     # mkdtemp 已创建目录，prepare 需要独占创建；只移除这个刚创建且已解析的叶目录。
     stage.rmdir()
-    context = build_capture_context(
+    context_builder = (
+        build_mainline_capture_context
+        if active_pipeline(config) == PIPELINE_MAINLINE
+        else build_capture_context
+    )
+    context = context_builder(
         config,
         trial_id=trial_id,
         session_id=session_id,
@@ -945,21 +956,22 @@ def run_capture(
     )
     prepare_capture_stage(stage, context)
     frame_limit = max(1, round(duration_s * config.data["runtime"]["nominal_fps"]))
-    legacy_config = write_legacy_pipeline_config(
+    generated_config = write_pipeline_config(
         stage / "pipeline.yaml",
         config,
         capture_stage=stage,
         frame_limit=frame_limit,
         project_root=root,
     )
-    executable = (root / config.data["adapters"]["legacy_pipeline"]["executable"]).resolve()
-    command = [str(executable), "--config", str(legacy_config)]
+    command = pipeline_command(root, config, generated_config)
     if dry_run:
         return stage
     try:
-        completed = subprocess.run(command, cwd=executable.parent, check=False)
+        completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
-            raise DatasetError(f"旧 NX 管线退出码为 {completed.returncode}，staging={stage}")
+            raise DatasetError(
+                f"NX 采集管线退出码为 {completed.returncode}，staging={stage}"
+            )
         published = finalize_capture_stage(stage, capture_root, config, project_root=root)
     except Exception:
         keep_stage = True

@@ -13,6 +13,11 @@ from typing import Callable, Iterable, Mapping
 from .calibration import load_opencv_stereo_calibration
 from .config import ResolvedConfig, find_project_root
 from .model_manifest import resolve_model, sha256_file
+from .pipeline_adapter import (
+    PIPELINE_LEGACY,
+    active_pipeline,
+    pipeline_executable,
+)
 from .runtime_dependencies import (
     DependencyProbe,
     probe_dynamic_linkage,
@@ -76,6 +81,7 @@ def _hardware_checks(
     machine: str,
     environment: Mapping[str, str],
     command_lookup: Callable[[str], str | None],
+    pipeline: str,
 ) -> list[DoctorCheck]:
     """检查启动硬件管线所需的主机事实，不枚举或改写相机。"""
 
@@ -180,7 +186,9 @@ def _hardware_checks(
 
     checks.extend(
         _dependency_check(probe)
-        for probe in probe_live_sdk_dependencies(system_root)
+        for probe in probe_live_sdk_dependencies(
+            system_root, pipeline=pipeline
+        )
     )
 
     if config.data["publisher"]["enabled"] and config.data["publisher"]["backend"] == "ros2":
@@ -220,12 +228,18 @@ def _backend_plan(config: ResolvedConfig) -> DoctorCheck:
     )
 
 
-def _expected_linked_libraries(config: ResolvedConfig) -> tuple[tuple[str, str], ...]:
+def _expected_linked_libraries(
+    config: ResolvedConfig,
+    pipeline: str,
+) -> tuple[tuple[str, str], ...]:
     expected: list[tuple[str, str]] = [
         ("MVS", "libMvCameraControl"),
-        ("VPI", "libnvvpi"),
         ("OpenCV", "libopencv_core"),
     ]
+    if pipeline == PIPELINE_LEGACY:
+        expected.append(("VPI", "libnvvpi"))
+    else:
+        expected.append(("OpenCV calib3d", "libopencv_calib3d"))
     if config.data["platform"]["accelerator"] in {"cuda", "cuda_dla"}:
         expected.append(("CUDA runtime", "libcudart"))
     if config.data["detector"]["backend"] == "tensorrt":
@@ -281,19 +295,32 @@ def run_doctor(
             else:
                 checks.append(DoctorCheck("model_sha256", "ok", actual))
 
-    adapter = config.data["adapters"]["legacy_pipeline"]
+    pipeline = active_pipeline(config)
     if mode == "replay":
-        checks.append(DoctorCheck("legacy_pipeline", "skipped", "确定性回放不启动硬件管线"))
+        checks.append(
+            DoctorCheck(
+                "pipeline_executable",
+                "skipped",
+                "确定性回放不启动硬件管线",
+            )
+        )
     else:
         checks.append(_backend_plan(config))
-        executable = (root / adapter["executable"]).resolve()
+        executable = pipeline_executable(root, config)
         executable_check = _check_path(
-            "legacy_pipeline",
+            "pipeline_executable",
             executable,
             executable=True,
         )
         checks.append(executable_check)
-        checks.append(_check_path("legacy_base_config", (root / adapter["base_config"]).resolve()))
+        if pipeline == PIPELINE_LEGACY:
+            adapter = config.data["adapters"]["legacy_pipeline"]
+            checks.append(
+                _check_path(
+                    "legacy_base_config",
+                    (root / adapter["base_config"]).resolve(),
+                )
+            )
         checks.extend(
             _hardware_checks(
                 config,
@@ -301,6 +328,7 @@ def run_doctor(
                 machine=machine or platform.machine(),
                 environment=environment if environment is not None else os.environ,
                 command_lookup=command_lookup,
+                pipeline=pipeline,
             )
         )
         if executable_check.status == "ok":
@@ -308,7 +336,7 @@ def run_doctor(
             if ldd is None:
                 checks.append(
                     DoctorCheck(
-                        "legacy_linkage",
+                        "pipeline_linkage",
                         "error",
                         "ldd 命令不可用，无法验证运行时动态库",
                     )
@@ -319,16 +347,17 @@ def run_doctor(
                         probe_dynamic_linkage(
                             executable,
                             ldd,
-                            _expected_linked_libraries(config),
+                            _expected_linked_libraries(config, pipeline),
+                            probe_name="pipeline_linkage",
                         )
                     )
                 )
         else:
             checks.append(
                 DoctorCheck(
-                    "legacy_linkage",
+                    "pipeline_linkage",
                     "skipped",
-                    "旧 NX 可执行文件不可用，无法检查动态链接",
+                    "所选 NX 可执行文件不可用，无法检查动态链接",
                 )
             )
 

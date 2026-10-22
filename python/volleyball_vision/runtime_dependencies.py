@@ -110,6 +110,48 @@ _LIVE_SDK_REQUIREMENTS = (
     ),
 )
 
+_MAINLINE_SDK_REQUIREMENTS = (
+    _SdkRequirement(
+        name="tensorrt_sdk",
+        headers=(
+            "/usr/include/aarch64-linux-gnu/NvInfer.h",
+            "/usr/include/x86_64-linux-gnu/NvInfer.h",
+            "/usr/include/NvInfer.h",
+            "/usr/local/include/NvInfer.h",
+        ),
+        libraries=(
+            (
+                "nvinfer",
+                (
+                    "/usr/lib/aarch64-linux-gnu/libnvinfer.so*",
+                    "/usr/lib/x86_64-linux-gnu/libnvinfer.so*",
+                    "/usr/lib/libnvinfer.so*",
+                    "/usr/local/lib/libnvinfer.so*",
+                ),
+            ),
+        ),
+    ),
+    _SdkRequirement(
+        name="opencv_sdk",
+        headers=(
+            "/usr/include/opencv4/opencv2/core.hpp",
+            "/usr/local/include/opencv4/opencv2/core.hpp",
+        ),
+        libraries=tuple(
+            (
+                component,
+                (
+                    f"/usr/lib/aarch64-linux-gnu/libopencv_{component}.so*",
+                    f"/usr/lib/x86_64-linux-gnu/libopencv_{component}.so*",
+                    f"/usr/lib/libopencv_{component}.so*",
+                    f"/usr/local/lib/libopencv_{component}.so*",
+                ),
+            )
+            for component in ("core", "calib3d")
+        ),
+    ),
+)
+
 
 def _system_path(system_root: Path, absolute_path: str) -> Path:
     path = Path(absolute_path)
@@ -136,12 +178,22 @@ def _first_existing(system_root: Path, patterns: Iterable[str]) -> Path | None:
     return None
 
 
-def probe_live_sdk_dependencies(system_root: str | Path) -> tuple[DependencyProbe, ...]:
-    """检查旧 NX 管线 CMake 中的强制 SDK 组件。"""
+def probe_live_sdk_dependencies(
+    system_root: str | Path,
+    *,
+    pipeline: str = "legacy",
+) -> tuple[DependencyProbe, ...]:
+    """检查所选 NX 管线构建和运行真正需要的 SDK 组件。"""
 
     root = Path(system_root).resolve()
+    if pipeline == "legacy":
+        requirements = _LIVE_SDK_REQUIREMENTS
+    elif pipeline == "mainline":
+        requirements = _MAINLINE_SDK_REQUIREMENTS
+    else:
+        raise ValueError(f"不支持的 NX pipeline: {pipeline}")
     probes: list[DependencyProbe] = []
-    for requirement in _LIVE_SDK_REQUIREMENTS:
+    for requirement in requirements:
         header = _first_existing(root, requirement.headers)
         libraries = {
             component: _first_existing(root, patterns)
@@ -201,6 +253,7 @@ def probe_dynamic_linkage(
     expected_libraries: Iterable[tuple[str, str]],
     *,
     command_runner: CommandRunner = _run_command,
+    probe_name: str = "legacy_linkage",
 ) -> DependencyProbe:
     """用 ldd 证明二进制没有缺库，且确实链接 profile 所需框架。"""
 
@@ -208,7 +261,7 @@ def probe_dynamic_linkage(
     returncode, output = command_runner(command)
     if returncode != 0:
         detail = output.strip() or f"ldd 返回 {returncode}"
-        return DependencyProbe("legacy_linkage", False, detail)
+        return DependencyProbe(probe_name, False, detail)
 
     unresolved = sorted(
         set(
@@ -221,7 +274,7 @@ def probe_dynamic_linkage(
     )
     if unresolved:
         return DependencyProbe(
-            "legacy_linkage",
+            probe_name,
             False,
             "动态库未解析: " + ", ".join(unresolved),
         )
@@ -233,14 +286,14 @@ def probe_dynamic_linkage(
     ]
     if absent:
         return DependencyProbe(
-            "legacy_linkage",
+            probe_name,
             False,
             "二进制未链接 profile 必需框架: " + ", ".join(absent),
         )
 
     resolved_lines = sum(bool(line.strip()) for line in output.splitlines())
     return DependencyProbe(
-        "legacy_linkage",
+        probe_name,
         True,
         f"动态依赖全部解析，已核对 {resolved_lines} 行",
     )

@@ -25,7 +25,7 @@ class DoctorTests(unittest.TestCase):
             )
         by_name = {check.name: check for check in checks}
         self.assertEqual(by_name["model"].status, "skipped")
-        self.assertEqual(by_name["legacy_pipeline"].status, "skipped")
+        self.assertEqual(by_name["pipeline_executable"].status, "skipped")
         self.assertNotIn("gpio_device", by_name)
         self.assertNotIn("hik_mvs_runtime", by_name)
         self.assertNotIn("cuda_runtime", by_name)
@@ -53,14 +53,33 @@ class DoctorTests(unittest.TestCase):
             "hik_mvs_runtime",
             "cuda_runtime",
             "tensorrt_sdk",
-            "vpi_sdk",
             "opencv_sdk",
             "ros2_environment",
         ):
             with self.subTest(name=name):
                 self.assertEqual(by_name[name].status, "error")
+        self.assertNotIn("vpi_sdk", by_name)
         self.assertEqual(by_name["pipeline_backend_config"].status, "ok")
-        self.assertEqual(by_name["legacy_linkage"].status, "skipped")
+        self.assertEqual(by_name["pipeline_linkage"].status, "skipped")
+
+    def test_legacy_profile_still_requires_vpi_for_regression(self) -> None:
+        profile = load_profile(
+            "nx-rdk",
+            overrides=("adapters.active_pipeline=legacy",),
+            project_root=ROOT,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            checks = run_doctor(
+                profile,
+                project_root=ROOT,
+                system_root=directory,
+                machine="aarch64",
+                environment={},
+                command_lookup=lambda _command: None,
+            )
+        by_name = {check.name: check for check in checks}
+        self.assertEqual(by_name["vpi_sdk"].status, "error")
+        self.assertIn("legacy_base_config", by_name)
 
     def test_free_flight_does_not_require_ros2_shell(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)
