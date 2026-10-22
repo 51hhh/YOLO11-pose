@@ -64,7 +64,7 @@ python3 tools/check_repository.py
 | `tests/support/` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
-| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试 |
+| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试；`tools/` 镜像实机工具目录 |
 | `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
 | `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
 

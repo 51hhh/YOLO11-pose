@@ -48,6 +48,12 @@ ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_TEST_ROOT_FILES = {
     "tests/__init__.py",
 }
+ALLOWED_TEST_GROUPS = {
+    "contract",
+    "cpp",
+    "support",
+    "unit",
+}
 ALLOWED_HARDWARE_TOOL_FILES = {
     "adapters/legacy_nx/tools/CMakeLists.txt",
     "adapters/legacy_nx/tools/common/atomic_file.cpp",
@@ -84,6 +90,12 @@ ALLOWED_LEGACY_TEST_GROUPS = {
     "ros",
     "stereo",
     "tools",
+}
+ALLOWED_LEGACY_TOOL_TEST_GROUPS = {
+    "capture_chessboard",
+    "common",
+    "hik_frame_metadata_probe",
+    "stereo_calibrate",
 }
 
 PURE_CPP_LAYERS = (
@@ -398,6 +410,43 @@ def main() -> int:
         errors.append(
             "tests 根目录只保留包入口，公共夹具进入 tests/support/:\n    "
             + "\n    ".join(unexpected_test_root_files)
+        )
+
+    unexpected_test_groups = sorted(
+        path for path in tracked
+        if path.startswith("tests/")
+        and len(Path(path).relative_to("tests").parts) > 1
+        and Path(path).relative_to("tests").parts[0]
+        not in ALLOWED_TEST_GROUPS
+    )
+    if unexpected_test_groups:
+        errors.append(
+            "tests 只能进入 unit、contract、support 或 cpp 职责目录:\n    "
+            + "\n    ".join(unexpected_test_groups)
+        )
+
+    flat_legacy_tool_tests = sorted(
+        path for path in tracked
+        if Path(path).parent == Path("tests/cpp/legacy_nx/tools")
+        and Path(path).suffix in {".cc", ".cpp", ".cxx"}
+    )
+    if flat_legacy_tool_tests:
+        errors.append(
+            "旧 NX 工具测试必须镜像被测工具目录:\n    "
+            + "\n    ".join(flat_legacy_tool_tests)
+        )
+
+    unexpected_legacy_tool_test_groups = sorted(
+        path for path in tracked
+        if path.startswith("tests/cpp/legacy_nx/tools/")
+        and len(Path(path).relative_to("tests/cpp/legacy_nx/tools").parts) > 1
+        and Path(path).relative_to("tests/cpp/legacy_nx/tools").parts[0]
+        not in ALLOWED_LEGACY_TOOL_TEST_GROUPS
+    )
+    if unexpected_legacy_tool_test_groups:
+        errors.append(
+            "旧 NX 工具测试只能进入已声明的工具目录:\n    "
+            + "\n    ".join(unexpected_legacy_tool_test_groups)
         )
 
     coupled_test_modules: list[str] = []
