@@ -83,12 +83,18 @@ ALLOWED_TEST_GROUPS = {
     "support",
     "unit",
 }
+ALLOWED_CPP_TEST_GROUPS = {
+    "adapters",
+    "fakes",
+    "hardware_tools",
+    "legacy_nx",
+    "mainline",
+}
 ALLOWED_LEGACY_CONFIG_FILES = {
     "adapters/legacy_nx/config/base_pipeline.yaml",
 }
 ALLOWED_LEGACY_TEST_GROUPS = {
     "capture",
-    "detect",
     "fakes",
     "fusion",
     "pipeline",
@@ -332,8 +338,22 @@ def main() -> int:
     )
     if flat_cpp_tests:
         errors.append(
-            "C++ 测试必须归入 mainline 或 legacy_nx:\n    "
+            "C++ 测试必须归入已声明的职责目录:\n    "
             + "\n    ".join(flat_cpp_tests)
+        )
+
+    unexpected_cpp_test_groups = sorted(
+        path for path in tracked
+        if path.startswith("tests/cpp/")
+        and len(Path(path).relative_to("tests/cpp").parts) > 1
+        and Path(path).relative_to("tests/cpp").parts[0]
+        not in ALLOWED_CPP_TEST_GROUPS
+    )
+    if unexpected_cpp_test_groups:
+        errors.append(
+            "C++ 测试只能进入 mainline、adapters、hardware_tools、"
+            "legacy_nx 或 fakes:\n    "
+            + "\n    ".join(unexpected_cpp_test_groups)
         )
 
     misplaced_adapter_tests: list[str] = []
