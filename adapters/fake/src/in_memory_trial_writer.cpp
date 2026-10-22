@@ -20,8 +20,26 @@ ports::WriteResult InMemoryTrialWriter::appendValidated(
 }
 
 ports::WriteResult InMemoryTrialWriter::append(
-    const core::CameraFrameRecord& record) {
-    return appendValidated(record, frames_);
+    const ports::StereoFrame& frame) {
+    if (finalized_ || !abort_reason_.empty()) {
+        return {ports::WriteStatus::failed, "writer is no longer open"};
+    }
+    const auto left = core::validate(frame.left.metadata);
+    const auto right = core::validate(frame.right.metadata);
+    if (!left || !right) {
+        return {
+            ports::WriteStatus::failed,
+            !left ? left.message : right.message,
+        };
+    }
+    if (frame.left.metadata.role != core::CameraRole::left ||
+        frame.right.metadata.role != core::CameraRole::right ||
+        frame.left.metadata.camera_id == frame.right.metadata.camera_id ||
+        frame.left.metadata.frame_index != frame.right.metadata.frame_index) {
+        return {ports::WriteStatus::failed, "invalid stereo frame identity"};
+    }
+    frames_.push_back(frame);
+    return {ports::WriteStatus::accepted, {}};
 }
 
 ports::WriteResult InMemoryTrialWriter::append(

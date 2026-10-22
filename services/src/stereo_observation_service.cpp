@@ -219,8 +219,7 @@ StereoProcessResult StereoObservationService::process(
     }
 
     std::string error;
-    if (!writeAccepted(writer_.append(frame.left.metadata), error) ||
-        !writeAccepted(writer_.append(frame.right.metadata), error)) {
+    if (!writeAccepted(writer_.append(frame), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
 

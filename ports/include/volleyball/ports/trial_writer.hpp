@@ -1,6 +1,7 @@
 #pragma once
 
 #include "volleyball/core/observation.hpp"
+#include "volleyball/ports/camera_source.hpp"
 
 #include <string>
 
@@ -19,8 +20,9 @@ struct WriteResult {
 class TrialWriter {
 public:
     virtual ~TrialWriter() = default;
-    [[nodiscard]] virtual WriteResult append(
-        const volleyball::core::CameraFrameRecord& record) = 0;
+    // 左右帧必须作为一个不可分割的采集事实交给写入器。这样生产实现既能
+    // 保存图像所有权，也不会在第二侧失败时留下半个双目帧。
+    [[nodiscard]] virtual WriteResult append(const StereoFrame& frame) = 0;
     [[nodiscard]] virtual WriteResult append(
         const volleyball::core::Detection2D& record) = 0;
     [[nodiscard]] virtual WriteResult append(

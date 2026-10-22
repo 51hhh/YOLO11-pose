@@ -241,14 +241,29 @@ void testDetectionValidation() {
 
 void testWriterSeparatesRawAndDerivedTypes() {
     fake::InMemoryTrialWriter writer;
-    const auto result = writer.append(validFrame());
-    check(result.status == ports::WriteStatus::accepted, "writer must accept valid frame");
-    check(writer.frames().size() == 1, "writer must retain accepted frame");
+    ports::StereoFrame frame;
+    frame.left.metadata = validFrame();
+    frame.right.metadata = validFrame();
+    frame.right.metadata.camera_id = core::CameraId{"right-serial"};
+    frame.right.metadata.role = core::CameraRole::right;
+    frame.right.metadata.hardware_timestamp.clock_domain =
+        core::ClockDomainId{"right-device-clock"};
+    const auto result = writer.append(frame);
+    check(result.status == ports::WriteStatus::accepted,
+          "writer must accept a valid stereo frame transaction");
+    check(writer.frames().size() == 1,
+          "writer must retain one complete stereo frame transaction");
+    auto invalid = frame;
+    invalid.right.metadata.camera_id = invalid.left.metadata.camera_id;
+    check(
+        writer.append(invalid).status == ports::WriteStatus::failed &&
+            writer.frames().size() == 1,
+        "invalid right metadata must not leave a half-written stereo frame");
     check(
         writer.finalize().status == ports::WriteStatus::accepted,
         "writer must finalize once");
     check(
-        writer.append(validFrame()).status == ports::WriteStatus::failed,
+        writer.append(frame).status == ports::WriteStatus::failed,
         "finalized writer must reject further records");
 }
 

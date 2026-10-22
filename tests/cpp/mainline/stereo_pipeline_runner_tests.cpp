@@ -61,7 +61,7 @@ ports::SourceResult timeoutResult() {
 class FinalizeFailingWriter final : public ports::TrialWriter {
 public:
     [[nodiscard]] ports::WriteResult append(
-        const core::CameraFrameRecord&) override {
+        const ports::StereoFrame&) override {
         return accepted();
     }
     [[nodiscard]] ports::WriteResult append(

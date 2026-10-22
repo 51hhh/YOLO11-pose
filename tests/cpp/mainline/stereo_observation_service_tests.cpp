@@ -56,7 +56,8 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "valid pair must produce an observation");
     check(result.associations.size() == 4,
           "every left/right candidate combination must be retained");
-    check(writer.frames().size() == 2, "both camera facts must be written");
+    check(writer.frames().size() == 1,
+          "both camera facts must be written as one stereo transaction");
     check(writer.detections().size() == 4, "all detector candidates must be written");
     check(
         std::count_if(

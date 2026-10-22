@@ -11,7 +11,7 @@ namespace volleyball::adapters::fake {
 class InMemoryTrialWriter final : public ports::TrialWriter {
 public:
     [[nodiscard]] ports::WriteResult append(
-        const core::CameraFrameRecord& record) override;
+        const ports::StereoFrame& frame) override;
     [[nodiscard]] ports::WriteResult append(
         const core::Detection2D& record) override;
     [[nodiscard]] ports::WriteResult append(
@@ -34,7 +34,7 @@ private:
         const Record& record,
         std::vector<Record>& destination);
 
-    std::vector<core::CameraFrameRecord> frames_;
+    std::vector<ports::StereoFrame> frames_;
     std::vector<core::Detection2D> detections_;
     std::vector<core::StereoAssociationAttempt> associations_;
     std::vector<core::TriangulatedObservation> observations_;
