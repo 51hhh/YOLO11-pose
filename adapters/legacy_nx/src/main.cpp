@@ -6,7 +6,6 @@
  */
 
 #include "pipeline/pipeline.h"
-#include "fusion/trajectory_predictor.h"
 #include "volleyball/logging/log.hpp"
 #include "diagnostics/realtime_debug_dump.h"
 #include "main_cli_options.h"
@@ -25,12 +24,10 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <algorithm>
 
 #ifdef HAS_ROS2
 #include "ros/nx_ball_observation_publisher.h"
 #include <rclcpp/rclcpp.hpp>
-#include "ros/goal_pose_bridge.h"
 #include "ros/diagnostic_publisher.h"
 #endif
 
@@ -86,11 +83,9 @@ int main(int argc, char* argv[]) {
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
 
-    // 初始化可选落点预测、正式 v2.1 采集和诊断输出。
-    stereo3d::TrajectoryPredictor predictor;
+    // 初始化正式 v2.1 采集和诊断输出。
     stereo3d::CaptureV21StageRecorder capture_v21_recorder;
     RealtimeDebugDumper realtime_debug_dumper;
-    bool nx_prediction_enabled = false;
     const auto capture_v21_cfg = loadCaptureV21StageRecorderConfig(config_path);
     if (!capture_v21_cfg.valid) {
         LOG_ERROR("Capture v2.1 configuration is invalid");
@@ -99,13 +94,6 @@ int main(int argc, char* argv[]) {
     if (!capture_v21_recorder.init(capture_v21_cfg)) {
         LOG_ERROR("Capture v2.1 staging recorder initialization failed");
         return 1;
-    }
-    const auto predictor_cfg = loadPredictorConfig(config_path);
-    nx_prediction_enabled = predictor_cfg.enabled;
-    if (nx_prediction_enabled) {
-        predictor.init(predictor_cfg);
-    } else {
-        LOG_INFO("NX landing predictor disabled; RDK owns ballistic prediction");
     }
     realtime_debug_dumper.init(realtime_dump_cfg);
 
@@ -119,14 +107,13 @@ int main(int argc, char* argv[]) {
     // === ROS2 Bridge 初始化 ===
 #ifdef HAS_ROS2
     std::shared_ptr<rclcpp::Node> ros2_node;
-    std::unique_ptr<stereo3d::GoalPoseBridge> ros2_bridge;
     std::unique_ptr<stereo3d::DiagnosticPublisher> ros2_diag;
     std::unique_ptr<stereo3d::NxBallObservationPublisher> nx_observation_pub;
     std::thread ros2_spin_thread;
-    stereo3d::Ros2BridgeConfig ros2_cfg{};
+    stereo3d::NxObservationRos2Config ros2_cfg{};
 
     try {
-        ros2_cfg = loadRos2Config(config_path);
+        ros2_cfg = loadNxObservationRos2Config(config_path);
     } catch (const std::exception& e) {
         LOG_WARN("ROS2 config load failed: %s, bridge disabled", e.what());
         ros2_cfg.enabled = false;
@@ -134,7 +121,6 @@ int main(int argc, char* argv[]) {
     if (ros2_cfg.enabled) {
         rclcpp::init(argc, argv);
         ros2_node = std::make_shared<rclcpp::Node>("stereo_3d_pipeline");
-        ros2_bridge = std::make_unique<stereo3d::GoalPoseBridge>(ros2_node, ros2_cfg);
         if (ros2_cfg.nx_observation_enabled) {
             nx_observation_pub = std::make_unique<stereo3d::NxBallObservationPublisher>(
                 ros2_node,
@@ -167,7 +153,8 @@ int main(int argc, char* argv[]) {
         ros2_spin_thread = std::thread([&ros2_node]() {
             rclcpp::spin(ros2_node);
         });
-        LOG_INFO("ROS2 bridge enabled: %s (diag=%d)", ros2_cfg.topic_realtime.c_str(), diag_cfg.enabled);
+        LOG_INFO("ROS2 direct observation publisher enabled: %s (diag=%d)",
+                 ros2_cfg.nx_observation_topic.c_str(), diag_cfg.enabled);
     }
 #endif
 
@@ -186,112 +173,14 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // 预测帧间隔 (dt) 需要实测, 这里用 FPS 倒数
-    std::chrono::steady_clock::time_point last_result_time{};
-    std::mutex pred_mutex;
-    std::vector<stereo3d::LandingPrediction> latest_preds;
-
     pipeline.setResultCallback(
         [&](int frame_id,
             const std::vector<stereo3d::Object3D>& results,
             const stereo3d::FrameMetadata& metadata) {
-            // 计算 dt
-            auto now = std::chrono::steady_clock::now();
-            double dt = 0.01; // 默认 100fps
-            if (last_result_time.time_since_epoch().count() > 0) {
-                dt = std::chrono::duration<double>(now - last_result_time).count();
-                dt = std::clamp(dt, 0.001, 0.1);
-            }
-            last_result_time = now;
-
-            // 预测落点
-            auto preds = nx_prediction_enabled
-                ? predictor.update(results, dt)
-                : std::vector<stereo3d::LandingPrediction>{};
-
-            // ROS2 发布并把实时控制门控审计结果写回 preds。
+            // NX 只发布直接观测；滤波、轨迹预测和控制由 RDK 负责。
 #ifdef HAS_ROS2
             if (nx_observation_pub) nx_observation_pub->publish(frame_id, results, metadata);
-            if (ros2_bridge && ros2_bridge->enabled()) {
-                auto stamp = ros2_node->get_clock()->now();
-                for (size_t i = 0; i < results.size(); ++i) {
-                    const auto& obj = results[i];
-                    auto wpt = ros2_bridge->transformVisionToWorld(obj.x, obj.z);
-                    ros2_bridge->publishRealtimeWorld(wpt.x, wpt.y, -obj.y, stamp);
-                    double bx, by;
-                    if (ros2_bridge->tryWorldToBase(wpt.x, wpt.y, bx, by)) {
-                        ros2_bridge->publishRealtimeBase(bx, by, -obj.y, stamp);
-                    }
-                }
-                // 从所有有效候选中优先选择 Student-t EKF 且置信度最高的
-                // track，避免按检测数组顺序把低质量 fallback 送入控制门控。
-                size_t best_pred = preds.size();
-                double best_score = -1.0;
-                for (size_t i = 0; i < preds.size(); ++i) {
-                    if (!preds[i].valid || i >= results.size()) continue;
-                    const bool method_ok = preds[i].method == 0 ||
-                        (preds[i].method == 1 && ros2_cfg.control_allow_polynomial);
-                    const bool obs_ok = preds[i].obs_source >= 0 &&
-                        (preds[i].obs_source < 3 ||
-                         ros2_cfg.control_allow_fallback_observation);
-                    const bool quality_hint = method_ok && obs_ok &&
-                        preds[i].confidence >= ros2_cfg.control_min_confidence &&
-                        preds[i].time_to_land >= ros2_cfg.control_min_time_to_land_s &&
-                        preds[i].time_to_land <= ros2_cfg.control_max_time_to_land_s &&
-                        preds[i].speed_mps >= ros2_cfg.control_min_speed_mps &&
-                        preds[i].student_w >= ros2_cfg.control_min_student_w &&
-                        std::fabs(preds[i].x) <= ros2_cfg.control_max_abs_x_m &&
-                        preds[i].y > ros2_cfg.control_min_depth_m &&
-                        preds[i].y <= ros2_cfg.control_max_depth_m;
-                    const double score = preds[i].confidence +
-                        (quality_hint ? 4.0 : 0.0) +
-                        (preds[i].method == 0 ? 2.0 : 0.0) +
-                        (preds[i].obs_source >= 0 && preds[i].obs_source < 3 ? 0.5 : 0.0) +
-                        0.1 * std::clamp(static_cast<double>(preds[i].student_w), 0.0, 1.0);
-                    if (score > best_score) {
-                        best_score = score;
-                        best_pred = i;
-                    }
-                }
-                if (best_pred < preds.size()) {
-                    const size_t i = best_pred;
-                    auto wl = ros2_bridge->transformVisionToWorld(preds[i].x, preds[i].y);
-                    ros2_bridge->publishLandingWorld(wl.x, wl.y, stamp);
-                    double bx, by;
-                    if (ros2_bridge->tryWorldToBase(wl.x, wl.y, bx, by)) {
-                        ros2_bridge->publishLandingBase(bx, by, stamp);
-                    }
-                    // 控制目标与 RViz 落点分离：仅在预测质量、范围、
-                    // 坐标变换和 odom 全部有效时，才发布 debug gate topic。
-                    stereo3d::ControlGoalGateResult gate_result;
-                    const bool gate_passed = ros2_bridge->tryPublishControlGoalFromVision(
-                        preds[i].x, preds[i].y,
-                        results[i].track_id,
-                        preds[i].confidence,
-                        preds[i].time_to_land,
-                        preds[i].speed_mps,
-                        preds[i].method,
-                        preds[i].student_w,
-                        preds[i].obs_source,
-                        stamp,
-                        &gate_result);
-                    preds[i].control_gate_selected = 1;
-                    preds[i].control_gate_passed = gate_passed ? 1 : 0;
-                    preds[i].control_gate_reason =
-                        static_cast<int>(gate_result.reason);
-                    preds[i].control_gate_stable_frames = gate_result.stable_frames;
-                    if (gate_passed) {
-                        preds[i].control_base_x = static_cast<float>(gate_result.base_x);
-                        preds[i].control_base_y = static_cast<float>(gate_result.base_y);
-                    }
-                }
-            }
 #endif
-
-            {
-                std::lock_guard<std::mutex> lock(pred_mutex);
-                latest_preds = preds;
-            }
 
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;
@@ -300,19 +189,11 @@ int main(int argc, char* argv[]) {
                 float speed = std::sqrt(obj.vx*obj.vx + obj.vy*obj.vy + obj.vz*obj.vz);
                 const char* method_str = obj.depth_method == 0 ? "M" :
                                          obj.depth_method == 1 ? "S" : "F";
-                if (i < preds.size() && preds[i].valid) {
-                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m [%s zm=%.2f zs=%.2f] |v|=%.1fm/s → land(%.2f,%.2f) in %.2fs",
-                             frame_id, obj.track_id,
-                             obj.x, obj.y, obj.z, method_str,
-                             obj.z_mono, obj.z_stereo, speed,
-                             preds[i].x, preds[i].y, preds[i].time_to_land);
-                } else {
-                    LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m [%s zm=%.2f zs=%.2f] |v|=%.1fm/s conf=%.2f",
-                             frame_id, obj.track_id,
-                             obj.x, obj.y, obj.z, method_str,
-                             obj.z_mono, obj.z_stereo, speed,
-                             obj.confidence);
-                }
+                LOG_INFO("[Frame %d] T%d: (%.2f,%.2f,%.2f)m [%s zm=%.2f zs=%.2f] |v|=%.1fm/s conf=%.2f",
+                         frame_id, obj.track_id,
+                         obj.x, obj.y, obj.z, method_str,
+                         obj.z_mono, obj.z_stereo, speed,
+                         obj.confidence);
             }
         });
 
@@ -362,10 +243,6 @@ int main(int argc, char* argv[]) {
                 display_job.frame_id = frame_data.frame_id;
                 display_job.rec_frames =
                     capture_v21_recorder.capturedFrames();
-                {
-                    std::lock_guard<std::mutex> plock(pred_mutex);
-                    display_job.preds = latest_preds;
-                }
                 display_job_ready = true;
             });
     }

@@ -88,7 +88,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         rendered = build_legacy_pipeline_config(profile, project_root=ROOT)
         self.assertNotIn("recording", rendered)
         self.assertNotIn("baseline_recording", rendered)
-        self.assertFalse(rendered["prediction"]["enable"])
+        self.assertNotIn("prediction", rendered)
         self.assertTrue(rendered["ros2"]["enable"])
         self.assertTrue(rendered["ros2"]["nx_observation"]["enable"])
         self.assertEqual(
@@ -99,7 +99,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
             rendered["ros2"]["nx_observation"]["frame_id"],
             "nx_left_rectified_optical_frame",
         )
-        self.assertFalse(rendered["ros2"]["control_goal"]["enable"])
+        self.assertNotIn("control_goal", rendered["ros2"])
         self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
         self.assertEqual(rendered["performance"]["log_interval"], 900)

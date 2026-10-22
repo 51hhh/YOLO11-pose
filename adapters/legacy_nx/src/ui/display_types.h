@@ -22,7 +22,6 @@ struct DisplayJob {
     cv::Mat frame;
     std::vector<stereo3d::Detection> detections;
     std::vector<stereo3d::Object3D> results;
-    std::vector<stereo3d::LandingPrediction> preds;
     float fps = 0.0f;
     int frame_id = 0;
     int rec_frames = 0;

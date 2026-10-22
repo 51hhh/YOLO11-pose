@@ -9,9 +9,6 @@
 #include "volleyball/adapters/hik_mvs/hikvision_camera.hpp"
 #include "../fusion/hybrid_depth.h"
 #include "../stereo/neural_feature_config.h"
-#ifdef HAS_ROS2
-#include "../ros/ros2_bridge_config.h"
-#endif
 
 #include <string>
 

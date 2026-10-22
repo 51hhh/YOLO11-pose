@@ -104,7 +104,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 
 ## 回调有效期
 
-`ResultCallback` 接收值语义元数据和结果引用，用于 ROS2、预测器或轻量观测消费。`FrameCallbackData` 中的 VPIImage 句柄和 vector 引用只在同步回调期间有效：
+`ResultCallback` 接收值语义元数据和结果引用，用于 ROS2 直接观测发布或轻量诊断消费。`FrameCallbackData` 中的 VPIImage 句柄和 vector 引用只在同步回调期间有效：
 
 - 需要跨线程保存时，必须在回调内复制；
 - 显示线程只能接收复制后的 `cv::Mat` 和值类型结果；

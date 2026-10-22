@@ -160,10 +160,6 @@ def build_legacy_pipeline_config(
         }
     )
     result.setdefault("capture_v21", {})["enabled"] = False
-    prediction = config.data["prediction"]
-    result.setdefault("prediction", {})["enable"] = bool(
-        prediction["enabled"] and prediction["owner"] == "nx"
-    )
     publisher = config.data["publisher"]
     ros2 = result.setdefault("ros2", {})
     ros2["enable"] = bool(
@@ -173,9 +169,6 @@ def build_legacy_pipeline_config(
     nx_observation["enable"] = ros2["enable"]
     nx_observation["topic"] = publisher["topic"]
     nx_observation["frame_id"] = publisher["frame_id"]
-    ros2.setdefault("control_goal", {})["enable"] = bool(
-        ros2["enable"] and publisher["control_goal_enabled"]
-    )
     diagnostics = config.data["diagnostics"]
     result["performance"]["log_interval"] = diagnostics[
         "metrics_interval_frames"
@@ -190,10 +183,8 @@ def build_legacy_pipeline_config(
         # 采集模式禁用会丢旧帧的异步路径和所有非契约诊断输出。
         result["performance"]["drop_stale_roi_frames"] = False
         result["performance"]["async_roi_stage2"] = False
-        result.setdefault("prediction", {})["enable"] = False
         result.setdefault("ros2", {})["enable"] = False
         result["ros2"]["nx_observation"]["enable"] = False
-        result["ros2"]["control_goal"]["enable"] = False
         result["ros2"]["diagnostic"]["enable"] = False
         result["debug_realtime_dump"]["enabled"] = False
         result["capture_v21"] = {

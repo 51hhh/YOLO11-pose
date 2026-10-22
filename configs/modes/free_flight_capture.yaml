@@ -9,11 +9,6 @@ tracking:
   filter: kalman_ca
   publish_filtered_as_measurement: false
 
-prediction:
-  enabled: false
-  owner: offline
-  model: none
-
 recording:
   enabled: true
   dataset_root: data/captures

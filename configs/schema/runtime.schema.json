@@ -4,7 +4,7 @@
   "title": "Volleyball vision resolved runtime configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "tracking", "prediction", "recording", "publisher", "diagnostics"],
+  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "tracking", "recording", "publisher", "diagnostics"],
   "properties": {
     "schema_version": {"const": 1},
     "runtime": {
@@ -211,15 +211,6 @@
         "publish_filtered_as_measurement": {"const": false}
       }
     },
-    "prediction": {
-      "type": "object", "additionalProperties": false,
-      "required": ["enabled", "owner", "model"],
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "owner": {"enum": ["nx", "rdk", "offline", "none"]},
-        "model": {"enum": ["none", "ballistic_drag", "physics_residual"]}
-      }
-    },
     "recording": {
       "type": "object", "additionalProperties": false,
       "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "image_product", "image_format", "loss_policy", "atomic_publish", "verify_hashes"],
@@ -237,14 +228,13 @@
     },
     "publisher": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "backend", "topic", "frame_id", "qos", "control_goal_enabled"],
+      "required": ["enabled", "backend", "topic", "frame_id", "qos"],
       "properties": {
         "enabled": {"type": "boolean"},
         "backend": {"enum": ["none", "ros2"]},
         "topic": {"type": "string"},
         "frame_id": {"type": "string"},
-        "qos": {"enum": ["sensor_data", "reliable"]},
-        "control_goal_enabled": {"type": "boolean"}
+        "qos": {"enum": ["sensor_data", "reliable"]}
       }
     },
     "diagnostics": {

@@ -61,7 +61,7 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 | async ROI Stage 2 | 开 | 强制关 | 无 |
 | 丢 stale ROI | 允许 | 强制关 | 无 |
 | 主队列 | 3，`drop_oldest` | 256，`block` | 64，`block` |
-| NX 内预测 | 关 | 关 | 离线 |
+| NX 对外轨迹预测/控制 | 不存在；由 RDK 负责 | 不存在 | 离线派生 |
 | ROS2 直接观测 | 开 | 关 | 关 |
 | v2.1 capture | 关 | 开 | 读取 |
 | raw Gray8 | 不保存 | 全部保存 | 读取 |

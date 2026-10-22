@@ -31,7 +31,9 @@ NX GPIO 上升沿 ────────┐
 - `TriangulatedObservation` 是直接测量；
 - `ValidatedObservation` 是质量判定，不修改原测量；
 - `TrackEstimate` 是滤波状态；
-- `LandingPrediction` 是预测结果。
+- `LandingPrediction` 是派生预测类型，不是 NX 发布载荷。
+
+滤波状态、未来轨迹和控制目标不属于本仓库的 NX 输出；它们由 RDK 或离线分析从直接观测派生。
 
 因此滤波位置不能冒充 `trajectory.csv` 中的测量。
 
@@ -115,6 +117,8 @@ NX GPIO 上升沿 ────────┐
 ## NX 与 RDK 边界
 
 NX 负责相机、校正、检测、双目关联和直接 3D 观测。RDK 负责最终稳健滤波、未来轨迹和控制。NX 内部可为关联使用临时滤波器，但不得把滤波位置伪装成直接测量发布；`publish_filtered_as_measurement` 在 schema 中固定为 `false`。
+
+旧 NX 内置的落点预测、世界/车体坐标变换和控制目标发布支路已经删除。NX 的 ROS2 边界只发布带来源证据的直接观测；影子仿真和轨迹预测继续使用冻结 trial 或由 RDK 消费该观测流。
 
 NX 内部 CUDA/VPI 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 深度候选以及一帧资源所有权的详细说明见 [NX 图像处理流水线](pipeline/README.md)。该文档同时区分最终 profile、旧配置投影和运行时自动降级，避免从历史 YAML 推断当前启用状态。
 

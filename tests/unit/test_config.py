@@ -67,6 +67,27 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
             _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_retired_nx_prediction_and_control(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value.update(
+                prediction={
+                    "enabled": True,
+                    "owner": "nx",
+                    "model": "ballistic_drag",
+                }
+            ),
+            lambda value: value["publisher"].update(
+                control_goal_enabled=True
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
     def test_semantics_reject_same_camera_serial(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

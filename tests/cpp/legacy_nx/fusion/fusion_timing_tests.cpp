@@ -40,7 +40,7 @@ int main() {
     check(std::abs(after_predict - static_cast<double>(frame) * 1e-9) < 1e-12,
           "predict-only frames must advance the capture-time baseline");
 
-    // If an entire frame is intentionally dropped without prediction, the
+    // If an entire frame is intentionally dropped without processing, the
     // capture delta correctly spans both frame periods.
     const double skipped = stereo3d::chooseFusionDtSeconds(
         1000000000ULL + 2 * frame, 1000000000ULL, 0.005, default_dt);

@@ -9,11 +9,6 @@ tracking:
   filter: none
   publish_filtered_as_measurement: false
 
-prediction:
-  enabled: false
-  owner: offline
-  model: none
-
 recording:
   enabled: false
   raw_frames: none

@@ -127,11 +127,6 @@ tracking:
   filter: kalman_ca
   publish_filtered_as_measurement: false
 
-prediction:
-  enabled: false
-  owner: none
-  model: none
-
 recording:
   enabled: false
   dataset_root: data/captures
@@ -149,7 +144,6 @@ publisher:
   topic: ""
   frame_id: stereo_rig
   qos: sensor_data
-  control_goal_enabled: false
 
 diagnostics:
   # 旧 NX logger 目前是结构化前缀文本，不是逐行 JSON；不能伪报已启用。

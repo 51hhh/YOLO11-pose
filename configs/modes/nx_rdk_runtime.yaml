@@ -9,11 +9,6 @@ tracking:
   filter: kalman_ca
   publish_filtered_as_measurement: false
 
-prediction:
-  enabled: false
-  owner: rdk
-  model: none
-
 recording:
   enabled: false
   raw_frames: none
@@ -25,5 +20,4 @@ publisher:
   topic: /nx/ball/observation
   frame_id: nx_left_rectified_optical_frame
   qos: sensor_data
-  control_goal_enabled: false
 

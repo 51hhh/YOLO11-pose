@@ -107,18 +107,6 @@ inline void renderPipelineDisplayFrame(
                     cv::FONT_HERSHEY_SIMPLEX, 0.5,
                     cv::Scalar(0, 255, 255), 1);
 
-        if (i < job.preds.size() && job.preds[i].valid) {
-            const auto& p = job.preds[i];
-            char pred_text[128];
-            snprintf(pred_text, sizeof(pred_text),
-                     "LAND(%.1f,%.1f) %.2fs %s",
-                     p.x, p.y, p.time_to_land,
-                     p.method == 0 ? "E" : (p.method == 1 ? "P" : "?"));
-            cv::putText(frame, pred_text,
-                        cv::Point(x1, y1 + bh + 60),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                        cv::Scalar(0, 100, 255), 2);
-        }
     }
 
     drawClickMeasurement(frame, click);

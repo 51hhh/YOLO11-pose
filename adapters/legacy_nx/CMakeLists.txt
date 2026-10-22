@@ -72,7 +72,6 @@ if(ament_cmake_FOUND)
   set(USE_ROS2 ON)
   find_package(rclcpp REQUIRED)
   find_package(geometry_msgs REQUIRED)
-  find_package(nav_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(volleyball_interfaces REQUIRED)
   message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
@@ -329,8 +328,6 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth_candidate_copy.cpp
   src/fusion/hybrid_depth.cpp
   src/fusion/hybrid_depth_track.cpp
-  src/fusion/trajectory_predictor.cpp
-  src/fusion/trajectory_predictor_fit.cpp
   ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/src/stage_schema.cpp
   src/capture/capture_v21_stage_recorder.cpp
   src/utils/vpi_image_copy.cpp
@@ -358,7 +355,6 @@ endif()
 # ROS2 源文件 (条件编译)
 if(USE_ROS2)
   list(APPEND PIPELINE_SOURCES
-    src/ros/goal_pose_bridge.cpp
     src/ros/diagnostic_publisher.cpp
     src/ros/nx_ball_observation_publisher.cpp
     src/ros/nx_observation_quality.cpp
@@ -423,7 +419,7 @@ endif()
 
 # ROS2 链接
 if(USE_ROS2)
-  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs nav_msgs sensor_msgs volleyball_interfaces)
+  ament_target_dependencies(stereo_pipeline rclcpp geometry_msgs sensor_msgs volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 

@@ -250,13 +250,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("publisher.enabled=true 时 topic 不得为空")
         if not publisher["frame_id"]:
             errors.append("publisher.enabled=true 时 frame_id 不得为空")
-    elif publisher["control_goal_enabled"]:
-        errors.append("publisher 关闭时不得启用 control_goal")
-    prediction = payload["prediction"]
-    if prediction["enabled"] and prediction["owner"] in {"none", "rdk", "offline"}:
-        errors.append("本仓库启用 prediction 时 owner 必须为 nx")
-    if prediction["enabled"] and prediction["model"] == "none":
-        errors.append("prediction.enabled=true 时 model 不得为 none")
     if mode == "capture" and not payload["recording"]["enabled"]:
         errors.append("capture 模式必须启用 recording")
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
