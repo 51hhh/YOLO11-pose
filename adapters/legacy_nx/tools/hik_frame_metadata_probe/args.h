@@ -17,7 +17,7 @@ struct Args {
     bool start_pwm = true;
     std::string trigger_chip = "gpiochip2";
     unsigned int trigger_line = 7;
-    double pwm_hz = 100.0;
+    double pwm_hz = 90.0;
     bool help_requested = false;
 };
 

@@ -4,16 +4,12 @@
 #include "stats.h"
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <map>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace {
 
@@ -27,8 +23,25 @@ using hik_metadata_probe::printMetaLine;
 
 struct Cam {
     void* handle = nullptr;
-    std::string tag;
     std::string serial;
+    bool grabbing = false;
+
+    Cam() = default;
+    Cam(const Cam&) = delete;
+    Cam& operator=(const Cam&) = delete;
+
+    ~Cam() { shutdown(); }
+
+    void shutdown() {
+        if (!handle) return;
+        if (grabbing) {
+            (void)MV_CC_StopGrabbing(handle);
+            grabbing = false;
+        }
+        (void)MV_CC_CloseDevice(handle);
+        (void)MV_CC_DestroyHandle(handle);
+        handle = nullptr;
+    }
 };
 
 uint64_t devTimestamp(const MV_FRAME_OUT_INFO_EX& info) {
@@ -240,7 +253,6 @@ bool openCamera(const MV_CC_DEVICE_INFO_LIST& list,
         return false;
     }
 
-    cam.tag = tag;
     cam.serial = serialOf(selected);
     int ret = MV_CC_CreateHandle(&cam.handle, selected);
     if (ret != MV_OK) {
@@ -352,15 +364,18 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[LEFT] StartGrabbing failed ret=0x%X\n", ret);
         return 1;
     }
+    left.grabbing = true;
     ret = MV_CC_StartGrabbing(right.handle);
     if (ret != MV_OK) {
         std::fprintf(stderr, "[RIGHT] StartGrabbing failed ret=0x%X\n", ret);
         return 1;
     }
+    right.grabbing = true;
 
     std::unique_ptr<stereo3d::PWMTrigger> pwm;
     if (args.start_pwm) {
-        pwm.reset(new stereo3d::PWMTrigger(args.trigger_chip, args.trigger_line, args.pwm_hz, 50.0));
+        pwm = std::make_unique<stereo3d::PWMTrigger>(
+            args.trigger_chip, args.trigger_line, args.pwm_hz, 50.0);
         if (!pwm->start()) {
             std::fprintf(stderr, "PWM start failed; cannot verify FrameCounter-to-GPIO mapping\n");
             return 1;
@@ -507,13 +522,11 @@ int main(int argc, char** argv) {
         prev_r = r;
     }
 
+    // Stop generating edges before releasing either camera. Cam also owns the
+    // same cleanup for every earlier error return.
     if (pwm) pwm->stop();
-    MV_CC_StopGrabbing(left.handle);
-    MV_CC_StopGrabbing(right.handle);
-    MV_CC_CloseDevice(left.handle);
-    MV_CC_CloseDevice(right.handle);
-    MV_CC_DestroyHandle(left.handle);
-    MV_CC_DestroyHandle(right.handle);
+    left.shutdown();
+    right.shutdown();
 
     std::puts("\nSummary:");
     std::printf("  ok_pairs=%d fail_pairs=%d\n", ok_pairs, fail_pairs);

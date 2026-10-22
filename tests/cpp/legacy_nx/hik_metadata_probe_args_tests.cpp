@@ -34,6 +34,8 @@ int main() {
               "default arguments must parse");
         check(hik_metadata_probe::validateArgs(args),
               "default arguments must be valid");
+        check(args.pwm_hz == 90.0,
+              "probe default must match the production trigger profile");
     }
 
     {
