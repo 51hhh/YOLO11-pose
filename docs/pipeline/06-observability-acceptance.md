@@ -115,8 +115,12 @@ python3 tools/check_repository.py
 
 ```bash
 volleyball doctor --profile nx-rdk
+volleyball doctor --profile nx-rdk --json
 volleyball run --profile nx-rdk --dry-run
 ```
+
+`doctor` 覆盖配置、SDK 与动态链接证据，不声称逐帧算子已经执行；四级启用判定见
+[运行依赖与实际启用判定](07-runtime-enablement.md)。
 
 实际采集完成后执行：
 

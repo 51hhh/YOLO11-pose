@@ -10,6 +10,7 @@
 4. [灰度 ROI 深度候选](04-gray-roi-depth.md)：当前启用的几何、NCC、多点亚像素及可选特征分支。
 5. [并发、数据流和启用矩阵](05-concurrency-profiles.md)：实时、采集、回放三种 profile 的实际差异。
 6. [观测、性能与验收](06-observability-acceptance.md)：如何证明流水线正确、实时且没有隐性丢帧。
+7. [运行依赖与实际启用判定](07-runtime-enablement.md)：区分配置、SDK、动态链接与逐帧执行证据。
 
 ## 当前主线结论
 

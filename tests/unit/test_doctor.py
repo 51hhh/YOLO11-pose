@@ -29,6 +29,10 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("gpio_device", by_name)
         self.assertNotIn("hik_mvs_runtime", by_name)
         self.assertNotIn("cuda_runtime", by_name)
+        self.assertNotIn("tensorrt_sdk", by_name)
+        self.assertNotIn("vpi_sdk", by_name)
+        self.assertNotIn("opencv_sdk", by_name)
+        self.assertNotIn("pipeline_backend_config", by_name)
 
     def test_nx_profile_rejects_non_jetson_host_and_missing_devices(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
@@ -48,10 +52,15 @@ class DoctorTests(unittest.TestCase):
             "gpio_device",
             "hik_mvs_runtime",
             "cuda_runtime",
+            "tensorrt_sdk",
+            "vpi_sdk",
+            "opencv_sdk",
             "ros2_environment",
         ):
             with self.subTest(name=name):
                 self.assertEqual(by_name[name].status, "error")
+        self.assertEqual(by_name["pipeline_backend_config"].status, "ok")
+        self.assertEqual(by_name["legacy_linkage"].status, "skipped")
 
     def test_free_flight_does_not_require_ros2_shell(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)

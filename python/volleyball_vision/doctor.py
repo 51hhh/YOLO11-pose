@@ -13,6 +13,11 @@ from typing import Callable, Iterable, Mapping
 from .calibration import load_opencv_stereo_calibration
 from .config import ResolvedConfig, find_project_root
 from .model_manifest import resolve_model, sha256_file
+from .runtime_dependencies import (
+    DependencyProbe,
+    probe_dynamic_linkage,
+    probe_live_sdk_dependencies,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +37,14 @@ def _check_path(name: str, path: Path, *, executable: bool = False) -> DoctorChe
     if executable and not path.stat().st_mode & 0o111:
         return DoctorCheck(name, "error", f"文件不可执行: {path}")
     return DoctorCheck(name, "ok", str(path))
+
+
+def _dependency_check(probe: DependencyProbe) -> DoctorCheck:
+    return DoctorCheck(
+        probe.name,
+        "ok" if probe.available else "error",
+        probe.message,
+    )
 
 
 def _system_path(system_root: Path, absolute_path: str | Path) -> Path:
@@ -165,6 +178,11 @@ def _hardware_checks(
             )
         )
 
+    checks.extend(
+        _dependency_check(probe)
+        for probe in probe_live_sdk_dependencies(system_root)
+    )
+
     if config.data["publisher"]["enabled"] and config.data["publisher"]["backend"] == "ros2":
         ros2 = command_lookup("ros2")
         ros_environment = environment.get("AMENT_PREFIX_PATH", "")
@@ -181,6 +199,41 @@ def _hardware_checks(
             )
         )
     return checks
+
+
+def _backend_plan(config: ResolvedConfig) -> DoctorCheck:
+    publisher = config.data["publisher"]
+    publish_backend = publisher["backend"] if publisher["enabled"] else "disabled"
+    return DoctorCheck(
+        "pipeline_backend_config",
+        "ok",
+        ", ".join(
+            (
+                f"camera={config.data['cameras']['backend']}",
+                f"accelerator={config.data['platform']['accelerator']}",
+                f"rectification={config.data['rectification']['backend']}",
+                f"detector={config.data['detector']['backend']}",
+                f"triangulation={config.data['stereo']['triangulation']['backend']}",
+                f"publisher={publish_backend}",
+            )
+        ),
+    )
+
+
+def _expected_linked_libraries(config: ResolvedConfig) -> tuple[tuple[str, str], ...]:
+    expected: list[tuple[str, str]] = [
+        ("MVS", "libMvCameraControl"),
+        ("VPI", "libnvvpi"),
+        ("OpenCV", "libopencv_core"),
+    ]
+    if config.data["platform"]["accelerator"] in {"cuda", "cuda_dla"}:
+        expected.append(("CUDA runtime", "libcudart"))
+    if config.data["detector"]["backend"] == "tensorrt":
+        expected.append(("TensorRT", "libnvinfer"))
+    publisher = config.data["publisher"]
+    if publisher["enabled"] and publisher["backend"] == "ros2":
+        expected.append(("ROS2", "librclcpp"))
+    return tuple(expected)
 
 
 def run_doctor(
@@ -232,7 +285,14 @@ def run_doctor(
     if mode == "replay":
         checks.append(DoctorCheck("legacy_pipeline", "skipped", "确定性回放不启动硬件管线"))
     else:
-        checks.append(_check_path("legacy_pipeline", (root / adapter["executable"]).resolve(), executable=True))
+        checks.append(_backend_plan(config))
+        executable = (root / adapter["executable"]).resolve()
+        executable_check = _check_path(
+            "legacy_pipeline",
+            executable,
+            executable=True,
+        )
+        checks.append(executable_check)
         checks.append(_check_path("legacy_base_config", (root / adapter["base_config"]).resolve()))
         checks.extend(
             _hardware_checks(
@@ -243,6 +303,34 @@ def run_doctor(
                 command_lookup=command_lookup,
             )
         )
+        if executable_check.status == "ok":
+            ldd = command_lookup("ldd")
+            if ldd is None:
+                checks.append(
+                    DoctorCheck(
+                        "legacy_linkage",
+                        "error",
+                        "ldd 命令不可用，无法验证运行时动态库",
+                    )
+                )
+            else:
+                checks.append(
+                    _dependency_check(
+                        probe_dynamic_linkage(
+                            executable,
+                            ldd,
+                            _expected_linked_libraries(config),
+                        )
+                    )
+                )
+        else:
+            checks.append(
+                DoctorCheck(
+                    "legacy_linkage",
+                    "skipped",
+                    "旧 NX 可执行文件不可用，无法检查动态链接",
+                )
+            )
 
     dataset_root = (root / config.data["recording"]["dataset_root"]).resolve()
     probe = dataset_root if dataset_root.exists() else dataset_root.parent
