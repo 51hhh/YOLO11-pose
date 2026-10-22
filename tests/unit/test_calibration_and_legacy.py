@@ -52,6 +52,11 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["ros2"]["enable"])
         self.assertEqual(rendered["capture_v21"]["overflow_policy"], "block")
         self.assertEqual(rendered["capture_v21"]["frame_limit"], 270)
+        self.assertEqual(rendered["camera"]["trigger_chip"], "gpiochip2")
+        self.assertEqual(rendered["camera"]["trigger_line"], 7)
+        self.assertEqual(rendered["camera"]["image_node_num"], 3)
+        self.assertEqual(rendered["camera"]["embedded_info_clear_rows"], 2)
+        self.assertEqual(rendered["performance"]["pwm_duty_cycle"], 50.0)
         self.assertEqual(
             rendered["capture_v21"]["exposure_timestamp_source"],
             "nx_gpio_rising_edge",
@@ -80,6 +85,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["ros2"]["control_goal"]["enable"])
         self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
+        self.assertFalse(rendered["capture_v21"]["enabled"])
 
 
 if __name__ == "__main__":

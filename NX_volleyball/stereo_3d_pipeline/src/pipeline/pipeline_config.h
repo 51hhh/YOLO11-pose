@@ -44,6 +44,7 @@ struct PipelineConfig {
     std::string trigger_chip = "gpiochip2";  ///< GPIO 芯片名 (Orin NX: gpiochip2)
     int trigger_line = 7;                     ///< GPIO 线路号 (Orin NX: line 7)
     int trigger_freq_hz = 100;
+    double trigger_duty_cycle = 50.0;
 
     // 标定
     std::string calibration_file = "config/intrinsics.yaml";

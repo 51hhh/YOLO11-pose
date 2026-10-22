@@ -256,6 +256,7 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
         errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
     sync = cameras["sync"]
+    transport = cameras["transport"]
     if sync["exposure_timestamp_source"] == "nx_gpio_rising_edge":
         if sync["method"] != "hardware_trigger":
             errors.append("nx_gpio_rising_edge 只允许用于 hardware_trigger")
@@ -263,6 +264,20 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("nx_gpio_rising_edge 要求 trigger_activation=RisingEdge")
     if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
         errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
+    if cameras["backend"] == "hik_mvs":
+        if transport["interface"] not in {"usb3", "gige"}:
+            errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
+        if transport["grab_strategy"] != "one_by_one":
+            errors.append("hik_mvs 双目必须使用 one_by_one 保留每侧到达顺序")
+        if sync["method"] == "hardware_trigger":
+            if sync["gpio_chip"] is None or sync["gpio_line"] is None:
+                errors.append("hardware_trigger 必须配置 gpio_chip/gpio_line")
+            if sync["frame_identity_source"] != "hik_frame_spec_info":
+                errors.append("hardware_trigger 必须使用 FrameSpecInfo 帧内水印识别身份")
+            if transport["embedded_info_clear_rows"] <= 0:
+                errors.append("FrameSpecInfo 开启时必须配置水印像素清除行数")
+    elif transport["interface"] != "recorded" or transport["grab_strategy"] != "recorded":
+        errors.append("recorded 相机必须使用 recorded transport")
 
     manifest_path = root / "models" / "manifest.yaml"
     manifest = _load_yaml(manifest_path)

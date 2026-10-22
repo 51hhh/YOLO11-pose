@@ -335,6 +335,8 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
     if (auto perf = root["performance"]) {
         if (perf["log_interval"])   cfg.stats_interval = perf["log_interval"].as<int>();
         if (perf["pwm_frequency"])  cfg.trigger_freq_hz = static_cast<int>(perf["pwm_frequency"].as<float>());
+        if (perf["pwm_duty_cycle"])
+            cfg.trigger_duty_cycle = perf["pwm_duty_cycle"].as<double>();
         if (perf["drop_stale_roi_frames"])
             cfg.drop_stale_roi_frames = perf["drop_stale_roi_frames"].as<bool>();
         if (perf["async_roi_stage2"])

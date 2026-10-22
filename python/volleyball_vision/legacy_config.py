@@ -29,6 +29,8 @@ def build_legacy_pipeline_config(
         raise ConfigError("旧管线基础配置顶层必须是对象")
     result = deepcopy(payload)
     cameras = config.data["cameras"]
+    transport = cameras["transport"]
+    sync = cameras["sync"]
     left = cameras["left"]
     right = cameras["right"]
     result["camera"].update(
@@ -39,10 +41,14 @@ def build_legacy_pipeline_config(
             "serial_right": right["serial"],
             "exposure_us": left["exposure_us"],
             "gain_db": left["gain_db"],
-            "use_trigger": cameras["sync"]["method"] == "hardware_trigger",
-            "trigger_source": cameras["sync"]["trigger_source"],
-            "trigger_activation": cameras["sync"]["trigger_activation"],
+            "use_trigger": sync["method"] == "hardware_trigger",
+            "trigger_source": sync["trigger_source"],
+            "trigger_activation": sync["trigger_activation"],
             "trigger_frequency_hz": round(config.data["runtime"]["nominal_fps"]),
+            "trigger_chip": sync["gpio_chip"],
+            "trigger_line": sync["gpio_line"],
+            "image_node_num": transport["image_node_num"],
+            "embedded_info_clear_rows": transport["embedded_info_clear_rows"],
             "width": left["resolution"][0],
             "height": left["resolution"][1],
         }
@@ -95,6 +101,7 @@ def build_legacy_pipeline_config(
     result["performance"].update(
         {
             "pwm_frequency": config.data["runtime"]["nominal_fps"],
+            "pwm_duty_cycle": sync["pwm_duty_cycle"],
             "target_fps": round(config.data["runtime"]["nominal_fps"]),
         }
     )

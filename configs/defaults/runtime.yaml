@@ -18,11 +18,20 @@ platform:
 
 cameras:
   backend: recorded
+  transport:
+    interface: recorded
+    grab_strategy: recorded
+    image_node_num: 1
+    embedded_info_clear_rows: 0
   sync:
     method: recorded
     clock_domain: camera-hardware
     trigger_source: null
     trigger_activation: null
+    gpio_chip: null
+    gpio_line: null
+    pwm_duty_cycle: 50.0
+    frame_identity_source: recorded
     estimated_error_ns: null
     exposure_timestamp_source: recorded
     exposure_delay_ns: 0

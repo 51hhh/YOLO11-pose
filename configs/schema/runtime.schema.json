@@ -43,17 +43,31 @@
     },
     "cameras": {
       "type": "object", "additionalProperties": false,
-      "required": ["backend", "sync", "left", "right"],
+      "required": ["backend", "transport", "sync", "left", "right"],
       "properties": {
         "backend": {"enum": ["hik_mvs", "recorded"]},
+        "transport": {
+          "type": "object", "additionalProperties": false,
+          "required": ["interface", "grab_strategy", "image_node_num", "embedded_info_clear_rows"],
+          "properties": {
+            "interface": {"enum": ["usb3", "gige", "recorded"]},
+            "grab_strategy": {"enum": ["one_by_one", "recorded"]},
+            "image_node_num": {"type": "integer", "minimum": 1, "maximum": 16},
+            "embedded_info_clear_rows": {"type": "integer", "minimum": 0, "maximum": 64}
+          }
+        },
         "sync": {
           "type": "object", "additionalProperties": false,
-          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "estimated_error_ns", "exposure_timestamp_source", "exposure_delay_ns", "exposure_delay_uncertainty_ns"],
+          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "gpio_chip", "gpio_line", "pwm_duty_cycle", "frame_identity_source", "estimated_error_ns", "exposure_timestamp_source", "exposure_delay_ns", "exposure_delay_uncertainty_ns"],
           "properties": {
             "method": {"enum": ["hardware_trigger", "shared_clock", "recorded"]},
             "clock_domain": {"type": "string", "minLength": 1},
             "trigger_source": {"type": ["string", "null"]},
             "trigger_activation": {"type": ["string", "null"]},
+            "gpio_chip": {"type": ["string", "null"], "minLength": 1},
+            "gpio_line": {"type": ["integer", "null"], "minimum": 0},
+            "pwm_duty_cycle": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
+            "frame_identity_source": {"enum": ["hik_frame_spec_info", "recorded"]},
             "estimated_error_ns": {"type": ["number", "null"], "minimum": 0},
             "exposure_timestamp_source": {"enum": ["nx_gpio_rising_edge", "recorded", "unavailable"]},
             "exposure_delay_ns": {"type": "integer", "minimum": 0},

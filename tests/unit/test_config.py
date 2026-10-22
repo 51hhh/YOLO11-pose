@@ -81,6 +81,20 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "backend"):
             _validate_semantics(ROOT, payload)
 
+    def test_hardware_trigger_requires_frame_watermark_identity(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["cameras"]["sync"]["frame_identity_source"] = "recorded"
+        with self.assertRaisesRegex(ConfigError, "FrameSpecInfo"):
+            _validate_semantics(ROOT, payload)
+
+    def test_hik_transport_rejects_latest_frame_strategy(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["cameras"]["transport"]["grab_strategy"] = "recorded"
+        with self.assertRaisesRegex(ConfigError, "one_by_one"):
+            _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),
