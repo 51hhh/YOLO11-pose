@@ -1,6 +1,6 @@
 # 实机与标定辅助工具
 
-主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。`build/nx-legacy-superbuild/legacy_nx/` 只生成与实机验收链直接相关的三个辅助程序：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
+主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。三个受测辅助程序的源码集中在 `tools/hardware/`，由 NX 构建环境生成到 `build/nx-legacy-superbuild/legacy_nx/`：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
 
 ## 推荐顺序
 
