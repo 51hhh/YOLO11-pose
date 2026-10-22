@@ -235,6 +235,7 @@ private:
     struct DualYoloMatchOutput {
         std::vector<Detection> detections;
         std::vector<Object3D> results;
+        std::vector<StereoRoiPairAttempt> pair_attempts;
         std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
     };
     struct RoiStage2Input {
@@ -260,6 +261,9 @@ private:
     };
     struct RoiStage2Output {
         std::vector<Detection> detections;
+        std::vector<Detection> detector_candidates_left;
+        std::vector<Detection> detector_candidates_right;
+        std::vector<StereoRoiPairAttempt> pair_attempts;
         std::vector<Object3D> roi_results;
         std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
         bool predict_only = false;

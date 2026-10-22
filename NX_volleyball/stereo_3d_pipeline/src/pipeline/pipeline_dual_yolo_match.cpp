@@ -757,6 +757,9 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         case StereoRoiPairRejectReason::LOW_IOU:
             ++local_stats.low_iou;
             break;
+        case StereoRoiPairRejectReason::NOT_SELECTED:
+        case StereoRoiPairRejectReason::DEPTH_REJECTED:
+            break;
         }
     };
 
@@ -3224,34 +3227,33 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     std::vector<bool> left_has_pair_candidate(left_detections.size(), false);
     std::vector<StereoRoiPair> direct_pairs;
     direct_pairs.reserve(left_detections.size() * right_detections.size());
-    for (size_t li = 0; li < left_detections.size(); ++li) {
-        const auto& left = left_detections[li];
-        for (size_t ri = 0; ri < right_detections.size(); ++ri) {
-            StereoRoiPair candidate_pair;
-            StereoRoiPairRejectReason reject_reason =
-                StereoRoiPairRejectReason::NONE;
-            if (!evaluateStereoRoiPair(left,
-                                       right_detections[ri],
-                                       static_cast<int>(li),
-                                       static_cast<int>(ri),
-                                       roi_pair_gate,
-                                       &candidate_pair,
-                                       &reject_reason)) {
-                record_pair_reject(reject_reason);
-                continue;
-            }
-            left_has_pair_candidate[li] = true;
-
-            candidate_pair.score += bboxDisparityConsistencyPenaltyCPU(
-                left,
-                right_detections[ri],
-                candidate_pair.initial_disparity,
-                baseline,
-                config_.depth,
-                config_.dual_yolo,
-                config_.max_disparity);
-            direct_pairs.push_back(candidate_pair);
+    output.pair_attempts = collectStereoRoiPairAttempts(
+        left_detections, right_detections, roi_pair_gate);
+    for (auto& attempt : output.pair_attempts) {
+        if (!attempt.passed_gate) {
+            record_pair_reject(attempt.reject_reason);
+            continue;
         }
+        const int li = attempt.pair.left_index;
+        const int ri = attempt.pair.right_index;
+        if (li < 0 || ri < 0 ||
+            li >= static_cast<int>(left_detections.size()) ||
+            ri >= static_cast<int>(right_detections.size())) {
+            attempt.passed_gate = false;
+            attempt.reject_reason = StereoRoiPairRejectReason::INVALID_BOX;
+            record_pair_reject(attempt.reject_reason);
+            continue;
+        }
+        left_has_pair_candidate[static_cast<size_t>(li)] = true;
+        attempt.pair.score += bboxDisparityConsistencyPenaltyCPU(
+            left_detections[static_cast<size_t>(li)],
+            right_detections[static_cast<size_t>(ri)],
+            attempt.pair.initial_disparity,
+            baseline,
+            config_.depth,
+            config_.dual_yolo,
+            config_.max_disparity);
+        direct_pairs.push_back(attempt.pair);
     }
     std::sort(direct_pairs.begin(), direct_pairs.end(),
               [](const StereoRoiPair& a, const StereoRoiPair& b) {
@@ -3460,6 +3462,17 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     collect_gpu_candidates();
 
+    auto find_pair_attempt = [&](int left_index,
+                                 int right_index) -> StereoRoiPairAttempt* {
+        for (auto& attempt : output.pair_attempts) {
+            if (attempt.pair.left_index == left_index &&
+                attempt.pair.right_index == right_index) {
+                return &attempt;
+            }
+        }
+        return nullptr;
+    };
+
     // Assign after global scoring so an early false detection cannot reserve
     // the only valid detection on the opposite camera.
     for (const auto& best_pair : direct_pairs) {
@@ -3471,6 +3484,15 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             continue;
         }
         if (left_has_stereo[li] || right_used[best_idx]) continue;
+
+        // selected 表示该组合进入了精细深度估计；即使估计失败也必须保留。
+        StereoRoiPairAttempt* pair_attempt =
+            find_pair_attempt(li, best_idx);
+        if (pair_attempt) {
+            pair_attempt->selected = true;
+            pair_attempt->reject_reason =
+                StereoRoiPairRejectReason::DEPTH_REJECTED;
+        }
 
         const auto& left = left_detections[li];
         const auto& right = right_detections[best_idx];
@@ -3534,7 +3556,19 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         output.results[li] = obj;
         right_used[best_idx] = true;
         left_has_stereo[li] = true;
+        if (pair_attempt) {
+            pair_attempt->triangulated = true;
+            pair_attempt->reject_reason = StereoRoiPairRejectReason::NONE;
+            pair_attempt->x_rig_m = obj.x;
+            pair_attempt->y_rig_m = obj.y;
+            pair_attempt->z_rig_m = obj.z;
+        }
         ++local_stats.matched;
+    }
+    for (auto& attempt : output.pair_attempts) {
+        if (attempt.passed_gate && !attempt.selected) {
+            attempt.reject_reason = StereoRoiPairRejectReason::NOT_SELECTED;
+        }
     }
     for (size_t li = 0; li < left_detections.size(); ++li) {
         if (!left_has_stereo[li] && !left_has_pair_candidate[li]) {

@@ -36,6 +36,9 @@ struct FrameCallbackData {
     VPIImage raw_right;
     const std::vector<Detection>& detections_left;
     const std::vector<Detection>& detections_right;
+    const std::vector<Detection>& detector_candidates_left;
+    const std::vector<Detection>& detector_candidates_right;
+    const std::vector<StereoRoiPairAttempt>& stereo_pair_attempts;
     const std::vector<Object3D>& results;
     FrameMetadata metadata;
     float fps;

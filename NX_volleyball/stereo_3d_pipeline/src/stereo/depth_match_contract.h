@@ -77,7 +77,9 @@ enum class StereoRoiPairRejectReason {
     OVER_MAX_DISPARITY,
     EPIPOLAR_REJECT,
     SIZE_REJECT,
-    LOW_IOU
+    LOW_IOU,
+    NOT_SELECTED,
+    DEPTH_REJECTED
 };
 
 struct StereoRoiPairGateConfig {
@@ -113,6 +115,25 @@ struct StereoRoiPairStats {
     int epipolar_reject = 0;
     int size_reject = 0;
     int low_iou = 0;
+};
+
+/**
+ * @brief 一个左右候选组合的完整审计记录。
+ *
+ * collectStereoRoiPairCandidates 只返回通过 gate 的候选，会丢失
+ * 被拒绝样本。新采集契约必须保留每个组合及其拒绝原因，
+ * 因此管线录制应使用 collectStereoRoiPairAttempts。
+ */
+struct StereoRoiPairAttempt {
+    StereoRoiPair pair;
+    StereoRoiPairRejectReason reject_reason =
+        StereoRoiPairRejectReason::NONE;
+    bool passed_gate = false;
+    bool selected = false;
+    bool triangulated = false;
+    float x_rig_m = 0.0f;
+    float y_rig_m = 0.0f;
+    float z_rig_m = 0.0f;
 };
 
 const char* depthCandidateMethodName(DepthCandidateMethod method);
@@ -151,6 +172,12 @@ bool evaluateStereoRoiPair(
 void accumulateStereoRoiPairReject(
     StereoRoiPairStats* stats,
     StereoRoiPairRejectReason reason);
+
+std::vector<StereoRoiPairAttempt> collectStereoRoiPairAttempts(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections,
+    const StereoRoiPairGateConfig& config,
+    StereoRoiPairStats* stats = nullptr);
 
 std::vector<StereoRoiPair> collectStereoRoiPairCandidates(
     const std::vector<Detection>& left_detections,

@@ -50,6 +50,8 @@ const char* stereoRoiPairRejectReasonName(StereoRoiPairRejectReason reason) {
     case StereoRoiPairRejectReason::EPIPOLAR_REJECT: return "epipolar_reject";
     case StereoRoiPairRejectReason::SIZE_REJECT: return "size_reject";
     case StereoRoiPairRejectReason::LOW_IOU: return "low_iou";
+    case StereoRoiPairRejectReason::NOT_SELECTED: return "not_selected";
+    case StereoRoiPairRejectReason::DEPTH_REJECTED: return "depth_rejected";
     }
     return "unknown";
 }
@@ -67,6 +69,22 @@ bool evaluateStereoRoiPair(
         return false;
     };
     if (reason) *reason = StereoRoiPairRejectReason::NONE;
+
+    // 先写入不需要除法的原始几何量，即使后续 gate 拒绝也能审计。
+    if (pair) {
+        pair->left_index = left_index;
+        pair->right_index = right_index;
+        pair->left = left;
+        pair->right = right;
+        pair->initial_disparity = left.cx - right.cx;
+        pair->epipolar_y_delta = left.cy - right.cy;
+        pair->epipolar_dy = std::abs(pair->epipolar_y_delta);
+        pair->y_tolerance = std::max(
+            std::max(1.0f, config.epipolar_y_tolerance),
+            config.adaptive_y_ratio * std::max(left.height, right.height));
+        pair->semantic_confidence =
+            std::sqrt(std::max(0.0f, left.confidence * right.confidence));
+    }
 
     if (left.class_id != right.class_id) {
         return reject(StereoRoiPairRejectReason::CLASS_MISMATCH);
@@ -98,6 +116,11 @@ bool evaluateStereoRoiPair(
                                    right.width / left.width);
     const float h_ratio = std::max(left.height / right.height,
                                    right.height / left.height);
+    if (pair) {
+        pair->width_ratio = w_ratio;
+        pair->height_ratio = h_ratio;
+        pair->size_ratio = std::max(w_ratio, h_ratio);
+    }
     const float max_ratio = std::max(1.0f, config.max_size_ratio);
     if (w_ratio > max_ratio || h_ratio > max_ratio) {
         return reject(StereoRoiPairRejectReason::SIZE_REJECT);
@@ -105,6 +128,9 @@ bool evaluateStereoRoiPair(
 
     const float shifted_iou =
         rectIoU(rectFromDetection(left), rectFromDetection(right, disparity));
+    if (pair) {
+        pair->shifted_bbox_iou = shifted_iou;
+    }
     if (shifted_iou < std::max(0.0f, config.min_shifted_iou)) {
         return reject(StereoRoiPairRejectReason::LOW_IOU);
     }
@@ -118,10 +144,6 @@ bool evaluateStereoRoiPair(
         pair->epipolar_y_delta = signed_dy;
         pair->epipolar_dy = dy;
         pair->y_tolerance = adaptive_y_tol;
-        pair->width_ratio = w_ratio;
-        pair->height_ratio = h_ratio;
-        pair->size_ratio = std::max(w_ratio, h_ratio);
-        pair->shifted_bbox_iou = shifted_iou;
         const float size_cost = std::abs(std::log(w_ratio)) +
                                 std::abs(std::log(h_ratio));
         pair->score = dy / adaptive_y_tol + size_cost - 0.25f * right.confidence;
@@ -148,7 +170,32 @@ void accumulateStereoRoiPairReject(
     case StereoRoiPairRejectReason::EPIPOLAR_REJECT: ++stats->epipolar_reject; break;
     case StereoRoiPairRejectReason::SIZE_REJECT: ++stats->size_reject; break;
     case StereoRoiPairRejectReason::LOW_IOU: ++stats->low_iou; break;
+    case StereoRoiPairRejectReason::NOT_SELECTED: break;
+    case StereoRoiPairRejectReason::DEPTH_REJECTED: break;
     }
+}
+
+std::vector<StereoRoiPairAttempt> collectStereoRoiPairAttempts(
+    const std::vector<Detection>& left_detections,
+    const std::vector<Detection>& right_detections,
+    const StereoRoiPairGateConfig& config,
+    StereoRoiPairStats* stats) {
+    std::vector<StereoRoiPairAttempt> attempts;
+    attempts.reserve(left_detections.size() * right_detections.size());
+    for (std::size_t li = 0; li < left_detections.size(); ++li) {
+        for (std::size_t ri = 0; ri < right_detections.size(); ++ri) {
+            StereoRoiPairAttempt attempt;
+            attempt.passed_gate = evaluateStereoRoiPair(
+                left_detections[li], right_detections[ri],
+                static_cast<int>(li), static_cast<int>(ri), config,
+                &attempt.pair, &attempt.reject_reason);
+            if (!attempt.passed_gate) {
+                accumulateStereoRoiPairReject(stats, attempt.reject_reason);
+            }
+            attempts.push_back(attempt);
+        }
+    }
+    return attempts;
 }
 
 std::vector<StereoRoiPair> collectStereoRoiPairCandidates(
@@ -160,18 +207,10 @@ std::vector<StereoRoiPair> collectStereoRoiPairCandidates(
     std::vector<StereoRoiPair> pairs;
     if (max_pairs == 0) return pairs;
     pairs.reserve(left_detections.size() * right_detections.size());
-    for (std::size_t li = 0; li < left_detections.size(); ++li) {
-        for (std::size_t ri = 0; ri < right_detections.size(); ++ri) {
-            StereoRoiPair pair;
-            StereoRoiPairRejectReason reason = StereoRoiPairRejectReason::NONE;
-            if (!evaluateStereoRoiPair(left_detections[li], right_detections[ri],
-                                       static_cast<int>(li),
-                                       static_cast<int>(ri),
-                                       config, &pair, &reason)) {
-                accumulateStereoRoiPairReject(stats, reason);
-                continue;
-            }
-            pairs.push_back(pair);
+    for (const auto& attempt : collectStereoRoiPairAttempts(
+             left_detections, right_detections, config, stats)) {
+        if (attempt.passed_gate) {
+            pairs.push_back(attempt.pair);
         }
     }
     std::sort(pairs.begin(), pairs.end(),

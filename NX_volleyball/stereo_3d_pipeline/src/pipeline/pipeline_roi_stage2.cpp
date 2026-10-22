@@ -40,6 +40,8 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
     const RoiStage2Input& input) {
     RoiStage2Output output;
     output.detections = input.left_detections;
+    output.detector_candidates_left = input.left_detections;
+    output.detector_candidates_right = input.right_detections;
 
     if (config_.detection_only) {
         output.detection_only = true;
@@ -228,6 +230,7 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
         }
 
         fusion_detections = std::move(semantic_match.detections);
+        output.pair_attempts = std::move(semantic_match.pair_attempts);
         output.p2_artifact_rows = std::move(semantic_match.p2_artifact_rows);
         roi_results = std::move(semantic_match.results);
         need_roi_texture_match =
@@ -305,6 +308,11 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
 void Pipeline::applyRoiStage2Output(FrameSlot& slot,
                                     RoiStage2Output&& output) {
     slot.detections = std::move(output.detections);
+    slot.detector_candidates_left =
+        std::move(output.detector_candidates_left);
+    slot.detector_candidates_right =
+        std::move(output.detector_candidates_right);
+    slot.stereo_pair_attempts = std::move(output.pair_attempts);
     if (output.detection_only) {
         slot.results.clear();
         return;
@@ -360,6 +368,9 @@ void Pipeline::publishRoiFrameCallbacks(FrameSlot& slot) {
             slot.rawR,
             slot.detections,
             slot.detections_right,
+            slot.detector_candidates_left,
+            slot.detector_candidates_right,
+            slot.stereo_pair_attempts,
             slot.results,
             makeFrameMetadata(slot),
             current_fps_.load()

@@ -11,6 +11,7 @@
 
 #include "detection_types.h"
 #include "object3d_types.h"
+#include "../stereo/depth_match_contract.h"
 
 #include <cuda_runtime.h>
 #include <vpi/Image.h>
@@ -120,6 +121,10 @@ struct FrameSlot {
     // =========== Stage 1: 检测结果 ===========
     std::vector<Detection> detections;    ///< 左目 YOLO 检测结果列表
     std::vector<Detection> detections_right; ///< 右目 YOLO 检测结果列表 (双路测试)
+    // 原始检测候选与最终融合输入分开保存，采集端不得从融合结果反推候选。
+    std::vector<Detection> detector_candidates_left;
+    std::vector<Detection> detector_candidates_right;
+    std::vector<StereoRoiPairAttempt> stereo_pair_attempts;
     bool detection_submitted = false;      ///< 本帧是否真正提交过左目 YOLO
     bool right_detection_submitted = false; ///< 本帧是否提交过右目 YOLO
 
@@ -227,6 +232,9 @@ struct FrameSlot {
 
         detections.clear();
         detections_right.clear();
+        detector_candidates_left.clear();
+        detector_candidates_right.clear();
+        stereo_pair_attempts.clear();
         detection_submitted = false;
         right_detection_submitted = false;
         results.clear();
@@ -261,6 +269,9 @@ struct FrameSlot {
     void reset() {
         detections.clear();
         detections_right.clear();
+        detector_candidates_left.clear();
+        detector_candidates_right.clear();
+        stereo_pair_attempts.clear();
         detection_submitted = false;
         right_detection_submitted = false;
         results.clear();

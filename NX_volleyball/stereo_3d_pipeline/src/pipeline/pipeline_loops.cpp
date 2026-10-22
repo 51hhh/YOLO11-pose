@@ -80,6 +80,9 @@ void Pipeline::pipelineLoop() {
                     slot.rawR,
                     slot.detections,
                     slot.detections_right,
+                    slot.detector_candidates_left,
+                    slot.detector_candidates_right,
+                    slot.stereo_pair_attempts,
                     slot.results,
                     makeFrameMetadata(slot),
                     current_fps_.load()
