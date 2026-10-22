@@ -22,17 +22,6 @@
 
 namespace stereo3d {
 
-// ==================== 工具宏 ====================
-
-#define MV_CHECK(fn, msg)                                               \
-    do {                                                                \
-        int nRet = (fn);                                                \
-        if (MV_OK != nRet) {                                           \
-            LOG_ERROR("[HikCam] " msg " failed, ret=0x%X", nRet);      \
-            return false;                                               \
-        }                                                               \
-    } while(0)
-
 namespace {
 
 struct CameraGeometry {
@@ -78,56 +67,6 @@ HikvisionCamera::HikvisionCamera() = default;
 
 HikvisionCamera::~HikvisionCamera() {
     close();
-}
-
-// ==================== 枚举 & 打开 ====================
-
-bool HikvisionCamera::openCamera(void*& handle, int index,
-                                  const std::string& serial) {
-    MV_CC_DEVICE_INFO_LIST devList;
-    memset(&devList, 0, sizeof(devList));
-
-    int nRet = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &devList);
-    if (MV_OK != nRet || devList.nDeviceNum == 0) {
-        LOG_ERROR("[HikCam] EnumDevices failed or no device found");
-        return false;
-    }
-
-    // 按序列号或索引选择
-    MV_CC_DEVICE_INFO* devInfo = nullptr;
-    if (!serial.empty()) {
-        for (unsigned int i = 0; i < devList.nDeviceNum; ++i) {
-            auto* info = devList.pDeviceInfo[i];
-            // USB3 设备序列号
-            if (info->nTLayerType == MV_USB_DEVICE) {
-                std::string sn(reinterpret_cast<char*>(
-                    info->SpecialInfo.stUsb3VInfo.chSerialNumber));
-                if (sn == serial) { devInfo = info; break; }
-            }
-            // GigE 设备序列号
-            if (info->nTLayerType == MV_GIGE_DEVICE) {
-                std::string sn(reinterpret_cast<char*>(
-                    info->SpecialInfo.stGigEInfo.chSerialNumber));
-                if (sn == serial) { devInfo = info; break; }
-            }
-        }
-        if (!devInfo) {
-            LOG_ERROR("[HikCam] Camera SN=%s not found", serial.c_str());
-            return false;
-        }
-    } else {
-        if (index < 0 || static_cast<unsigned>(index) >= devList.nDeviceNum) {
-            LOG_ERROR("[HikCam] Camera index %d out of range (%u)",
-                      index, devList.nDeviceNum);
-            return false;
-        }
-        devInfo = devList.pDeviceInfo[index];
-    }
-
-    MV_CHECK(MV_CC_CreateHandle(&handle, devInfo), "CreateHandle");
-    MV_CHECK(MV_CC_OpenDevice(handle), "OpenDevice");
-
-    return true;
 }
 
 bool HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg, const char* tag) {

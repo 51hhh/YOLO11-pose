@@ -148,7 +148,6 @@ public:
     bool isOpened() const { return opened_; }
 
 private:
-    bool openCamera(void*& handle, int index, const std::string& serial);
     bool configureCamera(void* handle, const CameraConfig& cfg, const char* tag);
     bool grabOneFrame(void* handle, uint8_t* dst, int pitch,
                       unsigned int timeout_ms, GrabResult& result);
