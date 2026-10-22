@@ -23,6 +23,7 @@ add_subdirectory(adapters/capture_v21)
 add_subdirectory(adapters/gpio)
 add_subdirectory(adapters/hik_mvs)
 add_subdirectory(adapters/tensorrt)
+add_subdirectory(adapters/ros2)
 add_subdirectory(adapters/fake)
 
 if(VOLLEYBALL_BUILD_TESTS)

@@ -97,3 +97,11 @@ target_link_libraries(hik_mvs_camera_tests PRIVATE
   volleyball::ports
   Threads::Threads
 )
+
+add_adapter_test(
+  ros2_observation_message_tests
+  ros2_observation_message_tests.cpp
+)
+target_link_libraries(
+  ros2_observation_message_tests PRIVATE volleyball::ros2_mapping
+)

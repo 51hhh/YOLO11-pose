@@ -133,6 +133,7 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
     ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
+    ("adapters/ros2/src", "adapters/ros2/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("tools/hardware", "tools/hardware/CMakeLists.txt"),
