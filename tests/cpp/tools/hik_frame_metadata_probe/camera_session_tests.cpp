@@ -1,4 +1,4 @@
-#include "tools/hik_frame_metadata_probe/camera_session.h"
+#include "hik_frame_metadata_probe/camera_session.h"
 
 #include <array>
 #include <cstdint>

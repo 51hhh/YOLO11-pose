@@ -1,4 +1,4 @@
-#include "tools/stereo_calibrate/args.h"
+#include "stereo_calibrate/args.h"
 
 #include <chrono>
 #include <cstdlib>

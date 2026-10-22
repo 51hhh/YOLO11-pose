@@ -65,9 +65,11 @@ python3 tools/check_repository.py
 | `tests/support/` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
-| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试；`tools/` 镜像实机工具目录 |
+| `tests/cpp/legacy_nx/` | 尚未迁出的 NX 兼容代码及 CUDA/VPI 桩测试 |
+| `tests/cpp/tools/` | 标定和硬件验收程序的无硬件单元测试 |
 | `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
-| `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
+| `tools/hardware/` | 帧元数据探针、标定图采集和离线双目标定三个受测辅助程序 |
+| `tools/check_repository.py` | 仓库结构、依赖方向、文档导航和构建接线门禁 |
 
 旧 NX 实现仍承载 CUDA、TensorRT 和 ROS2 的实机代码，并复用已提取的海康 MVS、GPIO 与 v2.1 适配器，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 

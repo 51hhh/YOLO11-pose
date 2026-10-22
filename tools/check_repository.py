@@ -49,7 +49,31 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "adapters/legacy_nx/src/ros/goal_pose_bridge",
     "adapters/legacy_nx/src/ros/diagnostic_publisher",
 )
-ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
+ALLOWED_TOOL_FILES = {
+    "tools/check_repository.py",
+    "tools/hardware/CMakeLists.txt",
+    "tools/hardware/common/atomic_file.cpp",
+    "tools/hardware/common/atomic_file.h",
+    "tools/hardware/common/parallel_tasks.cpp",
+    "tools/hardware/common/parallel_tasks.h",
+    "tools/hardware/capture_chessboard/args.cpp",
+    "tools/hardware/capture_chessboard/args.h",
+    "tools/hardware/capture_chessboard/main.cpp",
+    "tools/hardware/capture_chessboard/output.cpp",
+    "tools/hardware/capture_chessboard/output.h",
+    "tools/hardware/hik_frame_metadata_probe/args.cpp",
+    "tools/hardware/hik_frame_metadata_probe/args.h",
+    "tools/hardware/hik_frame_metadata_probe/camera_session.cpp",
+    "tools/hardware/hik_frame_metadata_probe/camera_session.h",
+    "tools/hardware/hik_frame_metadata_probe/main.cpp",
+    "tools/hardware/hik_frame_metadata_probe/pair_audit.cpp",
+    "tools/hardware/hik_frame_metadata_probe/pair_audit.h",
+    "tools/hardware/stereo_calibrate/args.cpp",
+    "tools/hardware/stereo_calibrate/args.h",
+    "tools/hardware/stereo_calibrate/images.cpp",
+    "tools/hardware/stereo_calibrate/images.h",
+    "tools/hardware/stereo_calibrate/main.cpp",
+}
 ALLOWED_TEST_ROOT_FILES = {
     "tests/__init__.py",
 }
@@ -58,30 +82,6 @@ ALLOWED_TEST_GROUPS = {
     "cpp",
     "support",
     "unit",
-}
-ALLOWED_HARDWARE_TOOL_FILES = {
-    "adapters/legacy_nx/tools/CMakeLists.txt",
-    "adapters/legacy_nx/tools/common/atomic_file.cpp",
-    "adapters/legacy_nx/tools/common/atomic_file.h",
-    "adapters/legacy_nx/tools/common/parallel_tasks.cpp",
-    "adapters/legacy_nx/tools/common/parallel_tasks.h",
-    "adapters/legacy_nx/tools/capture_chessboard/args.cpp",
-    "adapters/legacy_nx/tools/capture_chessboard/args.h",
-    "adapters/legacy_nx/tools/capture_chessboard/main.cpp",
-    "adapters/legacy_nx/tools/capture_chessboard/output.cpp",
-    "adapters/legacy_nx/tools/capture_chessboard/output.h",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.cpp",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.h",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/camera_session.cpp",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/camera_session.h",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/main.cpp",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/pair_audit.cpp",
-    "adapters/legacy_nx/tools/hik_frame_metadata_probe/pair_audit.h",
-    "adapters/legacy_nx/tools/stereo_calibrate/args.cpp",
-    "adapters/legacy_nx/tools/stereo_calibrate/args.h",
-    "adapters/legacy_nx/tools/stereo_calibrate/images.cpp",
-    "adapters/legacy_nx/tools/stereo_calibrate/images.h",
-    "adapters/legacy_nx/tools/stereo_calibrate/main.cpp",
 }
 ALLOWED_LEGACY_CONFIG_FILES = {
     "adapters/legacy_nx/config/base_pipeline.yaml",
@@ -94,13 +94,6 @@ ALLOWED_LEGACY_TEST_GROUPS = {
     "pipeline",
     "ros",
     "stereo",
-    "tools",
-}
-ALLOWED_LEGACY_TOOL_TEST_GROUPS = {
-    "capture_chessboard",
-    "common",
-    "hik_frame_metadata_probe",
-    "stereo_calibrate",
 }
 
 PURE_CPP_LAYERS = (
@@ -142,9 +135,10 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
-    ("adapters/legacy_nx/tools", "adapters/legacy_nx/tools/CMakeLists.txt"),
+    ("tools/hardware", "tools/hardware/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
+    ("tests/cpp/tools", "tests/cpp/tools/CMakeLists.txt"),
     ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
 )
 
@@ -311,19 +305,8 @@ def main() -> int:
     )
     if unexpected_tools:
         errors.append(
-            "tools 只保留仓库维护门禁，用户功能应进入统一 CLI:\n    "
+            "tools 只允许仓库门禁和已审核的硬件验收程序:\n    "
             + "\n    ".join(unexpected_tools)
-        )
-
-    unexpected_hardware_tools = sorted(
-        path for path in tracked
-        if path.startswith("adapters/legacy_nx/tools/")
-        and path not in ALLOWED_HARDWARE_TOOL_FILES
-    )
-    if unexpected_hardware_tools:
-        errors.append(
-            "NX 辅助工具必须归入已审核的硬件工具入口:\n    "
-            + "\n    ".join(unexpected_hardware_tools)
         )
 
     unexpected_legacy_config = sorted(
@@ -429,30 +412,6 @@ def main() -> int:
         errors.append(
             "tests 只能进入 unit、contract、support 或 cpp 职责目录:\n    "
             + "\n    ".join(unexpected_test_groups)
-        )
-
-    flat_legacy_tool_tests = sorted(
-        path for path in tracked
-        if Path(path).parent == Path("tests/cpp/legacy_nx/tools")
-        and Path(path).suffix in {".cc", ".cpp", ".cxx"}
-    )
-    if flat_legacy_tool_tests:
-        errors.append(
-            "旧 NX 工具测试必须镜像被测工具目录:\n    "
-            + "\n    ".join(flat_legacy_tool_tests)
-        )
-
-    unexpected_legacy_tool_test_groups = sorted(
-        path for path in tracked
-        if path.startswith("tests/cpp/legacy_nx/tools/")
-        and len(Path(path).relative_to("tests/cpp/legacy_nx/tools").parts) > 1
-        and Path(path).relative_to("tests/cpp/legacy_nx/tools").parts[0]
-        not in ALLOWED_LEGACY_TOOL_TEST_GROUPS
-    )
-    if unexpected_legacy_tool_test_groups:
-        errors.append(
-            "旧 NX 工具测试只能进入已声明的工具目录:\n    "
-            + "\n    ".join(unexpected_legacy_tool_test_groups)
         )
 
     coupled_test_modules: list[str] = []

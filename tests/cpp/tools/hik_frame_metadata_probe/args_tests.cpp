@@ -1,4 +1,4 @@
-#include "tools/hik_frame_metadata_probe/args.h"
+#include "hik_frame_metadata_probe/args.h"
 
 #include <cstdlib>
 #include <iostream>

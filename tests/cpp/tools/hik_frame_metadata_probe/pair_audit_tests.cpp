@@ -1,4 +1,4 @@
-#include "tools/hik_frame_metadata_probe/pair_audit.h"
+#include "hik_frame_metadata_probe/pair_audit.h"
 
 #include <cstdint>
 #include <iostream>

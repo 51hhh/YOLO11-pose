@@ -1,4 +1,4 @@
-#include "tools/capture_chessboard/args.h"
+#include "capture_chessboard/args.h"
 
 #include <chrono>
 #include <cstdlib>

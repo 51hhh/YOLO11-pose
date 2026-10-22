@@ -43,12 +43,14 @@ src/ros/      直接观测 ROS2 发布适配；不负责预测、控制或图像
 src/diagnostics/ 可选实时调试 artifact 写出
 src/ui/       本地显示与点击测距叠加
 src/utils/    VPI 图像访问和性能计数等底层工具
-tools/        按可执行程序分目录的标定与硬件诊断入口及 common 文件提交边界
 ```
+
+标定和硬件验收程序已独立到根目录 `tools/hardware/`，这里只在 NX
+构建环境中接入它们，不再拥有辅助程序源码。
 
 海康双目相机、主线 `CameraSource` 桥、GPIO 触发与公共日志分别归 `adapters/hik_mvs/`、`adapters/gpio/` 与 `libs/logging/` 所有；旧工程只复用这些目标，不再维护私有副本。旧 `stereo_pipeline` 目前仍直接编排海康相机和 GPIO；等正式写入器、GPU detector 与发布器迁出并完成同批数据回归后，才由新应用入口改用该桥。
 
-独立硬件 adapter 的 SDK 桩测试位于 `tests/cpp/adapters/`；尚未迁出的兼容逻辑与 CUDA/VPI 桩位于 `tests/cpp/legacy_nx/`。两者都由根目录主机预设执行，本目录不再保留第二套测试入口。
+独立硬件 adapter 的 SDK 桩测试位于 `tests/cpp/adapters/`，辅助程序测试位于 `tests/cpp/tools/`；尚未迁出的兼容逻辑与 CUDA/VPI 桩位于 `tests/cpp/legacy_nx/`。它们都由根目录主机预设执行，本目录不再保留第二套测试入口。
 
 平台无关的时间、坐标、配对和数据语义应放在根目录 `libs/`、`algorithms/`、`services/` 或 `python/volleyball_vision/`，不得继续堆入本目录。一次性实验脚本、生成结果和历史报告不进入仓库。
 

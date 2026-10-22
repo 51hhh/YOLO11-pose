@@ -1,4 +1,4 @@
-#include "tools/common/parallel_tasks.h"
+#include "common/parallel_tasks.h"
 
 #include <atomic>
 #include <cstdlib>
