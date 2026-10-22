@@ -9,7 +9,7 @@
 3. `calibration/*.yaml`：标定资产和坐标系；
 4. `pipelines/*.yaml`：检测、配对和三角化算法；
 5. `modes/*.yaml`：实时、采集或回放语义；
-6. 可选的 `configs/local.yaml`；
+6. profile 显式列出的本机层（若有）；
 7. 命令行 `--set` 临时覆盖。
 
 每个 profile 合并后必须通过 `configs/schema/runtime.schema.json` 和跨字段语义检查，并生成规范化 SHA-256。`config explain` 可以回答一个值来自哪一层。
@@ -29,13 +29,27 @@ volleyball config pipeline-report --profile nx-rdk
 ## 修改原则
 
 - 永久、可复用的差异写入对应层，不复制整份大 YAML；
-- 私有序列号或本机路径放入未提交的 `configs/local.yaml`；
+- 私有序列号或本机路径放入未提交的 `configs/local.yaml`；加载器不会
+  自动读取它，必须由仅本机 profile 显式列为最后一层；
 - `--set` 只能覆盖已存在的键，防止拼写错误静默生成无效配置；
 - 模型必须登记在 `models/manifest.yaml`，实机采集前固定 SHA-256；
 - 模型清单的 artifact 格式、输入尺寸/格式、目标平台和 accelerator 必须与 live profile 完全一致；
 - TensorRT engine 反序列化后的实际输入尺寸和 I/O 布局必须通过检测器契约，且与 profile 一致；
 - 标定必须有稳定 `calibration_id` 和 `created_at_utc`，不得用文件 mtime 充当版本；
 - 单位写入键名或契约，时间统一为整数纳秒，物理量使用 SI。
+
+本机覆盖的最小做法如下。`local-*.yaml` profile 和 `configs/local.yaml`
+都已被 Git 忽略，不会静默影响正式 profile，也不会误提交设备私有信息：
+
+```bash
+cp configs/local.example.yaml configs/local.yaml
+cp configs/profiles/nx-rdk.yaml configs/profiles/local-nx.yaml
+```
+
+然后在 `local-nx.yaml` 中把 `profile` 改为 `local-nx`，并在 `layers` 末尾
+追加 `local.yaml`。用 `volleyball config validate --profile local-nx` 和
+`volleyball config explain --profile local-nx <键>` 确认覆盖来源。正式采集记录的
+配置指纹仍包含本机层的最终值，不会牺牲可追溯性。
 
 ## 硬件触发约束
 

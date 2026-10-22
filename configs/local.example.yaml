@@ -1,5 +1,7 @@
-# 复制为 configs/local.yaml 作为本机参考；该文件默认不入库。
-# 正式 profile 不会自动读取 local.yaml，避免无声覆盖。
+# 本机覆盖示例：复制为 configs/local.yaml（默认不入库）。
+# 加载器绝不会自动读取它；还需复制一个正式 profile 为
+# configs/profiles/local-<名称>.yaml，将 profile 名改为 local-<名称>，
+# 并把 local.yaml 显式追加为 layers 的最后一项。
 recording:
   dataset_root: data/captures
 

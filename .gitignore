@@ -23,6 +23,7 @@
 # 本地配置、模型与 TensorRT 引擎
 /configs/local.yaml
 /configs/local/
+/configs/profiles/local-*.yaml
 /models/**/*.onnx
 /models/**/*.pt
 /models/**/*.engine
