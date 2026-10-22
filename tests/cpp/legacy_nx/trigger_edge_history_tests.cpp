@@ -1,4 +1,4 @@
-#include "calibration/pwm_trigger.h"
+#include "capture/pwm_trigger.h"
 
 #include <cstdlib>
 #include <iostream>

@@ -31,7 +31,7 @@
 #ifndef HIK_CAMERA_ENABLED
 namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #endif
-#include "../calibration/pwm_trigger.h"
+#include "../capture/pwm_trigger.h"
 #include "../calibration/stereo_calibration.h"
 #include "../rectify/vpi_rectifier.h"
 #include "../detect/trt_detector.h"

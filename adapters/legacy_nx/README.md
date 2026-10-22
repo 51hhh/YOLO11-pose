@@ -32,7 +32,7 @@ cmake --build --preset nx-legacy-release --parallel
 
 ```text
 config/       旧 C++ 字段的唯一兼容模板
-src/calibration/ 运行时标定加载与 GPIO 触发共享实现
+src/calibration/ 运行时双目标定加载
 src/capture/  海康取流、帧身份与 GPIO 触发
 src/detect/   TensorRT 检测
 src/rectify/  VPI 校正

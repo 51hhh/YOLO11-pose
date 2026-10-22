@@ -15,7 +15,7 @@
  */
 
 #include "args.h"
-#include "calibration/pwm_trigger.h"
+#include "capture/pwm_trigger.h"
 #include "capture/hikvision_camera.h"
 
 #include <opencv2/opencv.hpp>

@@ -1,6 +1,6 @@
 #include "MvCameraControl.h"
 #include "args.h"
-#include "calibration/pwm_trigger.h"
+#include "capture/pwm_trigger.h"
 #include "stats.h"
 
 #include <algorithm>
