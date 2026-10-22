@@ -41,9 +41,10 @@ src/fusion/   兼容性融合和本地诊断预测
 src/pipeline/ 实时流水线编排
 src/ros/      ROS2 发布适配
 src/utils/    v2.1 staging 记录与底层工具
-tests/        仅本适配器内部的 C++ 测试
 tools/        按可执行程序分目录的标定与硬件诊断入口
 ```
+
+适配器的纯逻辑测试和 SDK/CUDA/VPI 桩统一位于根目录 `tests/cpp/legacy_nx/`，由主机 Debug/Release 预设执行；本目录不再保留第二套测试入口。
 
 平台无关的时间、坐标、配对和数据语义应放在根目录 `libs/`、`algorithms/`、`services/` 或 `python/volleyball_vision/`，不得继续堆入本目录。一次性实验脚本、生成结果和历史报告不进入仓库。
 

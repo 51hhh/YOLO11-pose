@@ -37,6 +37,7 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "NX_volleyball/",
     "Stereo/",
     "volleyball_tracking/",
+    "adapters/legacy_nx/tests/",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_HARDWARE_TOOL_FILES = {
@@ -83,7 +84,6 @@ CMAKE_SOURCE_GROUPS = (
     ("services/src", "services/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
-    ("adapters/legacy_nx/tests", "adapters/legacy_nx/CMakeLists.txt"),
     ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/legacy_nx", "tests/cpp/legacy_nx/CMakeLists.txt"),
