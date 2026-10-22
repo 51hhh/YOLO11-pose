@@ -1,5 +1,6 @@
 add_library(volleyball_services STATIC
   src/stereo_observation_service.cpp
+  src/stereo_pipeline_runner.cpp
 )
 add_library(volleyball::services ALIAS volleyball_services)
 

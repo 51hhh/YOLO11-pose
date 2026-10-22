@@ -1,5 +1,6 @@
 add_library(volleyball_fake_adapters STATIC
   src/in_memory_trial_writer.cpp
+  src/scripted_camera_source.cpp
 )
 add_library(volleyball::fake_adapters ALIAS volleyball_fake_adapters)
 
