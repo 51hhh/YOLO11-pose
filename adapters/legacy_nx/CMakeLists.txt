@@ -192,8 +192,7 @@ set(PIPELINE_SOURCES
   src/main_dual_yolo_config.cpp
   src/main_realtime_debug_dump.cpp
   src/main_realtime_debug_dump_writer.cpp
-  src/main_recording_config_loaders.cpp
-  src/main_runtime_overrides.cpp
+  src/main_optional_config_loaders.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
   src/pipeline/pipeline_debug.cpp
@@ -244,12 +243,6 @@ set(PIPELINE_SOURCES
   src/fusion/trajectory_predictor.cpp
   src/fusion/trajectory_predictor_fit.cpp
   src/fusion/trajectory_predictor_history.cpp
-  src/utils/trajectory_recorder.cpp
-  src/utils/trajectory_recorder_summary.cpp
-  src/utils/trajectory_recorder_writer.cpp
-  src/utils/baseline_clip_recorder.cpp
-  src/utils/baseline_clip_recorder_io.cpp
-  src/utils/baseline_clip_recorder_writer.cpp
   src/utils/capture_v21_stage_recorder.cpp
   src/utils/vpi_image_copy.cpp
   src/track/nanotrack_trt.cpp

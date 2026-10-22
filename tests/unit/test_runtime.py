@@ -54,7 +54,7 @@ class RuntimeTests(unittest.TestCase):
                 result.command[1:], ("--config", str(destination))
             )
             rendered = yaml.safe_load(destination.read_text(encoding="utf-8"))
-            self.assertFalse(rendered["recording"]["enabled"])
+            self.assertNotIn("recording", rendered)
             self.assertFalse(rendered["capture_v21"]["enabled"])
             self.assertTrue(rendered["ros2"]["enable"])
 

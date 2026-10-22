@@ -159,9 +159,6 @@ def build_legacy_pipeline_config(
             "target_fps": round(config.data["runtime"]["nominal_fps"]),
         }
     )
-    # 主线从不启用旧版 CSV 录制器；原始层只能通过 capture_v21 发布。
-    result.setdefault("recording", {})["enabled"] = False
-    result.setdefault("baseline_recording", {})["enabled"] = False
     result.setdefault("capture_v21", {})["enabled"] = False
     prediction = config.data["prediction"]
     result.setdefault("prediction", {})["enable"] = bool(
@@ -190,7 +187,7 @@ def build_legacy_pipeline_config(
         "realtime_dump_enabled"
     ]
     if capture_stage is not None:
-        # 采集模式禁用会丢旧帧的异步路径和旧 CSV 录制器。
+        # 采集模式禁用会丢旧帧的异步路径和所有非契约诊断输出。
         result["performance"]["drop_stale_roi_frames"] = False
         result["performance"]["async_roi_stage2"] = False
         result.setdefault("prediction", {})["enable"] = False

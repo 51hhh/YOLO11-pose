@@ -174,7 +174,7 @@ neural_feature_matching_xfeat:
   final_sphere_margin_m: 0.04
 
 neural_feature_matching_superpoint:
-  enabled: false # keep the independent SuperPoint slot, but exclude it from the P0/P1+NCC+XFeat realtime recording config
+  enabled: false # 独立 SuperPoint 槽位保留，但不进入默认实时 profile
   backend: "superpoint_lightglue"
   extractor_engine_path: "models/neural/superpoint_extractor_160_top64_b2.engine"
   matcher_engine_path: ""
@@ -202,7 +202,7 @@ neural_feature_matching_superpoint:
   final_sphere_margin_m: 0.06
 
 neural_feature_matching_aliked:
-  enabled: false # diagnostic only for now: current ALIKED support/latency is not stable enough for default recording
+  enabled: false # 仅诊断候选：当前支持度与延迟不足以进入默认实时 profile
   backend: "aliked"
   extractor_engine_path: "models/neural/aliked_t16_nodcn_extractor_128_top64_b2.engine"
   matcher_engine_path: ""
@@ -277,7 +277,7 @@ performance:
   p2_diagnostic_deadline_ms: 50.0
   p2_diagnostic_use_source_snapshot: false  # diagnostic lane disabled for synchronized 90Hz capture
   p2_diagnostic_results_enabled: false
-  p2_diagnostic_results_path: ""             # empty = derive from recording.output_path or --recording-out
+  p2_diagnostic_results_path: ""             # 启用结果写出时必须显式指定
   p2_diagnostic_point_debug_enabled: false
   p2_diagnostic_point_debug_path: ""
   p2_diagnostic_artifacts_enabled: false
@@ -368,16 +368,6 @@ ros2:
     enable: false
     depth_full_divisor: 6
 
-recording:
-  enabled: false
-  output_path: "dual_yolo_observation_data.csv"
-  # legacy: old CSV columns only; depth_candidates: add depth candidates;
-  # extended: add sync watermark + bbox/circle geometry for model training.
-  detail_level: "extended"
-  raw_mode: true
-  frame_summary_enabled: true       # writes dual_yolo_observation_data.frames.csv for frame-level miss/pair metrics
-  max_queue_frames: 1000           # CSV 写入落后时丢记录，不阻塞 100fps 实时线程
-
 debug_realtime_dump:
   enabled: false
   output_dir: "debug_realtime_dumps"
@@ -385,25 +375,3 @@ debug_realtime_dump:
   max_frames: 0                     # 0 means unlimited while enabled
   max_queue: 4                      # writer backlog limit; drop debug dumps instead of blocking realtime
   dump_fallback: true               # always dump fallback frames even when stride does not hit
-
-baseline_recording:
-  enabled: false
-  output_dir: "baseline_clips"
-  duration_sec: 3.0
-  frame_limit: 0
-  clip_count: 1
-  clip_gap_sec: 0.0
-  clip_gap_frames: 0
-  require_left_detection: true
-  require_right_detection: true
-  require_pair_gate: false
-  min_confidence: 0.0
-  pair_y_tolerance_px: 30.0
-  pair_max_size_ratio: 2.5
-  pair_min_disparity_px: 0.0
-  image_format: "png"
-  image_mode: "gray"                  # gray|bgr; both 仅用于调试兼容，会额外写 left_bgr/right_bgr
-  png_compression: 1
-  write_after_capture: true           # 先快速缓存到内存，clip 结束后再写盘
-  max_queue_frames: 0                 # 0=不限; write_after_capture=true 时建议不限或至少 >= frame_limit*clip_count
-  stop_after_clip: true

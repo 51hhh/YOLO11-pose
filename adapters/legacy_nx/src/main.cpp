@@ -7,14 +7,11 @@
 
 #include "pipeline/pipeline.h"
 #include "fusion/trajectory_predictor.h"
-#include "utils/trajectory_recorder.h"
-#include "utils/baseline_clip_recorder.h"
 #include "utils/logger.h"
 #include "main_realtime_debug_dump.h"
 #include "main_cli_options.h"
 #include "main_config_loaders.h"
 #include "main_display_helpers.h"
-#include "main_runtime_overrides.h"
 
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
@@ -22,7 +19,6 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
-#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -57,38 +53,6 @@ static void mouseCallback(int event, int x, int y, int /*flags*/, void*) {
     }
 }
 
-namespace {
-
-std::string deriveP2DiagnosticResultsPath(const std::string& recording_path) {
-    if (recording_path.empty()) {
-        return {};
-    }
-    std::filesystem::path path(recording_path);
-    if (path.extension() == ".csv") {
-        path.replace_extension(".p2_diagnostic.csv");
-        return path.string();
-    }
-    return recording_path + ".p2_diagnostic.csv";
-}
-
-void bindP2DiagnosticResultsPath(
-    stereo3d::PipelineConfig& cfg,
-    const stereo3d::TrajectoryRecorderConfig& recorder_cfg) {
-    if (!cfg.p2_diagnostic_results_enabled ||
-        !cfg.p2_diagnostic_results_path.empty() ||
-        !recorder_cfg.enabled) {
-        return;
-    }
-    cfg.p2_diagnostic_results_path =
-        deriveP2DiagnosticResultsPath(recorder_cfg.output_path);
-    if (!cfg.p2_diagnostic_results_path.empty()) {
-        LOG_INFO("P2 diagnostic results path: %s",
-                 cfg.p2_diagnostic_results_path.c_str());
-    }
-}
-
-}  // namespace
-
 // ==================== main ====================
 
 int main(int argc, char* argv[]) {
@@ -100,7 +64,6 @@ int main(int argc, char* argv[]) {
     bool enable_display = cli.enable_display;
     bool debug_feature_matches = cli.debug_feature_matches;
     std::string debug_feature_matches_dir = cli.debug_feature_matches_dir;
-    std::string recording_out_override = cli.recording_out_override;
 
     // 注册信号
     signal(SIGINT,  signalHandler);
@@ -117,13 +80,8 @@ int main(int argc, char* argv[]) {
         LOG_ERROR("Failed to load config: %s", e.what());
         return 1;
     }
-    stereo3d::BaselineClipRecorderConfig baseline_cfg =
-        loadBaselineClipRecorderConfig(config_path);
-    applyBaselineClipOverrides(cli, cfg, baseline_cfg);
-
     RealtimeDebugDumpConfig realtime_dump_cfg =
         loadRealtimeDebugDumpConfig(config_path);
-    applyRealtimeDebugDumpOverrides(cli, realtime_dump_cfg);
 
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
@@ -139,10 +97,8 @@ int main(int argc, char* argv[]) {
         return ok ? 0 : 1;
     }
 
-    // 初始化落点预测 + 轨迹记录 / 基准片段录制
+    // 初始化可选落点预测、正式 v2.1 采集和诊断输出。
     stereo3d::TrajectoryPredictor predictor;
-    stereo3d::TrajectoryRecorder recorder;
-    stereo3d::BaselineClipRecorder baseline_recorder;
     stereo3d::CaptureV21StageRecorder capture_v21_recorder;
     RealtimeDebugDumper realtime_debug_dumper;
     bool nx_prediction_enabled = false;
@@ -151,36 +107,16 @@ int main(int argc, char* argv[]) {
         LOG_ERROR("Capture v2.1 configuration is invalid");
         return 1;
     }
-    if (capture_v21_cfg.enabled && baseline_cfg.enabled) {
-        LOG_ERROR("capture_v21 and baseline_recording cannot run together");
-        return 1;
-    }
     if (!capture_v21_recorder.init(capture_v21_cfg)) {
         LOG_ERROR("Capture v2.1 staging recorder initialization failed");
         return 1;
     }
-    if (baseline_cfg.enabled) {
-        baseline_recorder.init(baseline_cfg);
+    const auto predictor_cfg = loadPredictorConfig(config_path);
+    nx_prediction_enabled = predictor_cfg.enabled;
+    if (nx_prediction_enabled) {
+        predictor.init(predictor_cfg);
     } else {
-        const auto predictor_cfg = loadPredictorConfig(config_path);
-        nx_prediction_enabled = predictor_cfg.enabled;
-        if (nx_prediction_enabled) {
-            predictor.init(predictor_cfg);
-        } else {
-            LOG_INFO("NX landing predictor disabled; RDK owns ballistic prediction");
-        }
-        auto recorder_cfg = loadRecorderConfig(config_path);
-        if (!recording_out_override.empty()) {
-            recorder_cfg.output_path = recording_out_override;
-            recorder_cfg.frame_summary_path.clear();
-        }
-        bindP2DiagnosticResultsPath(cfg, recorder_cfg);
-        recorder.init(recorder_cfg);
-        if (!recording_out_override.empty() && !recorder.isEnabled()) {
-            LOG_ERROR("Trajectory recorder failed for --recording-out=%s",
-                      recording_out_override.c_str());
-            return 1;
-        }
+        LOG_INFO("NX landing predictor disabled; RDK owns ballistic prediction");
     }
     realtime_debug_dumper.init(realtime_dump_cfg);
 
@@ -206,10 +142,6 @@ int main(int argc, char* argv[]) {
         LOG_WARN("ROS2 config load failed: %s, bridge disabled", e.what());
         ros2_cfg.enabled = false;
     }
-    if (baseline_cfg.enabled) {
-        ros2_cfg.enabled = false;
-    }
-
     if (ros2_cfg.enabled) {
         rclcpp::init(argc, argv);
         ros2_node = std::make_shared<rclcpp::Node>("stereo_3d_pipeline");
@@ -270,11 +202,10 @@ int main(int argc, char* argv[]) {
     std::mutex pred_mutex;
     std::vector<stereo3d::LandingPrediction> latest_preds;
 
-    if (!baseline_cfg.enabled) {
-        pipeline.setResultCallback(
-            [&](int frame_id,
-                const std::vector<stereo3d::Object3D>& results,
-                const stereo3d::FrameMetadata& metadata) {
+    pipeline.setResultCallback(
+        [&](int frame_id,
+            const std::vector<stereo3d::Object3D>& results,
+            const stereo3d::FrameMetadata& metadata) {
             // 计算 dt
             auto now = std::chrono::steady_clock::now();
             double dt = 0.01; // 默认 100fps
@@ -288,10 +219,8 @@ int main(int argc, char* argv[]) {
             auto preds = nx_prediction_enabled
                 ? predictor.update(results, dt)
                 : std::vector<stereo3d::LandingPrediction>{};
-            double timestamp = std::chrono::duration<double>(
-                now.time_since_epoch()).count();
 
-            // ROS2 发布并把实时控制门控审计结果写回 preds，随后统一录制。
+            // ROS2 发布并把实时控制门控审计结果写回 preds。
 #ifdef HAS_ROS2
             if (nx_observation_pub) nx_observation_pub->publish(frame_id, results, metadata);
             if (ros2_bridge && ros2_bridge->enabled()) {
@@ -374,7 +303,6 @@ int main(int argc, char* argv[]) {
                 std::lock_guard<std::mutex> lock(pred_mutex);
                 latest_preds = preds;
             }
-            recorder.record(frame_id, timestamp, results, preds, metadata);
 
             // 降低日志开销: 仅每50帧打印一次
             if (frame_id % 50 != 0) return;
@@ -397,8 +325,7 @@ int main(int argc, char* argv[]) {
                              obj.confidence);
                 }
             }
-            });
-    }
+        });
 
     LOG_INFO("Pipeline initialized, starting...");
 
@@ -415,8 +342,8 @@ int main(int argc, char* argv[]) {
     DisplayJob display_job;
     bool display_job_ready = false;
 
-    if (capture_v21_recorder.enabled() || baseline_cfg.enabled ||
-        enable_display || realtime_debug_dumper.enabled()) {
+    if (capture_v21_recorder.enabled() || enable_display ||
+        realtime_debug_dumper.enabled()) {
         pipeline.setFrameCallback(
             [&, use_bgr](const stereo3d::FrameCallbackData& frame_data) {
                 if (capture_v21_recorder.enabled()) {
@@ -425,21 +352,6 @@ int main(int argc, char* argv[]) {
                         g_shutdown.store(true);
                     }
                 }
-                if (baseline_cfg.enabled) {
-                    baseline_recorder.record(frame_data.frame_id,
-                                             frame_data.rect_gray_left,
-                                             frame_data.rect_gray_right,
-                                             frame_data.rect_bgr_left,
-                                             frame_data.rect_bgr_right,
-                                             frame_data.detections_left,
-                                             frame_data.detections_right,
-                                             frame_data.metadata,
-                                             frame_data.fps);
-                    if (baseline_recorder.shouldStop()) {
-                        g_shutdown.store(true);
-                    }
-                }
-
                 if (realtime_debug_dumper.enabled()) {
                     realtime_debug_dumper.record(frame_data);
                 }
@@ -466,9 +378,8 @@ int main(int argc, char* argv[]) {
                 display_job.results = frame_data.results;
                 display_job.fps = frame_data.fps;
                 display_job.frame_id = frame_data.frame_id;
-                display_job.rec_frames = baseline_cfg.enabled
-                    ? baseline_recorder.frameCount()
-                    : recorder.frameCount();
+                display_job.rec_frames =
+                    capture_v21_recorder.capturedFrames();
                 {
                     std::lock_guard<std::mutex> plock(pred_mutex);
                     display_job.preds = latest_preds;
@@ -488,8 +399,6 @@ int main(int argc, char* argv[]) {
 #endif
         capture_v21_recorder.close();
         realtime_debug_dumper.close();
-        baseline_recorder.close();
-        recorder.close();
         return 1;
     }
 
@@ -557,8 +466,6 @@ int main(int argc, char* argv[]) {
     pipeline_failed = pipeline_failed || pipeline.hasFailed();
     capture_v21_recorder.close();
     realtime_debug_dumper.close();
-    baseline_recorder.close();
-    recorder.close();
     pipeline.printPerfReport();
 
     if (capture_v21_recorder.enabled() &&
