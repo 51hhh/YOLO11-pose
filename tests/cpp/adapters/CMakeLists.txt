@@ -17,6 +17,14 @@ target_link_libraries(capture_v21_stage_schema_tests PRIVATE
   volleyball::capture_v21
 )
 
+add_adapter_test(
+  mainline_stage_schema_tests
+  mainline_stage_schema_tests.cpp
+)
+target_link_libraries(mainline_stage_schema_tests PRIVATE
+  volleyball::capture_v21
+)
+
 add_adapter_test(gpio_trigger_tests gpio_trigger_tests.cpp)
 target_link_libraries(gpio_trigger_tests PRIVATE volleyball::gpio)
 

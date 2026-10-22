@@ -1,4 +1,5 @@
 add_library(volleyball_capture_v21 STATIC
+  src/mainline_stage_schema.cpp
   src/stage_schema.cpp
 )
 add_library(volleyball::capture_v21 ALIAS volleyball_capture_v21)
@@ -6,6 +7,7 @@ add_library(volleyball::capture_v21 ALIAS volleyball_capture_v21)
 target_include_directories(volleyball_capture_v21 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+target_link_libraries(volleyball_capture_v21 PUBLIC volleyball::ports)
 target_compile_features(volleyball_capture_v21 PUBLIC cxx_std_17)
 target_compile_options(volleyball_capture_v21 PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>
