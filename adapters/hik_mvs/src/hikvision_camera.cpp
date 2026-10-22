@@ -459,6 +459,12 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
     result.frame_number = info.nFrameNum;
     result.frame_counter = info.nFrameCounter;
     result.trigger_index = info.nTriggerIndex;
+    if (std::isfinite(info.fExposureTime) && info.fExposureTime > 0.0F) {
+        result.exposure_us = static_cast<double>(info.fExposureTime);
+    }
+    if (std::isfinite(info.fGain)) {
+        result.gain_db = static_cast<double>(info.fGain);
+    }
 
     const int free_status = MV_CC_FreeImageBuffer(handle, &frameOut);
     if (free_status != MV_OK) {

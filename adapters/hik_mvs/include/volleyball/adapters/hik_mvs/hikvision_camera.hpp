@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace volleyball::adapters::hik_mvs {
@@ -64,6 +65,8 @@ struct GrabResult {
     std::uint32_t frame_number = 0;    // SDK 帧号
     std::uint32_t frame_counter = 0;   // 水印帧计数, 主同步键
     std::uint32_t trigger_index = 0;   // 水印外触发计数, 仅用于诊断
+    std::optional<double> exposure_us; // 帧元数据中的实际曝光；缺失时为空
+    std::optional<double> gain_db;     // 帧元数据中的实际增益；缺失时为空
 };
 
 /**

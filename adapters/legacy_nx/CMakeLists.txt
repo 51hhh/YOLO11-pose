@@ -32,9 +32,29 @@ if(NOT EXISTS
   message(FATAL_ERROR
     "Mainline logging component not found: ${VOLLEYBALL_LOGGING_DIR}")
 endif()
+set(VOLLEYBALL_CORE_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/core")
+set(VOLLEYBALL_PORTS_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../ports")
+if(NOT EXISTS
+   "${VOLLEYBALL_CORE_DIR}/include/volleyball/core/observation.hpp" OR
+   NOT EXISTS
+   "${VOLLEYBALL_PORTS_DIR}/include/volleyball/ports/camera_source.hpp")
+  message(FATAL_ERROR "Mainline core/ports components are incomplete")
+endif()
 add_subdirectory(
   "${VOLLEYBALL_LOGGING_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/mainline_logging"
+  EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+  "${VOLLEYBALL_CORE_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_core"
+  EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+  "${VOLLEYBALL_PORTS_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_ports"
   EXCLUDE_FROM_ALL
 )
 

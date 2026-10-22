@@ -32,8 +32,12 @@ endif()
 if(NOT TARGET volleyball::logging)
   message(FATAL_ERROR "hik_mvs 需要 volleyball::logging 目标")
 endif()
+if(NOT TARGET volleyball::ports)
+  message(FATAL_ERROR "hik_mvs 需要 volleyball::ports 目标")
+endif()
 
 add_library(volleyball_hik_mvs STATIC
+  src/hik_stereo_camera_source.cpp
   src/hikvision_camera.cpp
 )
 add_library(volleyball::hik_mvs ALIAS volleyball_hik_mvs)
@@ -47,6 +51,8 @@ target_compile_options(volleyball_hik_mvs PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
 target_link_libraries(volleyball_hik_mvs
+  PUBLIC
+    volleyball::ports
   PRIVATE
     Threads::Threads
     volleyball::logging
