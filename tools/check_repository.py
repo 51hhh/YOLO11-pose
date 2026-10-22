@@ -76,6 +76,16 @@ ALLOWED_HARDWARE_TOOL_FILES = {
 ALLOWED_LEGACY_CONFIG_FILES = {
     "adapters/legacy_nx/config/base_pipeline.yaml",
 }
+ALLOWED_LEGACY_TEST_GROUPS = {
+    "capture",
+    "detect",
+    "fakes",
+    "fusion",
+    "pipeline",
+    "ros",
+    "stereo",
+    "tools",
+}
 
 PURE_CPP_LAYERS = (
     "libs/core",
@@ -315,6 +325,30 @@ def main() -> int:
         errors.append(
             "C++ 测试必须归入 mainline 或 legacy_nx:\n    "
             + "\n    ".join(flat_cpp_tests)
+        )
+
+    flat_legacy_cpp_tests = sorted(
+        path for path in tracked
+        if Path(path).parent == Path("tests/cpp/legacy_nx")
+        and Path(path).suffix in {".cc", ".cpp", ".cxx"}
+    )
+    if flat_legacy_cpp_tests:
+        errors.append(
+            "旧 NX 测试必须按被测职责分组:\n    "
+            + "\n    ".join(flat_legacy_cpp_tests)
+        )
+
+    unexpected_legacy_test_groups = sorted(
+        path for path in tracked
+        if path.startswith("tests/cpp/legacy_nx/")
+        and len(Path(path).relative_to("tests/cpp/legacy_nx").parts) > 1
+        and Path(path).relative_to("tests/cpp/legacy_nx").parts[0]
+        not in ALLOWED_LEGACY_TEST_GROUPS
+    )
+    if unexpected_legacy_test_groups:
+        errors.append(
+            "旧 NX 测试只能进入已声明的职责目录:\n    "
+            + "\n    ".join(unexpected_legacy_test_groups)
         )
 
     flat_python_tests = sorted(
