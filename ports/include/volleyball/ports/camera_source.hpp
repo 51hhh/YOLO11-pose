@@ -1,22 +1,11 @@
 #pragma once
 
-#include "volleyball/core/observation.hpp"
-#include "volleyball/ports/image_buffer.hpp"
+#include "volleyball/ports/captured_frame.hpp"
 
 #include <optional>
 #include <string>
 
 namespace volleyball::ports {
-
-struct CapturedFrame {
-    volleyball::core::CameraFrameRecord metadata;
-    ImageBufferPtr image;
-};
-
-struct StereoFrame {
-    CapturedFrame left;
-    CapturedFrame right;
-};
 
 enum class SourceStatus { frame, end_of_stream, timeout, error };
 

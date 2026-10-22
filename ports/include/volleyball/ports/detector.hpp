@@ -1,7 +1,7 @@
 #pragma once
 
 #include "volleyball/core/observation.hpp"
-#include "volleyball/ports/camera_source.hpp"
+#include "volleyball/ports/captured_frame.hpp"
 
 #include <string>
 #include <vector>
