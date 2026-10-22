@@ -85,3 +85,25 @@ add_legacy_nx_test(
   "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_track.cpp"
   "${LEGACY_NX_SOURCE_DIR}/fusion/hybrid_depth_candidate_copy.cpp"
 )
+
+add_legacy_nx_test(
+  depth_candidate_selection_tests
+  depth_candidate_selection_tests.cpp
+  "${LEGACY_NX_SOURCE_DIR}/stereo/depth_candidate_builder.cpp"
+  "${LEGACY_NX_SOURCE_DIR}/stereo/depth_candidate_builder_feature.cpp"
+  "${LEGACY_NX_SOURCE_DIR}/stereo/depth_candidate_contract.cpp"
+)
+
+add_legacy_nx_test(fusion_timing_tests fusion_timing_tests.cpp)
+
+add_legacy_nx_test(
+  nx_observation_quality_tests
+  nx_observation_quality_tests.cpp
+  "${LEGACY_NX_SOURCE_DIR}/ros/nx_observation_quality.cpp"
+)
+
+add_legacy_nx_test(
+  source_epoch_tests
+  source_epoch_tests.cpp
+  "${LEGACY_NX_SOURCE_DIR}/ros/source_epoch.cpp"
+)

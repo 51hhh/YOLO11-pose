@@ -348,33 +348,6 @@ if(USE_ROS2)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
 
-include(CTest)
-if(BUILD_TESTING)
-  add_executable(source_epoch_test
-    tests/source_epoch_test.cpp
-    src/ros/source_epoch.cpp)
-  add_test(NAME source_epoch_test COMMAND source_epoch_test)
-
-  add_executable(nx_observation_quality_test
-    tests/nx_observation_quality_test.cpp
-    src/ros/nx_observation_quality.cpp)
-  target_include_directories(nx_observation_quality_test PRIVATE src)
-  add_test(NAME nx_observation_quality_test COMMAND nx_observation_quality_test)
-
-  add_executable(depth_candidate_selection_test
-    tests/depth_candidate_selection_test.cpp
-    src/stereo/depth_candidate_builder.cpp
-    src/stereo/depth_candidate_builder_feature.cpp
-    src/stereo/depth_candidate_contract.cpp)
-  target_include_directories(depth_candidate_selection_test PRIVATE src)
-  add_test(NAME depth_candidate_selection_test
-           COMMAND depth_candidate_selection_test)
-
-  add_executable(fusion_timing_test tests/fusion_timing_test.cpp)
-  target_include_directories(fusion_timing_test PRIVATE src)
-  add_test(NAME fusion_timing_test COMMAND fusion_timing_test)
-endif()
-
 # ==================== 标定工具 ====================
 
 # stereo_calibrate (纯 OpenCV, 不依赖相机 SDK)
