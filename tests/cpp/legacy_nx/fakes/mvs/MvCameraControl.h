@@ -10,10 +10,12 @@
 
 struct MV_USB3_DEVICE_INFO {
     unsigned char chSerialNumber[64];
+    unsigned char chModelName[64];
 };
 
 struct MV_GIGE_DEVICE_INFO {
     unsigned char chSerialNumber[64];
+    unsigned char chModelName[64];
 };
 
 union MV_SPECIAL_INFO {
@@ -43,6 +45,16 @@ struct MVCC_INTVALUE {
     std::uint64_t nCurValue;
 };
 
+struct MV_CHUNK_DATA_CONTENT {
+    unsigned int nChunkID;
+    unsigned int nChunkLen;
+    unsigned char* pChunkData;
+};
+
+struct MV_UNPARSED_CHUNK_LIST {
+    MV_CHUNK_DATA_CONTENT* pUnparsedChunkContent;
+};
+
 struct MV_FRAME_OUT_INFO_EX {
     unsigned int nWidth;
     unsigned int nHeight;
@@ -52,6 +64,19 @@ struct MV_FRAME_OUT_INFO_EX {
     unsigned int nFrameNum;
     unsigned int nFrameCounter;
     unsigned int nTriggerIndex;
+    unsigned int nSecondCount;
+    unsigned int nCycleCount;
+    unsigned int nCycleOffset;
+    float fGain;
+    float fExposureTime;
+    unsigned int nInput;
+    unsigned int nOutput;
+    unsigned int nUnparsedChunkNum;
+    MV_UNPARSED_CHUNK_LIST UnparsedChunkList;
+    unsigned int nExtendWidth;
+    unsigned int nExtendHeight;
+    std::uint64_t nFrameLenEx;
+    unsigned int nFrameLen;
 };
 
 struct MV_FRAME_OUT {
