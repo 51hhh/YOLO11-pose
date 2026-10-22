@@ -116,7 +116,6 @@ enum class ChessboardDetectorMode {
     CLASSIC_FAST,
     CLASSIC_FILTER_QUADS,
     CLASSIC_NORMALIZED,
-    CLASSIC_PLAIN,
     SB_NORMALIZED,
     SB_EXHAUSTIVE,
 };
@@ -150,9 +149,6 @@ bool findCornersWithMode(const cv::Mat& gray, cv::Size boardSize,
         return refine_if_found(cv::findChessboardCorners(
             gray, boardSize, corners,
             cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE));
-    case ChessboardDetectorMode::CLASSIC_PLAIN:
-        return refine_if_found(cv::findChessboardCorners(
-            gray, boardSize, corners, 0));
     case ChessboardDetectorMode::SB_NORMALIZED:
         return refine_if_found(cv::findChessboardCornersSB(
             gray, boardSize, corners, cv::CALIB_CB_NORMALIZE_IMAGE));
