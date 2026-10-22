@@ -33,12 +33,7 @@
 /runs/
 /configs/calibration/images*/
 /adapters/legacy_nx/test_logs/
-/adapters/legacy_nx/baseline_clips/
-/adapters/legacy_nx/benchmark_results/
-/adapters/legacy_nx/diagnose_output/
-/adapters/legacy_nx/raw_observation_data.csv
 
 # 临时文件
 *.tmp
 *.partial
-/nx_check.txt

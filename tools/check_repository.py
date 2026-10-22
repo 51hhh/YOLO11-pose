@@ -38,6 +38,10 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "Stereo/",
     "volleyball_tracking/",
     "adapters/legacy_nx/tests/",
+    "adapters/legacy_nx/baseline_clips/",
+    "adapters/legacy_nx/benchmark_results/",
+    "adapters/legacy_nx/diagnose_output/",
+    "adapters/legacy_nx/raw_observation_data.csv",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_HARDWARE_TOOL_FILES = {
