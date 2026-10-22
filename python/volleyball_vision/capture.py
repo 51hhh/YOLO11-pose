@@ -136,6 +136,51 @@ def _bool(row: Mapping[str, str], key: str) -> bool:
     raise DatasetError(f"staging 字段 {key} 必须是布尔值")
 
 
+def _select_direct_pairs(
+    pairs: list[dict[str, str]],
+) -> dict[int, dict[str, str]]:
+    """为单球轨迹的每个曝光时刻选择唯一直接观测。"""
+
+    pair_ids: set[int] = set()
+    candidates: dict[int, list[dict[str, str]]] = {}
+    for row in pairs:
+        pair_id = _int(row, "pair_id")
+        frame_id = _int(row, "frame_id")
+        if pair_id < 0 or frame_id < 0:
+            raise DatasetError("staging pair_id/frame_id 不得为负")
+        if pair_id in pair_ids:
+            raise DatasetError(f"staging 出现重复 pair_id: {pair_id}")
+        pair_ids.add(pair_id)
+        if not _bool(row, "accepted"):
+            continue
+        confidence = _float(row, "semantic_confidence")
+        score = _float(row, "pair_score")
+        if confidence is None or not 0.0 <= confidence <= 1.0:
+            raise DatasetError(
+                "accepted staging pair 的 semantic_confidence 必须在 [0,1]"
+            )
+        assert score is not None
+        position = {
+            axis: _float(row, axis)
+            for axis in ("x_rig_m", "y_rig_m", "z_rig_m")
+        }
+        if position["z_rig_m"] is None or position["z_rig_m"] <= 0.0:
+            raise DatasetError("accepted staging pair 的 z_rig_m 必须大于 0")
+        candidates.setdefault(frame_id, []).append(row)
+
+    return {
+        frame_id: min(
+            rows,
+            key=lambda row: (
+                -float(row["semantic_confidence"]),
+                float(row["pair_score"]),
+                int(row["pair_id"]),
+            ),
+        )
+        for frame_id, rows in candidates.items()
+    }
+
+
 def _uint32_is_next(previous: int, current: int) -> bool:
     """按相机 uint32 计数器语义判断连续性，允许自然回绕。"""
 
@@ -668,6 +713,15 @@ def finalize_capture_stage(
         "perception_pipelines": [context["perception_pipeline"]],
     }
     frame_lookup = dict(zip(frame_ids, capture_times))
+    accepted_by_frame = _select_direct_pairs(pairs)
+    accepted_pair_ids = {
+        _int(row, "pair_id") for row in accepted_by_frame.values()
+    }
+    accepted_detection_keys = {
+        (frame_id, role, _int(row, f"{role}_candidate_id"))
+        for frame_id, row in accepted_by_frame.items()
+        for role in ("left", "right")
+    }
     raw_mode = config.data["recording"]["raw_frames"]
     with TrialPackageWriter(root, metadata, project_root=project_root) as writer:
         for (
@@ -745,13 +799,22 @@ def finalize_capture_stage(
             height = _float(row, "height_px")
             cx = _float(row, "cx_px")
             cy = _float(row, "cy_px")
-            assert width is not None and height is not None and cx is not None and cy is not None
+            # 仍解析旧值以拒绝损坏的 staging；最终选择权属于直接配对。
+            _bool(row, "selected")
+            frame_id = _int(row, "frame_id")
+            candidate_id = _int(row, "candidate_id")
+            assert (
+                width is not None
+                and height is not None
+                and cx is not None
+                and cy is not None
+            )
             writer.append(
                 "detections_2d",
                 {
                     "camera_id": left_id if role == "left" else right_id,
-                    "frame_index": _int(row, "frame_id"),
-                    "candidate_id": _int(row, "candidate_id"),
+                    "frame_index": frame_id,
+                    "candidate_id": candidate_id,
                     "u_px": cx,
                     "v_px": cy,
                     "radius_px": (width + height) * 0.25,
@@ -765,26 +828,29 @@ def finalize_capture_stage(
                     "cov_uu_px2": None,
                     "cov_uv_px2": None,
                     "cov_vv_px2": None,
-                    "selected": _bool(row, "selected"),
+                    "selected": (
+                        frame_id, role, candidate_id
+                    ) in accepted_detection_keys,
                     "source": pipeline_id,
                 },
             )
 
-        accepted_by_frame: dict[int, list[dict[str, str]]] = {}
         for row in pairs:
             frame_id = _int(row, "frame_id")
             if frame_id not in frame_lookup:
                 raise DatasetError("配对引用不存在的 staging frame")
             left_capture, right_capture = frame_lookup[frame_id]
-            accepted = _bool(row, "accepted")
+            staging_accepted = _bool(row, "accepted")
+            pair_id = _int(row, "pair_id")
+            accepted = staging_accepted and pair_id in accepted_pair_ids
             position = {
-                axis: _float(row, axis, optional=not accepted)
+                axis: _float(row, axis) if accepted else None
                 for axis in ("x_rig_m", "y_rig_m", "z_rig_m")
             }
             writer.append(
                 "stereo_pairs",
                 {
-                    "pair_id": _int(row, "pair_id"),
+                    "pair_id": pair_id,
                     "left_frame_index": frame_id,
                     "right_frame_index": frame_id,
                     "left_candidate_id": _int(row, "left_candidate_id"),
@@ -802,24 +868,20 @@ def finalize_capture_stage(
                     "cov_yz_m2": None,
                     "cov_zz_m2": None,
                     "accepted": accepted,
-                    "reject_reason": None if accepted else row["reject_reason"],
+                    "reject_reason": (
+                        None
+                        if accepted
+                        else "not_selected"
+                        if staging_accepted
+                        else row["reject_reason"]
+                    ),
                 },
             )
-            if accepted:
-                accepted_by_frame.setdefault(frame_id, []).append(row)
 
         sample_index = 0
         previous_timestamp_ns = -1
         for frame_id in sorted(accepted_by_frame):
-            candidates = accepted_by_frame[frame_id]
-            # 单球轨迹每个曝光时刻只保留一个直接观测；所有接受配对仍在 stereo_pairs。
-            chosen = max(
-                candidates,
-                key=lambda row: (
-                    _float(row, "semantic_confidence", optional=True) or 0.0,
-                    -(_float(row, "pair_score", optional=True) or 0.0),
-                ),
-            )
+            chosen = accepted_by_frame[frame_id]
             left_capture, right_capture = frame_lookup[frame_id]
             timestamp_ns = round((left_capture + right_capture) / 2) - origin_ns
             if timestamp_ns <= previous_timestamp_ns:

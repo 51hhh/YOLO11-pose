@@ -100,12 +100,52 @@ void testRuntimeRejectReasonsHaveStableNames() {
         "depth rejection reason must have stable serialization");
 }
 
+stereo3d::StereoRoiPairAttempt triangulatedAttempt(
+    float confidence,
+    float score,
+    float z_m) {
+    stereo3d::StereoRoiPairAttempt attempt;
+    attempt.passed_gate = true;
+    attempt.selected = true;
+    attempt.triangulated = true;
+    attempt.pair.semantic_confidence = confidence;
+    attempt.pair.score = score;
+    attempt.x_rig_m = 0.1f;
+    attempt.y_rig_m = 0.2f;
+    attempt.z_rig_m = z_m;
+    return attempt;
+}
+
+void testSingleBallSelectionIsDeterministic() {
+    std::vector<stereo3d::StereoRoiPairAttempt> attempts{
+        triangulatedAttempt(0.90f, 0.10f, 5.0f),
+        triangulatedAttempt(0.95f, 0.50f, 4.0f),
+        triangulatedAttempt(0.95f, 0.20f, 3.0f),
+        triangulatedAttempt(0.95f, 0.20f, 2.0f),
+    };
+    attempts.push_back(triangulatedAttempt(1.0f, 0.0f, -1.0f));
+
+    const auto selected =
+        stereo3d::selectSingleBallObservationPair(attempts);
+    check(selected && *selected == 2,
+          "single-ball selection must prefer confidence, score, then order");
+
+    attempts[0].triangulated = false;
+    attempts[1].triangulated = false;
+    attempts[2].triangulated = false;
+    attempts[3].triangulated = false;
+    check(
+        !stereo3d::selectSingleBallObservationPair(attempts),
+        "invalid triangulations must not produce a direct observation");
+}
+
 }  // namespace
 
 int main() {
     testEveryCandidateCombinationIsRetained();
     testRejectedAttemptRetainsRawGeometry();
     testRuntimeRejectReasonsHaveStableNames();
+    testSingleBallSelectionIsDeterministic();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

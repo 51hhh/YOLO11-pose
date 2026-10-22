@@ -198,6 +198,35 @@ std::vector<StereoRoiPairAttempt> collectStereoRoiPairAttempts(
     return attempts;
 }
 
+std::optional<std::size_t> selectSingleBallObservationPair(
+    const std::vector<StereoRoiPairAttempt>& attempts) {
+    std::optional<std::size_t> best;
+    for (std::size_t index = 0; index < attempts.size(); ++index) {
+        const auto& candidate = attempts[index];
+        if (!candidate.triangulated ||
+            !std::isfinite(candidate.pair.semantic_confidence) ||
+            !std::isfinite(candidate.pair.score) ||
+            !std::isfinite(candidate.x_rig_m) ||
+            !std::isfinite(candidate.y_rig_m) ||
+            !std::isfinite(candidate.z_rig_m) || candidate.z_rig_m <= 0.0f) {
+            continue;
+        }
+        if (!best) {
+            best = index;
+            continue;
+        }
+        const auto& current = attempts[*best];
+        if (candidate.pair.semantic_confidence >
+                current.pair.semantic_confidence ||
+            (candidate.pair.semantic_confidence ==
+                 current.pair.semantic_confidence &&
+             candidate.pair.score < current.pair.score)) {
+            best = index;
+        }
+    }
+    return best;
+}
+
 std::vector<StereoRoiPair> collectStereoRoiPairCandidates(
     const std::vector<Detection>& left_detections,
     const std::vector<Detection>& right_detections,

@@ -4,6 +4,7 @@
 #include "pipeline/detection_types.h"
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace stereo3d {
@@ -178,6 +179,11 @@ std::vector<StereoRoiPairAttempt> collectStereoRoiPairAttempts(
     const std::vector<Detection>& right_detections,
     const StereoRoiPairGateConfig& config,
     StereoRoiPairStats* stats = nullptr);
+
+// 单球数据集每个曝光时刻只能发布一个直接观测。先取语义置信度最高者，
+// 再取几何配对代价最低者；完全相同时保持原始尝试顺序。
+std::optional<std::size_t> selectSingleBallObservationPair(
+    const std::vector<StereoRoiPairAttempt>& attempts);
 
 std::vector<StereoRoiPair> collectStereoRoiPairCandidates(
     const std::vector<Detection>& left_detections,

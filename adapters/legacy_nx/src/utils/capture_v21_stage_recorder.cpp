@@ -52,13 +52,6 @@ std::string jsonEscape(const std::string& value) {
     return stream.str();
 }
 
-bool finitePosition(const StereoRoiPairAttempt& attempt) {
-    return attempt.triangulated &&
-           std::isfinite(attempt.x_rig_m) &&
-           std::isfinite(attempt.y_rig_m) &&
-           std::isfinite(attempt.z_rig_m) && attempt.z_rig_m > 0.0f;
-}
-
 }  // namespace
 
 bool CaptureV21StageRecorder::init(
@@ -281,9 +274,9 @@ void CaptureV21StageRecorder::record(const FrameCallbackData& frame) {
     queued.candidates_right = frame.detector_candidates_right;
     queued.pair_attempts = frame.stereo_pair_attempts;
 
-    bool accepted_pair = false;
+    const bool accepted_pair =
+        selectSingleBallObservationPair(queued.pair_attempts).has_value();
     for (const auto& attempt : queued.pair_attempts) {
-        accepted_pair = accepted_pair || finitePosition(attempt);
         if (attempt.pair.left_index < 0 || attempt.pair.right_index < 0 ||
             attempt.pair.left_index >=
                 static_cast<int>(queued.candidates_left.size()) ||
@@ -392,10 +385,12 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
         << frame.metadata.right_trigger_index << ','
         << left_raw << ',' << right_raw << '\n';
 
+    const auto accepted_index =
+        selectSingleBallObservationPair(frame.pair_attempts);
     std::vector<bool> selected_left(frame.candidates_left.size(), false);
     std::vector<bool> selected_right(frame.candidates_right.size(), false);
-    for (const auto& attempt : frame.pair_attempts) {
-        if (!finitePosition(attempt)) continue;
+    if (accepted_index) {
+        const auto& attempt = frame.pair_attempts[*accepted_index];
         selected_left[static_cast<std::size_t>(attempt.pair.left_index)] = true;
         selected_right[static_cast<std::size_t>(attempt.pair.right_index)] = true;
     }
@@ -416,9 +411,13 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
     write_detections("left", frame.candidates_left, selected_left);
     write_detections("right", frame.candidates_right, selected_right);
 
-    for (const auto& attempt : frame.pair_attempts) {
-        const bool accepted = finitePosition(attempt);
+    for (std::size_t index = 0; index < frame.pair_attempts.size(); ++index) {
+        const auto& attempt = frame.pair_attempts[index];
+        const bool accepted = accepted_index && index == *accepted_index;
         StereoRoiPairRejectReason reason = attempt.reject_reason;
+        if (!accepted && attempt.triangulated) {
+            reason = StereoRoiPairRejectReason::NOT_SELECTED;
+        }
         if (!accepted && reason == StereoRoiPairRejectReason::NONE) {
             reason = StereoRoiPairRejectReason::DEPTH_REJECTED;
         }

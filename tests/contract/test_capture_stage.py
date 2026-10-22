@@ -330,6 +330,117 @@ class CaptureStageTests(unittest.TestCase):
             self.assertEqual(transport["pairing_key"], "frame_counter")
             self.assertFalse(transport["arrival_time_used_for_pairing"])
 
+    def test_multiple_staging_observations_publish_one_single_ball_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+
+            detections_path = stage / "detections.csv"
+            with detections_path.open(encoding="utf-8", newline="") as handle:
+                detections = list(csv.DictReader(handle))
+            for role, cx in (("left", 710.0), ("right", 665.0)):
+                detections.append(
+                    {
+                        "frame_id": 0,
+                        "camera_role": role,
+                        "candidate_id": 1,
+                        "cx_px": cx,
+                        "cy_px": 501.0,
+                        "width_px": 38.0,
+                        "height_px": 38.0,
+                        "confidence": 0.99,
+                        "class_id": 0,
+                        "selected": True,
+                    }
+                )
+            detections_path.unlink()
+            _write_csv(
+                detections_path,
+                STAGE_DETECTION_COLUMNS,
+                detections,
+            )
+
+            pairs_path = stage / "pairs.csv"
+            with pairs_path.open(encoding="utf-8", newline="") as handle:
+                pairs = list(csv.DictReader(handle))
+            pairs.append(
+                {
+                    "pair_id": 99,
+                    "frame_id": 0,
+                    "left_candidate_id": 1,
+                    "right_candidate_id": 1,
+                    "disparity_px": 45.0,
+                    "epipolar_error_px": 0.05,
+                    "pair_score": 0.05,
+                    "semantic_confidence": 0.99,
+                    "x_rig_m": 0.9,
+                    "y_rig_m": 0.8,
+                    "z_rig_m": 4.0,
+                    "accepted": True,
+                    "reject_reason": "",
+                }
+            )
+            pairs_path.unlink()
+            _write_csv(pairs_path, STAGE_PAIR_COLUMNS, pairs)
+
+            trial = finalize_capture_stage(
+                stage,
+                root / "dataset",
+                profile,
+                project_root=ROOT,
+            )
+            with (trial / "stereo_pairs.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                final_pairs = list(csv.DictReader(handle))
+            frame_zero_pairs = [
+                row for row in final_pairs
+                if row["left_frame_index"] == "0"
+            ]
+            self.assertEqual(
+                [row["pair_id"] for row in frame_zero_pairs if row["accepted"] == "true"],
+                ["99"],
+            )
+            demoted = next(row for row in frame_zero_pairs if row["pair_id"] == "0")
+            self.assertEqual(demoted["reject_reason"], "not_selected")
+            self.assertEqual(demoted["x_rig_m"], "")
+
+            with (trial / "detections_2d.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                final_detections = list(csv.DictReader(handle))
+            selected_frame_zero = {
+                (row["camera_id"], row["candidate_id"])
+                for row in final_detections
+                if row["frame_index"] == "0" and row["selected"] == "true"
+            }
+            self.assertEqual(
+                selected_frame_zero,
+                {
+                    ("hik-00D39342665", "1"),
+                    ("hik-00219471413", "1"),
+                },
+            )
+
+            with (trial / "trajectory.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                trajectory = list(csv.DictReader(handle))
+            self.assertEqual(trajectory[0]["x_m"], "0.9")
+            self.assertEqual(trajectory[0]["z_m"], "4.0")
+
+            with (trial / "raw" / "audit" / "stage_pairs.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                staging_pairs = list(csv.DictReader(handle))
+            self.assertEqual(
+                sum(
+                    row["frame_id"] == "0" and row["accepted"] == "True"
+                    for row in staging_pairs
+                ),
+                2,
+            )
+
     def test_stage_with_frame_gap_is_not_publishable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
