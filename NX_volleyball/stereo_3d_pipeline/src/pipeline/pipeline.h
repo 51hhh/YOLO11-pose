@@ -85,8 +85,9 @@ public:
 
     /**
      * @brief 启动 Pipeline (在独立线程中运行)
+     * @return true 相机、触发器与工作线程均已启动
      */
-    void start();
+    bool start();
 
     /**
      * @brief 停止 Pipeline 并等待线程退出

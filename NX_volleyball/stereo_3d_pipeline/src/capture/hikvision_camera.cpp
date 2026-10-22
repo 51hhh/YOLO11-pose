@@ -370,8 +370,18 @@ bool HikvisionCamera::startGrabbing() {
     if (!opened_ || grabbing_) return false;
 
     resetSyncState();
-    MV_CHECK(MV_CC_StartGrabbing(handle_left_),  "StartGrab LEFT");
-    MV_CHECK(MV_CC_StartGrabbing(handle_right_), "StartGrab RIGHT");
+    int ret = MV_CC_StartGrabbing(handle_left_);
+    if (ret != MV_OK) {
+        LOG_ERROR("[HikCam] StartGrab LEFT failed, ret=0x%X", ret);
+        return false;
+    }
+    ret = MV_CC_StartGrabbing(handle_right_);
+    if (ret != MV_OK) {
+        LOG_ERROR("[HikCam] StartGrab RIGHT failed, ret=0x%X", ret);
+        // 不允许留下只有左相机正在取流的半启动状态。
+        MV_CC_StopGrabbing(handle_left_);
+        return false;
+    }
 
     grabbing_ = true;
     LOG_INFO("[HikCam] Grabbing started");

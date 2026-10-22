@@ -115,6 +115,9 @@ void Pipeline::pipelineLoop() {
             // 帧同步跳变: 跳过此帧
             if (slot.grab_failed) {
                 vpiStreamSync(streams_.vpiStreamPVA);
+                // 失败帧也必须进入帧回调，使 fail_trial 录制器能立即终止，
+                // 而不是等待一帧永远不会到达的后继帧来发现序号缺口。
+                publishRoiFrameCallbacks(slot);
                 next_detect_frame++;
                 next_fuse_frame = next_detect_frame;
             } else {
@@ -167,6 +170,13 @@ void Pipeline::pipelineLoop() {
     while (next_detect_frame < next_grab_frame) {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
+
+        if (slot.grab_failed) {
+            publishRoiFrameCallbacks(slot);
+            next_detect_frame++;
+            next_fuse_frame = next_detect_frame;
+            continue;
+        }
 
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU);
         cudaStreamWaitEvent(getDLAStream(slot.frame_id), slot.evtRectDone, 0);
@@ -301,7 +311,7 @@ void Pipeline::pipelineLoopROI() {
         slot.is_detect_frame = true;  // 首帧必为检测帧
 
         if (slot.grab_failed) {
-            next_detect_frame++;
+            publishRoiFrameCallbacks(slot);
         } else if (sync_rect_for_detect(slot, slot_idx)) {
             auto dlaStream = getDLAStream(slot.frame_id);
             cudaStreamWaitEvent(dlaStream, slot.evtRectDone, 0);
@@ -351,6 +361,7 @@ void Pipeline::pipelineLoopROI() {
             auto& slot = slots_[slot_idx];
 
             if (slot.grab_failed) {
+                publishRoiFrameCallbacks(slot);
                 next_detect_frame++;
             } else {
                 // 判断是否为检测帧
@@ -566,6 +577,7 @@ void Pipeline::pipelineLoopROI() {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
         if (slot.grab_failed) {
+            publishRoiFrameCallbacks(slot);
             next_detect_frame++;
             continue;
         }

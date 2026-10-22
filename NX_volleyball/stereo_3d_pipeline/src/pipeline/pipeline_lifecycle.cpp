@@ -44,8 +44,8 @@ Pipeline::~Pipeline() {
     streams_.destroy();
 }
 
-void Pipeline::start() {
-    if (running_.exchange(true)) return;
+bool Pipeline::start() {
+    if (running_.exchange(true)) return true;
 
     last_fuse_time_ = {};
     last_fuse_capture_timestamp_ns_ = 0;
@@ -55,19 +55,19 @@ void Pipeline::start() {
 
     if (!startAsyncRoiStage2()) {
         running_ = false;
-        return;
+        return false;
     }
     if (!startP2FeatureDiagnosticLane()) {
         running_ = false;
         shutdownP2InlineFeatureWorkers();
         shutdownAsyncRoiStage2();
-        return;
+        return false;
     }
     if (!startP2InlineFeatureWorkers()) {
         running_ = false;
         shutdownP2FeatureDiagnosticLane();
         shutdownAsyncRoiStage2();
-        return;
+        return false;
     }
 
 #ifdef HIK_CAMERA_ENABLED
@@ -77,10 +77,16 @@ void Pipeline::start() {
         shutdownP2InlineFeatureWorkers();
         shutdownP2FeatureDiagnosticLane();
         shutdownAsyncRoiStage2();
-        return;
+        return false;
     }
     if (pwm_trigger_ && !pwm_trigger_->start()) {
-        LOG_ERROR("Failed to start PWM trigger - camera may not receive triggers");
+        LOG_ERROR("Failed to start PWM trigger; refusing to run a triggerless pipeline");
+        if (camera_) camera_->stopGrabbing();
+        running_ = false;
+        shutdownP2InlineFeatureWorkers();
+        shutdownP2FeatureDiagnosticLane();
+        shutdownAsyncRoiStage2();
+        return false;
     }
 
     if (camera_) {
@@ -96,6 +102,7 @@ void Pipeline::start() {
         pipeline_thread_ = std::thread(&Pipeline::pipelineLoop, this);
         LOG_INFO("Pipeline thread started (Full-frame mode)");
     }
+    return true;
 }
 
 void Pipeline::stop() {

@@ -60,6 +60,9 @@ public:
 
     bool start() {
         if (running_.load()) return true;
+        // 上一次工作线程可能因 GPIO 写入失败而自行退出；先 join 并释放
+        // 旧 line/chip，避免给 joinable std::thread 重新赋值导致终止进程。
+        stop();
         if (frequency_ <= 0 || duty_cycle_ < 0 || duty_cycle_ > 100) {
             fprintf(stderr, "[PWM] Invalid params: freq=%.1f duty=%.1f\n", frequency_, duty_cycle_);
             return false;
@@ -79,7 +82,6 @@ public:
     }
 
     void stop() {
-        if (!running_.load()) return;
         running_.store(false);
         if (thread_.joinable()) thread_.join();
 
@@ -311,6 +313,7 @@ private:
             if (!edge_ok) {
                 fprintf(stderr, "[PWM] GPIO rising-edge write failed: %s\n",
                         strerror(errno));
+                running_.store(false);
                 break;
             }
             recordRisingEdge(next, monotonic_before, monotonic_after,
@@ -380,6 +383,7 @@ private:
             if (edge_status < 0) {
                 fprintf(stderr, "[PWM] GPIO rising-edge write failed: %s\n",
                         strerror(errno));
+                running_.store(false);
                 break;
             }
             recordRisingEdge(next, monotonic_before, monotonic_after,

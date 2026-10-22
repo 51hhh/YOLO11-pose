@@ -184,6 +184,13 @@ int main(int argc, char* argv[]) {
     }
     realtime_debug_dumper.init(realtime_dump_cfg);
 
+    // 先完成相机、GPU 与推理资源初始化，再启动 ROS2 线程。这样初始化失败
+    // 时不会遗留 joinable 的通信线程，也能让采集 staging 正常写出失败状态。
+    if (!pipeline.init(cfg)) {
+        LOG_ERROR("Pipeline init failed");
+        return 1;
+    }
+
     // === ROS2 Bridge 初始化 ===
 #ifdef HAS_ROS2
     std::shared_ptr<rclcpp::Node> ros2_node;
@@ -397,11 +404,6 @@ int main(int argc, char* argv[]) {
             });
     }
 
-    if (!pipeline.init(cfg)) {
-        LOG_ERROR("Pipeline init failed");
-        return 1;
-    }
-
     LOG_INFO("Pipeline initialized, starting...");
 
     // 构建彩色校正映射表 (用于可视化: raw Bayer → demosaic → remap → 彩色校正图)
@@ -480,7 +482,20 @@ int main(int argc, char* argv[]) {
     }
 
     // 启动
-    pipeline.start();
+    if (!pipeline.start()) {
+        LOG_ERROR("Pipeline start failed");
+#ifdef HAS_ROS2
+        if (ros2_cfg.enabled) {
+            rclcpp::shutdown();
+            if (ros2_spin_thread.joinable()) ros2_spin_thread.join();
+        }
+#endif
+        capture_v21_recorder.close();
+        realtime_debug_dumper.close();
+        baseline_recorder.close();
+        recorder.close();
+        return 1;
+    }
 
     // 主线程等待退出信号 / 可视化显示
     auto [disp_w, disp_h] = computeDisplaySize(cfg);
