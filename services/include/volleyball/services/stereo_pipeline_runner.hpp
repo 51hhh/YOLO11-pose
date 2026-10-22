@@ -4,6 +4,7 @@
 #include "volleyball/services/stereo_observation_service.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 
 namespace volleyball::services {
@@ -11,10 +12,15 @@ namespace volleyball::services {
 struct StereoPipelineRunnerConfig {
     // 允许连续出现的超时次数；0 表示第一次超时即终止 trial。
     std::size_t max_consecutive_timeouts{0};
+    // 由应用层信号处理器设置的只读查询。回调必须无阻塞且不得抛异常。
+    std::function<bool()> stop_requested;
+    // 实时无录制模式可在停止时正常关闭；采集必须 abort，禁止发布部分 trial。
+    bool finalize_on_stop{false};
 };
 
 enum class RunStatus {
     completed,
+    stopped,
     already_finished,
     source_timeout,
     source_error,

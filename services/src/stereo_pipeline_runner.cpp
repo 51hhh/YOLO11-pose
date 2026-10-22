@@ -42,8 +42,53 @@ RunSummary StereoPipelineRunner::run() {
         finished_ = true;
         return summary;
     };
+    auto stopRequested = [&]() -> std::optional<RunSummary> {
+        if (!config_.stop_requested) return std::nullopt;
+        bool requested = false;
+        try {
+            requested = config_.stop_requested();
+        } catch (const std::exception& error) {
+            return fail(
+                RunStatus::lifecycle_error,
+                std::string{"stop callback threw an exception: "} +
+                    error.what());
+        } catch (...) {
+            return fail(
+                RunStatus::lifecycle_error,
+                "stop callback threw a non-standard exception");
+        }
+        if (!requested) return std::nullopt;
+        if (!config_.finalize_on_stop) {
+            return fail(RunStatus::stopped, "stereo pipeline stop requested");
+        }
+        ports::WriteResult result;
+        try {
+            result = service_.finalize();
+        } catch (const std::exception& error) {
+            return fail(
+                RunStatus::finalize_error,
+                std::string{"stop finalization threw an exception: "} +
+                    error.what());
+        } catch (...) {
+            return fail(
+                RunStatus::finalize_error,
+                "stop finalization threw a non-standard exception");
+        }
+        if (result.status != ports::WriteStatus::accepted) {
+            return fail(
+                RunStatus::finalize_error,
+                messageOr(
+                    std::move(result.message),
+                    "trial writer rejected stop finalization"));
+        }
+        summary.status = RunStatus::stopped;
+        summary.message = "stereo pipeline stop requested";
+        finished_ = true;
+        return summary;
+    };
 
     while (true) {
+        if (auto stopped = stopRequested()) return *stopped;
         ports::SourceResult source_result;
         try {
             source_result = source_.next();
@@ -63,6 +108,7 @@ RunSummary StereoPipelineRunner::run() {
                 RunStatus::source_protocol_error,
                 "camera source frame status and payload disagree");
         }
+        if (auto stopped = stopRequested()) return *stopped;
 
         switch (source_result.status) {
         case ports::SourceStatus::frame: {

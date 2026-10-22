@@ -130,7 +130,9 @@ void testToleratesConfiguredTimeoutThenResumes() {
         support::passingObservationEstimator(), writer);
     fake::ScriptedCameraSource source(
         {timeoutResult(), frameResult(), endResult()});
-    services::StereoPipelineRunner runner({1}, source, service);
+    services::StereoPipelineRunnerConfig config;
+    config.max_consecutive_timeouts = 1;
+    services::StereoPipelineRunner runner(config, source, service);
 
     const auto result = runner.run();
     check(result.status == services::RunStatus::completed,
@@ -149,7 +151,9 @@ void testTimeoutLimitAbortsPartialTrial() {
         support::passingObservationEstimator(), writer);
     fake::ScriptedCameraSource source(
         {timeoutResult(), timeoutResult(), endResult()});
-    services::StereoPipelineRunner runner({1}, source, service);
+    services::StereoPipelineRunnerConfig config;
+    config.max_consecutive_timeouts = 1;
+    services::StereoPipelineRunner runner(config, source, service);
 
     const auto result = runner.run();
     check(result.status == services::RunStatus::source_timeout,
@@ -255,6 +259,48 @@ void testFinalizeFailureAbortsTrial() {
           "failed finalization must abort the writer with its reason");
 }
 
+void testRequestedRuntimeStopFinalizesWithoutReadingAnotherFrame() {
+    auto left = leftDetector();
+    auto right = rightDetector();
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        support::serviceConfig(), support::passingPreprocessor(), left, right,
+        support::passingObservationEstimator(), writer);
+    fake::ScriptedCameraSource source({frameResult(), endResult()});
+    services::StereoPipelineRunnerConfig config;
+    config.stop_requested = [] { return true; };
+    config.finalize_on_stop = true;
+    services::StereoPipelineRunner runner(config, source, service);
+
+    const auto result = runner.run();
+    check(result.status == services::RunStatus::stopped,
+          "runtime signal stop must be an explicit terminal state");
+    check(writer.finalized() && writer.abortReason().empty(),
+          "runtime stop may close a non-capture writer normally");
+    check(source.calls() == 0,
+          "an already-requested stop must not consume another camera frame");
+}
+
+void testRequestedCaptureStopAbortsPartialTrial() {
+    auto left = leftDetector();
+    auto right = rightDetector();
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        support::serviceConfig(), support::passingPreprocessor(), left, right,
+        support::passingObservationEstimator(), writer);
+    fake::ScriptedCameraSource source({frameResult(), endResult()});
+    services::StereoPipelineRunnerConfig config;
+    config.stop_requested = [] { return true; };
+    config.finalize_on_stop = false;
+    services::StereoPipelineRunner runner(config, source, service);
+
+    const auto result = runner.run();
+    check(result.status == services::RunStatus::stopped,
+          "capture cancellation must be distinguishable from source failure");
+    check(!writer.finalized() && !writer.abortReason().empty(),
+          "capture cancellation must never publish a partial trial");
+}
+
 }  // namespace
 
 int main() {
@@ -265,6 +311,8 @@ int main() {
     testProcessingFailureAbortsAndPreservesReason();
     testNoMatchIsAValidFrameOutcome();
     testFinalizeFailureAbortsTrial();
+    testRequestedRuntimeStopFinalizesWithoutReadingAnotherFrame();
+    testRequestedCaptureStopAbortsPartialTrial();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
