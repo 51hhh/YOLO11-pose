@@ -279,6 +279,34 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
         if transport["grab_strategy"] != "one_by_one":
             errors.append("hik_mvs 双目必须使用 one_by_one 保留每侧到达顺序")
+        if left["pixel_format"] != "bayer8" or right["pixel_format"] != "bayer8":
+            errors.append("当前海康适配器固定输出 BayerRG8，左右 pixel_format 必须为 bayer8")
+        if left["exposure_us"] != right["exposure_us"]:
+            errors.append("旧 NX 相机适配器只支持左右相同 exposure_us")
+        if left["gain_db"] != right["gain_db"]:
+            errors.append("旧 NX 相机适配器只支持左右相同 gain_db")
+        expected_roi = {
+            "x": 0,
+            "y": 0,
+            "width": left["resolution"][0],
+            "height": left["resolution"][1],
+        }
+        if left["roi"] != expected_roi or right["roi"] != expected_roi:
+            errors.append("当前海康适配器只支持左右相同的零偏移全幅 ROI")
+        if payload["rectification"]["backend"] != "cuda":
+            errors.append("当前 NX 主线只支持 rectification.backend=cuda")
+        if payload["stereo"]["triangulation"]["backend"] != "cuda":
+            errors.append("当前 NX 主线只支持 stereo.triangulation.backend=cuda")
+        if detector["backend"] != "tensorrt":
+            errors.append("当前 NX 主线只支持 detector.backend=tensorrt")
+        if detector["input_resolution"][0] != detector["input_resolution"][1]:
+            errors.append("当前 TensorRT 检测器要求正方形 input_resolution")
+        if detector["resize_mode"] != "letterbox":
+            errors.append("当前 TensorRT 检测器固定使用 letterbox")
+        if detector["input_format"] == "rgb8":
+            errors.append("当前 TensorRT 检测器不支持直接 rgb8 输入")
+        if detector["center_method"] != "bbox_center":
+            errors.append("当前实时检测输出只支持 center_method=bbox_center")
         if sync["method"] == "hardware_trigger":
             if sync["gpio_chip"] is None or sync["gpio_line"] is None:
                 errors.append("hardware_trigger 必须配置 gpio_chip/gpio_line")

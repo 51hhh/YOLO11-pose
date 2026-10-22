@@ -48,6 +48,7 @@ NX_volleyball/stereo_3d_pipeline/build/hik_frame_metadata_probe \
 - 两台相机在 PWM 启动前均已 `StartGrabbing`；
 - TriggerMode/Source/Activation 回读分别为 On/Line0/RisingEdge；
 - FrameSpecInfo 的 Timestamp、Framecounter、ExtTriggerCount 均已启用并可读取；
+- 左右 `Width/Height/OffsetX/OffsetY` 回读与 profile 一致，正式运行中 payload 尺寸无漂移；
 - 同步基线预热帧不会作为 `grab_failed` 进入采集回调，预热超限则明确失败；
 - 左右 `FrameCounter` 始终同号且逐帧 +1，允许 uint32 自然回绕；
 - USB 到达先后可变化，但不会改变配对；

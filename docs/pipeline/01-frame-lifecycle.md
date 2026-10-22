@@ -49,6 +49,8 @@ slot_index = frame_id % 3
 - `evtRectDone`、左右 `evtDetectDone` 和 `evtStereoDone`；
 - 触发、设备、USB 到达和配对残差元数据。
 
+原始 VPI 图像严格按 profile 的宽高预分配。海康相机打开时必须成功回读左右两侧的 `Width/Height/OffsetX/OffsetY`，并与 profile 的完整画面、零偏移契约一致；不能读取时不会退回配置值继续运行。每次 SDK payload 写入槽位前还会检查实际宽高和目标 pitch。任一项变化时先归还 SDK buffer，再让该帧明确失败，绝不把未知尺寸数据复制进既有 VPI 缓冲。
+
 槽位复用前有两个保护：
 
 1. 普通 CUDA/VPI 工作必须已被对应 stream/event 同步；

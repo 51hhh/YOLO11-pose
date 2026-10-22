@@ -102,6 +102,36 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "per_camera"):
             _validate_semantics(ROOT, payload)
 
+    def test_hik_adapter_rejects_unrepresentable_per_camera_settings(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            ("exposure_us", lambda value: value["cameras"]["right"].update(exposure_us=1000.0)),
+            ("gain_db", lambda value: value["cameras"]["right"].update(gain_db=1.0)),
+            ("pixel_format", lambda value: value["cameras"]["right"].update(pixel_format="gray8")),
+            ("全幅 ROI", lambda value: value["cameras"]["right"]["roi"].update(x=2)),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
+    def test_live_detector_rejects_unfaithful_legacy_projection(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            ("正方形", lambda value: value["detector"].update(input_resolution=[640, 384])),
+            ("letterbox", lambda value: value["detector"].update(resize_mode="stretch")),
+            ("rgb8", lambda value: value["detector"].update(input_format="rgb8")),
+            ("bbox_center", lambda value: value["detector"].update(center_method="circle_fit")),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),

@@ -16,7 +16,12 @@ struct StubCamera {
     bool frame_spec_enabled = false;
     unsigned int next_counter = 1;
     unsigned int image_reads = 0;
-    std::array<unsigned char, 4> image{};
+    unsigned int freed_frames = 0;
+    unsigned int width = 2;
+    unsigned int height = 2;
+    unsigned int offset_x = 0;
+    unsigned int offset_y = 0;
+    std::array<unsigned char, 16> image{};
 };
 
 StubCamera left_camera;
@@ -113,6 +118,43 @@ void testUnstableBaselineFailsWithBoundedReads() {
           "unstable warm-up must stop at the bounded retry limit");
 }
 
+void testOpenRejectsMismatchedCameraGeometry() {
+    resetStub(false);
+    right_camera.width = 3;
+    stereo3d::HikvisionCamera camera;
+    check(!camera.open(config()),
+          "camera open must reject unequal left/right dimensions");
+
+    resetStub(false);
+    right_camera.offset_x = 1;
+    check(!camera.open(config()),
+          "camera open must reject an ROI offset not represented by calibration");
+}
+
+void testGrabRejectsGeometryDriftAndShortPitch() {
+    resetStub(false);
+    stereo3d::HikvisionCamera camera;
+    check(camera.open(config()), "geometry drift camera must open initially");
+    check(camera.startGrabbing(), "geometry drift camera must start");
+
+    std::array<std::uint8_t, 4> image{};
+    stereo3d::GrabResult result;
+    check(!camera.grabSingle(true, image.data(), 1, 50, result),
+          "frame copy must reject a destination pitch smaller than its width");
+    check(left_camera.freed_frames == 1,
+          "rejected short-pitch frame must be returned to the MVS SDK");
+
+    right_camera.width = 3;
+    stereo3d::GrabResult left_result;
+    stereo3d::GrabResult right_result;
+    check(!camera.grabFramePair(
+              image.data(), image.data(), 2, 2, 50,
+              left_result, right_result),
+          "frame copy must reject dimensions that drift after open");
+    check(right_camera.freed_frames == 1,
+          "rejected drifted frame must be returned to the MVS SDK");
+}
+
 }  // namespace
 
 extern "C" {
@@ -162,8 +204,14 @@ int MV_CC_GetBoolValue(void* handle, const char* node, bool* value) {
     return MV_OK;
 }
 
-int MV_CC_GetIntValue(void*, const char*, MVCC_INTVALUE* value) {
-    value->nCurValue = 2;
+int MV_CC_GetIntValue(void* handle, const char* node, MVCC_INTVALUE* value) {
+    const auto* camera = static_cast<StubCamera*>(handle);
+    const std::string name(node);
+    if (name == "Width") value->nCurValue = camera->width;
+    else if (name == "Height") value->nCurValue = camera->height;
+    else if (name == "OffsetX") value->nCurValue = camera->offset_x;
+    else if (name == "OffsetY") value->nCurValue = camera->offset_y;
+    else return -1;
     return MV_OK;
 }
 
@@ -193,8 +241,8 @@ int MV_CC_GetImageBuffer(void* handle, MV_FRAME_OUT* frame, unsigned int) {
         timestamp_ns += 50000ULL;
     }
     frame->pBufAddr = camera->image.data();
-    frame->stFrameInfo.nWidth = 2;
-    frame->stFrameInfo.nHeight = 2;
+    frame->stFrameInfo.nWidth = camera->width;
+    frame->stFrameInfo.nHeight = camera->height;
     frame->stFrameInfo.nDevTimeStampHigh =
         static_cast<unsigned int>(timestamp_ns >> 32U);
     frame->stFrameInfo.nDevTimeStampLow =
@@ -206,13 +254,18 @@ int MV_CC_GetImageBuffer(void* handle, MV_FRAME_OUT* frame, unsigned int) {
     return MV_OK;
 }
 
-int MV_CC_FreeImageBuffer(void*, MV_FRAME_OUT*) { return MV_OK; }
+int MV_CC_FreeImageBuffer(void* handle, MV_FRAME_OUT*) {
+    ++static_cast<StubCamera*>(handle)->freed_frames;
+    return MV_OK;
+}
 
 }  // extern "C"
 
 int main() {
     testWarmupIsInternalToFirstGrab();
     testUnstableBaselineFailsWithBoundedReads();
+    testOpenRejectsMismatchedCameraGeometry();
+    testGrabRejectsGeometryDriftAndShortPitch();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

@@ -18,6 +18,7 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include <limits>
 
 namespace stereo3d {
 
@@ -31,6 +32,45 @@ namespace stereo3d {
             return false;                                               \
         }                                                               \
     } while(0)
+
+namespace {
+
+struct CameraGeometry {
+    int width = 0;
+    int height = 0;
+    int offset_x = 0;
+    int offset_y = 0;
+};
+
+bool readCameraGeometry(void* handle, const char* tag, CameraGeometry& geometry) {
+    auto read = [&](const char* node, int& output) {
+        MVCC_INTVALUE value;
+        std::memset(&value, 0, sizeof(value));
+        const int ret = MV_CC_GetIntValue(handle, node, &value);
+        if (ret != MV_OK ||
+            value.nCurValue > static_cast<std::uint64_t>(
+                std::numeric_limits<int>::max())) {
+            LOG_ERROR("[HikCam][%s] Get %s failed or overflowed, ret=0x%X",
+                      tag, node, ret);
+            return false;
+        }
+        output = static_cast<int>(value.nCurValue);
+        return true;
+    };
+    return read("Width", geometry.width) &&
+           read("Height", geometry.height) &&
+           read("OffsetX", geometry.offset_x) &&
+           read("OffsetY", geometry.offset_y);
+}
+
+bool geometryMatchesConfig(const CameraGeometry& geometry,
+                           const CameraConfig& config) {
+    return geometry.width == config.width &&
+           geometry.height == config.height &&
+           geometry.offset_x == 0 && geometry.offset_y == 0;
+}
+
+}  // namespace
 
 // ==================== 构造 / 析构 ====================
 
@@ -330,17 +370,27 @@ bool HikvisionCamera::open(const CameraConfig& cfg) {
         return false;
     }
 
-    // 读取实际图像尺寸
-    MVCC_INTVALUE intVal;
-    if (MV_OK == MV_CC_GetIntValue(handle_left_, "Width", &intVal))
-        width_ = static_cast<int>(intVal.nCurValue);
-    else
-        width_ = cfg.width;
-
-    if (MV_OK == MV_CC_GetIntValue(handle_left_, "Height", &intVal))
-        height_ = static_cast<int>(intVal.nCurValue);
-    else
-        height_ = cfg.height;
+    // VPI 缓冲按配置尺寸预分配。左右相机的实际尺寸或 ROI 偏移只要不一致，
+    // 后续 memcpy 就可能越界或让标定坐标失效，因此不能回退到猜测值。
+    CameraGeometry left_geometry;
+    CameraGeometry right_geometry;
+    if (!readCameraGeometry(handle_left_, "LEFT", left_geometry) ||
+        !readCameraGeometry(handle_right_, "RIGHT", right_geometry) ||
+        !geometryMatchesConfig(left_geometry, cfg) ||
+        !geometryMatchesConfig(right_geometry, cfg)) {
+        LOG_ERROR(
+            "[HikCam] Geometry mismatch: configured=%dx%d offset=(0,0), "
+            "left=%dx%d offset=(%d,%d), right=%dx%d offset=(%d,%d)",
+            cfg.width, cfg.height,
+            left_geometry.width, left_geometry.height,
+            left_geometry.offset_x, left_geometry.offset_y,
+            right_geometry.width, right_geometry.height,
+            right_geometry.offset_x, right_geometry.offset_y);
+        close();
+        return false;
+    }
+    width_ = cfg.width;
+    height_ = cfg.height;
 
     opened_ = true;
     LOG_INFO("[HikCam] Both cameras opened, %dx%d", width_, height_);
@@ -362,6 +412,8 @@ void HikvisionCamera::close() {
         handle_right_ = nullptr;
     }
     opened_ = false;
+    width_ = 0;
+    height_ = 0;
 }
 
 // ==================== start / stop ====================
@@ -427,6 +479,15 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
     // 直接 memcpy 到目标 buffer; dst 通常是 VPI host-mapped 内存,
     // 后续 CUDA/VPI 可复用该图像资源, 但相机 SDK buffer 仍有一次拷贝。
     int dstPitch = (pitch > 0) ? pitch : srcWidth;
+    if (!dst || !frameOut.pBufAddr || srcWidth != width_ ||
+        srcHeight != height_ || dstPitch < srcWidth) {
+        LOG_ERROR(
+            "[HikCam] Reject frame geometry=%dx%d pitch=%d, expected=%dx%d",
+            srcWidth, srcHeight, dstPitch, width_, height_);
+        MV_CC_FreeImageBuffer(handle, &frameOut);
+        result.success = false;
+        return false;
+    }
     if (dstPitch == srcWidth) {
         // 连续拷贝
         memcpy(dst, frameOut.pBufAddr, srcWidth * srcHeight);

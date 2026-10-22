@@ -35,11 +35,17 @@ volleyball config diff nx-rdk free-flight
 当 `cameras.sync.method=hardware_trigger` 时，主线要求：
 
 - 相机后端为 `hik_mvs`；
+- 左右相机均为 `bayer8`，曝光和增益相同；
+- 左右 ROI 均为零偏移、配置分辨率对应的完整画面；
 - 传输策略为 `one_by_one`；
 - 帧身份为 `hik_frame_spec_info`；
 - 触发源、沿、GPIO chip 和 line 非空；
 - 曝光时间来源为 `nx_gpio_rising_edge`；
+- 在线检测使用 TensorRT、正方形输入、`letterbox` 和 `bbox_center`；
+- 在线校正与三角化后端均为 CUDA；
 - 采集模式必须 `queue.overflow_policy=block`、`recording.loss_policy=fail_trial`、`raw_frames=all`。
+
+这些限制不是相机能力的上限，而是当前旧 NX 适配器能够忠实表达的契约。适配器目前只有一组曝光和增益，并按 profile 分辨率预分配 VPI 图像；因此配置层会拒绝左右参数差异和不能投影到旧 YAML 的视觉选项。相机打开时还会回读两侧 `Width/Height/OffsetX/OffsetY`，每帧复制前再次校验 payload 尺寸和目标 pitch，防止配置漂移造成越界写入。
 
 ## 主线到旧 NX 配置
 
