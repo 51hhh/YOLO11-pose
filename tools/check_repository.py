@@ -94,6 +94,10 @@ FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS = re.compile(
     r")\s*\.\s*(?:data|pBase|offsetBytes)\b",
     re.IGNORECASE,
 )
+FORBIDDEN_TEST_MODULE_IMPORT = re.compile(
+    r"^\s*(?:from|import)\s+(?:tests\.)?(?:unit|contract)\.test_[A-Za-z0-9_]+",
+    re.MULTILINE,
+)
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 CMAKE_SOURCE_GROUPS = (
     ("libs/core/src", "libs/core/CMakeLists.txt"),
@@ -327,6 +331,21 @@ def main() -> int:
         errors.append(
             "tests 根目录只保留包入口和跨套件夹具:\n    "
             + "\n    ".join(unexpected_test_root_files)
+        )
+
+    coupled_test_modules: list[str] = []
+    for path in tracked:
+        if not path.startswith("tests/") or not path.endswith(".py"):
+            continue
+        match = FORBIDDEN_TEST_MODULE_IMPORT.search(
+            (ROOT / path).read_text(encoding="utf-8")
+        )
+        if match:
+            coupled_test_modules.append(f"{path}: {match.group(0).strip()}")
+    if coupled_test_modules:
+        errors.append(
+            "测试模块不得相互导入，公共造数逻辑应进入 tests/trial_factory.py:\n    "
+            + "\n    ".join(coupled_test_modules)
         )
 
     required = [
