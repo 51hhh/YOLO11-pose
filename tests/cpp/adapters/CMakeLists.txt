@@ -176,3 +176,14 @@ if(TARGET volleyball::cuda_stereo_preprocessor)
     volleyball::cuda_stereo_preprocessor
   )
 endif()
+
+if(TARGET volleyball::cuda_direct_observation_estimator)
+  add_adapter_test(
+    cuda_direct_observation_estimator_tests
+    cuda_direct_observation_estimator_tests.cpp
+  )
+  target_link_libraries(
+    cuda_direct_observation_estimator_tests PRIVATE
+    volleyball::cuda_direct_observation_estimator
+  )
+endif()

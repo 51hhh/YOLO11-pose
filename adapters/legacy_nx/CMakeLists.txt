@@ -68,10 +68,14 @@ set(VOLLEYBALL_CORE_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/core")
 set(VOLLEYBALL_PORTS_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../../ports")
+set(VOLLEYBALL_STEREO_ALGORITHMS_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../algorithms/stereo")
 if(NOT EXISTS
    "${VOLLEYBALL_CORE_DIR}/include/volleyball/core/observation.hpp" OR
    NOT EXISTS
-   "${VOLLEYBALL_PORTS_DIR}/include/volleyball/ports/camera_source.hpp")
+   "${VOLLEYBALL_PORTS_DIR}/include/volleyball/ports/camera_source.hpp" OR
+   NOT EXISTS
+   "${VOLLEYBALL_STEREO_ALGORITHMS_DIR}/include/volleyball/algorithms/stereo/triangulation.hpp")
   message(FATAL_ERROR "Mainline core/ports components are incomplete")
 endif()
 add_subdirectory(
@@ -87,6 +91,11 @@ add_subdirectory(
 add_subdirectory(
   "${VOLLEYBALL_PORTS_DIR}"
   "${CMAKE_CURRENT_BINARY_DIR}/mainline_ports"
+  EXCLUDE_FROM_ALL
+)
+add_subdirectory(
+  "${VOLLEYBALL_STEREO_ALGORITHMS_DIR}"
+  "${CMAKE_CURRENT_BINARY_DIR}/mainline_stereo_algorithms"
   EXCLUDE_FROM_ALL
 )
 # ==================== ROS2 ament_cmake ====================
@@ -412,6 +421,7 @@ target_link_libraries(stereo_pipeline
   volleyball::cuda_preprocess_kernels
   volleyball::cuda_stereo_preprocessor
   volleyball::cuda_roi_matcher
+  volleyball::cuda_direct_observation_estimator
   volleyball::tensorrt_runtime
   # VPI
   vpi

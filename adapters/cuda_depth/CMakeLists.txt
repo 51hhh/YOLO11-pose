@@ -34,5 +34,33 @@ if(CMAKE_CUDA_COMPILER)
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
     CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+  )
+
+  add_library(volleyball_cuda_direct_observation_estimator STATIC
+    src/cuda_direct_observation_estimator.cpp
+  )
+  add_library(
+    volleyball::cuda_direct_observation_estimator
+    ALIAS volleyball_cuda_direct_observation_estimator
+  )
+  target_include_directories(
+    volleyball_cuda_direct_observation_estimator PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
+  target_link_libraries(
+    volleyball_cuda_direct_observation_estimator PUBLIC
+    volleyball::cuda_depth_selection
+    volleyball::cuda_roi_matcher
+    volleyball::stereo_algorithms
+    volleyball::ports
+    CUDA::cudart
+  )
+  target_compile_features(
+    volleyball_cuda_direct_observation_estimator PUBLIC cxx_std_17
+  )
+  target_compile_options(
+    volleyball_cuda_direct_observation_estimator PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>
   )
 endif()
