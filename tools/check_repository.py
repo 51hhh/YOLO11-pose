@@ -45,6 +45,10 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "adapters/legacy_nx/test_logs/",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
+ALLOWED_TEST_ROOT_FILES = {
+    "tests/__init__.py",
+    "tests/trial_factory.py",
+}
 ALLOWED_HARDWARE_TOOL_FILES = {
     "adapters/legacy_nx/tools/common/atomic_file.cpp",
     "adapters/legacy_nx/tools/common/atomic_file.h",
@@ -312,6 +316,17 @@ def main() -> int:
         errors.append(
             "Python 测试必须归入 unit 或 contract:\n    "
             + "\n    ".join(flat_python_tests)
+        )
+
+    unexpected_test_root_files = sorted(
+        path for path in tracked
+        if Path(path).parent == Path("tests")
+        and path not in ALLOWED_TEST_ROOT_FILES
+    )
+    if unexpected_test_root_files:
+        errors.append(
+            "tests 根目录只保留包入口和跨套件夹具:\n    "
+            + "\n    ".join(unexpected_test_root_files)
         )
 
     required = [

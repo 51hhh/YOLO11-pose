@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tests.contract.test_dataset import _write_valid_trial
+from tests.trial_factory import write_valid_trial
 from volleyball_vision.config import load_profile
 from volleyball_vision.dataset import DatasetError, validate_trial
 from volleyball_vision.replay import run_replay
@@ -18,7 +18,7 @@ class ReplayTests(unittest.TestCase):
     def test_replay_writes_only_fingerprinted_derived_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            trial = _write_valid_trial(root / "dataset")
+            trial = write_valid_trial(root / "dataset")
             trajectory_before = (trial / "trajectory.csv").read_bytes()
             config = load_profile("replay", project_root=ROOT)
 
@@ -45,7 +45,7 @@ class ReplayTests(unittest.TestCase):
     def test_shadow_comparison_is_deterministic_and_reports_uncertainty(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            trial = _write_valid_trial(root / "dataset")
+            trial = write_valid_trial(root / "dataset")
             shadow = root / "shadow.csv"
             columns = [
                 "sample_index",
@@ -109,7 +109,7 @@ class ReplayTests(unittest.TestCase):
 
     def test_replay_rejects_runtime_capture_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            trial = _write_valid_trial(Path(directory) / "dataset")
+            trial = write_valid_trial(Path(directory) / "dataset")
             config = load_profile("free-flight", project_root=ROOT)
             with self.assertRaisesRegex(DatasetError, "runtime.mode=replay"):
                 run_replay(trial, config, project_root=ROOT)

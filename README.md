@@ -55,6 +55,7 @@ python3 tools/check_repository.py
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
+| `tests/trial_factory.py` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/legacy_nx/` | 旧 NX 适配器测试及其 SDK/CUDA/VPI 桩 |
 | `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
