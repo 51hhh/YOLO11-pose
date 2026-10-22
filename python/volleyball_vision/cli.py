@@ -16,6 +16,7 @@ from .config import ConfigError, flatten, load_profile
 from .dataset import DatasetError, validate_dataset, validate_trial
 from .doctor import checks_as_dicts, run_doctor
 from .legacy_config import build_legacy_pipeline_config
+from .replay import run_replay
 
 
 def _add_profile_arguments(parser: argparse.ArgumentParser) -> None:
@@ -171,6 +172,49 @@ def _dataset_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _replay(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    result = run_replay(
+        args.trial,
+        config,
+        shadow_trajectory=args.shadow,
+        output_root=args.output_root,
+        max_time_delta_ms=args.max_time_delta_ms,
+        verify_hashes=not args.no_verify_hashes,
+    )
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "output_directory": str(result.output_directory),
+                    "fingerprint_sha256": result.fingerprint_sha256,
+                    "reused": result.reused,
+                    "metrics": result.metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        quality = result.metrics["quality"]
+        print(
+            f"OK replay={result.output_directory} "
+            f"observations={quality['direct_observations']} "
+            f"pairs={quality['accepted_pairs']}/{quality['pair_attempts']} "
+            f"reused={str(result.reused).lower()}"
+        )
+        comparison = result.metrics.get("shadow_comparison")
+        if comparison is not None:
+            error = comparison["position_error_m"]
+            print(
+                f"  shadow matched={comparison['matched_samples']}/"
+                f"{comparison['reference_samples']} "
+                f"rmse_m={error['rmse']} p95_m={error['p95']}"
+            )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="volleyball")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +271,34 @@ def build_parser() -> argparse.ArgumentParser:
     capture_finalize.add_argument("--stage", required=True)
     capture_finalize.add_argument("--dataset-root", required=True)
     capture_finalize.set_defaults(handler=_capture_finalize)
+
+    replay = subparsers.add_parser(
+        "replay",
+        help="确定性读取真实 trial，并可比较影子仿真轨迹",
+    )
+    _add_profile_arguments(replay)
+    replay.add_argument("--trial", required=True, help="v2.1 trial 目录")
+    replay.add_argument(
+        "--shadow",
+        help="待评估轨迹 CSV，至少含 timestamp_s,x_m,y_m,z_m",
+    )
+    replay.add_argument(
+        "--output-root",
+        help="派生结果根目录；默认写入 trial/derived",
+    )
+    replay.add_argument(
+        "--max-time-delta-ms",
+        type=float,
+        default=20.0,
+        help="最近时间戳配对上限，默认 20 ms",
+    )
+    replay.add_argument(
+        "--no-verify-hashes",
+        action="store_true",
+        help="仅快速诊断时跳过原始文件哈希检查",
+    )
+    replay.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    replay.set_defaults(handler=_replay)
 
     calibrate = subparsers.add_parser("calibrate", help="标定格式转换与检查")
     calibrate_commands = calibrate.add_subparsers(dest="calibrate_command", required=True)
