@@ -266,7 +266,7 @@ bool Pipeline::init(const PipelineConfig& config) {
             return false;
         }
         LOG_INFO("  Dual YOLO: right_engine=%s, use_for_depth=%d, fallback_roi=%d, "
-                 "modes[bbox=%d bboxEdge=%d circle=%d circleEdge=%d roiCent=%d "
+                 "modes[bbox=%d bboxEdge=%d circle=%d roiCent=%d "
                  "radial=%d edgePair=%d cornerPts=%d texturePts=%d binaryPts=%d "
                  "orbPts=%d briskPts=%d akazePts=%d siftPts=%d colorPatch=%d "
                  "colorEdge=%d cudaTmpl=%d cudaBM=%d cudaSGM=%d ringEdge=%d centerPatch=%d "
@@ -280,7 +280,6 @@ bool Pipeline::init(const PipelineConfig& config) {
                  config_.dual_yolo.depth_bbox_pair,
                  config_.dual_yolo.depth_bbox_edges,
                  config_.dual_yolo.depth_circle_center,
-                 config_.dual_yolo.depth_circle_edges,
                  config_.dual_yolo.depth_roi_edge_centroid,
                  config_.dual_yolo.depth_roi_radial_center,
                  config_.dual_yolo.depth_roi_edge_pair_center,
@@ -484,7 +483,6 @@ bool Pipeline::init(const PipelineConfig& config) {
             config_.dual_yolo.depth_bbox_edges ||
             (config_.dual_yolo.depth_circle_center &&
              config_.dual_yolo.center_refine) ||
-            dualYoloCircleEdgesDepthEnabled(config_.dual_yolo) ||
             (config_.dual_yolo.depth_roi_edge_centroid &&
              config_.dual_yolo.center_refine) ||
             config_.dual_yolo.depth_roi_radial_center ||
@@ -525,7 +523,6 @@ bool Pipeline::init(const PipelineConfig& config) {
         const bool dual_yolo_gpu_batch_modes_enabled =
             (config_.dual_yolo.depth_circle_center &&
              config_.dual_yolo.center_refine) ||
-            dualYoloCircleEdgesDepthEnabled(config_.dual_yolo) ||
             (config_.dual_yolo.depth_roi_edge_centroid &&
              config_.dual_yolo.center_refine) ||
             config_.dual_yolo.depth_roi_radial_center ||

@@ -16,7 +16,6 @@ bool isROISubpixelDepthSolver(std::string solver);
 bool dualYoloBBoxDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloBBoxEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloCircleDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
-bool dualYoloCircleEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloROIEdgeCentroidDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloROIRadialCenterDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);
 bool dualYoloROIEdgePairCenterDepthEnabled(const PipelineConfig::DualYoloConfig& cfg);

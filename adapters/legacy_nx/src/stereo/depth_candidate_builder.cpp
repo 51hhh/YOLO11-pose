@@ -1,8 +1,6 @@
 #include "depth_candidate_builder.h"
 #include "depth_candidate_builder_feature.h"
 
-#include <algorithm>
-
 namespace stereo3d {
 
 namespace {
@@ -42,12 +40,6 @@ DepthCandidateBuildResult buildDepthCandidateObservations(
     const float circle_anchor_y = in.left_circle.valid
         ? in.left_circle.cy
         : in.left_detection.cy;
-    const float circle_left_edge_anchor_x = in.left_circle.valid
-        ? in.left_circle.cx - in.left_circle.radius
-        : in.left_detection.cx - 0.5f * in.left_detection.width;
-    const float circle_right_edge_anchor_x = in.left_circle.valid
-        ? in.left_circle.cx + in.left_circle.radius
-        : in.left_detection.cx + 0.5f * in.left_detection.width;
     const float bbox_left_edge_anchor_x =
         in.left_detection.cx - 0.5f * in.left_detection.width;
     const float bbox_right_edge_anchor_x =
@@ -91,28 +83,6 @@ DepthCandidateBuildResult buildDepthCandidateObservations(
         1,
         in.left_edge_centroid_measure.cx,
         in.left_edge_centroid_measure.cy);
-    addCandidate(
-        &out.candidates,
-        DepthCandidateMethod::CIRCLE_LEFT_EDGE,
-        in.disparity_circle_left_edge,
-        in.z_circle_left_edge,
-        in.circle_confidence,
-        std::max(0.45f, in.circle_confidence),
-        -1.0f,
-        1,
-        circle_left_edge_anchor_x,
-        circle_anchor_y);
-    addCandidate(
-        &out.candidates,
-        DepthCandidateMethod::CIRCLE_RIGHT_EDGE,
-        in.disparity_circle_right_edge,
-        in.z_circle_right_edge,
-        in.circle_confidence,
-        std::max(0.45f, in.circle_confidence),
-        -1.0f,
-        1,
-        circle_right_edge_anchor_x,
-        circle_anchor_y);
     addCandidate(
         &out.candidates,
         DepthCandidateMethod::BBOX_CENTER,

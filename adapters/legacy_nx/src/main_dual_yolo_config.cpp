@@ -46,8 +46,6 @@ void loadDualYoloConfig(const YAML::Node& dual, stereo3d::PipelineConfig& cfg) {
             cfg.dual_yolo.depth_bbox_edges = modes["bbox_edges"].as<bool>();
         if (modes["circle_center"])
             cfg.dual_yolo.depth_circle_center = modes["circle_center"].as<bool>();
-        if (modes["circle_edges"])
-            cfg.dual_yolo.depth_circle_edges = modes["circle_edges"].as<bool>();
         if (modes["roi_edge_centroid"])
             cfg.dual_yolo.depth_roi_edge_centroid = modes["roi_edge_centroid"].as<bool>();
         if (modes["roi_radial_center"])

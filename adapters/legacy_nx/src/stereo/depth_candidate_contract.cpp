@@ -11,8 +11,6 @@ const char* depthCandidateMethodName(DepthCandidateMethod method) {
     case DepthCandidateMethod::BBOX_RIGHT_EDGE: return "bbox_right_edge";
     case DepthCandidateMethod::BBOX_EDGES: return "bbox_edges";
     case DepthCandidateMethod::CIRCLE_CENTER: return "circle_center";
-    case DepthCandidateMethod::CIRCLE_LEFT_EDGE: return "circle_left_edge";
-    case DepthCandidateMethod::CIRCLE_RIGHT_EDGE: return "circle_right_edge";
     case DepthCandidateMethod::ROI_EDGE_CENTROID: return "roi_edge_centroid";
     case DepthCandidateMethod::ROI_RADIAL_CENTER: return "roi_radial_center";
     case DepthCandidateMethod::ROI_EDGE_PAIR_CENTER: return "roi_edge_pair_center";
@@ -92,9 +90,6 @@ int stereoDepthSourceForMethod(DepthCandidateMethod method) {
         return 24;
     case DepthCandidateMethod::ROI_NEURAL_FEATURE:
         return 20;
-    case DepthCandidateMethod::CIRCLE_LEFT_EDGE:
-    case DepthCandidateMethod::CIRCLE_RIGHT_EDGE:
-        return 1;
     }
     return 0;
 }
@@ -146,8 +141,6 @@ bool isLegacyDepthOutputCandidate(const DepthCandidateObservation& candidate) {
     case DepthCandidateMethod::ROI_RADIAL_CENTER:
     case DepthCandidateMethod::ROI_EDGE_PAIR_CENTER:
     case DepthCandidateMethod::ROI_EDGE_CENTROID:
-    case DepthCandidateMethod::CIRCLE_LEFT_EDGE:
-    case DepthCandidateMethod::CIRCLE_RIGHT_EDGE:
     case DepthCandidateMethod::BBOX_CENTER:
     case DepthCandidateMethod::BBOX_EDGES:
     case DepthCandidateMethod::BBOX_LEFT_EDGE:

@@ -39,8 +39,6 @@ struct Object3D {
     float z_bbox_left_edge;///< bbox 左边缘视差测距, -1=无效
     float z_bbox_right_edge;///< bbox 右边缘视差测距, -1=无效
     float z_circle_center; ///< ROI 圆心视差测距, -1=无效
-    float z_circle_left_edge; ///< 已废弃: 球左轮廓不作为深度候选, -1=无效
-    float z_circle_right_edge;///< 已废弃: 球右轮廓不作为深度候选, -1=无效
     float z_roi_edge_centroid;///< ROI 边缘梯度质心视差测距, -1=无效
     float z_roi_radial_center;///< ROI 径向梯度中心视差测距, -1=无效
     float z_roi_edge_pair_center;///< ROI 左右边缘成对中心视差测距, -1=无效
@@ -74,8 +72,6 @@ struct Object3D {
     float disparity_bbox_left_edge; ///< bbox 左边缘视差, -1=无效
     float disparity_bbox_right_edge;///< bbox 右边缘视差, -1=无效
     float disparity_circle_center; ///< ROI 圆心视差, -1=无效
-    float disparity_circle_left_edge; ///< 已废弃: 球左轮廓视差不作为深度候选, -1=无效
-    float disparity_circle_right_edge;///< 已废弃: 球右轮廓视差不作为深度候选, -1=无效
     float disparity_roi_edge_centroid;///< ROI 边缘梯度质心视差, -1=无效
     float disparity_roi_radial_center;///< ROI 径向梯度中心视差, -1=无效
     float disparity_roi_edge_pair_center;///< ROI 左右边缘成对中心视差, -1=无效
@@ -229,7 +225,7 @@ struct Object3D {
                  kalman_sigma_z(-1),
                  z_mono(0), z_stereo(-1),
                  z_bbox_center(-1), z_bbox_left_edge(-1), z_bbox_right_edge(-1),
-                 z_circle_center(-1), z_circle_left_edge(-1), z_circle_right_edge(-1),
+                 z_circle_center(-1),
                  z_roi_edge_centroid(-1), z_roi_radial_center(-1),
                  z_roi_edge_pair_center(-1), z_roi_corner_points(-1),
                  z_roi_texture_points(-1), z_roi_binary_points(-1),
@@ -252,7 +248,6 @@ struct Object3D {
                  z_fallback_template(-1), z_fallback_feature_points(-1),
                  disparity_bbox_center(-1), disparity_bbox_left_edge(-1),
                  disparity_bbox_right_edge(-1), disparity_circle_center(-1),
-                 disparity_circle_left_edge(-1), disparity_circle_right_edge(-1),
                  disparity_roi_edge_centroid(-1), disparity_roi_radial_center(-1),
                  disparity_roi_edge_pair_center(-1), disparity_roi_corner_points(-1),
                  disparity_roi_texture_points(-1), disparity_roi_binary_points(-1),

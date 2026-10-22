@@ -437,8 +437,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         dualYoloBBoxEdgesDepthEnabled(config_.dual_yolo);
     const bool circle_depth_enabled =
         dualYoloCircleDepthEnabled(config_.dual_yolo);
-    const bool circle_edges_depth_enabled =
-        dualYoloCircleEdgesDepthEnabled(config_.dual_yolo);
     const bool roi_edge_centroid_depth_enabled =
         dualYoloROIEdgeCentroidDepthEnabled(config_.dual_yolo);
     const bool roi_radial_center_depth_enabled =
@@ -542,7 +540,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     const bool direct_circle_seed_refine_enabled =
         config_.dual_yolo.center_refine &&
         (circle_depth_enabled ||
-         circle_edges_depth_enabled ||
          roi_edge_centroid_depth_enabled ||
          roi_center_patch_depth_enabled ||
          subpixel_depth_enabled);
@@ -2389,14 +2386,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         bool any_fallback_depth_valid =
             epipolar_fallback_depth_valid || fallback_template_depth_valid;
 
-        float disparity_circle_left_edge = -1.0f;
-        float disparity_circle_right_edge = -1.0f;
-        float z_circle_left_edge = -1.0f;
-        float z_circle_right_edge = -1.0f;
-        // Sphere silhouette left/right edges are not the same physical surface
-        // point across cameras. Keep legacy CSV fields invalid; circle_match
-        // logs center/top/bottom axis points for diagnostics.
-
         SubpixelDisparityResult center_patch_result;
         bool center_patch_valid_for_obj = false;
         if (roi_center_patch_depth_enabled &&
@@ -2698,12 +2687,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         depth_candidate_input.z_circle_raw = z_circle_raw;
         depth_candidate_input.circle_confidence =
             std::min(left_circle.confidence, right_circle.confidence);
-        depth_candidate_input.disparity_circle_left_edge =
-            disparity_circle_left_edge;
-        depth_candidate_input.z_circle_left_edge = z_circle_left_edge;
-        depth_candidate_input.disparity_circle_right_edge =
-            disparity_circle_right_edge;
-        depth_candidate_input.z_circle_right_edge = z_circle_right_edge;
         depth_candidate_input.center_patch_valid = center_patch_valid_for_obj;
         depth_candidate_input.center_patch_result = center_patch_result;
         depth_candidate_input.z_roi_center_patch = z_roi_center_patch;
@@ -2837,8 +2820,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         obj.z_bbox_left_edge = z_bbox_left_edge;
         obj.z_bbox_right_edge = z_bbox_right_edge;
         obj.z_circle_center = circle_candidate_valid ? z_circle_raw : -1.0f;
-        obj.z_circle_left_edge = z_circle_left_edge;
-        obj.z_circle_right_edge = z_circle_right_edge;
         obj.z_roi_edge_centroid = z_roi_edge_centroid;
         obj.z_roi_radial_center = z_roi_radial_center;
         obj.z_roi_edge_pair_center = z_roi_edge_pair_center;
@@ -2878,10 +2859,6 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             (z_bbox_right_edge > 0.0f) ? disparity_bbox_right_edge : -1.0f;
         obj.disparity_circle_center =
             circle_candidate_valid ? circle_disparity : -1.0f;
-        obj.disparity_circle_left_edge =
-            (z_circle_left_edge > 0.0f) ? disparity_circle_left_edge : -1.0f;
-        obj.disparity_circle_right_edge =
-            (z_circle_right_edge > 0.0f) ? disparity_circle_right_edge : -1.0f;
         obj.disparity_roi_edge_centroid =
             (z_roi_edge_centroid > 0.0f) ? disparity_roi_edge_centroid : -1.0f;
         obj.disparity_roi_radial_center =

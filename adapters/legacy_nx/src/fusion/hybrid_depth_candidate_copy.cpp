@@ -7,8 +7,6 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
     obj.z_bbox_left_edge = roi.z_bbox_left_edge;
     obj.z_bbox_right_edge = roi.z_bbox_right_edge;
     obj.z_circle_center = roi.z_circle_center;
-    obj.z_circle_left_edge = roi.z_circle_left_edge;
-    obj.z_circle_right_edge = roi.z_circle_right_edge;
     obj.z_roi_edge_centroid = roi.z_roi_edge_centroid;
     obj.z_roi_radial_center = roi.z_roi_radial_center;
     obj.z_roi_edge_pair_center = roi.z_roi_edge_pair_center;
@@ -42,8 +40,6 @@ void copyRoiCandidateFields(const Object3D& roi, Object3D& obj) {
     obj.disparity_bbox_left_edge = roi.disparity_bbox_left_edge;
     obj.disparity_bbox_right_edge = roi.disparity_bbox_right_edge;
     obj.disparity_circle_center = roi.disparity_circle_center;
-    obj.disparity_circle_left_edge = roi.disparity_circle_left_edge;
-    obj.disparity_circle_right_edge = roi.disparity_circle_right_edge;
     obj.disparity_roi_edge_centroid = roi.disparity_roi_edge_centroid;
     obj.disparity_roi_radial_center = roi.disparity_roi_radial_center;
     obj.disparity_roi_edge_pair_center = roi.disparity_roi_edge_pair_center;

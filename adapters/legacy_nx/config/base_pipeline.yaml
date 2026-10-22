@@ -64,7 +64,6 @@ detector:
       bbox_pair: true          # cheap left/right YOLO bbox-center disparity candidate
       bbox_edges: true         # bbox left/right edge disparity candidates
       circle_center: true      # actual ROI circle-fit triangulation candidate (needs center_refine)
-      circle_edges: false      # legacy left/right silhouette depth off; circle_center uses top/bottom contour check
       roi_edge_centroid: true  # gradient-weighted ROI edge centroid disparity candidate
       roi_radial_center: true  # radial-gradient center disparity candidate
       roi_edge_pair_center: true # paired left/right ROI edge center disparity candidate

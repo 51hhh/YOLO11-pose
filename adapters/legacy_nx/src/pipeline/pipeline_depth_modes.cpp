@@ -31,11 +31,6 @@ bool dualYoloCircleDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     return cfg.depth_circle_center && cfg.center_refine;
 }
 
-bool dualYoloCircleEdgesDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
-    (void)cfg;
-    return false;
-}
-
 bool dualYoloROIEdgeCentroidDepthEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     return cfg.depth_roi_edge_centroid && cfg.center_refine;
 }
@@ -156,7 +151,6 @@ bool dualYoloAnyDepthModeEnabled(const PipelineConfig::DualYoloConfig& cfg) {
     return dualYoloBBoxDepthEnabled(cfg) ||
            dualYoloBBoxEdgesDepthEnabled(cfg) ||
            dualYoloCircleDepthEnabled(cfg) ||
-           dualYoloCircleEdgesDepthEnabled(cfg) ||
            dualYoloROIEdgeCentroidDepthEnabled(cfg) ||
            dualYoloROIRadialCenterDepthEnabled(cfg) ||
            dualYoloROIEdgePairCenterDepthEnabled(cfg) ||
