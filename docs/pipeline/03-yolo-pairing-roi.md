@@ -21,6 +21,8 @@
 - 多尺度 6-output DFL：GPU 解码每个尺度，只拷回小型候选表，CPU 做 NMS；
 - 单输出：异步 D2H 后由 CPU 解析/NMS；若 engine 已内置 NMS，则直接读取结果。
 
+启动时不会只凭文件扩展名假定 engine 可用。反序列化后必须满足当前实现的 I/O 契约：恰好一个静态 float32 NCHW `[1,3,S,S]` 正方形输入；输出必须是受后处理支持的 `[1,C,N]` / `[1,N,C]` pre-NMS、`[1,N,6]` post-NMS，或三尺度成对的 6 个 NHWC DFL tensor。动态 shape、矩形输入、多输入、额外未绑定输出、非 float32 以及不完整 DFL 尺度会直接阻止启动。左右 engine 的实际 `S` 还必须分别等于 profile 的 `detector.input_resolution`，因此配置、模型清单和运行 engine 不会静默分叉。
+
 `evtDetectDone` 在预处理、推理和所需 D2H 操作都排入同一 stream 后记录。Stage 2 等待 event 和 stream 完成后才读取 host 输出。
 
 ## 从检测框到左右候选

@@ -278,6 +278,12 @@ bool Pipeline::init(const PipelineConfig& config) {
         LOG_ERROR("Failed to initialize TRT Detector");
         return false;
     }
+    if (detector_->getInputSize() != config_.input_size) {
+        LOG_ERROR("Left TensorRT engine input is %dx%d but profile requires %dx%d",
+                  detector_->getInputSize(), detector_->getInputSize(),
+                  config_.input_size, config_.input_size);
+        return false;
+    }
 
     if (config_.dual_yolo.enabled) {
         const std::string right_engine = config_.dual_yolo.right_engine_file.empty()
@@ -294,6 +300,13 @@ bool Pipeline::init(const PipelineConfig& config) {
                                    config_.nms_threshold,
                                    right_format)) {
             LOG_ERROR("Failed to initialize right TRT Detector");
+            return false;
+        }
+        if (detector_right_->getInputSize() != config_.input_size) {
+            LOG_ERROR("Right TensorRT engine input is %dx%d but profile requires %dx%d",
+                      detector_right_->getInputSize(),
+                      detector_right_->getInputSize(),
+                      config_.input_size, config_.input_size);
             return false;
         }
         LOG_INFO("  Dual YOLO: right_engine=%s, use_for_depth=%d, fallback_roi=%d, "

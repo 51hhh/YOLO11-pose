@@ -27,6 +27,7 @@ volleyball config diff nx-rdk free-flight
 - 私有序列号或本机路径放入未提交的 `configs/local.yaml`；
 - `--set` 只能覆盖已存在的键，防止拼写错误静默生成无效配置；
 - 模型必须登记在 `models/manifest.yaml`，实机采集前固定 SHA-256；
+- TensorRT engine 反序列化后的实际输入尺寸和 I/O 布局必须通过检测器契约，且与 profile 一致；
 - 标定必须有稳定 `calibration_id` 和 `created_at_utc`，不得用文件 mtime 充当版本；
 - 单位写入键名或契约，时间统一为整数纳秒，物理量使用 SI。
 

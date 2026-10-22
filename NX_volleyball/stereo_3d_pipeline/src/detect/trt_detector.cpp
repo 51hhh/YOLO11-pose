@@ -10,6 +10,7 @@
  */
 
 #include "trt_detector.h"
+#include "trt_engine_contract.h"
 #include "../utils/logger.h"
 
 #include <NvInfer.h>
@@ -20,6 +21,8 @@
 #include <cstring>
 #include <cmath>
 #include <numeric>
+#include <sstream>
+#include <utility>
 
 // CUDA 预处理 kernel (灰度 U8 → RGB float32 CHW)
 extern "C" void launchGrayToRGBKernel(const unsigned char* gray, float* dst,
@@ -153,10 +156,18 @@ bool TRTDetector::loadEngine(const std::string& path) {
         return false;
     }
 
-    size_t fileSize = file.tellg();
+    const std::streampos end = file.tellg();
+    if (end <= 0) {
+        LOG_ERROR("TensorRT engine is empty or unreadable: %s", path.c_str());
+        return false;
+    }
+    const size_t fileSize = static_cast<size_t>(end);
     file.seekg(0);
     std::vector<char> engineData(fileSize);
-    file.read(engineData.data(), fileSize);
+    if (!file.read(engineData.data(), static_cast<std::streamsize>(fileSize))) {
+        LOG_ERROR("Failed to read complete TensorRT engine: %s", path.c_str());
+        return false;
+    }
     file.close();
 
     runtime_ = nvinfer1::createInferRuntime(sTrtLogger);
@@ -166,48 +177,74 @@ bool TRTDetector::loadEngine(const std::string& path) {
     engine_ = runtime_->deserializeCudaEngine(engineData.data(), fileSize);
     if (!engine_) return false;
 
-    for (auto& context : contexts_) {
-        context = engine_->createExecutionContext();
-        if (!context) return false;
-    }
-
-    // 获取 tensor 信息
-    int nbBindings = engine_->getNbIOTensors();
-    numOutputTensors_ = 0;
+    // 先把 TensorRT 元数据投影为无 SDK 依赖的严格契约。旧实现只取 d[2]
+    // 并假定正方形静态输入，遇到动态/矩形/多输入 engine 会按错误尺寸分配缓冲。
+    const int nbBindings = engine_->getNbIOTensors();
+    std::vector<DetectorTensorSpec> tensorSpecs;
+    tensorSpecs.reserve(nbBindings > 0 ? static_cast<size_t>(nbBindings) : 0U);
     for (int i = 0; i < nbBindings; ++i) {
         const char* name = engine_->getIOTensorName(i);
-        auto mode = engine_->getTensorIOMode(name);
-        auto dims = engine_->getTensorShape(name);
-
-        if (mode == nvinfer1::TensorIOMode::kINPUT) {
-            inputTensorName_ = name;
-            // dims: [batch, channels, H, W]
-            if (dims.nbDims >= 4) {
-                inputSize_ = dims.d[2];  // H == W
-            }
-            LOG_INFO("  Input tensor: %s [%d,%d,%d,%d]",
-                     name, dims.d[0], dims.d[1], dims.d[2], dims.d[3]);
-        } else {
-            numOutputTensors_++;
-            if (numOutputTensors_ == 1) {
-                outputTensorName_ = name;
-                outputSize_ = 1;
-                for (int d = 0; d < dims.nbDims; ++d) {
-                    outputSize_ *= dims.d[d];
-                }
-            }
-            LOG_INFO("  Output tensor %d: %s [%d dims]", numOutputTensors_, name,
-                     dims.nbDims);
+        if (!name) {
+            LOG_ERROR("TensorRT engine returned a null tensor name at index %d", i);
+            return false;
         }
+        auto mode = engine_->getTensorIOMode(name);
+        if (mode != nvinfer1::TensorIOMode::kINPUT &&
+            mode != nvinfer1::TensorIOMode::kOUTPUT) {
+            LOG_ERROR("Tensor '%s' has unsupported I/O mode", name);
+            return false;
+        }
+        auto dims = engine_->getTensorShape(name);
+        DetectorTensorSpec spec;
+        spec.name = name;
+        spec.is_input = mode == nvinfer1::TensorIOMode::kINPUT;
+        spec.is_float32 = engine_->getTensorDataType(name) ==
+                          nvinfer1::DataType::kFLOAT;
+        if (dims.nbDims > 0) {
+            spec.dimensions.reserve(static_cast<size_t>(dims.nbDims));
+            for (int d = 0; d < dims.nbDims; ++d) {
+                spec.dimensions.push_back(static_cast<std::int64_t>(dims.d[d]));
+            }
+        }
+        tensorSpecs.push_back(std::move(spec));
     }
 
-    // Detect 6-tensor multi-scale output format
-    // Format: cls[1,H,W,nc], bbox[1,H,W,64] alternating per scale
-    if (numOutputTensors_ == 6) {
-        multiScaleOutput_ = true;
-        LOG_INFO("  Detected 6-tensor multi-scale DFL output format");
-    } else {
-        multiScaleOutput_ = false;
+    DetectorEngineContract contract;
+    std::string contractError;
+    if (!validateDetectorEngineContract(tensorSpecs, contract, contractError)) {
+        LOG_ERROR("Unsupported TensorRT engine contract: %s",
+                  contractError.c_str());
+        return false;
+    }
+    inputTensorName_ = contract.input_name;
+    outputTensorName_ = contract.single_output_name;
+    inputSize_ = contract.input_size;
+    numOutputTensors_ = contract.output_count;
+    outputSize_ = contract.single_output_elements;
+    multiScaleOutput_ = contract.multi_scale_output;
+
+    for (const auto& spec : tensorSpecs) {
+        std::ostringstream shape;
+        shape << '[';
+        for (size_t d = 0; d < spec.dimensions.size(); ++d) {
+            if (d != 0) shape << ',';
+            shape << spec.dimensions[d];
+        }
+        shape << ']';
+        LOG_INFO("  %s tensor: %s %s float32",
+                 spec.is_input ? "Input" : "Output",
+                 spec.name.c_str(), shape.str().c_str());
+    }
+    if (multiScaleOutput_) {
+        LOG_INFO("  Detected validated 6-tensor multi-scale DFL output format");
+    }
+
+    for (auto& context : contexts_) {
+        context = engine_->createExecutionContext();
+        if (!context) {
+            LOG_ERROR("Failed to create TensorRT execution context");
+            return false;
+        }
     }
 
     return true;

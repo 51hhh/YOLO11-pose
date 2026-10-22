@@ -58,7 +58,7 @@ struct PipelineConfig {
 
     // 检测
     std::string engine_file = "models/yolov8n_int8.engine";
-    int  input_size      = 320;    ///< 模型输入尺寸
+    int  input_size      = 320;    ///< profile 期望尺寸，启动时必须与 engine 一致
     float conf_threshold = 0.5f;
     float nms_threshold  = 0.4f;
     int  max_detections  = 10;

@@ -71,3 +71,16 @@ target_compile_options(hik_camera_sync_tests PRIVATE
 )
 add_test(NAME hik_camera_sync_tests COMMAND hik_camera_sync_tests)
 
+add_executable(trt_engine_contract_tests
+  trt_engine_contract_tests.cpp
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/detect/trt_engine_contract.cpp
+)
+target_include_directories(trt_engine_contract_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+)
+target_compile_features(trt_engine_contract_tests PRIVATE cxx_std_17)
+target_compile_options(trt_engine_contract_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
+add_test(NAME trt_engine_contract_tests COMMAND trt_engine_contract_tests)
+
