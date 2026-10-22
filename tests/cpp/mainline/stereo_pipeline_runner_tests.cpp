@@ -4,10 +4,12 @@
 
 #include "stereo_service_fixtures.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -92,6 +94,32 @@ private:
         return {ports::WriteStatus::accepted, {}};
     }
 };
+
+class SlowPreprocessor final : public ports::StereoPreprocessor {
+public:
+    explicit SlowPreprocessor(std::chrono::milliseconds delay)
+        : delay_(delay) {}
+
+    [[nodiscard]] ports::PreprocessResult prepare(
+        const ports::StereoFrame& frame) override {
+        std::this_thread::sleep_for(delay_);
+        return delegate_.prepare(frame);
+    }
+
+private:
+    std::chrono::milliseconds delay_;
+    support::StaticStereoPreprocessor delegate_;
+};
+
+std::vector<ports::SourceResult> frameSequence(std::size_t count) {
+    std::vector<ports::SourceResult> output;
+    output.reserve(count + 1U);
+    for (std::size_t index = 0; index < count; ++index) {
+        output.push_back(frameResult());
+    }
+    output.push_back(endResult());
+    return output;
+}
 
 void testCompletesAndFinalizesExactlyOnce() {
     auto left = leftDetector();
@@ -301,6 +329,65 @@ void testRequestedCaptureStopAbortsPartialTrial() {
           "capture cancellation must never publish a partial trial");
 }
 
+void testBlockingSourceQueuePreservesEveryFrame() {
+    support::StaticDetector left({});
+    support::StaticDetector right({});
+    SlowPreprocessor preprocessor(std::chrono::milliseconds{1});
+    services::StereoObservationService service(
+        support::serviceConfig(), preprocessor, left, right,
+        support::passingObservationEstimator(),
+        static_cast<ports::TrialWriter*>(nullptr));
+    fake::ScriptedCameraSource source(frameSequence(12));
+    std::size_t progress_calls = 0;
+    services::StereoPipelineRunnerConfig config;
+    config.source_queue_capacity = 2;
+    config.source_queue_overflow =
+        services::SourceQueueOverflowPolicy::block;
+    config.progress_interval_frames = 3;
+    config.progress_callback = [&](const services::RunSummary&) {
+        ++progress_calls;
+    };
+    services::StereoPipelineRunner runner(config, source, service);
+
+    const auto result = runner.run();
+    check(result.status == services::RunStatus::completed,
+          "blocking queue must complete a finite source");
+    check(result.frames_received == 12 && result.frames_dropped == 0,
+          "blocking queue must preserve every frame");
+    check(result.queue_high_watermark > 0 &&
+              result.queue_high_watermark <= 2,
+          "blocking queue high watermark must remain bounded");
+    check(progress_calls == 4,
+          "progress callback must follow the configured frame interval");
+}
+
+void testRealtimeQueueDropsOnlyOldestUnprocessedFrames() {
+    support::StaticDetector left({});
+    support::StaticDetector right({});
+    SlowPreprocessor preprocessor(std::chrono::milliseconds{2});
+    services::StereoObservationService service(
+        support::serviceConfig(), preprocessor, left, right,
+        support::passingObservationEstimator(),
+        static_cast<ports::TrialWriter*>(nullptr));
+    constexpr std::size_t input_frames = 80;
+    fake::ScriptedCameraSource source(frameSequence(input_frames));
+    services::StereoPipelineRunnerConfig config;
+    config.source_queue_capacity = 1;
+    config.source_queue_overflow =
+        services::SourceQueueOverflowPolicy::drop_oldest;
+    services::StereoPipelineRunner runner(config, source, service);
+
+    const auto result = runner.run();
+    check(result.status == services::RunStatus::completed,
+          "drop-oldest queue must still deliver the terminal record");
+    check(result.frames_dropped > 0,
+          "slow processing must make the bounded realtime queue drop frames");
+    check(result.frames_received + result.frames_dropped == input_frames,
+          "every produced frame must be processed or explicitly counted dropped");
+    check(result.queue_high_watermark == 1,
+          "capacity-one realtime queue must never exceed its bound");
+}
+
 }  // namespace
 
 int main() {
@@ -313,6 +400,8 @@ int main() {
     testFinalizeFailureAbortsTrial();
     testRequestedRuntimeStopFinalizesWithoutReadingAnotherFrame();
     testRequestedCaptureStopAbortsPartialTrial();
+    testBlockingSourceQueuePreservesEveryFrame();
+    testRealtimeQueueDropsOnlyOldestUnprocessedFrames();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

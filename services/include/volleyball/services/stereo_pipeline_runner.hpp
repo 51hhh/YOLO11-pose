@@ -9,6 +9,13 @@
 
 namespace volleyball::services {
 
+enum class SourceQueueOverflowPolicy {
+    block,
+    drop_oldest,
+};
+
+struct RunSummary;
+
 struct StereoPipelineRunnerConfig {
     // 允许连续出现的超时次数；0 表示第一次超时即终止 trial。
     std::size_t max_consecutive_timeouts{0};
@@ -16,6 +23,13 @@ struct StereoPipelineRunnerConfig {
     std::function<bool()> stop_requested;
     // 实时无录制模式可在停止时正常关闭；采集必须 abort，禁止发布部分 trial。
     bool finalize_on_stop{false};
+    // 0 保留同步读取语义；正值启用独立采集线程和有界 FIFO。
+    std::size_t source_queue_capacity{0};
+    SourceQueueOverflowPolicy source_queue_overflow{
+        SourceQueueOverflowPolicy::block};
+    // 非零时，每处理相应数量的帧回调一次当前摘要。
+    std::size_t progress_interval_frames{0};
+    std::function<void(const RunSummary&)> progress_callback;
 };
 
 enum class RunStatus {
@@ -39,6 +53,9 @@ struct RunSummary {
     std::size_t no_matches{0};
     std::size_t timeouts{0};
     std::string message;
+    // 仅 drop_oldest 队列可以产生该计数；capture/block 必须始终为 0。
+    std::size_t frames_dropped{0};
+    std::size_t queue_high_watermark{0};
 
     [[nodiscard]] bool ok() const noexcept {
         return status == RunStatus::completed;
