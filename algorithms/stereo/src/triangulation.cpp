@@ -3,16 +3,31 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace volleyball::algorithms::stereo {
 namespace {
 
+bool nearlyEqual(double left, double right) noexcept {
+    const double scale = std::max({1.0, std::abs(left), std::abs(right)});
+    return std::abs(left - right) <=
+           8.0 * std::numeric_limits<double>::epsilon() * scale;
+}
+
 bool validCalibration(
     const core::RectifiedStereoCalibration& calibration) noexcept {
     const auto& left = calibration.left;
+    const auto& right = calibration.right;
     return std::isfinite(left.fx) && left.fx > 0.0 &&
            std::isfinite(left.fy) && left.fy > 0.0 &&
            std::isfinite(left.cx) && std::isfinite(left.cy) &&
+           std::isfinite(right.fx) && right.fx > 0.0 &&
+           std::isfinite(right.fy) && right.fy > 0.0 &&
+           std::isfinite(right.cx) && std::isfinite(right.cy) &&
+           nearlyEqual(left.fx, right.fx) &&
+           nearlyEqual(left.fy, right.fy) &&
+           nearlyEqual(left.cx, right.cx) &&
+           nearlyEqual(left.cy, right.cy) &&
            std::isfinite(calibration.baseline_m) &&
            calibration.baseline_m > 0.0 && !calibration.rig_frame.empty();
 }
@@ -26,8 +41,26 @@ TriangulationResult triangulateRectifiedCenters(
     const core::RectifiedStereoCalibration& calibration,
     const TriangulationConfig& config,
     core::ObservationId observation_id) {
+    if (!core::validate(left) || !core::validate(right)) {
+        return {std::nullopt, "left/right detection is invalid"};
+    }
+    if (!core::validate(association)) {
+        return {std::nullopt, "association is invalid"};
+    }
     if (association.decision != core::AssociationDecision::accepted) {
         return {std::nullopt, "association is not accepted"};
+    }
+    if (left.frame.role != core::CameraRole::left ||
+        right.frame.role != core::CameraRole::right ||
+        left.frame.camera_id == right.frame.camera_id ||
+        left.frame.frame_index != association.left_frame_index ||
+        right.frame.frame_index != association.right_frame_index ||
+        left.candidate_id != association.left_candidate_id ||
+        right.candidate_id != association.right_candidate_id) {
+        return {
+            std::nullopt,
+            "association does not reference the supplied left/right candidates",
+        };
     }
     if (!validCalibration(calibration) ||
         !std::isfinite(config.center_sigma_px) ||
@@ -37,6 +70,16 @@ TriangulationResult triangulateRectifiedCenters(
         return {std::nullopt, "invalid rectified stereo calibration/config"};
     }
     const double disparity = left.center_px.x - right.center_px.x;
+    const double epipolar_error =
+        std::abs(left.center_px.y - right.center_px.y);
+    if (!association.disparity_px || !association.epipolar_error_px ||
+        !nearlyEqual(*association.disparity_px, disparity) ||
+        !nearlyEqual(*association.epipolar_error_px, epipolar_error)) {
+        return {
+            std::nullopt,
+            "association geometry disagrees with the supplied detections",
+        };
+    }
     if (!std::isfinite(disparity) || disparity < config.min_disparity_px) {
         return {std::nullopt, "disparity is too small for triangulation"};
     }
@@ -94,8 +137,7 @@ TriangulationResult triangulateRectifiedCenters(
     }};
     observation.confidence = std::min(
         left.score.value_or(0.0), right.score.value_or(0.0));
-    observation.reprojection_error_px =
-        std::abs(left.center_px.y - right.center_px.y);
+    observation.reprojection_error_px = epipolar_error;
     if (!core::validate(observation)) {
         return {std::nullopt, "triangulated observation is invalid"};
     }

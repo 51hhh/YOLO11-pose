@@ -201,12 +201,27 @@ DomainValidationResult validate(
             DomainError::timestamp_order,
             "delta_t_lr_ns must equal right minus left capture timestamp");
     }
+    if ((attempt.disparity_px && !std::isfinite(*attempt.disparity_px)) ||
+        (attempt.epipolar_error_px &&
+         (!std::isfinite(*attempt.epipolar_error_px) ||
+          *attempt.epipolar_error_px < 0.0))) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "association geometry must be finite and non-negative where applicable");
+    }
     const bool accepted = attempt.decision == AssociationDecision::accepted;
     if ((accepted && attempt.reject_reason != AssociationRejectReason::none) ||
         (!accepted && attempt.reject_reason == AssociationRejectReason::none)) {
         return failure(
             DomainError::invalid_decision_reason,
             "association decision and rejection reason disagree");
+    }
+    if (accepted &&
+        (!attempt.disparity_px || *attempt.disparity_px <= 0.0 ||
+         !attempt.epipolar_error_px)) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "accepted association requires positive disparity and epipolar error");
     }
     return ok();
 }

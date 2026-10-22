@@ -141,6 +141,25 @@ void testAssociationValidation() {
     check(
         core::validate(attempt).error == core::DomainError::invalid_numeric_value,
         "association timestamps must not be negative");
+
+    attempt.left_capture = timestamp(1000, "camera");
+    attempt.disparity_px = std::numeric_limits<double>::quiet_NaN();
+    check(
+        core::validate(attempt).error == core::DomainError::invalid_numeric_value,
+        "association disparity must be finite");
+
+    attempt.disparity_px = 25.0;
+    attempt.epipolar_error_px = -0.5;
+    check(
+        core::validate(attempt).error == core::DomainError::invalid_numeric_value,
+        "association epipolar error must be non-negative");
+
+    attempt.decision = core::AssociationDecision::accepted;
+    attempt.reject_reason = core::AssociationRejectReason::none;
+    attempt.epipolar_error_px.reset();
+    check(
+        core::validate(attempt).error == core::DomainError::invalid_numeric_value,
+        "accepted association must retain its measured geometry");
 }
 
 void testDetectionValidation() {

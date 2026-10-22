@@ -14,6 +14,11 @@ target_link_libraries(core_contract_tests PRIVATE
   volleyball::fake_adapters
 )
 
+add_mainline_test(stereo_algorithms_tests stereo_algorithms_tests.cpp)
+target_link_libraries(stereo_algorithms_tests PRIVATE
+  volleyball::stereo_algorithms
+)
+
 add_mainline_test(
   stereo_observation_service_tests
   stereo_observation_service_tests.cpp
