@@ -1,206 +1,136 @@
-# 排球双目 3D 视觉系统（Jetson Orin NX → RDK）
+# 排球双目感知与真实数据闭环
 
-[![Language](https://img.shields.io/badge/Language-C%2B%2B17%20%7C%20CUDA%20%7C%20Python-brightgreen.svg)]()
-[![Platform](https://img.shields.io/badge/Platform-Jetson%20Orin%20NX-lightgrey.svg)]()
-[![Runtime](https://img.shields.io/badge/Runtime-ROS2%20Humble%20%7C%20TensorRT-orange.svg)]()
+本仓库用于把海康双目相机的同步图像转换为可审计的 3D 排球观测，并把真实自由飞行数据送入回放、影子仿真和后续 RL 随机域辨识。目标平台是 Jetson Orin NX；RDK 只消费直接观测并负责最终状态估计、轨迹预测和控制。
 
-本仓库的当前主线是在 **Jetson Orin NX** 上以 90 Hz 硬件触发海康双目相机，完成图像校正、双路 YOLO 检测、ROI 亚像素视差、3D 观测生成，并通过 ROS2 将带采集时间戳和质量信息的观测交给 **RDK**。RDK 负责 Student-t 滤波、弹道预测与控制。
+当前主线已经完成以下软件契约：
 
-> 当前有效代码位于 [`NX_volleyball/stereo_3d_pipeline`](NX_volleyball/stereo_3d_pipeline)。
-> 正式工程文档以 [`wiki/Home.md`](NX_volleyball/stereo_3d_pipeline/wiki/Home.md) 为入口；`docs/`、`.agent/` 和仓库内其他早期实现只作为历史资料或专项工具，不代表当前生产路径。
+- 分层配置、配置来源追踪和稳定 SHA-256 指纹；
+- GPIO 上升沿触发、海康 FrameSpecInfo 帧身份和 USB 到达时刻的独立记录；
+- 不依赖 USB 到达顺序的双目配对；
+- 全候选、全配对尝试、3D 观测和处理时序的 v2.1 原子数据包；
+- 真实 trial 的哈希校验、确定性回放和影子轨迹误差评估；
+- 平台无关的 C++ 核心、算法、服务边界和 CPU CI。
 
-## 当前系统
+真实 NX、相机线缆和示波器上的验收仍必须在目标硬件上执行，不能由主机测试代替。详细门禁见 [验收指南](docs/acceptance.md)。
 
-```text
-90 Hz GPIO/PWM 硬触发
-        ↓
-海康双目同步采集（1440×1080 Bayer）
-        ↓
-CUDA 双目校正 + BGR 转换
-        ↓
-左右 YOLO26 TensorRT FP16（640×640，GPU）
-        ↓
-双目 bbox 语义配对与极线/尺寸/IoU 门控
-        ↓
-ROI CUDA 多点 ZNCC + 亚像素视差（当前主深度）
-        ↓
-深度候选回退 + HybridDepth 关联/创新门控
-        ↓
-NxBallObservation（原始 3D 观测、协方差、采集时间戳）
-        ↓
-RDK Student-t 滤波、落点预测和控制
-```
+## 最重要的同步语义
 
-当前正式联合运行配置是 [`pipeline_rdk_joint.yaml`](NX_volleyball/stereo_3d_pipeline/config/pipeline_rdk_joint.yaml)。关键运行状态如下：
-
-| 项目 | 当前值 |
-|---|---|
-| 相机 | 海康双目，1440×1080，硬件触发 |
-| 触发/目标帧率 | 90 Hz / 90 FPS |
-| 校正 | CUDA Remap |
-| 检测 | 左右双路 YOLO26，TensorRT FP16，GPU，640×640 |
-| 双目策略 | `roi_only` |
-| 首选深度 | `roi_subpixel_match` → `ROI_MULTI_POINT` |
-| 有效距离 | `[0.8, 15.0)` m |
-| 标定基线 | 运行时以 `stereo_calib.yaml` 为准；当前参考值 853.154 mm |
-| 视差零点修正 | 当前联合配置关闭；使用 `z = fB / disparity` |
-| NX 在线落点预测 | 关闭 |
-| ROS2 主输出 | `/nx/ball/observation` |
-| 联合运行网络 | NX `10.43.0.10`，RDK `10.43.0.20`，`ROS_DOMAIN_ID=42` |
-
-## 当前深度方法
-
-### 1. 左右目标配对
-
-左右相机分别运行 YOLO。候选框必须依次通过：
-
-- 类别一致；
-- 正视差且不超过 `max_disparity`；
-- 校正后的极线 y 偏差门限；
-- 左右框宽高比例门限；
-- 按初始视差平移后的 bbox IoU 门限。
-
-配对成功后才进入 ROI 深度计算。单侧漏检时保留有界极线搜索能力，但正式 ROS2 配置设置了 `allow_fallback: false`，退化匹配不会发布给 RDK。
-
-### 2. 主深度：ROI 多点亚像素视差
-
-正式配置的 `depth_solver` 为 `roi_subpixel_match`。直接双目配对成功时，管线首选 `ROI_MULTI_POINT`：
-
-1. 在排球 ROI 内选择最多 12 个采样点；
-2. 使用 CUDA patch 匹配计算多点视差；
-3. 对有效匹配做亚像素细化；
-4. 使用 support、confidence、视差标准差、与初始视差/深度的一致性及 1.5 ms 时间预算做质量门控；
-5. 使用标定文件中的焦距和基线计算 `z = fB / d`。
-
-该方法对应输出字段 `z_roi_multi_point`、`disparity_roi_multi_point`，以及 `stereo_depth_source=2`。
-
-### 3. 当前启用的候选与回退
-
-生产配置会同时计算若干廉价候选，用于质量诊断或主方法失效时回退：
-
-| 候选 | 当前状态 | 在线用途 |
-|---|---:|---|
-| ROI 多点亚像素 `ROI_MULTI_POINT` | 开 | 直接配对的首选深度 |
-| ROI 中心 patch | 开 | 记录/诊断候选，不主动抢占主输出 |
-| 圆心三角测量 | 开 | 主方法无效后的第一回退 |
-| 径向梯度中心 | 开 | 几何回退 |
-| 成对边缘中心 | 开 | 几何回退 |
-| 边缘质心 | 开 | 几何回退 |
-| bbox 中心/边缘视差 | 开 | 最后几何回退及诊断 |
-| 单侧极线搜索 | 开 | 退化回退；当前不发给 RDK |
-
-直接配对时的实际选择逻辑是：
-
-```text
-ROI_MULTI_POINT
-  → circle_center
-  → roi_radial_center
-  → roi_edge_pair_center
-  → roi_edge_centroid
-  → bbox_center / bbox_edges
-```
-
-传统全帧/稠密 SGM、CUDA StereoBM/SGM、VPI Stereo、NCC 模板、XFeat、SuperPoint、ALIKED、ORB、BRISK、AKAZE、SIFT 和其他 P2 特征方法在当前联合配置中均关闭。它们保留用于专项 A/B、离线评估或后续训练，不是现在的生产深度来源。
-
-### 4. HybridDepth 与 RDK 的职责边界
-
-ROI 深度进入 `HybridDepthEstimator` 后：
-
-- 小于 0.8 m 时使用单目球尺寸深度；
-- 0.8–1.2 m 过渡区对单目/双目做逆方差加权；
-- 大于 1.2 m 时使用选中的双目深度；
-- 9 维常加速度 Kalman 状态用于目标关联、速度估计和创新门控；
-- 当前关闭 stereo bias EMA，双目尺度不再向单目 bbox 深度校正。
-
-NX 发布的是通过上述范围、连续性与创新门控后的 `raw_x/raw_y/raw_z`，而不是把 NX 的 Kalman 平滑位置当作 RDK 测量值。消息同时携带深度方法、视差、估计协方差、左右相机设备时间戳和映射后的采集时间戳。RDK 再完成最终的 Student-t 滤波、弹道外推和控制。
-
-## 目录结构
-
-| 路径 | 定位 | 当前状态 |
+| 事实 | 权威来源 | 用途 |
 |---|---|---|
-| `NX_volleyball/stereo_3d_pipeline/` | C++/CUDA 实时双目主程序 | **当前主线** |
-| `NX_volleyball/stereo_3d_pipeline/wiki/` | 架构、配置、标定、部署和测试文档 | **正式文档** |
-| `NX_volleyball/stereo_3d_pipeline/config/` | 生产、诊断与采集配置 | **当前配置源** |
-| `NX_volleyball/stereo_3d_pipeline/trajectory_fusion/` | 多候选可靠性、EKF/RTS、落点预测离线实验 | 活跃辅助模块 |
-| `NX_volleyball/calibration/` | 本机离线标定和验证工具 | 辅助工具 |
-| `volleyball_tracking/` | YOLO11-Pose 训练、圆拟合、单目追踪 | 早期训练链路 |
-| `TensorYOLO8Volleyball/` | 早期 TensorRT/ROS C++ 实现，含独立 Git 元数据 | 历史实现 |
-| `Stereo/` | 双目方案文档 | 历史参考 |
-| `NX_volleyball/docs/`、`.agent/` | 优化报告和旧设计记录 | 历史参考 |
+| 左右曝光属于哪一次触发 | NX GPIO 上升沿序号与时间戳 | 曝光时间、轨迹时间轴 |
+| 收到的 payload 是哪一帧 | 海康 FrameSpecInfo `FrameCounter` | 双目配对、检出漏帧 |
+| payload 何时到达主机 | 每侧 `GetImageBuffer` 返回时的单调/实时时钟 | USB/SDK 排队与延迟诊断 |
 
-不要从根 README 中推断旧 `ros2_ws/src/volleyball_stereo_driver` 路径；当前程序是 `stereo_3d_pipeline` 中由 CMake 构建的 `stereo_pipeline`。
+USB 传输可能让左右图像乱序到达。代码因此使用随图像 payload 到达的 `FrameCounter` 配对，而不使用回调先后或 USB 到达时间配对。`ExtTriggerCount` 会保存，但已在现有相机上观察到 0/+2 步进，只作为诊断字段。图像首部水印必须先由 SDK 解析，再清除对应像素行，之后才能进入去 Bayer、YOLO 和图像保存。
 
-## 配置入口
+## 快速开始
 
-| 配置文件 | 用途 |
+```bash
+cd /home/rick/rl/YOLO11-pose
+python3 -m pip install -e '.[test]'
+
+volleyball config validate --profile nx-rdk
+volleyball config validate --profile free-flight
+volleyball config validate --profile replay
+
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+cmake --preset host-core-debug
+cmake --build --preset host-core-debug --parallel 2
+ctest --preset host-core-debug
+python3 tools/check_repository.py
+```
+
+## 目录边界
+
+| 路径 | 职责 |
 |---|---|
-| `config/pipeline_rdk_joint.yaml` | NX→RDK 正式联合运行；90 Hz、ROS2 发布、关闭本机落点预测和诊断录制 |
-| `config/pipeline_dual_yolo_roi.yaml` | 双目深度算法、可视化和性能专项调试 |
-| `config/pipeline_record_p0p1.yaml` | P0/P1 候选轨迹数据采集 |
-| `config/pipeline.yaml` | 基础参考配置，不作为当前联合部署入口 |
+| `libs/core/` | 强类型领域事实、时钟和坐标语义；不得依赖硬件 SDK |
+| `ports/` | 相机、检测器、写入器和发布器接口 |
+| `algorithms/stereo/` | 纯双目关联、三角化和协方差传播 |
+| `services/` | 将端口与算法编排为观测用例 |
+| `adapters/` | 硬件、推理、存储和中间件适配器 |
+| `apps/` | 可执行程序的依赖组装与用户流程 |
+| `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
+| `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
+| `NX_volleyball/stereo_3d_pipeline/` | 现有 NX/CUDA 实现；由主线以适配器方式构建和启动 |
 
-修改运行路径、深度候选、CSV schema、标定流程或 ROS2 接口后，应同步更新对应 Wiki 页面。一次性实验结论和日志放入 `docs/` 或 `test_logs/`，不要覆盖正式配置语义。
+旧 NX 实现仍承载海康 MVS、CUDA、TensorRT、GPIO 和 ROS2 的实机代码，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 
-## 构建
+## 配置与运行
 
-目标环境：JetPack 6.x、CUDA 12.6+、TensorRT 10.3+、VPI 3.2+、OpenCV 4.x、海康 MVS SDK、yaml-cpp、libgpiod 和 ROS2 Humble。
+三个正式 profile：
 
-```bash
-cd NX_volleyball/stereo_3d_pipeline
-source /opt/ros/humble/setup.bash
-source ~/volleyball_ros2_ws/install/setup.bash
-
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCUDA_ARCH=87 \
-  -DREQUIRE_ROS2=ON
-cmake --build build -j$(nproc)
-ctest --test-dir build --output-on-failure
-```
-
-主要构建产物：
-
-- `stereo_pipeline`：实时双目主程序；
-- `stereo_calibrate`：双目标定求解；
-- `capture_chessboard`：海康双目标定采集；
-- `stereo_depth_viewer`：深度算法查看与基准测试；
-- `hik_frame_metadata_probe`：相机水印/时间戳检查。
-
-## NX→RDK 联合运行
-
-首次部署先在 RDK 配置 Chrony server，然后在 NX 安装直连 Chrony client：
+- `nx-rdk`：NX 实时双目感知，向 RDK 发布直接观测，不隐式录制；
+- `free-flight`：阻塞式、无丢帧自由飞行采集，任何契约破坏使整次 trial 失败；
+- `replay`：读取已发布的 v2.1 trial，不启动相机或模型。
 
 ```bash
-cd ~/NX_volleyball/stereo_3d_pipeline
-sudo scripts/install_rdk_chrony_client.sh
+# 查看合并结果、某个值的来源和两个 profile 的差异
+volleyball config render --profile free-flight
+volleyball config explain --profile free-flight cameras.sync.frame_identity_source
+volleyball config diff nx-rdk free-flight
+
+# 只读环境检查；未固定模型哈希、缺少标定或可执行文件时不允许实机启动
+volleyball doctor --profile nx-rdk
+
+# 生成旧 NX 适配器配置并查看启动命令，不启动硬件
+volleyball run --profile nx-rdk --dry-run
 ```
 
-正式启动统一使用：
+NX 构建使用根工程预设，旧工程在隔离的 ExternalProject 中编译，避免 CUDA/SDK 全局依赖污染核心层：
 
 ```bash
-cd ~/NX_volleyball/stereo_3d_pipeline
-VOLLEYBALL_ROS_SETUP=~/volleyball_ros2_ws/install/setup.bash \
-scripts/start_rdk_joint_runtime.sh
+cmake --preset nx-legacy-release
+cmake --build --preset nx-legacy-release --parallel
+volleyball run --profile nx-rdk
 ```
 
-启动脚本会检查 NX 与 RDK 的时钟偏差是否小于 2 ms，配置 CycloneDDS 单播直连，启动 `stereo_pipeline`，等待生成本次进程唯一的 `source_epoch`，随后在 NX 启动 `nx_time_sync_publisher`。RDK 不应重复启动该时间同步发布器。
+## 真实采集
 
-当前相机设备时间戳已映射到 NX `CLOCK_REALTIME`。映射未预热或不确定度超过 2 ms 时，消息会标为无效并由 RDK 拒绝；曝光中点偏移仍待实测，因此 `timestamp_offset_us` 目前为 0。
+先为每次实验准备条件 JSON；未知值使用 `null` 或省略，禁止伪造精度。球 ID、压力、温湿度、风、相机姿态等条件属于 trial 元数据，不应塞进轨迹 CSV。
 
-## 文档导航
+```bash
+volleyball capture \
+  --profile free-flight \
+  --trial 2026-10-22-v200w-001 \
+  --session free-flight-a \
+  --ball v200w-01 \
+  --duration 3.0 \
+  --conditions conditions.json
 
-- [正式 Wiki 首页](NX_volleyball/stereo_3d_pipeline/wiki/Home.md)
-- [项目总览](NX_volleyball/stereo_3d_pipeline/wiki/项目总览.md)
-- [系统架构](NX_volleyball/stereo_3d_pipeline/wiki/系统架构.md)
-- [实时管线](NX_volleyball/stereo_3d_pipeline/wiki/实时管线.md)
-- [深度算法导航](NX_volleyball/stereo_3d_pipeline/wiki/深度算法导航.md)
-- [配置参考](NX_volleyball/stereo_3d_pipeline/wiki/配置参考.md)
-- [配置矩阵](NX_volleyball/stereo_3d_pipeline/wiki/配置矩阵.md)
-- [ROS2 接口](NX_volleyball/stereo_3d_pipeline/wiki/ROS2接口.md)
-- [部署与运行](NX_volleyball/stereo_3d_pipeline/wiki/部署与运行.md)
-- [实机测试清单](NX_volleyball/stereo_3d_pipeline/wiki/实机测试清单.md)
-- [故障排查](NX_volleyball/stereo_3d_pipeline/wiki/故障排查.md)
+volleyball dataset validate data/captures
+```
 
-## 历史训练链路
+采集先写入同文件系统的隐藏 staging 目录，完成帧数、触发、配对、时钟、表格、原始图像和 SHA-256 检查后才原子发布。崩溃后的完整 staging 可以显式恢复：
 
-`volleyball_tracking` 保留了 YOLO11-Pose 的 5 关键点数据定义、训练、圆拟合、ByteTrack/Kalman 和 TensorRT 导出代码。它仍可用于训练与算法参考，但不等同于当前 NX 生产管线；当前生产检测器是双路 YOLO26 TensorRT，深度来自双目 ROI 亚像素匹配。
+```bash
+volleyball capture-finalize \
+  --profile free-flight \
+  --stage /path/to/.partial-trial \
+  --dataset-root data/captures
+```
+
+## 回放与影子仿真
+
+```bash
+volleyball replay \
+  --profile replay \
+  --trial data/captures/trials/2026-10-22-v200w-001
+
+volleyball replay \
+  --profile replay \
+  --trial data/captures/trials/2026-10-22-v200w-001 \
+  --shadow shadow_trajectory.csv \
+  --json
+```
+
+原始观测不可被滤波结果覆盖；标定、参数辨识、轨迹平滑和影子仿真都写入派生目录，并记录输入哈希与配置指纹。这样才能分别估计相机观测噪声与排球动力学残差，而不是把二者混成一个随机域。
+
+## 文档
+
+- [架构与数据流](docs/architecture.md)
+- [配置系统](docs/configuration.md)
+- [采集契约](docs/capture.md)
+- [旧 NX 管线迁移](docs/migration.md)
+- [验收标准](docs/acceptance.md)
+- [贡献与提交规范](CONTRIBUTING.md)
