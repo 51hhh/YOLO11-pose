@@ -98,7 +98,7 @@ void testCompletesAndFinalizesExactlyOnce() {
     auto right = rightDetector();
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source({frameResult(), endResult()});
     services::StereoPipelineRunner runner({}, source, service);
 
@@ -125,7 +125,7 @@ void testToleratesConfiguredTimeoutThenResumes() {
     auto right = rightDetector();
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source(
         {timeoutResult(), frameResult(), endResult()});
     services::StereoPipelineRunner runner({1}, source, service);
@@ -143,7 +143,7 @@ void testTimeoutLimitAbortsPartialTrial() {
     auto right = rightDetector();
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source(
         {timeoutResult(), timeoutResult(), endResult()});
     services::StereoPipelineRunner runner({1}, source, service);
@@ -163,7 +163,7 @@ void testSourceErrorAndProtocolErrorAbort() {
         auto right = rightDetector();
         fake::InMemoryTrialWriter writer;
         services::StereoObservationService service(
-            support::serviceConfig(), left, right, writer);
+            support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
         fake::ScriptedCameraSource source({
             {ports::SourceStatus::error, std::nullopt, "USB transfer failed"},
         });
@@ -181,7 +181,7 @@ void testSourceErrorAndProtocolErrorAbort() {
         auto right = rightDetector();
         fake::InMemoryTrialWriter writer;
         services::StereoObservationService service(
-            support::serviceConfig(), left, right, writer);
+            support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
         fake::ScriptedCameraSource source({
             {ports::SourceStatus::frame, std::nullopt, {}},
         });
@@ -201,7 +201,7 @@ void testProcessingFailureAbortsAndPreservesReason() {
     right.setFail(true);
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source({frameResult(), endResult()});
     services::StereoPipelineRunner runner({}, source, service);
 
@@ -219,7 +219,7 @@ void testNoMatchIsAValidFrameOutcome() {
     support::StaticDetector right(std::vector<core::Detection2D>{});
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source({frameResult(), endResult()});
     services::StereoPipelineRunner runner({}, source, service);
 
@@ -236,7 +236,7 @@ void testFinalizeFailureAbortsTrial() {
     auto right = rightDetector();
     FinalizeFailingWriter writer;
     services::StereoObservationService service(
-        support::serviceConfig(), left, right, writer);
+        support::serviceConfig(), support::passingPreprocessor(), left, right, writer);
     fake::ScriptedCameraSource source({endResult()});
     services::StereoPipelineRunner runner({}, source, service);
 

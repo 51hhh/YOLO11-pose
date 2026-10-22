@@ -4,6 +4,7 @@
 #include "volleyball/ports/detector.hpp"
 #include "volleyball/ports/image_buffer.hpp"
 #include "volleyball/ports/observation_publisher.hpp"
+#include "volleyball/ports/stereo_preprocessor.hpp"
 #include "volleyball/services/stereo_observation_service.hpp"
 
 #include "stereo_domain_fixtures.hpp"
@@ -74,27 +75,92 @@ public:
         : candidates_(std::move(candidates)) {}
 
     [[nodiscard]] ports::DetectionResult detect(
-        const ports::CapturedFrame& frame) override {
+        const ports::RectifiedCameraFrame& frame) override {
+        ++calls_;
+        last_detector_format_ = frame.detector_input
+            ? std::optional<core::PixelFormat>{
+                  frame.detector_input->pixelFormat()}
+            : std::nullopt;
         if (fail_) {
             return {false, {}, "injected detector failure"};
         }
         ports::DetectionBatch batch;
-        batch.frame = {
-            frame.metadata.camera_id,
-            frame.metadata.role,
-            frame.metadata.frame_index,
-        };
+        batch.frame = frame.source;
         batch.pipeline_id = core::PipelineId{"fixture-detector"};
         batch.candidates = candidates_;
         return {true, std::move(batch), {}};
     }
 
     void setFail(bool value) noexcept { fail_ = value; }
+    [[nodiscard]] std::size_t calls() const noexcept { return calls_; }
+    [[nodiscard]] std::optional<core::PixelFormat> lastDetectorFormat()
+        const noexcept {
+        return last_detector_format_;
+    }
 
 private:
     std::vector<core::Detection2D> candidates_;
     bool fail_{false};
+    std::size_t calls_{0};
+    std::optional<core::PixelFormat> last_detector_format_;
 };
+
+class StaticStereoPreprocessor final : public ports::StereoPreprocessor {
+public:
+    [[nodiscard]] ports::PreprocessResult prepare(
+        const ports::StereoFrame& frame) override {
+        if (fail_) {
+            return {false, std::nullopt, "injected preprocess failure"};
+        }
+        auto prepared = ports::RectifiedStereoFrame{
+            prepareCamera(frame.left),
+            prepareCamera(frame.right),
+        };
+        if (swap_sources_) {
+            std::swap(prepared.left.source, prepared.right.source);
+        }
+        if (invalid_left_detector_format_) {
+            prepared.left.detector_input = std::make_shared<TestImage>(
+                frame.left.metadata.roi.width,
+                frame.left.metadata.roi.height,
+                core::PixelFormat::gray8);
+        }
+        return {true, std::move(prepared), {}};
+    }
+
+    void setFail(bool value) noexcept { fail_ = value; }
+    void setSwapSources(bool value) noexcept { swap_sources_ = value; }
+    void setInvalidLeftDetectorFormat(bool value) noexcept {
+        invalid_left_detector_format_ = value;
+    }
+
+private:
+    static ports::RectifiedCameraFrame prepareCamera(
+        const ports::CapturedFrame& frame) {
+        const auto width = frame.metadata.roi.width;
+        const auto height = frame.metadata.roi.height;
+        return {
+            {
+                frame.metadata.camera_id,
+                frame.metadata.role,
+                frame.metadata.frame_index,
+            },
+            std::make_shared<TestImage>(
+                width, height, core::PixelFormat::bgr8),
+            std::make_shared<TestImage>(
+                width, height, core::PixelFormat::gray8),
+        };
+    }
+
+    bool fail_{false};
+    bool swap_sources_{false};
+    bool invalid_left_detector_format_{false};
+};
+
+inline StaticStereoPreprocessor& passingPreprocessor() {
+    static StaticStereoPreprocessor preprocessor;
+    return preprocessor;
+}
 
 class CollectingPublisher final : public ports::ObservationPublisher {
 public:
@@ -124,7 +190,7 @@ inline core::CameraFrameRecord frame(
     output.receive_timestamp = time(receive_ns);
     output.inference_done_timestamp = time(1400);
     output.roi = {0, 0, 1440, 1080};
-    output.pixel_format = core::PixelFormat::gray8;
+    output.pixel_format = core::PixelFormat::bayer8;
     output.acquisition.receive_monotonic_timestamp = {
         receive_ns - 700,
         core::ClockDomainId{"nx-monotonic"},
@@ -147,9 +213,11 @@ inline ports::StereoFrame stereoFrame() {
     // 左帧比右帧晚到，但共享同一 GPIO 曝光时刻。
     return {
         {frame(core::CameraRole::left, "left", 1300),
-         std::make_shared<TestImage>()},
+         std::make_shared<TestImage>(
+             1440, 1080, core::PixelFormat::bayer8)},
         {frame(core::CameraRole::right, "right", 1200),
-         std::make_shared<TestImage>()},
+         std::make_shared<TestImage>(
+             1440, 1080, core::PixelFormat::bayer8)},
     };
 }
 

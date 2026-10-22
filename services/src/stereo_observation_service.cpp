@@ -40,27 +40,46 @@ std::size_t bytesPerPixel(core::PixelFormat format) noexcept {
     return 0;
 }
 
-bool imageMatchesMetadata(const ports::CapturedFrame& frame) noexcept {
-    if (!frame.image || frame.metadata.dropped ||
-        frame.image->nativeHandle() == 0 ||
-        frame.image->width() != frame.metadata.roi.width ||
-        frame.image->height() != frame.metadata.roi.height ||
-        frame.image->pixelFormat() != frame.metadata.pixel_format) {
+bool imageMatchesContract(
+    const ports::ImageBufferPtr& image,
+    std::uint32_t width,
+    std::uint32_t height,
+    core::PixelFormat pixel_format) noexcept {
+    if (!image || image->nativeHandle() == 0 || image->width() != width ||
+        image->height() != height || image->pixelFormat() != pixel_format) {
         return false;
     }
-    const std::size_t channels = bytesPerPixel(frame.metadata.pixel_format);
-    const std::size_t width = frame.image->width();
-    const std::size_t height = frame.image->height();
-    if (channels == 0 || width > std::numeric_limits<std::size_t>::max() / channels) {
+    const std::size_t channels = bytesPerPixel(pixel_format);
+    const std::size_t image_width = image->width();
+    const std::size_t image_height = image->height();
+    if (channels == 0 ||
+        image_width > std::numeric_limits<std::size_t>::max() / channels) {
         return false;
     }
-    const std::size_t minimum_stride = width * channels;
-    const std::size_t stride = frame.image->strideBytes();
+    const std::size_t minimum_stride = image_width * channels;
+    const std::size_t stride = image->strideBytes();
     if (stride < minimum_stride ||
-        (stride != 0 && height > std::numeric_limits<std::size_t>::max() / stride)) {
+        (stride != 0 &&
+         image_height > std::numeric_limits<std::size_t>::max() / stride)) {
         return false;
     }
-    return frame.image->sizeBytes() >= stride * height;
+    return image->sizeBytes() >= stride * image_height;
+}
+
+bool imageMatchesMetadata(const ports::CapturedFrame& frame) noexcept {
+    return !frame.metadata.dropped && imageMatchesContract(
+        frame.image,
+        frame.metadata.roi.width,
+        frame.metadata.roi.height,
+        frame.metadata.pixel_format);
+}
+
+bool referencesFrame(
+    const core::FrameReference& reference,
+    const core::CameraFrameRecord& frame) noexcept {
+    return reference.camera_id == frame.camera_id &&
+           reference.role == frame.role &&
+           reference.frame_index == frame.frame_index;
 }
 
 bool detectionInsideImage(
@@ -92,11 +111,13 @@ bool detectionInsideImage(
 
 StereoObservationService::StereoObservationService(
     StereoObservationServiceConfig config,
+    ports::StereoPreprocessor& preprocessor,
     ports::Detector& left_detector,
     ports::Detector& right_detector,
     ports::TrialWriter& writer,
     ports::ObservationPublisher* publisher)
     : config_(std::move(config)),
+      preprocessor_(preprocessor),
       left_detector_(left_detector),
       right_detector_(right_detector),
       writer_(writer),
@@ -185,6 +206,36 @@ bool StereoObservationService::validateDetectionBatch(
     return true;
 }
 
+bool StereoObservationService::validateRectifiedFrame(
+    const ports::RectifiedStereoFrame& rectified,
+    const ports::StereoFrame& source,
+    std::string& error) const {
+    const auto valid_camera = [](
+                                  const ports::RectifiedCameraFrame& output,
+                                  const ports::CapturedFrame& input) {
+        const auto& roi = input.metadata.roi;
+        return referencesFrame(output.source, input.metadata) &&
+               imageMatchesContract(
+                   output.detector_input,
+                   roi.width,
+                   roi.height,
+                   core::PixelFormat::bgr8) &&
+               imageMatchesContract(
+                   output.geometry_gray,
+                   roi.width,
+                   roi.height,
+                   core::PixelFormat::gray8);
+    };
+    if (!valid_camera(rectified.left, source.left) ||
+        !valid_camera(rectified.right, source.right)) {
+        error =
+            "preprocessor output must preserve frame identity and provide "
+            "full-size rectified BGR8/Gray8 images";
+        return false;
+    }
+    return true;
+}
+
 bool StereoObservationService::passesGate(
     const core::TriangulatedObservation& observation) const noexcept {
     const double depth = observation.position_m.z;
@@ -223,8 +274,20 @@ StereoProcessResult StereoObservationService::process(
         return fail(ProcessStatus::write_error, std::move(error));
     }
 
-    auto left_result = left_detector_.detect(frame.left);
-    auto right_result = right_detector_.detect(frame.right);
+    auto preprocess_result = preprocessor_.prepare(frame);
+    if (!preprocess_result.success || !preprocess_result.frame) {
+        return fail(
+            ProcessStatus::preprocess_error,
+            preprocess_result.message.empty()
+                ? "stereo preprocessing failed"
+                : std::move(preprocess_result.message));
+    }
+    if (!validateRectifiedFrame(*preprocess_result.frame, frame, error)) {
+        return fail(ProcessStatus::preprocess_error, std::move(error));
+    }
+
+    auto left_result = left_detector_.detect(preprocess_result.frame->left);
+    auto right_result = right_detector_.detect(preprocess_result.frame->right);
     if (!left_result.success || !right_result.success) {
         const std::string message = !left_result.success
             ? left_result.message

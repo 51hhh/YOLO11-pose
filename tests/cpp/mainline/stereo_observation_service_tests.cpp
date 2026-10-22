@@ -32,6 +32,7 @@ using support::CollectingPublisher;
 using support::StaticDetector;
 using support::TestImage;
 using support::detection;
+using support::passingPreprocessor;
 using support::serviceConfig;
 using support::stereoFrame;
 using support::time;
@@ -48,7 +49,7 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
     fake::InMemoryTrialWriter writer;
     CollectingPublisher publisher;
     services::StereoObservationService service(
-        serviceConfig(), left, right, writer, &publisher);
+        serviceConfig(), passingPreprocessor(), left, right, writer, &publisher);
 
     const auto result = service.process(stereoFrame());
     check(result.ok(), "valid stereo frame must be processed");
@@ -58,6 +59,11 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "every left/right candidate combination must be retained");
     check(writer.frames().size() == 1,
           "both camera facts must be written as one stereo transaction");
+    check(
+        writer.frames()[0].left.image->pixelFormat() ==
+            core::PixelFormat::bayer8 &&
+            left.lastDetectorFormat() == core::PixelFormat::bgr8,
+        "writer must retain raw Bayer while detector receives rectified BGR");
     check(writer.detections().size() == 4, "all detector candidates must be written");
     check(
         std::count_if(
@@ -94,7 +100,8 @@ void testUnselectedGatePassingPairIsRecordedAsRejected() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.90),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::observation,
@@ -121,7 +128,7 @@ void testTriangulationFailureRejectsSelectedPair() {
     auto service_config = serviceConfig();
     service_config.triangulation.min_disparity_px = 1.0;
     services::StereoObservationService service(
-        service_config, left, right, writer);
+        service_config, passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -155,7 +162,7 @@ void testObservationGateRejectsSelectedPair() {
     auto service_config = serviceConfig();
     service_config.gate.max_depth_m = 10.0;
     services::StereoObservationService service(
-        service_config, left, right, writer);
+        service_config, passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -180,7 +187,7 @@ bool serviceConstructionRejects(
     fake::InMemoryTrialWriter writer;
     try {
         services::StereoObservationService service(
-            std::move(config), left, right, writer);
+            std::move(config), passingPreprocessor(), left, right, writer);
     } catch (const std::invalid_argument&) {
         return true;
     }
@@ -218,13 +225,68 @@ void testDetectorFailureAbortsTrial() {
     });
     right.setFail(true);
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
           "detector error must be explicit");
     check(!writer.abortReason().empty(), "partial trial must be aborted");
     check(service.finalize().status == ports::WriteStatus::failed,
           "aborted service must not publish a trial");
+}
+
+void testPreprocessFailureAbortsAfterRawEvidence() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    support::StaticStereoPreprocessor preprocessor;
+    preprocessor.setFail(true);
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        serviceConfig(), preprocessor, left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::preprocess_error,
+          "preprocess failure must have a distinct status");
+    check(writer.frames().size() == 1,
+          "raw camera evidence must be retained before preprocessing starts");
+    check(left.calls() == 0 && right.calls() == 0,
+          "detectors must not receive a failed preprocess product");
+    check(!writer.abortReason().empty(),
+          "preprocess failure must abort the partial trial");
+}
+
+void testMalformedPreprocessProductsAbortTrial() {
+    auto rejects = [](support::StaticStereoPreprocessor& preprocessor) {
+        StaticDetector left({
+            detection(
+                core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+        });
+        StaticDetector right({
+            detection(
+                core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+        });
+        fake::InMemoryTrialWriter writer;
+        services::StereoObservationService service(
+            serviceConfig(), preprocessor, left, right, writer);
+        const auto result = service.process(stereoFrame());
+        return result.status == services::ProcessStatus::preprocess_error &&
+               left.calls() == 0 && right.calls() == 0 &&
+               !writer.abortReason().empty();
+    };
+
+    support::StaticStereoPreprocessor swapped;
+    swapped.setSwapSources(true);
+    check(rejects(swapped),
+          "preprocessor must not swap or rewrite source frame identity");
+
+    support::StaticStereoPreprocessor wrong_format;
+    wrong_format.setInvalidLeftDetectorFormat(true);
+    check(rejects(wrong_format),
+          "preprocessor must provide the declared BGR detector product");
 }
 
 void testExplicitAbortClosesServiceExactlyOnce() {
@@ -235,7 +297,8 @@ void testExplicitAbortClosesServiceExactlyOnce() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     service.abort("camera source failed");
     service.abort("must not replace the first reason");
@@ -257,7 +320,8 @@ void testMalformedDetectorBatchAbortsTrial() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -275,7 +339,8 @@ void testDuplicateCandidateIdsAbortTrial() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -292,7 +357,8 @@ void testDetectorCandidateMustIntersectItsSourceImage() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -311,7 +377,8 @@ void testServiceOwnsSelectedFlags() {
     StaticDetector left({left_candidate});
     StaticDetector right({right_candidate});
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -333,7 +400,8 @@ void testArrivalOrderNeverDefinesStereoIdentity() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
     auto input = stereoFrame();
     check(input.left.metadata.receive_timestamp->nanoseconds >
               input.right.metadata.receive_timestamp->nanoseconds,
@@ -350,7 +418,8 @@ void testCaptureDeltaUsesConfiguredTemporalGate() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
     auto within_tolerance = stereoFrame();
     within_tolerance.right.metadata.capture_timestamp = time(1050);
 
@@ -370,7 +439,7 @@ void testCaptureDeltaUsesConfiguredTemporalGate() {
     });
     fake::InMemoryTrialWriter late_writer;
     services::StereoObservationService late_service(
-        serviceConfig(), late_left, late_right, late_writer);
+        serviceConfig(), passingPreprocessor(), late_left, late_right, late_writer);
     auto outside_tolerance = stereoFrame();
     outside_tolerance.right.metadata.capture_timestamp = time(1101);
 
@@ -392,7 +461,8 @@ bool rejectsInvalidStereoFrame(ports::StereoFrame input) {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    services::StereoObservationService service(serviceConfig(), left, right, writer);
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, writer);
     const auto result = service.process(input);
     return result.status == services::ProcessStatus::invalid_input &&
            !writer.abortReason().empty();
@@ -428,7 +498,7 @@ void testStereoFrameIdentityAndBufferContract() {
 
     auto short_buffer = stereoFrame();
     short_buffer.left.image = std::make_shared<TestImage>(
-        1440, 1080, core::PixelFormat::gray8, 1440, 1024);
+        1440, 1080, core::PixelFormat::bayer8, 1440, 1024);
     check(rejectsInvalidStereoFrame(std::move(short_buffer)),
           "image allocation must cover stride times height");
 }
@@ -441,6 +511,8 @@ int main() {
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
     testInvalidStaticConfigFailsDuringServiceConstruction();
+    testPreprocessFailureAbortsAfterRawEvidence();
+    testMalformedPreprocessProductsAbortTrial();
     testDetectorFailureAbortsTrial();
     testExplicitAbortClosesServiceExactlyOnce();
     testMalformedDetectorBatchAbortsTrial();

@@ -4,6 +4,7 @@
 #include "volleyball/algorithms/stereo/triangulation.hpp"
 #include "volleyball/ports/detector.hpp"
 #include "volleyball/ports/observation_publisher.hpp"
+#include "volleyball/ports/stereo_preprocessor.hpp"
 #include "volleyball/ports/trial_writer.hpp"
 
 #include <optional>
@@ -28,6 +29,7 @@ struct StereoObservationServiceConfig {
 enum class ProcessStatus {
     observation,
     no_match,
+    preprocess_error,
     detector_error,
     invalid_input,
     write_error,
@@ -52,6 +54,7 @@ class StereoObservationService {
 public:
     StereoObservationService(
         StereoObservationServiceConfig config,
+        ports::StereoPreprocessor& preprocessor,
         ports::Detector& left_detector,
         ports::Detector& right_detector,
         ports::TrialWriter& writer,
@@ -76,10 +79,15 @@ private:
         const ports::DetectionBatch& batch,
         const core::CameraFrameRecord& frame,
         std::string& error) const;
+    [[nodiscard]] bool validateRectifiedFrame(
+        const ports::RectifiedStereoFrame& rectified,
+        const ports::StereoFrame& source,
+        std::string& error) const;
     [[nodiscard]] bool passesGate(
         const core::TriangulatedObservation& observation) const noexcept;
 
     StereoObservationServiceConfig config_;
+    ports::StereoPreprocessor& preprocessor_;
     ports::Detector& left_detector_;
     ports::Detector& right_detector_;
     ports::TrialWriter& writer_;

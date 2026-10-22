@@ -1,7 +1,7 @@
 #pragma once
 
 #include "volleyball/core/observation.hpp"
-#include "volleyball/ports/captured_frame.hpp"
+#include "volleyball/ports/rectified_frame.hpp"
 
 #include <string>
 #include <vector>
@@ -23,7 +23,8 @@ struct DetectionResult {
 class Detector {
 public:
     virtual ~Detector() = default;
-    [[nodiscard]] virtual DetectionResult detect(const CapturedFrame& frame) = 0;
+    [[nodiscard]] virtual DetectionResult detect(
+        const RectifiedCameraFrame& frame) = 0;
 };
 
 }  // namespace volleyball::ports
