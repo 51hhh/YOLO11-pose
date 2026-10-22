@@ -47,7 +47,6 @@ Stage 0 对每个 VPI lock/unlock、submit 和 stream sync 检查返回状态；
 | `rectBGR_vpiL/R` | BGR8 | VPI remap | TensorRT YOLO | 是 |
 | `rectGray_vpiL/R` | U8 | VPI format conversion | ROI 深度、采集 | 是 |
 | `disparityMap/confidenceMap` | S16/置信度 | VPI full-frame stereo | 全帧融合 | `FrameSlot` 有字段；当前 ROI_ONLY 不分配图像、不计算 |
-| TNR NV12 输入/输出 | NV12 | VPI convert/TNR | 后续 raw | 仅配置开启时分配；当前关闭 |
 
 VPI 图像以 CPU、CUDA、PVA、VIC 可访问标志创建。CUDA 地址按使用区间通过 `vpiImageLockData(...CUDA_PITCH_LINEAR...)` 获取，匹配的 `vpiImageUnlock()` 返回后立即清空，不跨帧缓存。
 
@@ -136,7 +135,6 @@ Stage 0 涉及：
 
 | 路径 | 状态 | 说明 |
 |---|---|---|
-| VPI TNR | 关闭 | 代码会走 U8↔NV12 和时序降噪；对 Bayer 语义和高速球拖影必须先在 NX 实测，当前不能视为已验证能力 |
 | 纯 Gray 检测 | 关闭 | 当前模型输入为 BGR；代码保留 Gray/Bayer 输入预处理能力 |
 | VPI 全帧 Stereo | 关闭 | `stereo.strategy=roi_only`，不提交 full/half-resolution disparity |
 | VIC/PVA remap | 未选 | stream 支持相应 backend，但最终 profile 指定 CUDA |
@@ -147,7 +145,7 @@ Stage 0 涉及：
 以下是待实测候选，不是当前已实现结论：
 
 - 用可证明正确的 VPI/CUDA 互操作消除 Bayer 后和 remap 后的 CPU 硬同步；
-- 按 profile 条件分配 TNR 资源；full-frame disparity 与 P2 候选的 stream/worker 已按最终配置创建；
+- full-frame disparity 与 P2 候选的 stream/worker 已按最终配置创建；
 - 用 Nsight Systems 检查左右 YOLO 是否与下一帧 USB 等待/Stage 0 重叠；
 - 比较 CUDA、VIC 和 PVA remap 的延迟、功耗及像素一致性；
 - 若修改色彩路径，必须重新验证 YOLO 精度、标定 remap 顺序和 Bayer pattern，不能只以帧率决定。

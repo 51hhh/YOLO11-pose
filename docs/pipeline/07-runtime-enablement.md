@@ -81,7 +81,6 @@ pitch-linear 地址布局差异；`doctor` 的 L2 成功不能代替用目标机
 ## 参考
 
 - [NVIDIA VPI 安装说明](https://docs.nvidia.com/vpi/4.0/installation.html)：不同版本安装在 `/opt/nvidia/vpiN`，包含头文件和库目录。
-- [NVIDIA VPI TNR C API](https://docs.nvidia.com/vpi/group__VPI__TNR.html)：TNR 初始化和 submit 以状态码报告失败。
 - [NVIDIA VPI Stereo Disparity C API](https://docs.nvidia.com/vpi/group__VPI__StereoDisparityEstimator.html)：创建/提交参数初始化和 disparity submit 返回 `VPIStatus`。
 - [NVIDIA VPI Rescale C API](https://docs.nvidia.com/vpi/group__VPI__Rescale.html)：half-resolution 链的每次 rescale submit 都返回 `VPIStatus`，必须逐项检查。
 - [NVIDIA VPI Image C API](https://docs.nvidia.com/vpi/group__VPI__Image.html)：外部 buffer 只在 image lock 期间有效；相容的多重 lock 必须逐次匹配 unlock。

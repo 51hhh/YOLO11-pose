@@ -106,7 +106,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["capture_v21"]["enabled"])
         self.assertFalse(rendered["disparity_offset"]["enabled"])
         self.assertNotIn("file", rendered["disparity_offset"])
-        self.assertFalse(rendered["tnr"]["enabled"])
+        self.assertNotIn("tnr", rendered)
         self.assertNotIn("tracker", rendered)
         self.assertFalse(rendered["display"]["enable"])
         self.assertEqual(rendered["stereo"]["strategy"], "roi_only")

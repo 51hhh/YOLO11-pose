@@ -86,7 +86,6 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 | CUDA template/NCC | 是 | pair 通过后 | 当前否 | 候选字段保存 |
 | ORB/BRISK/AKAZE/SIFT | 否或惰性 | 否 | 否 | 字段可为空 |
 | XFeat/SuperPoint/ALIKED | 配置对象存在 | 否 | 否 | 字段可为空 |
-| TNR | 否 | 否 | 否 | 否 |
 
 ## 配置投影边界
 

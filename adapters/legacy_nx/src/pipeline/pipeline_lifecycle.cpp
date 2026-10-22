@@ -60,12 +60,6 @@ Pipeline::~Pipeline() {
     for (auto& slot : slots_) {
         slot.destroy();
     }
-    if (tnrPayloadL_) vpiPayloadDestroy(tnrPayloadL_);
-    if (tnrPayloadR_) vpiPayloadDestroy(tnrPayloadR_);
-    if (tnrNV12L_) vpiImageDestroy(tnrNV12L_);
-    if (tnrNV12R_) vpiImageDestroy(tnrNV12R_);
-    if (tnrOutNV12L_) vpiImageDestroy(tnrOutNV12L_);
-    if (tnrOutNV12R_) vpiImageDestroy(tnrOutNV12R_);
     streams_.destroy();
 }
 

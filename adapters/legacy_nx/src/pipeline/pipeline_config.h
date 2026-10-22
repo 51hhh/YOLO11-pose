@@ -13,8 +13,6 @@
 #include "../ros/ros2_bridge_config.h"
 #endif
 
-#include <vpi/algo/TemporalNoiseReduction.h>
-
 #include <string>
 
 namespace stereo3d {
@@ -202,11 +200,6 @@ struct PipelineConfig {
     std::string p2_diagnostic_artifacts_dir; ///< diagnostic PNG 输出目录; 空则从 CSV 路径派生
     int p2_diagnostic_artifacts_max = 20; ///< 最多输出多少张 diagnostic artifact
 
-    // VPI TNR (时域降噪)
-    bool tnr_enabled = false;              ///< 是否启用 VPI TNR
-    VPITNRPreset tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
-    float tnr_strength = 0.6f;             ///< 降噪强度 0.0~1.0
-    VPITNRVersion tnr_version = VPI_TNR_DEFAULT;
 };
 
 }  // namespace stereo3d

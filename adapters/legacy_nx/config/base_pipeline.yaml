@@ -37,12 +37,6 @@ rectify:
   output_width: 1440
   output_height: 1080
 
-tnr:
-  enabled: false
-  preset: "outdoor_medium"
-  strength: 0.6
-  version: "default"
-
 detector:
   # 统一 CLI 会按 models/manifest.yaml 投影为绝对路径。
   engine_path: "models/yolo26_gpu_fp16.engine"

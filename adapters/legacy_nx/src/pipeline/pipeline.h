@@ -40,7 +40,6 @@
 #include "../fusion/hybrid_depth.h"
 #include "../utils/profiler.h"
 
-#include <vpi/algo/TemporalNoiseReduction.h>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 #include <opencv2/cudaimgproc.hpp>
@@ -516,15 +515,6 @@ private:
     P2InlineFeatureWorker p2_inline_xfeat_worker_;
     P2InlineFeatureWorker p2_inline_superpoint_worker_;
     P2InlineFeatureWorker p2_inline_aliked_worker_;
-
-    // ===== VPI TNR 资源 =====
-    VPIPayload tnrPayloadL_ = nullptr;     ///< 左目 TNR payload
-    VPIPayload tnrPayloadR_ = nullptr;     ///< 右目 TNR payload
-    VPIImage tnrNV12L_   = nullptr;        ///< 左目 NV12 输入缓冲
-    VPIImage tnrNV12R_   = nullptr;        ///< 右目 NV12 输入缓冲
-    VPIImage tnrOutNV12L_   = nullptr;     ///< 左目 TNR 输出
-    VPIImage tnrOutNV12R_   = nullptr;     ///< 右目 TNR 输出
-    bool tnrFirstFrame_ = true;            ///< 首帧标志 (prevOutput 传 NULL)
 
     // ===== Kalman dt 实测时间间隔 =====
     std::chrono::steady_clock::time_point last_fuse_time_{};

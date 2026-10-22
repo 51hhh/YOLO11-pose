@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[2]
 def _hostile_template() -> dict[str, object]:
     return {
         "disparity_offset": {"enabled": True},
-        "tnr": {"enabled": True},
         "detector": {
             "use_dla": True,
             "dual_yolo": {
@@ -50,7 +49,6 @@ class LegacyActivationPolicyTests(unittest.TestCase):
         apply_legacy_activation_policy(payload, profile)
 
         self.assertFalse(payload["disparity_offset"]["enabled"])
-        self.assertFalse(payload["tnr"]["enabled"])
         detector = payload["detector"]
         self.assertFalse(detector["use_dla"])
         dual = detector["dual_yolo"]

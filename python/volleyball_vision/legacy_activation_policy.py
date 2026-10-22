@@ -33,8 +33,6 @@ def apply_legacy_activation_policy(
     use_dla = config.data["platform"]["accelerator"] == "cuda_dla"
 
     _mapping(payload, "disparity_offset")["enabled"] = False
-    _mapping(payload, "tnr")["enabled"] = False
-
     detector = _mapping(payload, "detector")
     detector["use_dla"] = use_dla
     dual = _mapping(detector, "dual_yolo")

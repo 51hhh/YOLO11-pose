@@ -109,71 +109,11 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         return;
     }
 
-    if (config_.tnr_enabled) {
-        ScopedTimer tt("TNR");
-
-        if (!checkVpi(vpiSubmitConvertImageFormat(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          slot.rawL, tnrNV12L_, nullptr),
-                      "submit left raw-to-NV12") ||
-            !checkVpi(vpiSubmitConvertImageFormat(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          slot.rawR, tnrNV12R_, nullptr),
-                      "submit right raw-to-NV12")) {
-            NVTX_RANGE_POP();
-            return;
-        }
-
-        VPITNRParams tnrParams;
-        if (!checkVpi(vpiInitTemporalNoiseReductionParams(&tnrParams),
-                      "initialize TNR parameters")) {
-            NVTX_RANGE_POP();
-            return;
-        }
-        tnrParams.preset = config_.tnr_preset;
-        tnrParams.strength = config_.tnr_strength;
-
-        VPIImage prevL = tnrFirstFrame_ ? nullptr : tnrOutNV12L_;
-        VPIImage prevR = tnrFirstFrame_ ? nullptr : tnrOutNV12R_;
-
-        if (!checkVpi(vpiSubmitTemporalNoiseReduction(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          tnrPayloadL_, prevL, tnrNV12L_, tnrOutNV12L_,
-                          &tnrParams),
-                      "submit left TNR") ||
-            !checkVpi(vpiSubmitTemporalNoiseReduction(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          tnrPayloadR_, prevR, tnrNV12R_, tnrOutNV12R_,
-                          &tnrParams),
-                      "submit right TNR") ||
-            !checkVpi(vpiSubmitConvertImageFormat(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          tnrOutNV12L_, slot.rawL, nullptr),
-                      "submit left NV12-to-raw") ||
-            !checkVpi(vpiSubmitConvertImageFormat(
-                          streams_.vpiStreamPVA, VPI_BACKEND_CUDA,
-                          tnrOutNV12R_, slot.rawR, nullptr),
-                      "submit right NV12-to-raw")) {
-            NVTX_RANGE_POP();
-            return;
-        }
-
-        tnrFirstFrame_ = false;
-        globalPerf().record("TNR", tt.elapsedMs());
-    }
-
     if (colorPipelineEnabled()) {
         const int rw = config_.camera.width;
         const int rh = config_.camera.height;
 
-        // TNR 在 VPI stream 上异步回写 raw 图。CUDA 在取得外部视图前必须
-        // 等待该写入完成；随后 view 只在本段 kernel 使用期间保持 lock。
-        if (config_.tnr_enabled &&
-            !checkVpi(vpiStreamSync(streams_.vpiStreamPVA),
-                      "sync TNR before Bayer-to-BGR")) {
-            NVTX_RANGE_POP();
-            return;
-        }
+        // CUDA view 只在本段 Bayer kernel 使用期间保持 lock。
         if (!lockStage0CudaViews(slot)) {
             NVTX_RANGE_POP();
             return;

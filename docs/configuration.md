@@ -121,7 +121,7 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 `stereo.triangulation.fallback_search` 与 `stereo.triangulation.circle_fit`。这些参数都会被
 严格投影到旧 NX adapter，不能再通过修改 `base_pipeline.yaml` 改变正式 profile。
 
-同样，`legacy_activation_policy.py` 会集中覆盖 TNR、DLA、双路 YOLO、全帧视差、
+同样，`legacy_activation_policy.py` 会集中覆盖 DLA、双路 YOLO、全帧视差、
 神经特征、异步 ROI、P2 诊断和显示等功能开关。实时 profile 才允许
 异步/丢旧帧；采集 profile 即使只执行 `render-legacy` 也保持同步无丢帧语义。
 旧模板暂时仍保存已禁用实验候选和诊断工具的兼容数值，但它们不再有权自行开启处理支路；

@@ -61,7 +61,7 @@ slot_index = frame_id % 3
 
 `reset()` 故意不清理 lock 状态或 CUDA 地址：锁只能由知道相关 stream 是否已经结束的调度层释放。这样遗漏 unlock 会被下一次 lock 识别为 stale-frame 错误，而不会被重置操作掩盖。
 
-取流失败的槽不会继续沿用上一次留在 raw buffer 中的像素。raw VPI 锁定/解锁、Stage 0 stream 同步、TNR、remap 或格式转换任一失败都会设置 `grab_failed`；该帧跳过 YOLO 和深度计算，并沿失败回调进入采集的 `fail_trial` 契约。采集回调深拷贝校正 Gray8 后也必须成功解锁 VPI 图像，否则计为 `copy_failure` 并使 trial 失败。
+取流失败的槽不会继续沿用上一次留在 raw buffer 中的像素。raw VPI 锁定/解锁、Stage 0 stream 同步、remap 或格式转换任一失败都会设置 `grab_failed`；该帧跳过 YOLO 和深度计算，并沿失败回调进入采集的 `fail_trial` 契约。采集回调深拷贝校正 Gray8 后也必须成功解锁 VPI 图像，否则计为 `copy_failure` 并使 trial 失败。
 
 ## 实时 `nx-rdk` 生命周期
 

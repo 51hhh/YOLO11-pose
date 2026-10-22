@@ -3,7 +3,6 @@
 #include "main_dual_yolo_config.h"
 #include "stereo/neural_feature_config.h"
 
-#include <vpi/algo/TemporalNoiseReduction.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
@@ -138,27 +137,6 @@ stereo3d::PipelineConfig loadConfig(const std::string& path) {
         if (rect["output_width"])  cfg.rect_width  = rect["output_width"].as<int>();
         if (rect["output_height"]) cfg.rect_height = rect["output_height"].as<int>();
         if (rect["backend"]) cfg.rect_backend = rect["backend"].as<std::string>();
-    }
-
-    // VPI TNR (时域降噪)
-    if (auto tnr = root["tnr"]) {
-        if (tnr["enabled"]) cfg.tnr_enabled = tnr["enabled"].as<bool>();
-        if (tnr["strength"]) cfg.tnr_strength = tnr["strength"].as<float>();
-        if (tnr["preset"]) {
-            std::string p = tnr["preset"].as<std::string>();
-            if (p == "indoor_low")         cfg.tnr_preset = VPI_TNR_PRESET_INDOOR_LOW_LIGHT;
-            else if (p == "indoor_high")   cfg.tnr_preset = VPI_TNR_PRESET_INDOOR_HIGH_LIGHT;
-            else if (p == "outdoor_low")   cfg.tnr_preset = VPI_TNR_PRESET_OUTDOOR_LOW_LIGHT;
-            else if (p == "outdoor_medium") cfg.tnr_preset = VPI_TNR_PRESET_OUTDOOR_MEDIUM_LIGHT;
-            else if (p == "outdoor_high")  cfg.tnr_preset = VPI_TNR_PRESET_OUTDOOR_HIGH_LIGHT;
-        }
-        if (tnr["version"]) {
-            std::string v = tnr["version"].as<std::string>();
-            if (v == "v1")      cfg.tnr_version = VPI_TNR_V1;
-            else if (v == "v2") cfg.tnr_version = VPI_TNR_V2;
-            else if (v == "v3") cfg.tnr_version = VPI_TNR_V3;
-            else                cfg.tnr_version = VPI_TNR_DEFAULT;
-        }
     }
 
     // Detector

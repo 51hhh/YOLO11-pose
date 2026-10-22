@@ -19,7 +19,6 @@
 #include "pipeline_depth_modes.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "volleyball/logging/log.hpp"
-#include <vpi/algo/ConvertImageFormat.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -157,42 +156,7 @@ bool Pipeline::init(const PipelineConfig& config) {
     // 会按实际使用区间获取并释放 lock，具体边界集中在
     // pipeline_image_access.cpp。
 
-    // 6. 初始化 VPI TNR (时域降噪, 在校正前降噪)
-    if (config_.tnr_enabled) {
-        LOG_INFO("Initializing VPI TNR (preset=%d, strength=%.2f)...",
-                 config_.tnr_preset, config_.tnr_strength);
-        VPIStatus err;
-        // 创建 NV12 缓冲 (用于 U8 → NV12 转换 + TNR 处理)
-        // 使用 raw 分辨率, TNR 在校正前执行
-        uint64_t nv12_flags = VPI_BACKEND_CUDA | VPI_BACKEND_CPU;
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
-                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12L_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
-                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrNV12R_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR NV12 R create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
-                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12L_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 L create failed"); return false; }
-        err = vpiImageCreate(config_.camera.width, config_.camera.height,
-                             VPI_IMAGE_FORMAT_NV12_ER, nv12_flags, &tnrOutNV12R_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR output NV12 R create failed"); return false; }
-
-        // 创建 TNR payload
-        err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.camera.width, config_.camera.height,
-                  VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadL_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload L create failed"); return false; }
-        err = vpiCreateTemporalNoiseReduction(VPI_BACKEND_CUDA,
-                  config_.camera.width, config_.camera.height,
-                  VPI_IMAGE_FORMAT_NV12_ER, config_.tnr_version, &tnrPayloadR_);
-        if (err != VPI_SUCCESS) { LOG_ERROR("VPI TNR payload R create failed"); return false; }
-
-        tnrFirstFrame_ = true;
-        LOG_INFO("VPI TNR initialized (%dx%d, NV12_ER)", config_.camera.width, config_.camera.height);
-    }
-
-    // 7. 初始化海康双目相机
+    // 6. 初始化海康双目相机
 #ifdef HIK_CAMERA_ENABLED
     LOG_INFO("Opening dual cameras...");
     camera_ = std::make_unique<
