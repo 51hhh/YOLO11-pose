@@ -16,6 +16,10 @@ stereo:
     max_size_ratio: 2.0
     min_shifted_iou: 0.05
     max_disparity_px: 2048.0
+    # bbox 尺寸给出粗深度先验，只影响多候选排序，不替代双目几何。
+    bbox_disparity_consistency_ratio: 0.30
+    bbox_disparity_consistency_min_px: 45.0
+    bbox_disparity_penalty_scale: 0.75
     record_rejected: true
   triangulation:
     backend: cuda
@@ -30,6 +34,14 @@ stereo:
       max_points: 12
       min_points: 4
       min_confidence: 0.25
+      max_disparity_delta_px: 2.0
+      max_disparity_delta_ratio: 0.03
+      max_depth_delta_m: 0.5
       max_stddev_px: 1.0
       time_budget_ms: 1.5
+    fallback_search:
+      margin_px: 48
+      max_width_px: 220
+    circle_fit:
+      max_roi_pixels: 18000
 

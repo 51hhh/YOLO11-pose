@@ -54,6 +54,25 @@ def triangulation_semantic_errors(triangulation: Mapping[str, Any]) -> list[str]
     fallback_set = set(fallbacks)
     errors: list[str] = []
 
+    subpixel = triangulation.get("subpixel")
+    if (
+        isinstance(subpixel, Mapping)
+        and "min_points" in subpixel
+        and "max_points" in subpixel
+        and subpixel["min_points"] > subpixel["max_points"]
+    ):
+        errors.append("subpixel.min_points 不得大于 subpixel.max_points")
+    fallback_search = triangulation.get("fallback_search")
+    if (
+        isinstance(fallback_search, Mapping)
+        and "margin_px" in fallback_search
+        and "max_width_px" in fallback_search
+        and fallback_search["margin_px"] * 2 > fallback_search["max_width_px"]
+    ):
+        errors.append(
+            "fallback_search.max_width_px 不得小于 margin_px 的两倍"
+        )
+
     if backend == "recorded":
         if primary != "recorded":
             errors.append("recorded 三角化必须使用 primary_method=recorded")

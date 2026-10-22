@@ -148,6 +148,34 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(dual["subpixel_enabled"])
         self.assertFalse(dual["fallback_epipolar_search"])
 
+    def test_active_geometry_tuning_is_projected_from_main_config(self) -> None:
+        profile = load_profile(
+            "nx-rdk",
+            project_root=ROOT,
+            overrides=(
+                "stereo.association.bbox_disparity_consistency_ratio=0.22",
+                "stereo.association.bbox_disparity_consistency_min_px=31.0",
+                "stereo.association.bbox_disparity_penalty_scale=0.61",
+                "stereo.triangulation.subpixel.max_disparity_delta_px=1.7",
+                "stereo.triangulation.subpixel.max_disparity_delta_ratio=0.04",
+                "stereo.triangulation.subpixel.max_depth_delta_m=0.35",
+                "stereo.triangulation.fallback_search.margin_px=36",
+                "stereo.triangulation.fallback_search.max_width_px=180",
+                "stereo.triangulation.circle_fit.max_roi_pixels=12000",
+            ),
+        )
+        rendered = build_legacy_pipeline_config(profile, project_root=ROOT)
+        dual = rendered["detector"]["dual_yolo"]
+        self.assertEqual(dual["bbox_disparity_consistency_ratio"], 0.22)
+        self.assertEqual(dual["bbox_disparity_consistency_min_px"], 31.0)
+        self.assertEqual(dual["bbox_disparity_penalty_scale"], 0.61)
+        self.assertEqual(dual["subpixel_max_disp_delta_px"], 1.7)
+        self.assertEqual(dual["subpixel_max_disp_delta_ratio"], 0.04)
+        self.assertEqual(dual["subpixel_max_depth_delta_m"], 0.35)
+        self.assertEqual(dual["fallback_search_margin_px"], 36)
+        self.assertEqual(dual["fallback_max_width_px"], 180)
+        self.assertEqual(dual["circle_max_roi_pixels"], 12000)
+
 
 if __name__ == "__main__":
     unittest.main()

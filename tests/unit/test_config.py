@@ -247,6 +247,26 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(triangulation["candidate_methods"], [])
         self.assertEqual(triangulation["fallback_methods"], [])
 
+    def test_subpixel_min_points_cannot_exceed_max_points(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["subpixel"].update(
+            min_points=13,
+            max_points=12,
+        )
+        with self.assertRaisesRegex(ConfigError, "min_points"):
+            _validate_semantics(ROOT, payload)
+
+    def test_fallback_search_width_must_cover_both_margins(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["stereo"]["triangulation"]["fallback_search"].update(
+            margin_px=60,
+            max_width_px=100,
+        )
+        with self.assertRaisesRegex(ConfigError, "max_width_px"):
+            _validate_semantics(ROOT, payload)
+
 
 if __name__ == "__main__":
     unittest.main()

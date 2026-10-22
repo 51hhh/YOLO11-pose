@@ -137,18 +137,21 @@
       "properties": {
         "association": {
           "type": "object", "additionalProperties": false,
-          "required": ["epipolar_tolerance_px", "max_size_ratio", "min_shifted_iou", "max_disparity_px", "record_rejected"],
+          "required": ["epipolar_tolerance_px", "max_size_ratio", "min_shifted_iou", "max_disparity_px", "bbox_disparity_consistency_ratio", "bbox_disparity_consistency_min_px", "bbox_disparity_penalty_scale", "record_rejected"],
           "properties": {
             "epipolar_tolerance_px": {"type": "number", "minimum": 0},
             "max_size_ratio": {"type": "number", "minimum": 1},
             "min_shifted_iou": {"type": "number", "minimum": 0, "maximum": 1},
             "max_disparity_px": {"type": "number", "exclusiveMinimum": 0},
+            "bbox_disparity_consistency_ratio": {"type": "number", "minimum": 0.05},
+            "bbox_disparity_consistency_min_px": {"type": "number", "minimum": 5.0},
+            "bbox_disparity_penalty_scale": {"type": "number", "minimum": 0},
             "record_rejected": {"type": "boolean"}
           }
         },
         "triangulation": {
           "type": "object", "additionalProperties": false,
-          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel"],
+          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "fallback_search", "circle_fit"],
           "properties": {
             "backend": {"enum": ["cuda", "opencv", "recorded"]},
             "primary_method": {"enum": ["roi_multi_point", "circle_center", "bbox_center", "recorded"]},
@@ -163,15 +166,33 @@
             "propagate_covariance": {"type": "boolean"},
             "subpixel": {
               "type": "object", "additionalProperties": false,
-              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_stddev_px", "time_budget_ms"],
+              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_disparity_delta_px", "max_disparity_delta_ratio", "max_depth_delta_m", "max_stddev_px", "time_budget_ms"],
               "properties": {
                 "patch_radius": {"type": "integer", "minimum": 1},
                 "search_radius_px": {"type": "integer", "minimum": 1},
                 "max_points": {"type": "integer", "minimum": 1},
                 "min_points": {"type": "integer", "minimum": 1},
                 "min_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "max_disparity_delta_px": {"type": "number", "minimum": 0.25},
+                "max_disparity_delta_ratio": {"type": "number", "minimum": 0},
+                "max_depth_delta_m": {"type": "number", "exclusiveMinimum": 0.01},
                 "max_stddev_px": {"type": "number", "exclusiveMinimum": 0},
                 "time_budget_ms": {"type": "number", "exclusiveMinimum": 0}
+              }
+            },
+            "fallback_search": {
+              "type": "object", "additionalProperties": false,
+              "required": ["margin_px", "max_width_px"],
+              "properties": {
+                "margin_px": {"type": "integer", "minimum": 4},
+                "max_width_px": {"type": "integer", "minimum": 32}
+              }
+            },
+            "circle_fit": {
+              "type": "object", "additionalProperties": false,
+              "required": ["max_roi_pixels"],
+              "properties": {
+                "max_roi_pixels": {"type": "integer", "minimum": 1}
               }
             }
           }

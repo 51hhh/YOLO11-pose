@@ -98,13 +98,40 @@ def build_legacy_pipeline_config(
             "epipolar_y_tolerance": association["epipolar_tolerance_px"],
             "max_size_ratio": association["max_size_ratio"],
             "min_shifted_iou": association["min_shifted_iou"],
+            "bbox_disparity_consistency_ratio": association[
+                "bbox_disparity_consistency_ratio"
+            ],
+            "bbox_disparity_consistency_min_px": association[
+                "bbox_disparity_consistency_min_px"
+            ],
+            "bbox_disparity_penalty_scale": association[
+                "bbox_disparity_penalty_scale"
+            ],
             "subpixel_patch_radius": triangulation["subpixel"]["patch_radius"],
             "subpixel_search_radius_px": triangulation["subpixel"]["search_radius_px"],
             "subpixel_max_points": triangulation["subpixel"]["max_points"],
             "subpixel_min_points": triangulation["subpixel"]["min_points"],
             "subpixel_min_confidence": triangulation["subpixel"]["min_confidence"],
+            "subpixel_max_disp_delta_px": triangulation["subpixel"][
+                "max_disparity_delta_px"
+            ],
+            "subpixel_max_disp_delta_ratio": triangulation["subpixel"][
+                "max_disparity_delta_ratio"
+            ],
+            "subpixel_max_depth_delta_m": triangulation["subpixel"][
+                "max_depth_delta_m"
+            ],
             "subpixel_max_stddev_px": triangulation["subpixel"]["max_stddev_px"],
             "subpixel_time_budget_ms": triangulation["subpixel"]["time_budget_ms"],
+            "fallback_search_margin_px": triangulation["fallback_search"][
+                "margin_px"
+            ],
+            "fallback_max_width_px": triangulation["fallback_search"][
+                "max_width_px"
+            ],
+            "circle_max_roi_pixels": triangulation["circle_fit"][
+                "max_roi_pixels"
+            ],
         }
     )
     result["stereo"]["max_disparity"] = int(association["max_disparity_px"])

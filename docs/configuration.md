@@ -101,8 +101,15 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 生成旧 YAML 时，适配器先关闭基础模板中的全部 `depth_modes`，再只开启
 `candidate_methods` 显式列出的模式。因此修改旧模板或新增旧开关不会静默改变正式 profile。
 
+当前实际 P0/P1 路径中的 bbox 视差一致性惩罚由
+`stereo.association.bbox_disparity_*` 管理；多点结果相对初始几何的门限由
+`stereo.triangulation.subpixel.max_*` 管理；单侧漏检搜索窗口和圆拟合采样上限分别位于
+`stereo.triangulation.fallback_search` 与 `stereo.triangulation.circle_fit`。这些参数都会被
+严格投影到旧 NX adapter，不能再通过修改 `base_pipeline.yaml` 改变正式 profile。
+
 同样，`legacy_activation_policy.py` 会集中覆盖 TNR、DLA、双路 YOLO、全帧视差、
 神经特征、异步 ROI、P2 诊断、图像 SOT 和显示等功能开关。实时 profile 才允许
 异步/丢旧帧；采集 profile 即使只执行 `render-legacy` 也保持同步无丢帧语义。
-旧模板暂时仍提供尚未提升到 schema 的数值调参，但不再有权自行开启处理支路。
+旧模板暂时仍保存已禁用实验候选和诊断工具的兼容数值，但它们不再有权自行开启处理支路；
+当前正式 P0/P1 几何路径使用的上述门限均由主线配置拥有。
 
