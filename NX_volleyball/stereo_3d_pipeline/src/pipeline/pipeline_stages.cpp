@@ -156,6 +156,19 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         const int rw = config_.camera.width;
         const int rh = config_.camera.height;
 
+        // TNR 在 VPI stream 上异步回写 raw 图。CUDA 在取得外部视图前必须
+        // 等待该写入完成；随后 view 只在本段 kernel 使用期间保持 lock。
+        if (config_.tnr_enabled &&
+            !checkVpi(vpiStreamSync(streams_.vpiStreamPVA),
+                      "sync TNR before Bayer-to-BGR")) {
+            NVTX_RANGE_POP();
+            return;
+        }
+        if (!lockStage0CudaViews(slot)) {
+            NVTX_RANGE_POP();
+            return;
+        }
+
         launchBayerToBGR8(
             static_cast<const unsigned char*>(slot.rawL_gpu.data),
             static_cast<unsigned char*>(slot.tempBGR_L_gpu.data),
@@ -163,28 +176,33 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             slot.rawL_gpu.pitchBytes,
             slot.tempBGR_L_gpu.pitchBytes,
             streams_.cudaStreamBGR);
-
-        launchBayerToBGR8(
-            static_cast<const unsigned char*>(slot.rawR_gpu.data),
-            static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
-            rw, rh,
-            slot.rawR_gpu.pitchBytes,
-            slot.tempBGR_R_gpu.pitchBytes,
-            streams_.cudaStreamBGR);
-
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            LOG_ERROR("BayerToBGR kernel launch failed: %s",
-                      cudaGetErrorString(err));
-            slot.grab_failed = true;
-            NVTX_RANGE_POP();
-            return;
+        cudaError_t launch_err = cudaGetLastError();
+        if (launch_err == cudaSuccess) {
+            launchBayerToBGR8(
+                static_cast<const unsigned char*>(slot.rawR_gpu.data),
+                static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
+                rw, rh,
+                slot.rawR_gpu.pitchBytes,
+                slot.tempBGR_R_gpu.pitchBytes,
+                streams_.cudaStreamBGR);
+            launch_err = cudaGetLastError();
         }
-        err = cudaStreamSynchronize(streams_.cudaStreamBGR);
-        if (err != cudaSuccess) {
-            LOG_ERROR("BayerToBGR stream sync failed: %s",
-                      cudaGetErrorString(err));
+
+        // 即使其中一个 launch 失败，也要排空已成功提交的 kernel 后再 unlock。
+        const cudaError_t sync_err =
+            cudaStreamSynchronize(streams_.cudaStreamBGR);
+        const bool unlock_ok = unlockStage0CudaViews(slot);
+        if (launch_err != cudaSuccess) {
+            LOG_ERROR("BayerToBGR kernel launch failed: %s",
+                      cudaGetErrorString(launch_err));
             slot.grab_failed = true;
+        }
+        if (sync_err != cudaSuccess) {
+            LOG_ERROR("BayerToBGR stream sync failed: %s",
+                      cudaGetErrorString(sync_err));
+            slot.grab_failed = true;
+        }
+        if (slot.grab_failed || !unlock_ok) {
             NVTX_RANGE_POP();
             return;
         }
@@ -251,8 +269,10 @@ bool Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     const auto& leftDetectGpu = leftDetectorUsesBGR()
         ? slot.rectBGR_L_gpu
         : slot.rectGray_L_gpu;
-    if (!leftDetectGpu.data || leftDetectGpu.pitchBytes <= 0) {
-        return fail("invalid left detect CUDA pointer");
+    if (!leftDetectGpu.locked ||
+        leftDetectGpu.locked_frame_id != slot.frame_id ||
+        !leftDetectGpu.data || leftDetectGpu.pitchBytes <= 0) {
+        return fail("left detect CUDA view is not locked for this frame");
     }
 
     const bool submitted = det->enqueue(slot_index, leftDetectGpu.data,
@@ -284,8 +304,10 @@ bool Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
         const auto& rightDetectGpu = rightDetectorUsesBGR()
             ? slot.rectBGR_R_gpu
             : slot.rectGray_R_gpu;
-        if (!rightDetectGpu.data || rightDetectGpu.pitchBytes <= 0) {
-            return fail("invalid right detect CUDA pointer");
+        if (!rightDetectGpu.locked ||
+            rightDetectGpu.locked_frame_id != slot.frame_id ||
+            !rightDetectGpu.data || rightDetectGpu.pitchBytes <= 0) {
+            return fail("right detect CUDA view is not locked for this frame");
         }
 
         const bool submittedR = detR->enqueue(slot_index, rightDetectGpu.data,

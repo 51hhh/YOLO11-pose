@@ -32,8 +32,9 @@
 2. 把左右整帧校正 Gray8 从 FrameSlot D2D 复制到异步缓冲；
 3. 只有 CPU fallback 可能需要时才附加 D2H Gray；
 4. 只有已启用彩色/神经候选需要 BGR 时才附加 D2D BGR；当前不需要；
-5. worker 等待 copy event 后运行 ROI Stage 2；
-6. 主线程 drain 完成结果并执行融合、ResultCallback/FrameCallback。
+5. 主线程等待槽位快照 event，随后释放 FrameSlot 的 VPI CUDA read lock；
+6. worker 只读取自己的快照，等待 copy event 后运行 ROI Stage 2；
+7. 主线程 drain 完成结果并执行融合、ResultCallback/FrameCallback。
 
 缓冲池当前为 3。pending 队列以新代旧，正在运行的任务不被抢占；没有空闲缓冲、结果过期或超过帧截止线时均有独立计数。
 

@@ -67,6 +67,7 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 | 相机初始化、FrameSpecInfo 和配对 | `NX_volleyball/stereo_3d_pipeline/src/capture/` |
 | 三缓冲帧容器 | `src/pipeline/frame_slot.h` |
 | CUDA/VPI stream | `src/pipeline/sync.h` |
+| VPI 图像的短期 CUDA view 锁边界 | `src/pipeline/pipeline_image_access.cpp` |
 | Stage 0/1/全帧 Stage 2 | `src/pipeline/pipeline_stages.cpp` |
 | ROI 模式调度 | `src/pipeline/pipeline_loops.cpp` |
 | 异步 ROI 快照与 worker | `src/pipeline/pipeline_async_roi.cpp` |

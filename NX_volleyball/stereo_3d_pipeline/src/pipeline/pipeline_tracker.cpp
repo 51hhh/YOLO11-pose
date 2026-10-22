@@ -11,6 +11,15 @@
 
 namespace stereo3d {
 
+namespace {
+
+bool viewLockedForFrame(const FrameSlot::CudaImageView& view, int frame_id) {
+    return view.locked && view.locked_frame_id == frame_id &&
+           view.data != nullptr && view.pitchBytes > 0;
+}
+
+}  // namespace
+
 void Pipeline::tracker_handle_detect_result(FrameSlot& slot) {
     if (!tracker_) return;
 
@@ -36,7 +45,12 @@ void Pipeline::tracker_handle_detect_result(FrameSlot& slot) {
 
     const uint8_t* imgPtr = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
     int imgPitch = slot.rectGray_L_gpu.pitchBytes;
-    if (!imgPtr) return;
+    if (!viewLockedForFrame(slot.rectGray_L_gpu, slot.frame_id)) {
+        LOG_ERROR("[Tracker] left gray CUDA view is not locked for frame=%d",
+                  slot.frame_id);
+        slot.grab_failed = true;
+        return;
+    }
 
     if (tracker_state_ == TrackerState::IDLE ||
         tracker_state_ == TrackerState::LOST) {
@@ -63,7 +77,10 @@ void Pipeline::tracker_infill(FrameSlot& slot) {
 
     const uint8_t* imgPtr = static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);
     int imgPitch = slot.rectGray_L_gpu.pitchBytes;
-    if (!imgPtr) {
+    if (!viewLockedForFrame(slot.rectGray_L_gpu, slot.frame_id)) {
+        LOG_ERROR("[Tracker] infill CUDA view is not locked for frame=%d",
+                  slot.frame_id);
+        slot.grab_failed = true;
         slot.sot_bbox_result = SOTResult{};
         slot.bbox_source = BboxSource::NONE;
         return;
@@ -131,7 +148,11 @@ void Pipeline::stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index) {
         static_cast<const uint8_t*>(slot.rectGray_R_gpu.data);
     const int leftPitch = slot.rectGray_L_gpu.pitchBytes;
     const int rightPitch = slot.rectGray_R_gpu.pitchBytes;
-    if (!leftPtr || !rightPtr || leftPitch <= 0 || rightPitch <= 0) {
+    if (!viewLockedForFrame(slot.rectGray_L_gpu, slot.frame_id) ||
+        !viewLockedForFrame(slot.rectGray_R_gpu, slot.frame_id)) {
+        LOG_ERROR("Tracker ROI fuse CUDA views are not locked for frame=%d",
+                  slot.frame_id);
+        slot.grab_failed = true;
         if (hybrid_depth_) {
             std::lock_guard<std::mutex> hd_lock(hybrid_depth_mutex_);
             slot.results = hybrid_depth_->predictOnly(fusionDtForFrame(slot));

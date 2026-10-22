@@ -71,4 +71,6 @@ TensorRT detector 和各自 CUDA stream；ROI 候选集合由最终 profile 投�
 - [NVIDIA VPI TNR C API](https://docs.nvidia.com/vpi/group__VPI__TNR.html)：TNR 初始化和 submit 以状态码报告失败。
 - [NVIDIA VPI Stereo Disparity C API](https://docs.nvidia.com/vpi/group__VPI__StereoDisparityEstimator.html)：创建/提交参数初始化和 disparity submit 返回 `VPIStatus`。
 - [NVIDIA VPI Rescale C API](https://docs.nvidia.com/vpi/group__VPI__Rescale.html)：half-resolution 链的每次 rescale submit 都返回 `VPIStatus`，必须逐项检查。
+- [NVIDIA VPI Image C API](https://docs.nvidia.com/vpi/group__VPI__Image.html)：外部 buffer 只在 image lock 期间有效；相容的多重 lock 必须逐次匹配 unlock。
+- [NVIDIA VPI Basic Concepts](https://docs.nvidia.com/vpi/basic_concepts.html)：CUDA 互操作应在 lock 期间使用导出的 pitch-linear view；跨 backend 包装外部 allocation 不保证零拷贝。
 - [NVIDIA TensorRT 安装说明](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/installing.html)：C++ 部署需要 TensorRT 动态库；仅安装 Python wheel 不能替代当前 C++ 管线依赖。

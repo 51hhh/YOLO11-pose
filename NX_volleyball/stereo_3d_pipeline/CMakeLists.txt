@@ -230,6 +230,7 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_dual_yolo_match.cpp
   src/pipeline/pipeline_dual_yolo_host.cpp
   src/pipeline/pipeline_feature_jobs.cpp
+  src/pipeline/pipeline_image_access.cpp
   src/pipeline/pipeline_lifecycle.cpp
   src/pipeline/pipeline_loops.cpp
   src/pipeline/pipeline_roi_match_helpers.cpp

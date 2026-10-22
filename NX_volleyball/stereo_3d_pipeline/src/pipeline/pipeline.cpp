@@ -146,66 +146,9 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
-    // 5b. 缓存 Bayer→BGR 所需的 CUDA 指针 (Tegra 统一内存: 指针固定)
-    //     避免每帧 8 次 VPI lock/unlock, 节省 ~2.4ms/frame
-    if (colorPipelineEnabled()) {
-        LOG_INFO("Caching CUDA pointers for Bayer pipeline...");
-        for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
-            auto cachePtr = [i](const char* name, VPIImage img,
-                                FrameSlot::CachedGPU& out) -> bool {
-                VPIImageData d;
-                VPIStatus st = vpiImageLockData(
-                    img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
-                if (st != VPI_SUCCESS) {
-                    LOG_ERROR("Failed to cache %s CUDA pointer for slot %d (err=%d)",
-                              name, i, (int)st);
-                    return false;
-                }
-                out.data = d.buffer.pitch.planes[0].data;
-                out.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
-                vpiImageUnlock(img);
-                return out.data != nullptr && out.pitchBytes > 0;
-            };
-            if (!cachePtr("rawL", slots_[i].rawL, slots_[i].rawL_gpu) ||
-                !cachePtr("rawR", slots_[i].rawR, slots_[i].rawR_gpu) ||
-                !cachePtr("tempBGR_L", slots_[i].tempBGR_L, slots_[i].tempBGR_L_gpu) ||
-                !cachePtr("tempBGR_R", slots_[i].tempBGR_R, slots_[i].tempBGR_R_gpu) ||
-                !cachePtr("rectBGR_vpiL", slots_[i].rectBGR_vpiL, slots_[i].rectBGR_L_gpu) ||
-                !cachePtr("rectBGR_vpiR", slots_[i].rectBGR_vpiR, slots_[i].rectBGR_R_gpu)) {
-                return false;
-            }
-        }
-    }
-
-    // 双目 ROI/GPU 热路径直接使用校正灰度 CUDA 指针，避免 Stage2 每帧 VPI lock/unlock。
-    LOG_INFO("Caching CUDA pointers for rectified gray images...");
-    for (int i = 0; i < RING_BUFFER_SIZE; ++i) {
-        auto cachePtr = [i](const char* name, VPIImage img,
-                            FrameSlot::CachedGPU& out) -> bool {
-            VPIImageData d;
-            VPIStatus st = vpiImageLockData(
-                img, VPI_LOCK_READ, VPI_IMAGE_BUFFER_CUDA_PITCH_LINEAR, &d);
-            if (st != VPI_SUCCESS) {
-                LOG_ERROR("Failed to cache %s CUDA pointer for slot %d (err=%d)",
-                          name, i, (int)st);
-                return false;
-            }
-            out.data = d.buffer.pitch.planes[0].data;
-            out.pitchBytes = d.buffer.pitch.planes[0].pitchBytes;
-            vpiImageUnlock(img);
-            if (!out.data || out.pitchBytes <= 0) {
-                LOG_ERROR("Invalid %s CUDA pointer for slot %d", name, i);
-                return false;
-            }
-            return true;
-        };
-        if (!cachePtr("rectGray_vpiL", slots_[i].rectGray_vpiL,
-                      slots_[i].rectGray_L_gpu) ||
-            !cachePtr("rectGray_vpiR", slots_[i].rectGray_vpiR,
-                      slots_[i].rectGray_R_gpu)) {
-            return false;
-        }
-    }
+    // CUDA 视图不能在 vpiImageUnlock 后缓存。Stage 0 和后续检测/ROI
+    // 会按实际使用区间获取并释放 lock，具体边界集中在
+    // pipeline_image_access.cpp。
 
     // 6. 初始化 VPI TNR (时域降噪, 在校正前降噪)
     if (config_.tnr_enabled) {

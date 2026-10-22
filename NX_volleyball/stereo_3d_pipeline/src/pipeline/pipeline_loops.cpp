@@ -48,6 +48,9 @@ void Pipeline::pipelineLoop() {
                 synchronizeDetectDone(slot, "synchronize Stage3 detect dependencies");
                 globalPerf().record("Stage3_WaitDetect", tw.elapsedMs());
             }
+            // BGR 检测可与灰度全帧视差并行；到 Stage3 时检测已完成，
+            // 先释放外部 CUDA view，回调才能重新 lock 同一 VPI 图像。
+            unlockRectifiedCudaViews(slot);
 
             // 等 Stereo 完成（VPI stream 级同步，放在 Stage3 前，避免阻塞 Stage1/2 提交）
             if (!slot.grab_failed) {
@@ -134,6 +137,9 @@ void Pipeline::pipelineLoop() {
                     slot.grab_failed = true;
                 }
                 if (!slot.grab_failed) {
+                    lockRectifiedCudaViews(slot);
+                }
+                if (!slot.grab_failed) {
                     checkCudaFrame(
                         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
                         slot, "record rectification completion event");
@@ -151,6 +157,15 @@ void Pipeline::pipelineLoop() {
                     globalPerf().record("Stage1_DetectSubmit", t1.elapsedMs());
                 }
                 recordDetectDoneEvents(slot);
+
+                // 灰度检测与 VPI stereo 读取的是同一 VPIImage。VPI 文档要求
+                // image 被外部 lock 时不得由 VPI stream 访问，因此这里先等
+                // detector 用完并解锁；BGR 检测仍可和灰度 stereo 并行。
+                if (rectifiedGrayCudaViewsLocked(slot)) {
+                    synchronizeDetectDone(
+                        slot, "synchronize gray detector before VPI stereo");
+                    unlockRectifiedCudaViews(slot);
+                }
 
                 if (!slot.grab_failed) {
                     ScopedTimer t2("Stage2_StereoSubmit");
@@ -198,6 +213,7 @@ void Pipeline::pipelineLoop() {
 
         checkCudaFrame(cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
                        slot, "record final rectification completion event");
+        if (!slot.grab_failed) lockRectifiedCudaViews(slot);
         if (!slot.grab_failed) {
             checkCudaFrame(cudaStreamWaitEvent(streams_.cudaStreamGPU,
                                                slot.evtRectDone, 0),
@@ -205,6 +221,11 @@ void Pipeline::pipelineLoop() {
         }
         if (!slot.grab_failed) stage1_detect(slot, slot_idx);
         recordDetectDoneEvents(slot);
+        if (rectifiedGrayCudaViewsLocked(slot)) {
+            synchronizeDetectDone(
+                slot, "synchronize final gray detector before VPI stereo");
+            unlockRectifiedCudaViews(slot);
+        }
         if (!slot.grab_failed) stage2_stereo(slot);
 
         next_detect_frame++;
@@ -216,6 +237,7 @@ void Pipeline::pipelineLoop() {
         auto& slot = slots_[slot_idx];
 
         synchronizeDetectDone(slot, "synchronize final detect dependencies");
+        unlockRectifiedCudaViews(slot);
         if (!slot.grab_failed) {
             const VPIStatus status = vpiStreamSync(streams_.vpiStreamGPU);
             if (status != VPI_SUCCESS) {
@@ -267,6 +289,9 @@ void Pipeline::pipelineLoopROI() {
             slot.grab_failed = true;
             return false;
         }
+        if (!lockRectifiedCudaViews(slot)) {
+            return false;
+        }
         return checkCudaFrame(
             cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
             slot, "record ROI rectification completion event");
@@ -312,7 +337,13 @@ void Pipeline::pipelineLoopROI() {
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
-        waitAsyncRoiSlotSnapshotDone(slot_idx, "roi_initial_grab_reuse");
+        if (!waitAsyncRoiSlotSnapshotDone(
+                slot_idx, "roi_initial_grab_reuse") ||
+            !unlockRectifiedCudaViews(slot)) {
+            LOG_ERROR("[ROI] Failed to prepare initial slot %d for reuse",
+                      slot_idx);
+            return;
+        }
         slot.reset();
         slot.frame_id = next_grab_frame;
 
@@ -366,7 +397,13 @@ void Pipeline::pipelineLoopROI() {
         int grab_slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         {
             auto& slot = slots_[grab_slot_idx];
-            waitAsyncRoiSlotSnapshotDone(grab_slot_idx, "roi_grab_reuse");
+            if (!waitAsyncRoiSlotSnapshotDone(
+                    grab_slot_idx, "roi_grab_reuse") ||
+                !unlockRectifiedCudaViews(slot)) {
+                LOG_ERROR("[ROI] Failed to prepare slot %d for reuse",
+                          grab_slot_idx);
+                break;
+            }
             slot.reset();
             slot.frame_id = next_grab_frame;
 #ifdef HIK_CAMERA_ENABLED
@@ -420,6 +457,9 @@ void Pipeline::pipelineLoopROI() {
                                   "frame=%d status=%d",
                                   slot.frame_id, (int)tracker_rect_status);
                         slot.grab_failed = true;
+                    }
+                    if (!slot.grab_failed) {
+                        lockRectifiedCudaViews(slot);
                     }
                     if (!slot.grab_failed) {
                         checkCudaFrame(
@@ -485,6 +525,7 @@ void Pipeline::pipelineLoopROI() {
                     synchronizeDetectDone(
                         slot, "synchronize failed ROI detect dependencies");
                 }
+                unlockRectifiedCudaViews(slot);
                 publishRoiFrameCallbacks(slot);
                 next_fuse_frame++;
                 break;
@@ -502,6 +543,9 @@ void Pipeline::pipelineLoopROI() {
                     LOG_WARN("[ROI] Dropped %d stale frame(s); latest ready frame=%d",
                              stale_drop_count, next_fuse_frame + 1);
                 }
+                synchronizeDetectDone(
+                    slot, "synchronize stale ROI detect dependencies");
+                unlockRectifiedCudaViews(slot);
                 expireAsyncRoiBefore(next_fuse_frame + 1);
                 next_fuse_frame++;
                 break;
@@ -515,6 +559,7 @@ void Pipeline::pipelineLoopROI() {
             }
 
             if (slot.grab_failed) {
+                unlockRectifiedCudaViews(slot);
                 publishRoiFrameCallbacks(slot);
                 next_fuse_frame++;
                 break;
@@ -544,6 +589,7 @@ void Pipeline::pipelineLoopROI() {
                 }
 
                 if (slot.grab_failed) {
+                    unlockRectifiedCudaViews(slot);
                     publishRoiFrameCallbacks(slot);
                     next_fuse_frame++;
                     break;
@@ -560,6 +606,14 @@ void Pipeline::pipelineLoopROI() {
                     globalPerf().record("Stage2_ROIMatchFuseSubmit", t2.elapsedMs());
                     slot.bbox_source = BboxSource::YOLO;
                     tracker_handle_detect_result(slot);
+                    const bool snapshot_ready =
+                        waitAsyncRoiSlotSnapshotDone(
+                            slot_idx, "roi_async_snapshot_release");
+                    if (!snapshot_ready) {
+                        slot.grab_failed = true;
+                        expireAsyncRoiBefore(slot.frame_id + 1);
+                    }
+                    unlockRectifiedCudaViews(slot);
                     publish_now = false;
                     if (!submitted) {
                         if (!slot.detections.empty() ||
@@ -582,8 +636,13 @@ void Pipeline::pipelineLoopROI() {
                     slot.bbox_source = BboxSource::YOLO;
                     // 用 YOLO 结果刷新 tracker template
                     tracker_handle_detect_result(slot);
+                    checkCudaFrame(
+                        cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
+                        "synchronize ROI Stage2 before image unlock");
+                    unlockRectifiedCudaViews(slot);
                 }
 
+                if (slot.grab_failed) publish_now = true;
                 if (publish_now) {
                     publishRoiFrameCallbacks(slot);
                     account_output_frame(slot.frame_id);
@@ -595,6 +654,10 @@ void Pipeline::pipelineLoopROI() {
                     stage2_roi_fuse_tracker(slot, slot_idx);
                     globalPerf().record("Stage2_ROIFuseTracker", t2.elapsedMs());
                 }
+                checkCudaFrame(
+                    cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
+                    "synchronize tracker ROI Stage2 before image unlock");
+                unlockRectifiedCudaViews(slot);
                 publishRoiFrameCallbacks(slot);
                 account_output_frame(slot.frame_id);
             }
@@ -661,6 +724,7 @@ void Pipeline::pipelineLoopROI() {
         if (slot.grab_failed) {
             synchronizeDetectDone(
                 slot, "synchronize failed final ROI detect dependencies");
+            unlockRectifiedCudaViews(slot);
             publishRoiFrameCallbacks(slot);
         }
         next_detect_frame++;
@@ -677,17 +741,23 @@ void Pipeline::pipelineLoopROI() {
                 synchronizeDetectDone(
                     slot, "synchronize failed ROI drain dependencies");
             }
+            unlockRectifiedCudaViews(slot);
             publishRoiFrameCallbacks(slot);
             next_fuse_frame++;
             continue;
         }
         synchronizeDetectDone(slot, "synchronize ROI drain dependencies");
         if (slot.grab_failed) {
+            unlockRectifiedCudaViews(slot);
             publishRoiFrameCallbacks(slot);
             next_fuse_frame++;
             continue;
         }
         stage2_roi_match_fuse(slot, slot_idx);
+        checkCudaFrame(
+            cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
+            "synchronize final ROI Stage2 before image unlock");
+        unlockRectifiedCudaViews(slot);
         publishRoiFrameCallbacks(slot);
         account_output_frame(slot.frame_id);
         next_fuse_frame++;

@@ -2,18 +2,18 @@
  * @file pipeline.h
  * @brief 四级流水线 Pipeline 类
  *
- * 流水线架构:
- *   Stage 0 [Grab + Rectify]  → CPU + PVA    ~3ms
- *   Stage 1 [Detect / DLA]    → NVDLA         ~12-15ms  ┐
- *   Stage 2 [Stereo / GPU]    → GPU CUDA      ~10-12ms  ┘ 串行执行, 帧级流水线重叠
- *   Stage 3 [Fuse + Output]   → GPU/CPU       ~1ms
+ * 流水线架构（具体 backend 和耗时由 profile/目标机决定）:
+ *   Stage 0 [Grab + Bayer + Rectify] → Camera + CUDA/VPI
+ *   Stage 1 [Detect]                 → TensorRT
+ *   Stage 2 [Stereo/ROI candidates]  → VPI/CUDA/CPU
+ *   Stage 3 [Fuse + Output]          → CUDA/CPU
  *
  * 使用三缓冲实现帧间流水线重叠:
  *   Frame N:   Stage 3 (Fuse)
  *   Frame N+1: Stage 1+2 (Detect+Stereo)
  *   Frame N+2: Stage 0 (Grab+Rect)
  *
- * 吞吐量 = 1 / max(Stage_i latency) → 60-100 FPS
+ * ROI 模式另有异步快照 worker，完整时序见 docs/pipeline/。
  */
 
 #ifndef STEREO_3D_PIPELINE_PIPELINE_H_
@@ -152,6 +152,11 @@ private:
     bool leftDetectorUsesBGR() const;
     bool rightDetectorUsesBGR() const;
     bool colorPipelineEnabled() const;
+    bool lockStage0CudaViews(FrameSlot& slot);
+    bool unlockStage0CudaViews(FrameSlot& slot);
+    bool lockRectifiedCudaViews(FrameSlot& slot);
+    bool unlockRectifiedCudaViews(FrameSlot& slot);
+    bool rectifiedGrayCudaViewsLocked(const FrameSlot& slot) const;
     bool checkCudaFrame(cudaError_t status, FrameSlot& slot,
                         const char* operation) const;
     bool recordDetectDoneEvents(FrameSlot& slot) const;
@@ -377,7 +382,7 @@ private:
     void releaseAsyncRoiBufferLocked(int buffer_index);
     bool waitAsyncRoiBufferCopy(int buffer_index, const char* reason);
     void markAsyncRoiSlotCopyPendingLocked(int slot_index);
-    void waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
+    bool waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
     bool p2FeatureDiagnosticLaneConfigured() const;
     bool startP2FeatureDiagnosticLane();
     void shutdownP2FeatureDiagnosticLane();

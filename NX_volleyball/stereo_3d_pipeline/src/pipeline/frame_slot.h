@@ -191,18 +191,19 @@ struct FrameSlot {
     cudaEvent_t evtDetectRightDone = nullptr; ///< Stage 1 右目检测完成
     cudaEvent_t evtStereoDone = nullptr;  ///< Stage 2 视差完成
 
-    // =========== Cached CUDA Pointers (Tegra 统一内存优化) ===========
-    // init() 时缓存, 避免每帧 VPI lock/unlock (~0.3ms/次, 8 次 = 2.4ms)
-    // Tegra 统一内存: CPU/GPU 共享物理地址, CUDA 指针在 VPI Image 生命周期内固定
-    struct CachedGPU {
+    // =========== VPI CUDA lock views ===========
+    // VPI 只保证 buffer 在 lock 到 unlock 之间有效，禁止解锁后长期缓存指针。
+    struct CudaImageView {
         void* data = nullptr;
         int pitchBytes = 0;
+        bool locked = false;
+        int locked_frame_id = -1;
     };
-    CachedGPU rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA 指针
-    CachedGPU tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA 指针
-    CachedGPU rectBGR_L_gpu, rectBGR_R_gpu;   ///< 校正 BGR 图 CUDA 指针
-    CachedGPU rectGray_L_gpu;                 ///< 校正灰度左图 CUDA 指针
-    CachedGPU rectGray_R_gpu;                 ///< 校正灰度右图 CUDA 指针
+    CudaImageView rawL_gpu, rawR_gpu;             ///< 原始 Bayer 的 CUDA view
+    CudaImageView tempBGR_L_gpu, tempBGR_R_gpu;   ///< Debayer 输出 BGR 的 CUDA view
+    CudaImageView rectBGR_L_gpu, rectBGR_R_gpu;   ///< 校正 BGR 图 CUDA view
+    CudaImageView rectGray_L_gpu;                 ///< 校正灰度左图 CUDA view
+    CudaImageView rectGray_R_gpu;                 ///< 校正灰度右图 CUDA view
 
     // =========== 生命周期 ===========
 
@@ -240,6 +241,19 @@ struct FrameSlot {
      * @brief 销毁所有 VPI 和 CUDA 资源
      */
     void destroy() {
+        auto unlockView = [](VPIImage image, CudaImageView& view) {
+            if (image && view.locked) vpiImageUnlock(image);
+            view = CudaImageView{};
+        };
+        unlockView(rawL, rawL_gpu);
+        unlockView(rawR, rawR_gpu);
+        unlockView(tempBGR_L, tempBGR_L_gpu);
+        unlockView(tempBGR_R, tempBGR_R_gpu);
+        unlockView(rectBGR_vpiL, rectBGR_L_gpu);
+        unlockView(rectBGR_vpiR, rectBGR_R_gpu);
+        unlockView(rectGray_vpiL, rectGray_L_gpu);
+        unlockView(rectGray_vpiR, rectGray_R_gpu);
+
         auto destroyVPI = [](VPIImage& img) {
             if (img) { vpiImageDestroy(img); img = nullptr; }
         };

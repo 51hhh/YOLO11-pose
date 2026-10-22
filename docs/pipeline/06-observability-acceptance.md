@@ -9,7 +9,7 @@
 | 类别 | 关键指标 |
 |---|---|
 | 取流 | `Stage0_WaitGrab`、FrameCounter 跳变、左右到达时间差 |
-| 前处理 | `Stage0_Process`、`Stage1_WaitRect`、Bayer stream 错误 |
+| 前处理 | `Stage0_Process`、`Stage1_WaitRect`、`Stage0_VpiCudaLock/Unlock`、`Rectified_VpiCudaLock/Unlock`、Bayer stream 错误 |
 | YOLO | `Stage1_DetectSubmit`、`Stage2_WaitYOLOComplete`、左右提交标志 |
 | ROI | `Stage2_DualYoloMatch`、各候选 attempted/valid/selected |
 | 异步队列 | pending depth、free buffers、worker busy、replace/drop/no-buffer |
@@ -73,6 +73,7 @@ fusion/callback
 - `FrameCounter`、trigger sequence 和 frame id 连续；
 - 左右计数器一致，时间字段不倒退；
 - callback 前完成图像深拷贝；
+- 所有外部 CUDA 指针仅在 VPI lock 区间使用，unlock 后地址被清空；槽位复用时不存在旧 `locked_frame_id`；
 - raw lock/unlock、VPI submit/sync 或 CUDA 前处理失败均形成失败帧，不能复用旧像素伪造成功帧；
 - TensorRT enqueue、CUDA event record/wait/sync 和 full-frame VPI Stereo 任一错误均形成失败帧；event 未成功记录时不得查询或等待旧槽位 event；
 - 注入 Stage 1 失败时，已入队 GPU 工作完成排空、失败回调恰好一次，v2.1 recorder 以 `fail_trial` 结束而不是写出正常空检测；

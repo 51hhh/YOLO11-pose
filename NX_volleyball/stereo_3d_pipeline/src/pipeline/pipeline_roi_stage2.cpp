@@ -392,6 +392,22 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
     slot.results.clear();
     collectRoiDetections(slot, slot_index);
 
+    auto locked_for_frame = [&](const FrameSlot::CudaImageView& view) {
+        return view.locked && view.locked_frame_id == slot.frame_id &&
+               view.data != nullptr && view.pitchBytes > 0;
+    };
+    if (!locked_for_frame(slot.rectGray_L_gpu) ||
+        !locked_for_frame(slot.rectGray_R_gpu) ||
+        (colorPipelineEnabled() &&
+         (!locked_for_frame(slot.rectBGR_L_gpu) ||
+          !locked_for_frame(slot.rectBGR_R_gpu)))) {
+        LOG_ERROR("[Pipeline] ROI Stage2 CUDA views are not locked for frame=%d",
+                  slot.frame_id);
+        slot.grab_failed = true;
+        NVTX_RANGE_POP();
+        return;
+    }
+
     RoiStage2Input input;
     input.frame_id = slot.frame_id;
     input.left_detections = slot.detections;

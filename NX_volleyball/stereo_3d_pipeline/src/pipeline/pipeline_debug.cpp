@@ -74,6 +74,10 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     bool pwm_started = false;
     auto cleanup = [&]() {
         streams_.syncAll();
+        for (auto& live_slot : slots_) {
+            unlockStage0CudaViews(live_slot);
+            unlockRectifiedCudaViews(live_slot);
+        }
         if (pwm_started && pwm_trigger_) pwm_trigger_->stop();
         if (grabbing_started && camera_) camera_->stopGrabbing();
     };
@@ -117,6 +121,11 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
         cleanup();
         return false;
     }
+    if (!lockRectifiedCudaViews(slot)) {
+        LOG_ERROR("Feature match debug: failed to lock rectified CUDA views");
+        cleanup();
+        return false;
+    }
     const bool rect_event_ok = checkCudaFrame(
         cudaEventRecord(slot.evtRectDone, streams_.cudaStreamGPU),
         slot, "record debug rectification completion event");
@@ -127,6 +136,11 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
         slot, "synchronize debug detector dependencies");
     if (!detect_ok || !detect_event_ok || !detect_sync_ok) {
         LOG_ERROR("Feature match debug: detector submission or synchronization failed");
+        cleanup();
+        return false;
+    }
+    if (!unlockRectifiedCudaViews(slot)) {
+        LOG_ERROR("Feature match debug: failed to unlock rectified CUDA views");
         cleanup();
         return false;
     }

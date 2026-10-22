@@ -2527,25 +2527,33 @@ void Pipeline::markAsyncRoiSlotCopyPendingLocked(int slot_index) {
     }
 }
 
-void Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
+bool Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
                                             const char* reason) {
     using Clock = std::chrono::high_resolution_clock;
     if (!async_roi_ready_ ||
         slot_index < 0 ||
         slot_index >= RING_BUFFER_SIZE) {
-        return;
+        return true;
     }
 
     cudaEvent_t evt = nullptr;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         if (!async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)]) {
-            return;
+            return true;
         }
         evt = async_roi_slot_copy_done_[static_cast<size_t>(slot_index)];
     }
     if (!evt) {
-        return;
+        LOG_WARN("[AsyncROI] Slot snapshot is pending without an event "
+                 "slot=%d reason=%s",
+                 slot_index, reason ? reason : "unknown");
+        if (async_roi_copy_stream_) {
+            cudaStreamSynchronize(async_roi_copy_stream_);
+        }
+        std::lock_guard<std::mutex> lk(async_roi_mutex_);
+        async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)] = false;
+        return false;
     }
 
     const auto t0 = Clock::now();
@@ -2559,11 +2567,17 @@ void Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
         async_roi_slot_copy_pending_[static_cast<size_t>(slot_index)] = false;
     }
     if (err != cudaSuccess) {
+        // event 失败时仍排空 copy stream，调用方随后释放 VPI lock 才安全。
+        if (async_roi_copy_stream_) {
+            cudaStreamSynchronize(async_roi_copy_stream_);
+        }
         LOG_WARN("[AsyncROI] Slot snapshot wait failed slot=%d reason=%s err=%s",
                  slot_index,
                  reason ? reason : "unknown",
                  cudaGetErrorString(err));
+        return false;
     }
+    return true;
 }
 
 void Pipeline::shutdownAsyncRoiStage2() {
@@ -2686,6 +2700,20 @@ bool Pipeline::snapshotAsyncRoiImages(FrameSlot& slot,
             SnapshotClock::now() - start).count();
         globalPerf().record(name, ms);
     };
+
+    auto locked_for_frame = [&](const FrameSlot::CudaImageView& view) {
+        return view.locked && view.locked_frame_id == slot.frame_id &&
+               view.data != nullptr && view.pitchBytes > 0;
+    };
+    if (!locked_for_frame(slot.rectGray_L_gpu) ||
+        !locked_for_frame(slot.rectGray_R_gpu) ||
+        (need_bgr &&
+         (!locked_for_frame(slot.rectBGR_L_gpu) ||
+          !locked_for_frame(slot.rectBGR_R_gpu)))) {
+        LOG_WARN("Async ROI: source CUDA views are not locked for frame=%d",
+                 slot.frame_id);
+        return false;
+    }
 
     const uint8_t* left_src =
         static_cast<const uint8_t*>(slot.rectGray_L_gpu.data);

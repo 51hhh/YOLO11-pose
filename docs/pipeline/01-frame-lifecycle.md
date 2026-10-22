@@ -40,7 +40,7 @@
 slot_index = frame_id % 3
 ```
 
-初始化时一次性创建 VPI 图像和 CUDA event，并缓存 VPI 图像对应的 CUDA 指针。之后 `reset()` 只清理帧号、候选、结果和状态，不反复分配大图像。每个槽包含：
+初始化时一次性创建 VPI 图像和 CUDA event，但不缓存解锁后的 CUDA 指针。VPI 只保证 `vpiImageLockData()` 返回的地址在本次 lock 到匹配 unlock 之间有效，因此每个 Stage 仅在真实使用区间取得短期 CUDA view。之后 `reset()` 只清理帧号、候选、结果和状态，不反复分配大图像。每个槽包含：
 
 - 原始 `rawL/rawR`；
 - 去 Bayer 的临时 BGR；
@@ -54,8 +54,10 @@ slot_index = frame_id % 3
 
 槽位复用前有两个保护：
 
-1. 普通 CUDA/VPI 工作必须已被对应 stream/event 同步；
-2. 实时异步 ROI 若正在从该槽做 D2D/D2H 快照，`waitAsyncRoiSlotSnapshotDone()` 必须先完成。
+1. 普通 CUDA/VPI 工作必须已被对应 stream/event 同步，并释放该帧全部 VPI CUDA view；
+2. 实时异步 ROI 若正在从该槽做 D2D/D2H 快照，`waitAsyncRoiSlotSnapshotDone()` 必须先完成，才能 unlock 和 `reset()`。
+
+`reset()` 故意不清理 lock 状态或 CUDA 地址：锁只能由知道相关 stream 是否已经结束的调度层释放。这样遗漏 unlock 会被下一次 lock 识别为 stale-frame 错误，而不会被重置操作掩盖。
 
 取流失败的槽不会继续沿用上一次留在 raw buffer 中的像素。raw VPI 锁定/解锁、Stage 0 stream 同步、TNR、remap 或格式转换任一失败都会设置 `grab_failed`；该帧跳过 YOLO 和深度计算，并沿失败回调进入采集的 `fail_trial` 契约。采集回调深拷贝校正 Gray8 后也必须成功解锁 VPI 图像，否则计为 `copy_failure` 并使 trial 失败。
 
@@ -106,6 +108,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - `grab_failed` 是为兼容旧回调保留的“本帧不可发布为有效观测”总门控：FrameCounter 无法对齐、抓取/Stage 0、TensorRT/CUDA 同步或 VPI Stereo 失败都会设置它；不能按字段名把它仅解释为相机抓取失败；
 - TensorRT `enqueue` 失败时仍可能已有预处理、推理或 D2H 工作进入 stream，失败路径必须先排空对应 stream；
 - detect event 记录失败时禁止等待槽位中旧 event，改为直接同步真正的源 stream，并把本帧交给 fail-trial；
+- 任一图像 CUDA view 必须携带 `locked_frame_id`，消费者同时校验 lock、帧号、地址和 pitch；解锁后立即清空地址，禁止跨帧复用；
 - Stage 2 需要 host Gray 时，左右 VPI image 必须同时 lock/unlock 成功；基础设施失败不能退化为“没有纹理候选”；
 - 全帧 Stage 3 使用显式成功状态区分“计算成功但没有有效视差”和 Coordinate3D CUDA/图像锁失败，后一种必须使帧失败；
 - ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；

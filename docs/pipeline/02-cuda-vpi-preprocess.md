@@ -16,8 +16,10 @@
   -> SDK 解析 FrameSpecInfo
   -> 清除图像首部的 2 行水印像素
   -> 写入 rawL/rawR 的 host-pitch VPI buffer
+  -> lock raw READ + tempBGR WRITE 的 CUDA view
   -> CUDA Bayer RGGB -> BGR8（全分辨率、双目）
   -> cudaStreamSynchronize(cudaStreamBGR)
+  -> unlock raw/tempBGR CUDA view
   -> VPI CUDA 双目标定 remap，得到 rectified BGR8
   -> VPI CUDA BGR8 -> U8，得到 rectified Gray8
   -> vpiStreamSync
@@ -41,7 +43,31 @@ Stage 0 对每个 VPI lock/unlock、submit 和 stream sync 检查返回状态；
 | `disparityMap/confidenceMap` | S16/置信度 | VPI full-frame stereo | 全帧融合 | `FrameSlot` 有字段；当前 ROI_ONLY 不分配图像、不计算 |
 | TNR NV12 输入/输出 | NV12 | VPI convert/TNR | 后续 raw | 仅配置开启时分配；当前关闭 |
 
-VPI 图像以 CPU、CUDA、PVA、VIC 可访问标志创建，初始化时通过一次 lock/unlock 缓存 CUDA 指针。这样每帧不用为同一图像反复 lock 八次左右；缓存只在 VPIImage 整个生命周期内有效。
+VPI 图像以 CPU、CUDA、PVA、VIC 可访问标志创建。CUDA 地址按使用区间通过 `vpiImageLockData(...CUDA_PITCH_LINEAR...)` 获取，匹配的 `vpiImageUnlock()` 返回后立即清空，不跨帧缓存。
+
+## VPI/CUDA 图像锁契约
+
+NVIDIA 的 Image API 明确规定：`vpiImageLockData()` 返回的 buffer 只在图像保持 lock 时有效；图像可以有多个相容的 read lock，但每次 lock 都必须有一次 unlock。图像被外部 lock 时，VPI stream 不能对它执行不相容访问，否则会得到 `VPI_ERROR_BUFFER_LOCKED`。当前边界是：
+
+| 图像 | lock 模式 | 外部消费者 | 释放条件 |
+|---|---|---|---|
+| `rawL/rawR` | READ | Bayer CUDA kernel | `cudaStreamBGR` 已排空 |
+| `tempBGR_L/R` | WRITE | Bayer CUDA kernel | `cudaStreamBGR` 已排空，之后才允许 VPI remap 读取 |
+| `rectBGR_vpiL/R` | READ | BGR YOLO、可选彩色 ROI、tracker 模板 | 对应 TensorRT/ROI/快照工作完成 |
+| `rectGray_vpiL/R` | READ | Gray YOLO、ROI/特征点、异步快照 | 对应 TensorRT/ROI/快照工作完成 |
+
+生产者与消费者的顺序如下：
+
+1. VPI 生产 rectified 图后先 `vpiStreamSync`；
+2. pipeline 为本帧取得所需 BGR/Gray CUDA view，并记录 `locked_frame_id`；
+3. YOLO、tracker、ROI 或异步快照只接受“已锁且帧号一致”的 view；
+4. 同步实时 ROI 在候选计算和 tracker 模板刷新完成后释放；异步 ROI 必须等整帧 D2D/D2H 快照 event 完成后释放；
+5. FrameCallback 在 view 释放后运行，回调可重新以 host read lock 深拷贝图像；
+6. 槽位只有在 view 全部释放后才能 `reset()` 和重新写入。
+
+全帧 Stereo 有一个额外分支：BGR YOLO 只锁 BGR，VPI Stereo 可同时读取独立的 Gray 图；Gray YOLO 则与 Stereo 读取同一 VPI image，必须先等 detector 完成并 unlock，再提交 Stereo。这个串行化是内存正确性的要求，性能影响需要在 Orin NX 上测量。
+
+相容的 CUDA READ 与 HOST READ 可嵌套，用于少数同时需要 GPU Gray 和 CPU Gray 的候选；两次 lock 分别 unlock。任何 lock/unlock、快照 event 或 fallback stream 同步失败都会使该帧失败，不退化成普通“无匹配”。
 
 ## Stream 和同步边界
 
@@ -60,6 +86,8 @@ Stage 0 涉及：
 2. YOLO 提交前 `vpiStreamSync(vpiStreamPVA)`，之后才记录 CUDA event。
 
 所以 `evtRectDone` 是“VPI 已由 CPU 同步确认完成后的门闩”，不是 VPI 工作直接记录到 CUDA event 的零阻塞互操作。文档或性能分析不能把这一段画成完全异步重叠。
+
+新增的 `Stage0_VpiCudaLock/Unlock` 与 `Rectified_VpiCudaLock/Unlock` 性能项专门测量 view 获取和释放成本。若该成本成为瓶颈，可评估外部分配 CUDA memory 再包装为 VPIImage，但 VPI 官方同时说明跨 backend 不保证原 allocation 零拷贝，必须以目标机 timeline 和像素回归为准，不能恢复“解锁后缓存地址”的做法。
 
 ## TensorRT 输入前处理
 
