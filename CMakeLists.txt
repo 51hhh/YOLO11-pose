@@ -13,6 +13,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 add_subdirectory(libs/core)
 add_subdirectory(ports)
+add_subdirectory(algorithms/stereo)
+add_subdirectory(services)
 add_subdirectory(adapters/fake)
 
 if(VOLLEYBALL_BUILD_TESTS)

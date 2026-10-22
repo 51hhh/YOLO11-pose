@@ -38,3 +38,19 @@ target_compile_options(trigger_edge_history_tests PRIVATE
 )
 add_test(NAME trigger_edge_history_tests COMMAND trigger_edge_history_tests)
 
+add_executable(stereo_observation_service_tests
+  stereo_observation_service_tests.cpp
+)
+target_link_libraries(stereo_observation_service_tests PRIVATE
+  volleyball::services
+  volleyball::fake_adapters
+)
+target_compile_features(stereo_observation_service_tests PRIVATE cxx_std_17)
+target_compile_options(stereo_observation_service_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
+add_test(
+  NAME stereo_observation_service_tests
+  COMMAND stereo_observation_service_tests
+)
+

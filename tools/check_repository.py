@@ -4,11 +4,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+PURE_CPP_LAYERS = (
+    "libs/core",
+    "ports",
+    "algorithms",
+    "services",
+)
+FORBIDDEN_HARDWARE_INCLUDES = re.compile(
+    r"^\s*#\s*include\s*[<\"](?:cuda|vpi|NvInfer|opencv|rclcpp|"
+    r"MvCameraControl|gpiod|yaml-cpp)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _git(*arguments: str) -> str:
@@ -45,10 +58,32 @@ def main() -> int:
         "configs/profiles/free-flight.yaml",
         "models/manifest.yaml",
         "CMakePresets.json",
+        "algorithms/stereo/CMakeLists.txt",
+        "services/CMakeLists.txt",
     ]
     missing = [path for path in required if not (ROOT / path).is_file()]
     if missing:
         errors.append("缺少主线必需文件:\n    " + "\n    ".join(missing))
+
+    dependency_violations: list[str] = []
+    for layer in PURE_CPP_LAYERS:
+        layer_root = ROOT / layer
+        if not layer_root.exists():
+            continue
+        for path in layer_root.rglob("*"):
+            if path.suffix not in {".h", ".hpp", ".cc", ".cpp", ".cxx"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            match = FORBIDDEN_HARDWARE_INCLUDES.search(text)
+            if match:
+                dependency_violations.append(
+                    f"{path.relative_to(ROOT)}: {match.group(0).strip()}"
+                )
+    if dependency_violations:
+        errors.append(
+            "纯核心/算法/服务层禁止直接依赖硬件 SDK:\n    "
+            + "\n    ".join(dependency_violations)
+        )
 
     if errors:
         print("REPOSITORY_AUDIT_FAILED", file=sys.stderr)
