@@ -154,6 +154,23 @@ StereoObservationService::StereoObservationService(
     ports::DirectObservationEstimator& estimator,
     ports::TrialWriter& writer,
     ports::ObservationPublisher* publisher)
+    : StereoObservationService(
+          std::move(config),
+          preprocessor,
+          left_detector,
+          right_detector,
+          estimator,
+          &writer,
+          publisher) {}
+
+StereoObservationService::StereoObservationService(
+    StereoObservationServiceConfig config,
+    ports::StereoPreprocessor& preprocessor,
+    ports::Detector& left_detector,
+    ports::Detector& right_detector,
+    ports::DirectObservationEstimator& estimator,
+    ports::TrialWriter* writer,
+    ports::ObservationPublisher* publisher)
     : config_(std::move(config)),
       preprocessor_(preprocessor),
       detector_executor_(std::make_unique<StereoDetectorExecutor>(
@@ -189,8 +206,9 @@ StereoProcessResult StereoObservationService::fail(
 bool StereoObservationService::appendDetections(
     const std::vector<core::Detection2D>& detections,
     std::string& error) {
+    if (!writer_) return true;
     for (const auto& detection : detections) {
-        if (!writeAccepted(writer_.append(detection), error)) {
+        if (!writeAccepted(writer_->append(detection), error)) {
             return false;
         }
     }
@@ -200,8 +218,9 @@ bool StereoObservationService::appendDetections(
 bool StereoObservationService::appendAssociations(
     const std::vector<algorithms::stereo::ScoredAssociation>& associations,
     std::string& error) {
+    if (!writer_) return true;
     for (const auto& scored : associations) {
-        if (!writeAccepted(writer_.append(scored.attempt), error)) {
+        if (!writeAccepted(writer_->append(scored.attempt), error)) {
             return false;
         }
     }
@@ -306,7 +325,7 @@ StereoProcessResult StereoObservationService::process(
     }
 
     std::string error;
-    if (!writeAccepted(writer_.append(frame), error)) {
+    if (writer_ && !writeAccepted(writer_->append(frame), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
 
@@ -446,7 +465,7 @@ StereoProcessResult StereoObservationService::process(
     }
     const auto& estimated_observation = *estimated.observation;
     const auto& observation = estimated_observation.measurement;
-    if (!writeAccepted(writer_.append(estimated_observation), error)) {
+    if (writer_ && !writeAccepted(writer_->append(estimated_observation), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
     ++next_observation_id_;
@@ -480,7 +499,9 @@ ports::WriteResult StereoObservationService::finalize() {
     if (closed_) {
         return {ports::WriteStatus::failed, "service is closed"};
     }
-    auto result = writer_.finalize();
+    auto result = writer_
+        ? writer_->finalize()
+        : ports::WriteResult{ports::WriteStatus::accepted, {}};
     if (result.status == ports::WriteStatus::accepted) {
         closed_ = true;
         return result;
@@ -499,7 +520,9 @@ void StereoObservationService::abort(std::string reason) noexcept {
     if (reason.empty()) {
         reason = "stereo observation service aborted";
     }
-    writer_.abort(std::move(reason));
+    if (writer_) {
+        writer_->abort(std::move(reason));
+    }
     closed_ = true;
 }
 

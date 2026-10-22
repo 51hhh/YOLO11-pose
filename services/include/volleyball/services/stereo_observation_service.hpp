@@ -62,6 +62,14 @@ public:
         ports::DirectObservationEstimator& estimator,
         ports::TrialWriter& writer,
         ports::ObservationPublisher* publisher = nullptr);
+    StereoObservationService(
+        StereoObservationServiceConfig config,
+        ports::StereoPreprocessor& preprocessor,
+        ports::Detector& left_detector,
+        ports::Detector& right_detector,
+        ports::DirectObservationEstimator& estimator,
+        ports::TrialWriter* writer,
+        ports::ObservationPublisher* publisher = nullptr);
     ~StereoObservationService();
 
     StereoObservationService(const StereoObservationService&) = delete;
@@ -97,7 +105,8 @@ private:
     ports::StereoPreprocessor& preprocessor_;
     std::unique_ptr<StereoDetectorExecutor> detector_executor_;
     ports::DirectObservationEstimator& estimator_;
-    ports::TrialWriter& writer_;
+    // 实时发布模式可以不录制；采集应用必须注入非空 writer。
+    ports::TrialWriter* writer_;
     ports::ObservationPublisher* publisher_;
     core::PairId next_pair_id_{0};
     core::ObservationId next_observation_id_{0};

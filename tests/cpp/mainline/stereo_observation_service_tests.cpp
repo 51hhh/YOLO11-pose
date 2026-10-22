@@ -216,6 +216,34 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "successful service must finalize the raw writer");
 }
 
+void testRuntimeServiceCanPublishWithoutRecordingWriter() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.5, 0.90),
+    });
+    CollectingPublisher publisher;
+    services::StereoObservationService service(
+        serviceConfig(),
+        passingPreprocessor(),
+        left,
+        right,
+        passingObservationEstimator(),
+        static_cast<ports::TrialWriter*>(nullptr),
+        &publisher);
+
+    const auto result = service.process(stereoFrame());
+    const auto finalized = service.finalize();
+    check(
+        result.status == services::ProcessStatus::observation &&
+            publisher.publications.size() == 1,
+        "runtime mode must publish direct observations without a fake writer");
+    check(
+        finalized.status == ports::WriteStatus::accepted,
+        "runtime mode without recording must finalize its service lifecycle");
+}
+
 void testUnselectedGatePassingPairIsRecordedAsRejected() {
     StaticDetector left({
         detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
@@ -725,6 +753,7 @@ void testStereoFrameIdentityAndBufferContract() {
 
 int main() {
     testServicePreservesAllAttemptsAndPublishesDirectObservation();
+    testRuntimeServiceCanPublishWithoutRecordingWriter();
     testUnselectedGatePassingPairIsRecordedAsRejected();
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
