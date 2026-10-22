@@ -21,8 +21,8 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     LOG_ERROR("Feature match debug capture requires Hikvision camera support");
     return false;
 #else
-    if (running_.load()) {
-        LOG_ERROR("Feature match debug capture must run before Pipeline::start()");
+    if (!run_state_.isIdle()) {
+        LOG_ERROR("Feature match debug capture requires an idle Pipeline");
         return false;
     }
     if (!camera_) {
@@ -72,14 +72,20 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
 
     bool grabbing_started = false;
     bool pwm_started = false;
-    auto cleanup = [&]() {
-        streams_.syncAll();
-        for (auto& live_slot : slots_) {
-            unlockStage0CudaViews(live_slot);
-            unlockRectifiedCudaViews(live_slot);
+    auto cleanup = [&]() -> bool {
+        const bool streams_drained = streams_.syncAll();
+        if (streams_drained) {
+            for (auto& live_slot : slots_) {
+                unlockStage0CudaViews(live_slot);
+                unlockRectifiedCudaViews(live_slot);
+            }
+        } else {
+            LOG_ERROR("Feature match debug: final stream drain failed; "
+                      "retaining exported image locks");
         }
         if (pwm_started && pwm_trigger_) pwm_trigger_->stop();
         if (grabbing_started && camera_) camera_->stopGrabbing();
+        return streams_drained;
     };
 
     if (!camera_->startGrabbing()) {
@@ -316,8 +322,7 @@ bool Pipeline::debugFeatureMatchesOnce(const std::string& output_dir) {
     }
 
     LOG_INFO("Feature match debug saved to %s", output_dir.c_str());
-    cleanup();
-    return true;
+    return cleanup();
 #endif
 }
 

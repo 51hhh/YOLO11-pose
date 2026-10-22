@@ -16,6 +16,7 @@
 | buffer 所有权 | `Stage2_AsyncRoiBufferQuarantined`、`Stage2_AsyncRoiDropDiagnosticBusy`、copy/event/stream drain 错误 |
 | 截止线 | `Stage2_AsyncRoiOverDeadline`、stale pending/ready/result drop |
 | 回调 | `Stage2_ResultCB`、`Stage2_FrameCB` |
+| 线程生命周期 | `Pipeline_WorkerFailure`、启动回滚和最终 stream drain 日志 |
 | 输出 | FPS、3D 有效率、深度来源、置信度、pair reject reason |
 
 只看平均 FPS 不足以验收。需要同时看端到端年龄、p50/p95/p99、连续丢帧长度和每个候选的有效率。
@@ -86,6 +87,10 @@ fusion/callback
 - 注入异步 ROI 的缺失/失败 snapshot event 与 worker 异常：`Stage2_AsyncRoiFailed` 增加，buffer 可再次取得，worker 继续处理下一任务；失败帧不得进入 HybridDepth，也不得被记为正常 `predict_only`；
 - 注入异步 ROI copy event/stream 同步失败：失败 buffer 必须被隔离且不再进入 free pool；当前帧进入 `grab_failed`，不能在 pending-replace 或下一次 snapshot 中复用该显存；
 - 让 P2 诊断持有 source snapshot 后触发 pending-replace：旧 buffer 必须等最后一个诊断引用释放后才回池，新帧不得原地覆盖；
+- 在 Result/Frame callback、grab worker、异步 ROI worker 分别注入异常：进程不得 `std::terminate`；pipeline failure 必须可见，主线程退出等待、执行一次 join/drain 并返回非零；
+- 注入一个未标记 failure 的 pipeline 主循环提前退出：线程入口必须把它转为可见 failure，主线程不得永久等待；
+- 从 pipeline callback 内请求 `stop()`：不得自我 join；owner 后续仍能取得 cleanup token 并完成关闭；
+- 注入最终 CUDA/VPI stream drain 失败：运行必须标记失败，外部 VPI view 不得在未证明 GPU 停止前由正常停止路径解锁；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

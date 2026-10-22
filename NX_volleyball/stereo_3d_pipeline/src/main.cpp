@@ -515,7 +515,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (enable_display) {
-        while (!g_shutdown.load()) {
+        while (!g_shutdown.load() && pipeline.isRunning()) {
             DisplayJob job;
             bool has_job = false;
             {
@@ -537,9 +537,14 @@ int main(int argc, char* argv[]) {
         }
         cv::destroyAllWindows();
     } else {
-        while (!g_shutdown.load()) {
+        while (!g_shutdown.load() && pipeline.isRunning()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
+    }
+
+    bool pipeline_failed = pipeline.hasFailed();
+    if (pipeline_failed) {
+        LOG_ERROR("Pipeline worker failed; beginning controlled shutdown");
     }
 
     LOG_INFO("Shutting down...");
@@ -553,6 +558,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     pipeline.stop();
+    pipeline_failed = pipeline_failed || pipeline.hasFailed();
     capture_v21_recorder.close();
     realtime_debug_dumper.close();
     baseline_recorder.close();
@@ -564,6 +570,10 @@ int main(int argc, char* argv[]) {
         LOG_ERROR("Capture v2.1 staging is not publishable: %s",
                   capture_v21_recorder.fatalError().c_str());
         return 2;
+    }
+
+    if (pipeline_failed) {
+        return 1;
     }
 
     LOG_INFO("Done.");

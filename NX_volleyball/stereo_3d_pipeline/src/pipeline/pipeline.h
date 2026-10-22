@@ -24,6 +24,7 @@
 #include "pipeline_callbacks.h"
 #include "pipeline_config.h"
 #include "pipeline_feature_jobs.h"
+#include "pipeline_run_state.h"
 #include "sync.h"
 #include "../capture/async_grab_state.h"
 #include "../capture/hikvision_camera.h"   // CameraConfig (值类型, 必须完整定义)
@@ -116,6 +117,10 @@ public:
      */
     float getCurrentFPS() const { return current_fps_.load(); }
 
+    /** @brief 任一工作线程发生未恢复异常或启动回滚时返回 true。 */
+    bool hasFailed() const { return run_state_.hasFailed(); }
+    bool isRunning() const { return run_state_.isRunning(); }
+
     /**
      * @brief 打印性能报告
      */
@@ -130,6 +135,11 @@ private:
     // ===== Pipeline 主循环 =====
     void pipelineLoop();
     void pipelineLoopROI();   ///< ROI_ONLY 策略: 检测后多点匹配
+    void pipelineThreadMain(bool roi_mode) noexcept;
+    void asyncRoiWorkerThreadMain() noexcept;
+    void p2FeatureDiagnosticThreadMain() noexcept;
+    void handleWorkerFailure(const char* worker,
+                             const char* detail) noexcept;
 
     // ===== Stage 函数 =====
     void stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded = false);
@@ -448,6 +458,7 @@ private:
     // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
     std::thread grab_thread_;
     void grabLoop();
+    void grabThreadMain() noexcept;
     void attachPwmTriggerMetadata(
         FrameSlot& slot,
         std::uint32_t frame_counter) const;
@@ -535,7 +546,7 @@ private:
     uint64_t last_fuse_capture_timestamp_ns_ = 0;
 
     // ===== 状态 =====
-    std::atomic<bool> running_{false};
+    PipelineRunState run_state_;
     std::atomic<float> current_fps_{0.0f};
     std::thread pipeline_thread_;              ///< Pipeline 工作线程
 

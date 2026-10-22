@@ -792,7 +792,8 @@ bool Pipeline::startAsyncRoiStage2() {
         async_roi_expire_before_frame_ = -1;
         async_roi_completed_.clear();
     }
-    async_roi_thread_ = std::thread(&Pipeline::asyncRoiWorkerLoop, this);
+    async_roi_thread_ =
+        std::thread(&Pipeline::asyncRoiWorkerThreadMain, this);
     LOG_INFO("Async ROI Stage2 worker started");
     return true;
 }
@@ -822,7 +823,7 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
         p2_feature_diag_pending_.clear();
     }
     p2_feature_diag_thread_ =
-        std::thread(&Pipeline::p2FeatureDiagnosticWorkerLoop, this);
+        std::thread(&Pipeline::p2FeatureDiagnosticThreadMain, this);
     LOG_INFO("P2 diagnostic FeatureJob worker started");
     return true;
 }

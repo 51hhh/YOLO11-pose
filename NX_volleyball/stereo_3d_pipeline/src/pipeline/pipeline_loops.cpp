@@ -22,6 +22,13 @@ void Pipeline::pipelineLoop() {
     int next_detect_frame = 0;    // 下一次 Stage1/2 要提交的 frame id
     int next_fuse_frame = 0;      // 下一次 Stage3 要输出的 frame id
 
+    // start() 创建线程后，owner 可能立即请求停止。此时线程尚未开始任何
+    // 设备工作，直接退出；若首帧已经开始，后续排空路径仍负责完成它。
+    if (!run_state_.isRunning()) {
+        LOG_INFO("Pipeline loop stopped before initial frame");
+        return;
+    }
+
     // ===== 填充: 先抓首帧 =====
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
@@ -36,7 +43,7 @@ void Pipeline::pipelineLoop() {
         next_grab_frame++;
     }
 
-    while (running_) {
+    while (run_state_.isRunning()) {
         // --- Stage 3: 融合上一帧 (若已提交 detect/stereo) ---
         if (next_fuse_frame < next_detect_frame) {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
@@ -121,7 +128,15 @@ void Pipeline::pipelineLoop() {
 
             // 帧同步跳变: 跳过此帧
             if (slot.grab_failed) {
-                vpiStreamSync(streams_.vpiStreamPVA);
+                const VPIStatus failed_frame_drain =
+                    vpiStreamSync(streams_.vpiStreamPVA);
+                if (failed_frame_drain != VPI_SUCCESS) {
+                    LOG_ERROR("[Pipeline] failed-frame rectification drain "
+                              "failed: frame=%d status=%d",
+                              slot.frame_id,
+                              static_cast<int>(failed_frame_drain));
+                    run_state_.markFailed();
+                }
                 // 失败帧也必须进入帧回调，使 fail_trial 录制器能立即终止，
                 // 而不是等待一帧永远不会到达的后继帧来发现序号缺口。
                 publishRoiFrameCallbacks(slot);
@@ -178,6 +193,9 @@ void Pipeline::pipelineLoop() {
         }
 
         // --- Stage 0: 抓取下一帧 ---
+        if (!run_state_.isRunning()) {
+            break;
+        }
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
         slot.reset();
@@ -197,6 +215,7 @@ void Pipeline::pipelineLoop() {
     if (drain_rect_status != VPI_SUCCESS) {
         LOG_ERROR("[Pipeline] final rectification drain failed: status=%d",
                   (int)drain_rect_status);
+        run_state_.markFailed();
     }
 
     // 1) 提交所有已抓取但尚未提交 detect/stereo 的帧
@@ -333,6 +352,11 @@ void Pipeline::pipelineLoopROI() {
         }
     };
 
+    if (!run_state_.isRunning()) {
+        LOG_INFO("ROI Pipeline loop stopped before initial frame");
+        return;
+    }
+
     // ===== 填充: 同步抓取 + 处理首帧 =====
     {
         int slot_idx = next_grab_frame % RING_BUFFER_SIZE;
@@ -389,7 +413,7 @@ void Pipeline::pipelineLoopROI() {
         next_detect_frame++;
     }
 
-    while (running_) {
+    while (run_state_.isRunning()) {
         drain_async_outputs();
 
         // ====================================================================
@@ -717,6 +741,7 @@ void Pipeline::pipelineLoopROI() {
     if (roi_drain_status != VPI_SUCCESS) {
         LOG_ERROR("[Pipeline] ROI final rectification drain failed: status=%d",
                   (int)roi_drain_status);
+        run_state_.markFailed();
     }
     drain_async_outputs();
 

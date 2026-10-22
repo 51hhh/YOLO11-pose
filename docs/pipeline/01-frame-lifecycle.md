@@ -122,12 +122,19 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - 采集模式仍会触发帧回调，让 fail-trial 录制器立即停止，而不是静默制造序号缺口；
 - 停止时先让 pipeline 排空已提交的工作，再关闭 ROI/P2 worker 和 grab 线程，最后同步所有 stream 并停止 PWM/相机；
 - 停止发生在 USB 等待期间时，已接受的抓帧必须完成握手；`running=false` 本身绝不能唤醒 `waitGrab()` 并复用上一帧成功状态；
+- 若 owner 在线程真正执行首帧前请求停止，主循环直接退出且不额外抓取一帧；若首帧已经开始，则仍按已接受工作完成并排空；
+- `running=false` 只停止新调度，不等于资源已经清理；独立的 cleanup token 保证即使 worker 先异常退出，owner 线程仍会且只会执行一次 join、stream drain、VPI view 解锁及相机/触发停止；
+- pipeline、grab、异步 ROI 和 P2 诊断线程都有 `noexcept` 入口边界。用户回调或内部 worker 的未捕获异常会标记 pipeline failure 并触发受控退出，主程序返回非零，而不是让 `std::thread` 调用 `std::terminate`；
+- pipeline 主循环若在仍为 `RUNNING` 时意外 `return/break`，线程入口会将其升级为 failure，避免进程主循环误以为设备仍在运行而永久等待；
+- failure 对当前 `Pipeline` 实例是终态；完成清理后也不能原地重启，必须销毁并重新初始化全部 CUDA/VPI/TensorRT/相机资源；正常主动停止则仍允许再次启动；
+- 若最终 CUDA/VPI stream drain 失败，停止路径不会提前解除导出的 VPI CUDA view；这些锁保留到资源销毁，同时整次运行标记失败；
 - 实时模式的主动丢弃必须有性能计数，采集模式的任何丢弃都不允许发布完整 trial。
 
 ## 代码核对点
 
 - 容器和回调时效：`src/pipeline/frame_slot.h`、`pipeline_callbacks.h`
 - 启停顺序：`src/pipeline/pipeline_lifecycle.cpp`
+- 运行/失败/清理状态：`src/pipeline/pipeline_run_state.h`
 - 四阶段循环：`src/pipeline/pipeline_loops.cpp`
 - 异步槽位快照：`src/pipeline/pipeline_async_roi.cpp`
 - 采集深拷贝：`src/utils/capture_v21_stage_recorder.cpp`

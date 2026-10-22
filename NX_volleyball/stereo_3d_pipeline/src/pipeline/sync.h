@@ -141,20 +141,39 @@ struct PipelineStreams {
     /**
      * @brief 等待所有 Streams 完成当前工作
      */
-    void syncAll() {
-        if (vpiStreamPVA) vpiStreamSync(vpiStreamPVA);
-        if (vpiStreamGPU) vpiStreamSync(vpiStreamGPU);
-        if (cudaStreamDLA) cudaStreamSynchronize(cudaStreamDLA);
-        if (cudaStreamDLA_R) cudaStreamSynchronize(cudaStreamDLA_R);
-        if (cudaStreamGPU) cudaStreamSynchronize(cudaStreamGPU);
-        if (cudaStreamFuse) cudaStreamSynchronize(cudaStreamFuse);
-        if (cudaStreamBGR)  cudaStreamSynchronize(cudaStreamBGR);
-        if (cudaStreamP2Ncc) cudaStreamSynchronize(cudaStreamP2Ncc);
-        if (cudaStreamP2XFeat) cudaStreamSynchronize(cudaStreamP2XFeat);
-        if (cudaStreamP2SuperPoint) {
-            cudaStreamSynchronize(cudaStreamP2SuperPoint);
-        }
-        if (cudaStreamP2Aliked) cudaStreamSynchronize(cudaStreamP2Aliked);
+    bool syncAll() {
+        bool ok = true;
+        auto sync_vpi = [&ok](VPIStream stream, const char* name) {
+            if (!stream) return;
+            const VPIStatus status = vpiStreamSync(stream);
+            if (status != VPI_SUCCESS) {
+                fprintf(stderr, "[Sync] Failed to synchronize %s: status=%d\n",
+                        name, static_cast<int>(status));
+                ok = false;
+            }
+        };
+        auto sync_cuda = [&ok](cudaStream_t stream, const char* name) {
+            if (!stream) return;
+            const cudaError_t status = cudaStreamSynchronize(stream);
+            if (status != cudaSuccess) {
+                fprintf(stderr, "[Sync] Failed to synchronize %s: %s\n",
+                        name, cudaGetErrorString(status));
+                ok = false;
+            }
+        };
+
+        sync_vpi(vpiStreamPVA, "VPI rectification stream");
+        sync_vpi(vpiStreamGPU, "VPI stereo stream");
+        sync_cuda(cudaStreamDLA, "left TensorRT stream");
+        sync_cuda(cudaStreamDLA_R, "right TensorRT stream");
+        sync_cuda(cudaStreamGPU, "pipeline GPU stream");
+        sync_cuda(cudaStreamFuse, "fusion stream");
+        sync_cuda(cudaStreamBGR, "Bayer-to-BGR stream");
+        sync_cuda(cudaStreamP2Ncc, "P2 NCC stream");
+        sync_cuda(cudaStreamP2XFeat, "P2 XFeat stream");
+        sync_cuda(cudaStreamP2SuperPoint, "P2 SuperPoint stream");
+        sync_cuda(cudaStreamP2Aliked, "P2 ALIKED stream");
+        return ok;
     }
 
     /**

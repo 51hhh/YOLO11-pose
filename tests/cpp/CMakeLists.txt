@@ -96,6 +96,32 @@ target_compile_options(async_roi_buffer_state_tests PRIVATE
 )
 add_test(NAME async_roi_buffer_state_tests COMMAND async_roi_buffer_state_tests)
 
+add_executable(pipeline_run_state_tests
+  pipeline_run_state_tests.cpp
+)
+target_include_directories(pipeline_run_state_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+)
+target_link_libraries(pipeline_run_state_tests PRIVATE Threads::Threads)
+target_compile_features(pipeline_run_state_tests PRIVATE cxx_std_17)
+target_compile_options(pipeline_run_state_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
+add_test(NAME pipeline_run_state_tests COMMAND pipeline_run_state_tests)
+
+add_executable(pipeline_streams_tests
+  pipeline_streams_tests.cpp
+)
+target_include_directories(pipeline_streams_tests BEFORE PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/fakes/sync
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+)
+target_compile_features(pipeline_streams_tests PRIVATE cxx_std_17)
+target_compile_options(pipeline_streams_tests PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
+add_test(NAME pipeline_streams_tests COMMAND pipeline_streams_tests)
+
 foreach(VPI_FAKE_MAJOR IN ITEMS 3 4)
   set(VPI_PLANE_TEST_TARGET vpi${VPI_FAKE_MAJOR}_plane_access_tests)
   add_executable(${VPI_PLANE_TEST_TARGET}

@@ -19,6 +19,8 @@
 
 pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 single-flight 状态机：同一时刻最多一个 active 请求；重叠请求被拒绝；停止后拒绝新请求，但已接受请求必须写完并发出 completion。completion 才转移 raw 图像所有权，`running` 标志不承担图像完成语义。
 
+线程生命周期另由 `PipelineRunState` 管理三种正交事实：是否仍运行、是否发生失败、是否仍有一次 cleanup 责任。worker 异常可以立即停止新调度，但不能消费 cleanup token；只有 owner 调用 `stop()` 才执行 join 和资源排空。若回调从 pipeline 线程内误调 `stop()`，实现只发停止信号并把 join 延后给 owner，避免线程自我 join。
+
 异步 ROI worker 的 snapshot completion 也承担所有权转移语义。worker 必须收到有效 buffer 和已记录 event，等待 event 成功后才可读取快照；CUDA event 错误或 worker 异常会产生显式失败结果。失败路径先排空 ROI core/copy stream，再归还 buffer，防止异常发生在 kernel 提交之后时复用仍被 GPU 读取的内存。`roi_postprocess_mutex_` 只包围共享 matcher/core 调用，artifact/CSV 写入不持有该锁，避免诊断 I/O 反向阻塞同步候选。
 
 异步 buffer 只有在对应 copy event 或源 stream 被证明同步成功后才能回到空闲池。event/stream 同步失败时，该 buffer 会进入 `quarantined` 状态并一直保留到管线销毁；它不能被 pending-replace、expire 或下一帧重新取得。快照提交、slot completion event 或复用前等待属于基础设施边界，失败帧必须设置 `grab_failed`，不能降级成正常的 `predict_only` 观测。
