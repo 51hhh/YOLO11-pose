@@ -236,6 +236,9 @@ StereoProcessResult StereoObservationService::process(
         frame.right.metadata.capture_timestamp,
         config_.association,
         next_pair_id_);
+    if (!associations.ok()) {
+        return fail(ProcessStatus::invalid_input, std::move(associations.message));
+    }
     next_pair_id_ += associations.attempts.size();
     auto appendEvidence = [&]() {
         return appendDetections(left_result.batch.candidates, error) &&

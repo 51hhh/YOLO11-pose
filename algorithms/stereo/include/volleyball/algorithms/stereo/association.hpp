@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace volleyball::algorithms::stereo {
@@ -26,6 +27,9 @@ struct ScoredAssociation {
 struct AssociationBatch {
     std::vector<ScoredAssociation> attempts;
     std::optional<std::size_t> best_accepted_index;
+    std::string message;
+
+    [[nodiscard]] bool ok() const noexcept { return message.empty(); }
 };
 
 // 保留笛卡尔积中的每一次尝试；best 只是对已接受项的确定性选择。

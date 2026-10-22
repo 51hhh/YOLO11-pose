@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace algorithms = volleyball::algorithms::stereo;
 namespace core = volleyball::core;
@@ -93,6 +94,34 @@ void testCalibrationMustDescribeSharedRectifiedProjection() {
     check(!result, "incompatible rectified intrinsics must be rejected");
 }
 
+void testInvalidAssociationConfigurationIsNotANoMatch() {
+    const auto inputs = ValidInputs{};
+    auto config = support::associationConfig();
+    config.min_shifted_iou = std::numeric_limits<double>::quiet_NaN();
+    const auto batch = algorithms::associateCandidates(
+        {inputs.left},
+        {inputs.right},
+        support::time(1000),
+        support::time(1000),
+        config,
+        0);
+    check(!batch.ok(), "invalid association config must fail the batch");
+    check(batch.attempts.empty(), "invalid association config must emit no evidence");
+}
+
+void testAssociationRejectsExhaustedPairIdRange() {
+    const auto inputs = ValidInputs{};
+    const auto batch = algorithms::associateCandidates(
+        {inputs.left},
+        {inputs.right},
+        support::time(1000),
+        support::time(1000),
+        support::associationConfig(),
+        std::numeric_limits<core::PairId>::max());
+    check(!batch.ok(), "pair ID exhaustion must fail before wraparound");
+    check(batch.attempts.empty(), "pair ID exhaustion must emit no wrapped ID");
+}
+
 }  // namespace
 
 int main() {
@@ -100,6 +129,8 @@ int main() {
     testAssociationMustReferenceSuppliedCandidates();
     testAssociationGeometryMustMatchCandidates();
     testCalibrationMustDescribeSharedRectifiedProjection();
+    testInvalidAssociationConfigurationIsNotANoMatch();
+    testAssociationRejectsExhaustedPairIdRange();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

@@ -7,6 +7,18 @@
 namespace volleyball::algorithms::stereo {
 namespace {
 
+bool validConfig(const AssociationConfig& config) noexcept {
+    return config.max_capture_delta_ns >= 0 &&
+           std::isfinite(config.epipolar_tolerance_px) &&
+           config.epipolar_tolerance_px >= 0.0 &&
+           std::isfinite(config.max_size_ratio) &&
+           config.max_size_ratio >= 1.0 &&
+           std::isfinite(config.min_shifted_iou) &&
+           config.min_shifted_iou >= 0.0 && config.min_shifted_iou <= 1.0 &&
+           std::isfinite(config.max_disparity_px) &&
+           config.max_disparity_px > 0.0;
+}
+
 double scoreOf(const core::Detection2D& detection) noexcept {
     return detection.score.value_or(0.0);
 }
@@ -86,13 +98,33 @@ AssociationBatch associateCandidates(
     const AssociationConfig& config,
     core::PairId first_pair_id) {
     AssociationBatch output;
-    output.attempts.reserve(left.size() * right.size());
+    if (!validConfig(config)) {
+        output.message = "invalid stereo association configuration";
+        return output;
+    }
+    if (left_capture.clock_domain.empty() ||
+        left_capture.clock_domain != right_capture.clock_domain ||
+        left_capture.nanoseconds < 0 || right_capture.nanoseconds < 0) {
+        output.message = "invalid stereo association capture timestamps";
+        return output;
+    }
+    if (!right.empty() &&
+        left.size() > std::numeric_limits<std::size_t>::max() / right.size()) {
+        output.message = "stereo association candidate product overflows";
+        return output;
+    }
+    const std::size_t attempt_count = left.size() * right.size();
+    if (attempt_count > output.attempts.max_size() ||
+        attempt_count >
+            std::numeric_limits<core::PairId>::max() - first_pair_id) {
+        output.message = "stereo association pair ID range is exhausted";
+        return output;
+    }
+    output.attempts.reserve(attempt_count);
     double best_score = -std::numeric_limits<double>::infinity();
-    const bool capture_delta_valid =
-        left_capture.nanoseconds >= 0 && right_capture.nanoseconds >= 0;
-    const std::int64_t capture_delta_ns = capture_delta_valid
-        ? right_capture.nanoseconds - left_capture.nanoseconds
-        : 0;
+    const bool capture_delta_valid = true;
+    const std::int64_t capture_delta_ns =
+        right_capture.nanoseconds - left_capture.nanoseconds;
 
     for (const auto& left_candidate : left) {
         for (const auto& right_candidate : right) {
