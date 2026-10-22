@@ -64,13 +64,14 @@ int main(int argc, char* argv[]) {
     if (!validateCaptureChessboardArgs(args)) return 1;
     if (!validateCaptureChessboardOutputDirectory(args.output_dir)) return 1;
 
+    // 声明顺序是硬件生命周期约束：局部对象按声明的逆序析构，因此所有
+    // 提前返回和异常路径都会先停止 PWM，再停止并关闭相机。
+    stereo3d::HikvisionCamera camera;
     // PWM trigger is started after both cameras enter grabbing state.
     // Starting PWM earlier can give the two USB cameras different local
     // FrameCounter phases, which breaks strict watermarked pair matching.
     std::unique_ptr<stereo3d::PWMTrigger> pwm;
 
-    // Camera
-    stereo3d::HikvisionCamera camera;
     stereo3d::CameraConfig cfg;
     cfg.exposure_us = static_cast<float>(args.exposure_us);
     cfg.gain_db     = args.gain_db;
@@ -98,7 +99,6 @@ int main(int argc, char* argv[]) {
     }
     if (!camera.startGrabbing()) {
         fprintf(stderr, "[ERROR] Failed to start grabbing\n");
-        camera.close();
         return 1;
     }
 
@@ -109,8 +109,6 @@ int main(int argc, char* argv[]) {
             fprintf(stderr,
                     "[ERROR] Local PWM start failed; use --no-pwm only when "
                     "an external trigger is intentionally connected\n");
-            camera.stopGrabbing();
-            camera.close();
             return 1;
         }
     } else if (args.no_pwm && !args.free_run) {
@@ -127,9 +125,6 @@ int main(int argc, char* argv[]) {
     // destination immediately before the first filesystem write to narrow the
     // preflight/write race window.
     if (!validateCaptureChessboardOutputDirectory(args.output_dir)) {
-        if (pwm) pwm->stop();
-        camera.stopGrabbing();
-        camera.close();
         return 1;
     }
     std::error_code ec;
@@ -139,9 +134,6 @@ int main(int argc, char* argv[]) {
     if (ec || !fs::is_directory(left_dir)) {
         fprintf(stderr, "[ERROR] Failed to create left output directory: %s\n",
                 ec ? ec.message().c_str() : left_dir.string().c_str());
-        if (pwm) pwm->stop();
-        camera.stopGrabbing();
-        camera.close();
         return 1;
     }
     ec.clear();
@@ -149,9 +141,6 @@ int main(int argc, char* argv[]) {
     if (ec || !fs::is_directory(right_dir)) {
         fprintf(stderr, "[ERROR] Failed to create right output directory: %s\n",
                 ec ? ec.message().c_str() : right_dir.string().c_str());
-        if (pwm) pwm->stop();
-        camera.stopGrabbing();
-        camera.close();
         return 1;
     }
 
@@ -163,17 +152,11 @@ int main(int argc, char* argv[]) {
     if (!metadata.is_open()) {
         fprintf(stderr, "[ERROR] Failed to open metadata file: %s\n",
                 metadata_path.string().c_str());
-        if (pwm) pwm->stop();
-        camera.stopGrabbing();
-        camera.close();
         return 1;
     }
     if (!capture_chessboard::writeMetadataHeader(metadata)) {
         fprintf(stderr, "[ERROR] Failed to write metadata header: %s\n",
                 metadata_path.string().c_str());
-        if (pwm) pwm->stop();
-        camera.stopGrabbing();
-        camera.close();
         return 1;
     }
 
