@@ -86,6 +86,18 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
         self.assertFalse(rendered["capture_v21"]["enabled"])
+        self.assertFalse(rendered["disparity_offset"]["enabled"])
+        self.assertFalse(rendered["tnr"]["enabled"])
+        self.assertFalse(rendered["tracker"]["enabled"])
+        self.assertFalse(rendered["display"]["enable"])
+        self.assertEqual(rendered["stereo"]["strategy"], "roi_only")
+        self.assertTrue(rendered["detector"]["dual_yolo"]["enabled"])
+        self.assertTrue(rendered["detector"]["dual_yolo"]["use_for_depth"])
+        self.assertFalse(rendered["neural_feature_matching_xfeat"]["enabled"])
+        self.assertFalse(
+            rendered["neural_feature_matching_superpoint"]["enabled"]
+        )
+        self.assertFalse(rendered["neural_feature_matching_aliked"]["enabled"])
 
         enabled_depth_modes = {
             name

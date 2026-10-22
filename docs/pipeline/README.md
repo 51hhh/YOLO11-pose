@@ -57,7 +57,8 @@ PYTHONPATH=python python3 -m volleyball_vision config render-legacy --profile nx
 PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 ```
 
-`free-flight` 的无丢帧覆盖只有在执行 `volleyball capture`、传入实际 staging 目录后才注入；普通 `render-legacy` 不包含这组运行时覆盖。
+`free-flight` 的同步、无丢帧执行策略由 mode 在普通 `render-legacy` 阶段就固定；
+真正执行 `volleyball capture` 时只再注入 staging 路径、帧数、图像产品和采集身份。
 
 ## 代码入口
 

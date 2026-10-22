@@ -95,6 +95,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "one_by_one"):
             _validate_semantics(ROOT, payload)
 
+    def test_live_stereo_requires_per_camera_detector(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["detector"]["per_camera"] = False
+        with self.assertRaisesRegex(ConfigError, "per_camera"):
+            _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),

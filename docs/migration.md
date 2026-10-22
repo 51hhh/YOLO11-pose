@@ -15,7 +15,7 @@
              → legacy YAML 生成 → 旧 NX 可执行文件
 ```
 
-旧目录中的生产 YAML 现阶段仍是投影所需的基础模板，但不得直接作为新的部署入口。深度候选已经由主线 `candidate_methods` 完整覆盖旧 `depth_modes`；其他尚未提升的旧选项仍必须显式决定是保留、删除还是提升到 schema，不能靠模板中的隐含默认值改变行为。
+旧目录中的生产 YAML 现阶段仍是投影所需的基础模板，但不得直接作为新的部署入口。深度候选由主线 `candidate_methods` 完整覆盖旧 `depth_modes`；`legacy_activation_policy.py` 还会统一覆盖 TNR、DLA、双路检测、全帧视差、神经特征、异步 ROI、P2 诊断、图像 SOT 和显示等启用开关。尚未提升的数值调参仍需逐项决定保留、删除或加入 schema，但基础模板已不能通过修改布尔开关偷偷改变正式 profile 的执行支路。
 
 ## 迁移阶段
 

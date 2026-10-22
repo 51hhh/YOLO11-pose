@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from .config import ConfigError, ResolvedConfig, find_project_root
+from .legacy_activation_policy import apply_legacy_activation_policy
 from .model_manifest import resolve_model
 from .triangulation_config import legacy_depth_projection
 
@@ -29,6 +30,7 @@ def build_legacy_pipeline_config(
     if not isinstance(payload, dict):
         raise ConfigError("旧管线基础配置顶层必须是对象")
     result = deepcopy(payload)
+    apply_legacy_activation_policy(result, config)
     cameras = config.data["cameras"]
     transport = cameras["transport"]
     sync = cameras["sync"]

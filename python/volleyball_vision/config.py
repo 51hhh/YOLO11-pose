@@ -261,6 +261,10 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         errors.append("capture 模式必须启用 recording")
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
         errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
+    detector = payload["detector"]
+    if mode in {"runtime", "capture"} and detector["backend"] != "recorded":
+        if not detector["per_camera"]:
+            errors.append("实时双目管线要求 detector.per_camera=true")
     sync = cameras["sync"]
     transport = cameras["transport"]
     if sync["exposure_timestamp_source"] == "nx_gpio_rising_edge":

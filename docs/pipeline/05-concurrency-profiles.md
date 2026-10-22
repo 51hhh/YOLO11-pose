@@ -55,7 +55,9 @@
 | raw Gray8 | 不保存 | 全部保存 | 读取 |
 | 契约破坏 | 记录/降级 | fail trial | 拒绝数据 |
 
-注意：直接执行 `config render-legacy --profile free-flight` 不带 staging 参数，所以输出仍显示基础配置的异步值且 `capture_v21=false`。真正 `volleyball capture` 会调用适配器的 `capture_stage` 分支并注入表中覆盖。
+注意：直接执行 `config render-legacy --profile free-flight` 时已经显示同步、无丢帧
+执行策略，但 `capture_v21=false`，因为尚无 trial staging。真正 `volleyball capture`
+会再调用 `capture_stage` 分支，注入输出目录、帧数、队列和采集身份。
 
 ## 当前算法启用矩阵
 

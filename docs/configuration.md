@@ -81,3 +81,8 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 生成旧 YAML 时，适配器先关闭基础模板中的全部 `depth_modes`，再只开启
 `candidate_methods` 显式列出的模式。因此修改旧模板或新增旧开关不会静默改变正式 profile。
 
+同样，`legacy_activation_policy.py` 会集中覆盖 TNR、DLA、双路 YOLO、全帧视差、
+神经特征、异步 ROI、P2 诊断、图像 SOT 和显示等功能开关。实时 profile 才允许
+异步/丢旧帧；采集 profile 即使只执行 `render-legacy` 也保持同步无丢帧语义。
+旧模板暂时仍提供尚未提升到 schema 的数值调参，但不再有权自行开启处理支路。
+
