@@ -22,6 +22,16 @@ struct TriangulationResult {
     }
 };
 
+// ROI/特征匹配输出的精化视差。left_anchor_px 是该次深度测量在左校正图
+// 上的实际锚点；它不必等于检测框中心，disparity_px 也不应反写 2D 关联证据。
+struct RefinedDisparityMeasurement {
+    core::Vec2 left_anchor_px;
+    double disparity_px{0.0};
+    double disparity_stddev_px{0.0};
+    double anchor_stddev_px{0.0};
+    std::optional<double> confidence;
+};
+
 [[nodiscard]] bool isValidTriangulationConfig(
     const core::RectifiedStereoCalibration& calibration,
     const TriangulationConfig& config) noexcept;
@@ -30,6 +40,15 @@ struct TriangulationResult {
     const core::Detection2D& left,
     const core::Detection2D& right,
     const core::StereoAssociationAttempt& association,
+    const core::RectifiedStereoCalibration& calibration,
+    const TriangulationConfig& config,
+    core::ObservationId observation_id);
+
+[[nodiscard]] TriangulationResult triangulateRefinedDisparity(
+    const core::Detection2D& left,
+    const core::Detection2D& right,
+    const core::StereoAssociationAttempt& association,
+    const RefinedDisparityMeasurement& measurement,
     const core::RectifiedStereoCalibration& calibration,
     const TriangulationConfig& config,
     core::ObservationId observation_id);
