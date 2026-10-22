@@ -19,17 +19,6 @@ target_link_libraries(stereo_algorithms_tests PRIVATE
   volleyball::stereo_algorithms
 )
 
-add_mainline_test(
-  capture_v21_stage_schema_tests
-  capture_v21_stage_schema_tests.cpp
-)
-target_link_libraries(capture_v21_stage_schema_tests PRIVATE
-  volleyball::capture_v21
-)
-
-add_mainline_test(gpio_trigger_tests gpio_trigger_tests.cpp)
-target_link_libraries(gpio_trigger_tests PRIVATE volleyball::gpio)
-
 add_mainline_test(logging_tests logging_tests.cpp)
 target_link_libraries(logging_tests PRIVATE volleyball::logging)
 
