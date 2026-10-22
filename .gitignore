@@ -26,7 +26,6 @@
 /models/**/*.onnx
 /models/**/*.pt
 /models/**/*.engine
-/adapters/legacy_nx/models/
 
 # 采集、标定和运行时输出
 /data/
