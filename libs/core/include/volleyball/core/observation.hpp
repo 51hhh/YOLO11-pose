@@ -70,6 +70,7 @@ enum class AssociationRejectReason {
     size_ratio,
     shifted_iou,
     temporal_mismatch,
+    not_selected,
     triangulation_failure,
     quality_gate,
 };

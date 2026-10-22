@@ -1,6 +1,7 @@
 #include "volleyball/adapters/fake/in_memory_trial_writer.hpp"
 #include "volleyball/services/stereo_observation_service.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -163,6 +164,13 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
     check(writer.frames().size() == 2, "both camera facts must be written");
     check(writer.detections().size() == 4, "all detector candidates must be written");
     check(writer.associations().size() == 4, "all pair attempts must be written");
+    check(
+        std::count_if(
+            writer.associations().begin(), writer.associations().end(),
+            [](const core::StereoAssociationAttempt& attempt) {
+                return attempt.decision == core::AssociationDecision::accepted;
+            }) == 1,
+        "exactly one pair may be accepted for one direct observation");
     check(writer.observations().size() == 1, "one direct observation must be written");
     check(publisher.observations.size() == 1, "accepted direct observation must publish");
     check(result.observation &&
@@ -172,6 +180,83 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "triangulation must propagate center uncertainty");
     check(service.finalize().status == ports::WriteStatus::accepted,
           "successful service must finalize the raw writer");
+}
+
+void testUnselectedGatePassingPairIsRecordedAsRejected() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+        detection(core::CameraRole::left, "left", 1, 695.0, 500.0, 0.80),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.90),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::observation,
+          "best gate-passing pair must produce an observation");
+    check(writer.associations().size() == 2,
+          "both gate-passing attempts must be retained");
+    check(writer.associations()[0].decision == core::AssociationDecision::accepted,
+          "best pair must remain accepted");
+    check(
+        writer.associations()[1].decision == core::AssociationDecision::rejected &&
+            writer.associations()[1].reject_reason ==
+                core::AssociationRejectReason::not_selected,
+        "unselected gate-passing pair must have an explicit rejection reason");
+}
+
+void testTriangulationFailureRejectsSelectedPair() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 699.5, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    auto service_config = config();
+    service_config.triangulation.min_disparity_px = 1.0;
+    services::StereoObservationService service(
+        service_config, left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::no_match,
+          "triangulation failure must not produce an observation");
+    check(writer.associations().size() == 1,
+          "failed selected pair must still be retained");
+    check(
+        writer.associations()[0].decision == core::AssociationDecision::rejected &&
+            writer.associations()[0].reject_reason ==
+                core::AssociationRejectReason::triangulation_failure,
+        "triangulation failure must rewrite final pair semantics");
+    check(writer.observations().empty(),
+          "triangulation failure must not write a direct observation");
+}
+
+void testObservationGateRejectsSelectedPair() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    auto service_config = config();
+    service_config.gate.max_depth_m = 10.0;
+    services::StereoObservationService service(
+        service_config, left, right, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::no_match,
+          "quality gate failure must not produce an observation");
+    check(
+        writer.associations().size() == 1 &&
+            writer.associations()[0].decision ==
+                core::AssociationDecision::rejected &&
+            writer.associations()[0].reject_reason ==
+                core::AssociationRejectReason::quality_gate,
+        "quality gate failure must be explicit in the retained pair");
 }
 
 void testDetectorFailureAbortsTrial() {
@@ -213,6 +298,9 @@ void testArrivalOrderNeverDefinesStereoIdentity() {
 
 int main() {
     testServicePreservesAllAttemptsAndPublishesDirectObservation();
+    testUnselectedGatePassingPairIsRecordedAsRejected();
+    testTriangulationFailureRejectsSelectedPair();
+    testObservationGateRejectsSelectedPair();
     testDetectorFailureAbortsTrial();
     testArrivalOrderNeverDefinesStereoIdentity();
     if (failures != 0) {

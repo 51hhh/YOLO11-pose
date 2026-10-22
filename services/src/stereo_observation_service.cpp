@@ -58,6 +58,17 @@ bool StereoObservationService::appendDetections(
     return true;
 }
 
+bool StereoObservationService::appendAssociations(
+    const std::vector<algorithms::stereo::ScoredAssociation>& associations,
+    std::string& error) {
+    for (const auto& scored : associations) {
+        if (!writeAccepted(writer_.append(scored.attempt), error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool StereoObservationService::passesGate(
     const core::TriangulatedObservation& observation) const noexcept {
     const double depth = observation.position_m.z;
@@ -118,12 +129,10 @@ StereoProcessResult StereoObservationService::process(
         config_.association,
         next_pair_id_);
     next_pair_id_ += associations.attempts.size();
-    for (const auto& scored : associations.attempts) {
-        if (!writeAccepted(writer_.append(scored.attempt), error)) {
+    if (!associations.best_accepted_index) {
+        if (!appendAssociations(associations.attempts, error)) {
             return fail(ProcessStatus::write_error, std::move(error));
         }
-    }
-    if (!associations.best_accepted_index) {
         return {
             ProcessStatus::no_match,
             std::nullopt,
@@ -132,8 +141,17 @@ StereoProcessResult StereoObservationService::process(
         };
     }
 
-    const auto& selected =
-        associations.attempts[*associations.best_accepted_index].attempt;
+    const auto selected_index = *associations.best_accepted_index;
+    for (std::size_t index = 0; index < associations.attempts.size(); ++index) {
+        auto& attempt = associations.attempts[index].attempt;
+        if (index != selected_index &&
+            attempt.decision == core::AssociationDecision::accepted) {
+            attempt.decision = core::AssociationDecision::rejected;
+            attempt.reject_reason = core::AssociationRejectReason::not_selected;
+        }
+    }
+
+    auto& selected = associations.attempts[selected_index].attempt;
     const auto* left_candidate = findCandidate(
         left_result.batch.candidates, selected.left_candidate_id);
     const auto* right_candidate = findCandidate(
@@ -147,20 +165,42 @@ StereoProcessResult StereoObservationService::process(
         selected,
         config_.calibration,
         config_.triangulation,
-        next_observation_id_++);
-    if (!triangulated || !passesGate(*triangulated.observation)) {
+        next_observation_id_);
+    if (!triangulated) {
+        selected.decision = core::AssociationDecision::rejected;
+        selected.reject_reason =
+            core::AssociationRejectReason::triangulation_failure;
+        if (!appendAssociations(associations.attempts, error)) {
+            return fail(ProcessStatus::write_error, std::move(error));
+        }
         return {
             ProcessStatus::no_match,
             std::nullopt,
             std::move(associations.attempts),
-            triangulated ? "triangulated observation failed quality gate"
-                         : triangulated.message,
+            triangulated.message,
         };
+    }
+    if (!passesGate(*triangulated.observation)) {
+        selected.decision = core::AssociationDecision::rejected;
+        selected.reject_reason = core::AssociationRejectReason::quality_gate;
+        if (!appendAssociations(associations.attempts, error)) {
+            return fail(ProcessStatus::write_error, std::move(error));
+        }
+        return {
+            ProcessStatus::no_match,
+            std::nullopt,
+            std::move(associations.attempts),
+            "triangulated observation failed quality gate",
+        };
+    }
+    if (!appendAssociations(associations.attempts, error)) {
+        return fail(ProcessStatus::write_error, std::move(error));
     }
     const auto& observation = *triangulated.observation;
     if (!writeAccepted(writer_.append(observation), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
+    ++next_observation_id_;
     if (publisher_) {
         core::ValidatedObservation validated;
         validated.measurement = observation;

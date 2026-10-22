@@ -45,6 +45,8 @@ NX GPIO 上升沿 ────────┐
 
 `StereoObservationService` 负责一次双目观测用例：读取配对帧、调用两侧检测器、保存全部候选、枚举并保存全部配对尝试、三角化通过门控的配对，然后写入或发布直接观测。任何必需写入失败都会使本次 trial 失败。
 
+`accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。因此不会出现“接受配对存在但对应 3D 缺失”的原始数据。
+
 ### Adapters 与 Apps
 
 `adapters` 实现实际硬件和外部系统；`apps` 只组装依赖并暴露命令。现有 NX/CUDA 代码集中在 `adapters/legacy_nx`，并由根工程 ExternalProject 隔离构建。

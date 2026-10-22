@@ -68,6 +68,9 @@ private:
     [[nodiscard]] bool appendDetections(
         const std::vector<core::Detection2D>& detections,
         std::string& error);
+    [[nodiscard]] bool appendAssociations(
+        const std::vector<algorithms::stereo::ScoredAssociation>& associations,
+        std::string& error);
     [[nodiscard]] bool passesGate(
         const core::TriangulatedObservation& observation) const noexcept;
 
