@@ -91,6 +91,7 @@ fusion/callback
 - 注入一个未标记 failure 的 pipeline 主循环提前退出：线程入口必须把它转为可见 failure，主线程不得永久等待；
 - 从 pipeline callback 内请求 `stop()`：不得自我 join；owner 后续仍能取得 cleanup token 并完成关闭；
 - 注入最终 CUDA/VPI stream drain 失败：运行必须标记失败，外部 VPI view 不得在未证明 GPU 停止前由正常停止路径解锁；
+- 分别注入 async ROI core/copy 与 P2 diagnostic core/copy stream 的最终同步失败：即使主 `PipelineStreams` 全部成功，整次停止仍必须失败，未证明安全的辅助 buffer 不得提前销毁；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

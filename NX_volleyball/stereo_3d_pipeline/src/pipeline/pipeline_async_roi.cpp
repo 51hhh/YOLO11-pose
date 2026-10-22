@@ -619,6 +619,20 @@ bool p2DiagnosticOnlyFeatureJobsEnabled(const PipelineConfig& config) {
            !config.p2_realtime_lane_decision_enabled;
 }
 
+bool synchronizeAuxiliaryCudaStream(cudaStream_t stream, const char* name) {
+    if (!stream) {
+        return true;
+    }
+    const cudaError_t status = cudaStreamSynchronize(stream);
+    if (status == cudaSuccess) {
+        return true;
+    }
+    LOG_ERROR("[Pipeline] Failed to synchronize %s: %s",
+              name ? name : "auxiliary CUDA stream",
+              cudaGetErrorString(status));
+    return false;
+}
+
 }  // namespace
 
 bool Pipeline::asyncRoiStage2Configured() const {
@@ -828,10 +842,22 @@ bool Pipeline::startP2FeatureDiagnosticLane() {
     return true;
 }
 
-void Pipeline::shutdownP2FeatureDiagnosticLane() {
+bool Pipeline::shutdownP2FeatureDiagnosticLane() {
     if (!p2_feature_diag_thread_.joinable()) {
-        destroyP2FeatureDiagnosticBuffers();
-        return;
+        bool drained = true;
+        drained = synchronizeAuxiliaryCudaStream(
+                      p2_feature_diag_copy_stream_,
+                      "P2 diagnostic copy stream") && drained;
+        drained = synchronizeAuxiliaryCudaStream(
+                      p2_feature_diag_stream_,
+                      "P2 diagnostic worker stream") && drained;
+        if (drained) {
+            destroyP2FeatureDiagnosticBuffers();
+        } else {
+            LOG_ERROR("P2 diagnostic streams are unsafe to destroy; "
+                      "retaining their buffers and streams");
+        }
+        return drained;
     }
     std::vector<int> dropped_source_refs;
     {
@@ -862,13 +888,26 @@ void Pipeline::shutdownP2FeatureDiagnosticLane() {
     }
     p2_feature_diag_cv_.notify_all();
     p2_feature_diag_thread_.join();
+    bool drained = true;
+    drained = synchronizeAuxiliaryCudaStream(
+                  p2_feature_diag_copy_stream_,
+                  "P2 diagnostic copy stream") && drained;
+    drained = synchronizeAuxiliaryCudaStream(
+                  p2_feature_diag_stream_,
+                  "P2 diagnostic worker stream") && drained;
     closeP2FeatureDiagnosticResults();
     {
         std::lock_guard<std::mutex> lk(p2_feature_diag_mutex_);
         p2_feature_diag_worker_busy_ = false;
         p2_feature_diag_thread_stop_ = false;
     }
-    destroyP2FeatureDiagnosticBuffers();
+    if (drained) {
+        destroyP2FeatureDiagnosticBuffers();
+    } else {
+        LOG_ERROR("P2 diagnostic streams are unsafe to destroy; "
+                  "retaining their buffers and streams");
+    }
+    return drained;
 }
 
 bool Pipeline::initP2FeatureDiagnosticBuffers() {
@@ -2644,10 +2683,12 @@ bool Pipeline::waitAsyncRoiSlotSnapshotDone(int slot_index,
     return true;
 }
 
-void Pipeline::shutdownAsyncRoiStage2() {
-    if (!async_roi_ready_ && !async_roi_thread_.joinable()) {
-        return;
+bool Pipeline::shutdownAsyncRoiStage2() {
+    if (!async_roi_ready_ && !async_roi_thread_.joinable() &&
+        !async_roi_stream_ && !async_roi_copy_stream_) {
+        return true;
     }
+    bool drained = true;
     std::vector<int> pending_buffers;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
@@ -2659,21 +2700,32 @@ void Pipeline::shutdownAsyncRoiStage2() {
     }
     async_roi_cv_.notify_all();
     for (int buffer_index : pending_buffers) {
-        releaseAsyncRoiBuffer(buffer_index, "shutdown");
+        drained = releaseAsyncRoiBuffer(buffer_index, "shutdown") && drained;
     }
     if (async_roi_thread_.joinable()) {
         async_roi_thread_.join();
     }
+    drained = synchronizeAuxiliaryCudaStream(
+                  async_roi_copy_stream_,
+                  "async ROI copy stream") && drained;
+    drained = synchronizeAuxiliaryCudaStream(
+                  async_roi_stream_,
+                  "async ROI worker stream") && drained;
     {
         std::lock_guard<std::mutex> lk(async_roi_mutex_);
         async_roi_completed_.clear();
         async_roi_slot_copy_pending_.fill(false);
         async_roi_worker_busy_ = false;
     }
+    return drained;
 }
 
 void Pipeline::destroyAsyncRoiStage2() {
-    shutdownAsyncRoiStage2();
+    if (!shutdownAsyncRoiStage2()) {
+        LOG_ERROR("Async ROI streams are unsafe to destroy; retaining their "
+                  "buffers and streams");
+        return;
+    }
 
     for (auto& b : async_roi_buffers_) {
         if (b.copy_done) {

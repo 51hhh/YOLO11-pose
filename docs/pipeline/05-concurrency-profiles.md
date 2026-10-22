@@ -14,12 +14,17 @@
 | Fuse CUDA stream | detection event 等待、部分融合任务 | 开启 |
 | Async ROI copy stream | Gray D2D、必要时 Gray D2H/BGR D2D | 仅实时异步开启 |
 | Async ROI worker | 关联、ROI 候选、深度计算 | 仅实时异步开启 |
-| P2 feature worker/stream | NCC、XFeat、SuperPoint、ALIKED 作业框架 | worker 会创建；当前只有 NCC 候选实际启用，神经候选关闭 |
+| P2 inline worker/stream | NCC、XFeat、SuperPoint、ALIKED 作业框架 | 四组 worker/stream 会创建；当前只有 NCC 候选有逐帧任务，神经候选关闭 |
+| P2 diagnostic worker/stream | 独立低优先级候选和 artifact/CSV | 当前 diagnostic lane 关闭，因此不创建 |
 | capture writer | 写 v2.1 staging | 仅真实采集开启 |
 
 pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 single-flight 状态机：同一时刻最多一个 active 请求；重叠请求被拒绝；停止后拒绝新请求，但已接受请求必须写完并发出 completion。completion 才转移 raw 图像所有权，`running` 标志不承担图像完成语义。
 
 线程生命周期另由 `PipelineRunState` 管理三种正交事实：是否仍运行、是否发生失败、是否仍有一次 cleanup 责任。worker 异常可以立即停止新调度，但不能消费 cleanup token；只有 owner 调用 `stop()` 才执行 join 和资源排空。若回调从 pipeline 线程内误调 `stop()`，实现只发停止信号并把 join 延后给 owner，避免线程自我 join。
+
+主 stream 与辅助 stream 的退出结果会合并：异步 ROI core/copy、P2 diagnostic
+core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅助 stream 不能因
+不在 `PipelineStreams` 结构体里而漏过最终 drain。
 
 异步 ROI worker 的 snapshot completion 也承担所有权转移语义。worker 必须收到有效 buffer 和已记录 event，等待 event 成功后才可读取快照；CUDA event 错误或 worker 异常会产生显式失败结果。失败路径先排空 ROI core/copy stream，再归还 buffer，防止异常发生在 kernel 提交之后时复用仍被 GPU 读取的内存。`roi_postprocess_mutex_` 只包围共享 matcher/core 调用，artifact/CSV 写入不持有该锁，避免诊断 I/O 反向阻塞同步候选。
 

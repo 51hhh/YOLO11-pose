@@ -380,7 +380,7 @@ private:
     bool asyncRoiStage2Configured() const;
     bool initAsyncRoiStage2();
     bool startAsyncRoiStage2();
-    void shutdownAsyncRoiStage2();
+    bool shutdownAsyncRoiStage2();
     void destroyAsyncRoiStage2();
     void asyncRoiWorkerLoop();
     bool submitAsyncRoiStage2(FrameSlot& slot, int slot_index);
@@ -399,7 +399,7 @@ private:
     bool waitAsyncRoiSlotSnapshotDone(int slot_index, const char* reason);
     bool p2FeatureDiagnosticLaneConfigured() const;
     bool startP2FeatureDiagnosticLane();
-    void shutdownP2FeatureDiagnosticLane();
+    bool shutdownP2FeatureDiagnosticLane();
     bool initP2FeatureDiagnosticBuffers();
     void destroyP2FeatureDiagnosticBuffers();
     void releaseP2FeatureDiagnosticBuffer(int buffer_index);

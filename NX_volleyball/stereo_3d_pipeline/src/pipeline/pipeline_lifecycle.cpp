@@ -30,7 +30,7 @@ Pipeline::Pipeline() = default;
 
 Pipeline::~Pipeline() {
     stop();
-    shutdownP2FeatureDiagnosticLane();
+    (void)shutdownP2FeatureDiagnosticLane();
     destroyAsyncRoiStage2();
     shutdownP2InlineFeatureWorkers();
     for (auto& slot : slots_) {
@@ -134,8 +134,8 @@ void Pipeline::stop() {
         pipeline_thread_.join();
     }
 
-    shutdownAsyncRoiStage2();
-    shutdownP2FeatureDiagnosticLane();
+    const bool async_roi_drained = shutdownAsyncRoiStage2();
+    const bool p2_diagnostic_drained = shutdownP2FeatureDiagnosticLane();
     shutdownP2InlineFeatureWorkers();
 
 #ifdef HIK_CAMERA_ENABLED
@@ -144,7 +144,10 @@ void Pipeline::stop() {
     }
 #endif
 
-    const bool streams_drained = streams_.syncAll();
+    const bool primary_streams_drained = streams_.syncAll();
+    const bool streams_drained = primary_streams_drained &&
+                                 async_roi_drained &&
+                                 p2_diagnostic_drained;
     if (streams_drained) {
         for (auto& slot : slots_) {
             unlockStage0CudaViews(slot);

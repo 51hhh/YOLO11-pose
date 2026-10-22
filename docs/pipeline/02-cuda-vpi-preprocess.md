@@ -80,6 +80,30 @@ Stage 0 涉及：
 - `cudaStreamGPU`：在 VPI stream 已同步后记录 `evtRectDone`；
 - 左右 TensorRT stream 等待 `evtRectDone`。
 
+完整 stream 清单不能只看 `PipelineStreams`，因为异步 ROI 与 P2 诊断会按配置
+另外创建低优先级 stream：
+
+| stream | 生产的工作 | `nx-rdk` 每帧状态 | 主要完成证明 |
+|---|---|---|---|
+| `vpiStreamPVA` | remap、BGR→Gray；名称为历史遗留 | 开，算子 backend 为 CUDA | Stage 1 前 `vpiStreamSync` |
+| `vpiStreamGPU` | full/half-frame VPI disparity | 关，无 disparity submit | 仅关闭支路/最终清理 |
+| `cudaStreamBGR` | 左右 Bayer→BGR kernel | 开 | 每帧显式 synchronize |
+| `cudaStreamDLA` | 左 YOLO preprocess/infer/decode/D2H | 开；名称不表示实际用了 DLA | 左 detect event/源 stream fallback |
+| `cudaStreamDLA_R` | 右 YOLO preprocess/infer/decode/D2H | 开；当前 engine 为 CUDA GPU | 右 detect event/源 stream fallback |
+| `cudaStreamGPU` | rect-done event、全帧/旧 tracker 协调 | 开但当前主线负载很轻 | event 或最终 synchronize |
+| `cudaStreamFuse` | 同步 ROI Stage 2 与融合支路 | 开 | Stage 2 结束同步/最终清理 |
+| `cudaStreamP2Ncc` | inline CUDA template/NCC | 开且当前候选启用 | P2 worker join + 最终 synchronize |
+| `cudaStreamP2XFeat/SuperPoint/Aliked` | inline 神经特征 | stream/线程已创建，候选关闭所以不应有逐帧 kernel | 最终 synchronize |
+| `async_roi_copy_stream_` | FrameSlot→异步缓冲的 Gray D2D，按需 Gray D2H/BGR D2D | 实时开，采集关 | slot/buffer copy event + 停止时同步 |
+| `async_roi_stream_` | 异步 ROI 几何、NCC、多点候选 | 实时开，采集关 | worker 完成 + 停止时同步 |
+| `p2_feature_diag_copy_stream_` | 独立诊断图像副本 | 当前诊断 lane 关，不创建 | 若启用则 copy event + 停止时同步 |
+| `p2_feature_diag_stream_` | 低优先级 P2 诊断候选 | 当前诊断 lane 关，不创建 | 若启用则 worker join + 停止时同步 |
+
+停止顺序是：停止新调度并 join pipeline，关闭并 join 异步 ROI/P2 worker，显式
+同步四条辅助 stream，再同步 `PipelineStreams` 中的全部 VPI/CUDA stream。只有
+所有 drain 都成功才释放导出的 VPI CUDA view；任何一条失败都会把本次运行标记
+为 failure，并保留无法证明安全的锁或辅助缓冲到资源销毁阶段。
+
 每个 detect event 另有本帧有效位。正常路径是“TensorRT preprocess/infer/decode/D2H 入队 → 在同一 stream 记录 event → fuse stream 等 event → 同步 fuse stream → CPU collect”。如果 enqueue 或 event API 失败，本帧立即失效；代码不会从上一次 ring-slot 复用留下的 host 输出构造空检测或旧检测。
 
 当前存在两个明确硬屏障：
