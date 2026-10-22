@@ -132,6 +132,22 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
+    def test_hik_adapter_rejects_unimplemented_diagnostic_modes(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            ("json_logs", lambda value: value["diagnostics"].update(json_logs=True)),
+            (
+                "processing_timing",
+                lambda value: value["diagnostics"].update(processing_timing=False),
+            ),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(
             find_project_root(ROOT / "python" / "volleyball_vision"),

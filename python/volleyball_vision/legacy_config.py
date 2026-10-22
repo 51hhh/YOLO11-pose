@@ -143,6 +143,9 @@ def build_legacy_pipeline_config(
         ros2["enable"] and publisher["control_goal_enabled"]
     )
     diagnostics = config.data["diagnostics"]
+    result["performance"]["log_interval"] = diagnostics[
+        "metrics_interval_frames"
+    ]
     ros2.setdefault("diagnostic", {})["enable"] = bool(
         ros2["enable"] and diagnostics["ros2_depth_enabled"]
     )

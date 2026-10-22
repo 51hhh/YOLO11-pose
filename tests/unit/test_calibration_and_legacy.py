@@ -85,6 +85,7 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertFalse(rendered["ros2"]["control_goal"]["enable"])
         self.assertFalse(rendered["ros2"]["diagnostic"]["enable"])
         self.assertFalse(rendered["debug_realtime_dump"]["enabled"])
+        self.assertEqual(rendered["performance"]["log_interval"], 900)
         self.assertFalse(rendered["capture_v21"]["enabled"])
         self.assertFalse(rendered["disparity_offset"]["enabled"])
         self.assertFalse(rendered["tnr"]["enabled"])

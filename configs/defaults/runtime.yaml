@@ -139,7 +139,8 @@ publisher:
   control_goal_enabled: false
 
 diagnostics:
-  json_logs: true
+  # 旧 NX logger 目前是结构化前缀文本，不是逐行 JSON；不能伪报已启用。
+  json_logs: false
   processing_timing: true
   metrics_interval_frames: 900
   ros2_depth_enabled: false

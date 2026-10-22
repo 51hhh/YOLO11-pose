@@ -4,6 +4,8 @@
 
 当前代码通过 `globalPerf()`、日志和 NVTX 暴露多个阶段。至少应持续观察：
 
+旧 C++ logger 当前输出带单调时钟、线程 ID 和级别的文本行，并非 JSON。主线因此显式配置 `json_logs=false`；`metrics_interval_frames` 才是统计日志周期的配置真相，并被投影为旧管线 `performance.log_interval`。
+
 | 类别 | 关键指标 |
 |---|---|
 | 取流 | `Stage0_WaitGrab`、FrameCounter 跳变、左右到达时间差 |

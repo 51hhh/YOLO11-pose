@@ -72,6 +72,8 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 | 深度 | `stereo.triangulation.*` | 计算候选集合、主方法、回退顺序、亚像素与时间预算 |
 | 录制 | `recording.*` | schema、原图、失败策略、哈希校验 |
 
+`diagnostics.metrics_interval_frames` 会投影为旧管线的 `performance.log_interval`。当前旧 logger 输出带单调时钟、线程和级别前缀的文本，不是逐行 JSON，因此主线固定 `diagnostics.json_logs=false`；把它改成 `true` 会在配置校验阶段被拒绝。性能计时当前是管线固有观测能力，也不能用配置伪装为已关闭。
+
 ### 深度候选与最终选择
 
 三类字段不能混用：

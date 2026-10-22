@@ -275,6 +275,11 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
         errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
     if cameras["backend"] == "hik_mvs":
+        diagnostics = payload["diagnostics"]
+        if diagnostics["json_logs"]:
+            errors.append("当前旧 NX logger 尚不支持 diagnostics.json_logs=true")
+        if not diagnostics["processing_timing"]:
+            errors.append("当前旧 NX 管线固定启用 processing_timing，不能声明关闭")
         if transport["interface"] not in {"usb3", "gige"}:
             errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
         if transport["grab_strategy"] != "one_by_one":
