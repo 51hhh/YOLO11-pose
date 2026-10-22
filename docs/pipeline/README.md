@@ -79,8 +79,8 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 | Stage 0/1/全帧 Stage 2 | `src/pipeline/pipeline_stages.cpp` |
 | ROI 模式调度 | `src/pipeline/pipeline_loops.cpp` |
 | 异步 ROI 快照与 worker | `src/pipeline/pipeline_async_roi.cpp` |
-| TensorRT context/CUDA 推理编排 | `src/detect/trt_detector.*` |
-| TensorRT I/O、CPU 后处理与 detector CUDA kernel | `adapters/tensorrt/` |
+| TensorRT engine/context/buffer、CPU 后处理与 detector CUDA kernel | `adapters/tensorrt/` |
+| 旧 `TRTDetector` 名称兼容层 | `src/detect/trt_detector.h` |
 | 校正前 Bayer→BGR CUDA 转换 | `src/rectify/bayer_to_bgr.*` |
 | 左右配对契约 | `src/stereo/depth_match_contract.*` |
 | 双路 YOLO 深度候选 | `src/pipeline/pipeline_dual_yolo_match.cpp` |

@@ -2,7 +2,7 @@
 
 ## 双路检测
 
-当前左右相机各有一个 `TRTDetector`，共享同一 TensorRT engine，但各自使用独立 CUDA stream。每个 detector 又按三缓冲槽创建独立 execution context、输入、输出和 pinned host 缓冲，防止异步帧互相覆盖。
+当前左右相机各有一个 `TensorRtRuntime`（旧管线仍以 `TRTDetector` 别名引用），共享同一 TensorRT engine 文件，但各自使用独立 CUDA stream。每个 runtime 又按三缓冲槽创建独立 execution context、输入、输出和 pinned host 缓冲，防止异步帧互相覆盖；旧帧环槽数与 runtime 槽数在编译期强制一致。
 
 当前参数：
 
