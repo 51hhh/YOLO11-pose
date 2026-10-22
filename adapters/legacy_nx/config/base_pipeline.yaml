@@ -1,7 +1,5 @@
-# ============================================================
-# Fixed P0/P1 trajectory recording config.
-# Use --recording-out <csv> at runtime to choose a timestamped output file.
-# ============================================================
+# 旧 NX 字段兼容模板。生产运行必须由 volleyball CLI 投影主线配置；
+# 模板自身保持无发布、无预测、无写盘副作用。
 
 camera:
   left_index: 0
@@ -297,6 +295,7 @@ tracker:
   min_confidence: 0.3
 
 prediction:
+  enable: false
   # Legacy landing prediction path; production profiles keep it disabled:
   # bbox_center disparity + d0 -> Student-t EKF -> RK4 rollout.
   gravity: 9.81
@@ -326,7 +325,7 @@ display:
   enable: false
 
 ros2:
-  enable: true
+  enable: false
   world_frame_id: "vision_world"
   base_frame_id: "base_link"
   odom_topic: "/odom"
@@ -339,7 +338,7 @@ ros2:
     ball_realtime_base: "/nx/debug/ball/realtime_base"
     ball_landing_base: "/nx/debug/ball/landing_base"
   nx_observation:
-    enable: true
+    enable: false
     topic: "/nx/ball/observation"
     frame_id: "nx_left_rectified_optical_frame"
     source_epoch_file: "/run/volleyball/nx_source_epoch"
@@ -351,7 +350,7 @@ ros2:
     translation_x: 0.0
     translation_y: 0.0
   control_goal:
-    enable: true
+    enable: false
     topic: "/nx/debug/auto_goal_pose"
     min_depth_m: 0.0
     max_depth_m: 14.0
@@ -366,11 +365,11 @@ ros2:
     allow_polynomial: false
     allow_fallback_observation: false
   diagnostic:
-    enable: true
+    enable: false
     depth_full_divisor: 6
 
 recording:
-  enabled: true
+  enabled: false
   output_path: "dual_yolo_observation_data.csv"
   # legacy: old CSV columns only; depth_candidates: add depth candidates;
   # extended: add sync watermark + bbox/circle geometry for model training.
