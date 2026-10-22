@@ -140,3 +140,21 @@ if(TARGET volleyball::stereo_calibration)
     stereo_calibration_tests PRIVATE volleyball::stereo_calibration
   )
 endif()
+
+if(TARGET volleyball::cuda_preprocess_kernels)
+  add_executable(
+    cuda_preprocess_kernels_tests
+    cuda_preprocess_kernels_tests.cu
+  )
+  target_link_libraries(cuda_preprocess_kernels_tests PRIVATE
+    volleyball::cuda_preprocess_kernels
+  )
+  set_target_properties(cuda_preprocess_kernels_tests PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+  )
+  add_test(
+    NAME cuda_preprocess_kernels_tests
+    COMMAND cuda_preprocess_kernels_tests
+  )
+endif()

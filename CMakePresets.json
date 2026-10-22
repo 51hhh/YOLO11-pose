@@ -26,6 +26,19 @@
       }
     },
     {
+      "name": "cuda-adapters-release",
+      "displayName": "Generic CUDA adapters (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cuda-adapters-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VOLLEYBALL_BUILD_TESTS": "ON",
+        "VOLLEYBALL_BUILD_LEGACY": "OFF",
+        "VOLLEYBALL_BUILD_CUDA_ADAPTERS": "ON",
+        "VOLLEYBALL_CUDA_ARCH": "native"
+      }
+    },
+    {
       "name": "nx-legacy-release",
       "displayName": "Jetson Orin NX legacy adapter (Release)",
       "generator": "Ninja",
@@ -44,6 +57,7 @@
   "buildPresets": [
     {"name": "host-core-debug", "configurePreset": "host-core-debug"},
     {"name": "host-core-release", "configurePreset": "host-core-release"},
+    {"name": "cuda-adapters-release", "configurePreset": "cuda-adapters-release"},
     {"name": "nx-legacy-release", "configurePreset": "nx-legacy-release"}
   ],
   "testPresets": [
@@ -55,6 +69,11 @@
     {
       "name": "host-core-release",
       "configurePreset": "host-core-release",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "cuda-adapters-release",
+      "configurePreset": "cuda-adapters-release",
       "output": {"outputOnFailure": true}
     }
   ]
