@@ -79,8 +79,10 @@ StereoObservationService::StereoObservationService(
 StereoProcessResult StereoObservationService::fail(
     ProcessStatus status,
     std::string message) noexcept {
-    writer_.abort(message);
-    closed_ = true;
+    if (message.empty()) {
+        message = "stereo observation service failed";
+    }
+    abort(message);
     return {status, std::nullopt, {}, std::move(message)};
 }
 
@@ -310,11 +312,27 @@ ports::WriteResult StereoObservationService::finalize() {
     if (closed_) {
         return {ports::WriteStatus::failed, "service is closed"};
     }
-    const auto result = writer_.finalize();
+    auto result = writer_.finalize();
     if (result.status == ports::WriteStatus::accepted) {
         closed_ = true;
+        return result;
     }
+    if (result.message.empty()) {
+        result.message = "trial writer finalize failed";
+    }
+    abort(result.message);
     return result;
+}
+
+void StereoObservationService::abort(std::string reason) noexcept {
+    if (closed_) {
+        return;
+    }
+    if (reason.empty()) {
+        reason = "stereo observation service aborted";
+    }
+    writer_.abort(std::move(reason));
+    closed_ = true;
 }
 
 }  // namespace volleyball::services

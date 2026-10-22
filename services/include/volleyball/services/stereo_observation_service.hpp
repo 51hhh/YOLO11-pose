@@ -60,6 +60,7 @@ public:
     [[nodiscard]] StereoProcessResult process(
         const ports::StereoFrame& frame);
     [[nodiscard]] ports::WriteResult finalize();
+    void abort(std::string reason) noexcept;
 
 private:
     [[nodiscard]] StereoProcessResult fail(

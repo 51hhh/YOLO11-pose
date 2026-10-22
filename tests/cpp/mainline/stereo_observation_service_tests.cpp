@@ -185,6 +185,28 @@ void testDetectorFailureAbortsTrial() {
           "aborted service must not publish a trial");
 }
 
+void testExplicitAbortClosesServiceExactlyOnce() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(serviceConfig(), left, right, writer);
+
+    service.abort("camera source failed");
+    service.abort("must not replace the first reason");
+
+    check(writer.abortReason() == "camera source failed",
+          "explicit abort must preserve the first terminal reason");
+    check(service.process(stereoFrame()).status ==
+              services::ProcessStatus::write_error,
+          "explicit abort must close the processing service");
+    check(service.finalize().status == ports::WriteStatus::failed,
+          "explicit abort must prevent later finalization");
+}
+
 void testMalformedDetectorBatchAbortsTrial() {
     auto wrong_frame =
         detection(core::CameraRole::left, "other-left", 0, 700.0, 500.0, 0.95);
@@ -360,6 +382,7 @@ int main() {
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
     testDetectorFailureAbortsTrial();
+    testExplicitAbortClosesServiceExactlyOnce();
     testMalformedDetectorBatchAbortsTrial();
     testDuplicateCandidateIdsAbortTrial();
     testServiceOwnsSelectedFlags();
