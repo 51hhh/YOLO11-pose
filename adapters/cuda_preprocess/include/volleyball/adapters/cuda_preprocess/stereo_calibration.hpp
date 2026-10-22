@@ -66,6 +66,9 @@ public:
     const cv::Mat& getProjectionLeft() const {
         return P1_scaled_.empty() ? P1_ : P1_scaled_;
     }
+    const cv::Mat& getProjectionRight() const {
+        return P2_scaled_.empty() ? P2_ : P2_scaled_;
+    }
 
     /**
      * @brief 生成 OpenCV undistortRectifyMap (用于构建 VPI Remap LUT)

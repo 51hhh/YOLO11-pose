@@ -46,6 +46,11 @@ void testLoadsCheckedInCalibrationAndBuildsMaps() {
         "all four rectification maps must have one float coordinate per pixel");
     check(std::abs(value.getFocalLength() - 827.4286F) < 1.0e-3F,
           "projection focal length must scale with output resolution");
+    check(
+        std::abs(
+            value.getProjectionRight().at<double>(0, 0) -
+            value.getProjectionLeft().at<double>(0, 0)) < 1.0e-9,
+        "both scaled rectified projections must be available to mainline assembly");
 
     calibration::StereoRemapMaps portable_maps;
     check(value.buildRemapMaps(portable_maps, 720, 540) &&
