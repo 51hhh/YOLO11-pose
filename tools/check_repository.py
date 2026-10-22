@@ -195,7 +195,9 @@ def _check_cmake_sources(tracked: list[str]) -> list[str]:
             if path.suffix not in {".cc", ".cpp", ".cxx", ".cu"}:
                 continue
             token = path.relative_to(cmake_directory).as_posix()
-            if token not in cmake_text and path.name not in cmake_text:
+            # 只匹配 basename 会让 tools/*/main.cpp 等同名文件互相代为
+            # 通过，导致未接入任何目标的源码逃过仓库审计。
+            if token not in cmake_text:
                 errors.append(f"{source}: 未列入 {cmake_file}")
     return errors
 
