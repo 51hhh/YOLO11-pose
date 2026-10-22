@@ -1,6 +1,7 @@
 #pragma once
 
 #include "volleyball/core/observation.hpp"
+#include "volleyball/ports/direct_observation_estimator.hpp"
 
 #include <string>
 
@@ -15,6 +16,7 @@ struct ObservationPublication {
     volleyball::core::Detection2D left_detection;
     volleyball::core::Detection2D right_detection;
     volleyball::core::StereoAssociationAttempt association;
+    DirectObservationEvidence estimation;
 };
 
 struct PublishResult {

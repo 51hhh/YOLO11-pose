@@ -1,8 +1,8 @@
 #pragma once
 
 #include "volleyball/algorithms/stereo/association.hpp"
-#include "volleyball/algorithms/stereo/triangulation.hpp"
 #include "volleyball/ports/detector.hpp"
+#include "volleyball/ports/direct_observation_estimator.hpp"
 #include "volleyball/ports/observation_publisher.hpp"
 #include "volleyball/ports/stereo_preprocessor.hpp"
 #include "volleyball/ports/trial_writer.hpp"
@@ -21,8 +21,6 @@ struct ObservationGateConfig {
 
 struct StereoObservationServiceConfig {
     algorithms::stereo::AssociationConfig association;
-    algorithms::stereo::TriangulationConfig triangulation;
-    core::RectifiedStereoCalibration calibration;
     ObservationGateConfig gate;
 };
 
@@ -31,6 +29,7 @@ enum class ProcessStatus {
     no_match,
     preprocess_error,
     detector_error,
+    estimator_error,
     invalid_input,
     write_error,
     publish_error,
@@ -57,6 +56,7 @@ public:
         ports::StereoPreprocessor& preprocessor,
         ports::Detector& left_detector,
         ports::Detector& right_detector,
+        ports::DirectObservationEstimator& estimator,
         ports::TrialWriter& writer,
         ports::ObservationPublisher* publisher = nullptr);
 
@@ -90,6 +90,7 @@ private:
     ports::StereoPreprocessor& preprocessor_;
     ports::Detector& left_detector_;
     ports::Detector& right_detector_;
+    ports::DirectObservationEstimator& estimator_;
     ports::TrialWriter& writer_;
     ports::ObservationPublisher* publisher_;
     core::PairId next_pair_id_{0};

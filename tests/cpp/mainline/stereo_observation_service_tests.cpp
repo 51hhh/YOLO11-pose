@@ -15,6 +15,7 @@ namespace core = volleyball::core;
 namespace fake = volleyball::adapters::fake;
 namespace ports = volleyball::ports;
 namespace services = volleyball::services;
+namespace stereo_algorithms = volleyball::algorithms::stereo;
 namespace support = volleyball::test_support;
 
 namespace {
@@ -28,10 +29,40 @@ void check(bool condition, const char* message) {
     }
 }
 
+class FixedEstimator final : public ports::DirectObservationEstimator {
+public:
+    explicit FixedEstimator(ports::DirectObservationResult result)
+        : result_(std::move(result)) {}
+
+    [[nodiscard]] ports::DirectObservationResult estimate(
+        const ports::DirectObservationRequest& request) override {
+        ++calls_;
+        saw_gray_inputs_ =
+            request.rectified_frame.left.geometry_gray &&
+            request.rectified_frame.right.geometry_gray &&
+            request.rectified_frame.left.geometry_gray->pixelFormat() ==
+                core::PixelFormat::gray8 &&
+            request.rectified_frame.right.geometry_gray->pixelFormat() ==
+                core::PixelFormat::gray8;
+        return result_;
+    }
+
+    [[nodiscard]] std::size_t calls() const noexcept { return calls_; }
+    [[nodiscard]] bool sawGrayInputs() const noexcept {
+        return saw_gray_inputs_;
+    }
+
+private:
+    ports::DirectObservationResult result_;
+    std::size_t calls_{0};
+    bool saw_gray_inputs_{false};
+};
+
 using support::CollectingPublisher;
 using support::StaticDetector;
 using support::TestImage;
 using support::detection;
+using support::passingObservationEstimator;
 using support::passingPreprocessor;
 using support::serviceConfig;
 using support::stereoFrame;
@@ -49,7 +80,8 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
     fake::InMemoryTrialWriter writer;
     CollectingPublisher publisher;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer, &publisher);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer, &publisher);
 
     const auto result = service.process(stereoFrame());
     check(result.ok(), "valid stereo frame must be processed");
@@ -102,8 +134,12 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
         publication.left_frame.camera_id == core::CameraId{"left"} &&
             publication.right_frame.camera_id == core::CameraId{"right"} &&
             publication.left_detection.selected &&
-            publication.right_detection.selected,
-        "publication must retain both source frames and selected detections");
+            publication.right_detection.selected &&
+            publication.estimation.method ==
+                core::StereoDepthMethodId{"detection_center"} &&
+            publication.estimation.disparity_px == 50.0 &&
+            publication.estimation.support_points == 1,
+        "publication must retain frames, detections, and estimator evidence");
     check(result.observation &&
               std::abs(result.observation->position_m.z - 16.0) < 1.0e-9,
           "rectified triangulation must use z=fx*baseline/disparity");
@@ -123,7 +159,8 @@ void testUnselectedGatePassingPairIsRecordedAsRejected() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::observation,
@@ -147,10 +184,12 @@ void testTriangulationFailureRejectsSelectedPair() {
         detection(core::CameraRole::right, "right", 0, 699.5, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
-    auto service_config = serviceConfig();
-    service_config.triangulation.min_disparity_px = 1.0;
+    auto triangulation = support::triangulationConfig();
+    triangulation.min_disparity_px = 1.0;
+    stereo_algorithms::RectifiedCenterEstimator estimator(
+        support::calibration(), triangulation);
     services::StereoObservationService service(
-        service_config, passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right, estimator, writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -184,7 +223,8 @@ void testObservationGateRejectsSelectedPair() {
     auto service_config = serviceConfig();
     service_config.gate.max_depth_m = 10.0;
     services::StereoObservationService service(
-        service_config, passingPreprocessor(), left, right, writer);
+        service_config, passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -198,6 +238,57 @@ void testObservationGateRejectsSelectedPair() {
         "quality gate failure must be explicit in the retained pair");
 }
 
+void testEstimatorInfrastructureFailureAbortsTrial() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    FixedEstimator estimator({
+        ports::DirectObservationStatus::failed,
+        std::nullopt,
+        {core::StereoDepthMethodId{"roi_multi_point"}, std::nullopt,
+         std::nullopt, std::nullopt},
+        "injected ROI backend failure",
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, estimator, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::estimator_error,
+          "estimator infrastructure failure must be distinct from no-match");
+    check(estimator.calls() == 1 && estimator.sawGrayInputs(),
+          "estimator must receive the validated rectified Gray products");
+    check(writer.abortReason() == "injected ROI backend failure",
+          "estimator infrastructure failure must abort the trial");
+}
+
+void testMalformedEstimatorResultAbortsTrial() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    FixedEstimator estimator({
+        ports::DirectObservationStatus::observation,
+        std::nullopt,
+        {},
+        {},
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        serviceConfig(), passingPreprocessor(), left, right, estimator, writer);
+
+    const auto result = service.process(stereoFrame());
+    check(result.status == services::ProcessStatus::estimator_error,
+          "malformed estimator output must be a protocol failure");
+    check(!writer.abortReason().empty(),
+          "malformed estimator output must abort the partial trial");
+}
+
 bool serviceConstructionRejects(
     services::StereoObservationServiceConfig config) {
     StaticDetector left({
@@ -209,7 +300,8 @@ bool serviceConstructionRejects(
     fake::InMemoryTrialWriter writer;
     try {
         services::StereoObservationService service(
-            std::move(config), passingPreprocessor(), left, right, writer);
+            std::move(config), passingPreprocessor(), left, right,
+            passingObservationEstimator(), writer);
     } catch (const std::invalid_argument&) {
         return true;
     }
@@ -221,16 +313,6 @@ void testInvalidStaticConfigFailsDuringServiceConstruction() {
     config.association.max_size_ratio = 0.5;
     check(serviceConstructionRejects(config),
           "invalid association config must fail before processing");
-
-    config = serviceConfig();
-    config.calibration.right.fx += 1.0;
-    check(serviceConstructionRejects(config),
-          "incompatible rectified calibration must fail before processing");
-
-    config = serviceConfig();
-    config.triangulation.center_sigma_px = -1.0;
-    check(serviceConstructionRejects(config),
-          "invalid triangulation config must fail before processing");
 
     config = serviceConfig();
     config.gate.max_depth_m = config.gate.min_depth_m;
@@ -248,7 +330,8 @@ void testDetectorFailureAbortsTrial() {
     right.setFail(true);
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
           "detector error must be explicit");
@@ -268,7 +351,8 @@ void testPreprocessFailureAbortsAfterRawEvidence() {
     preprocessor.setFail(true);
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), preprocessor, left, right, writer);
+        serviceConfig(), preprocessor, left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::preprocess_error,
@@ -293,7 +377,8 @@ void testMalformedPreprocessProductsAbortTrial() {
         });
         fake::InMemoryTrialWriter writer;
         services::StereoObservationService service(
-            serviceConfig(), preprocessor, left, right, writer);
+            serviceConfig(), preprocessor, left, right,
+            passingObservationEstimator(), writer);
         const auto result = service.process(stereoFrame());
         return result.status == services::ProcessStatus::preprocess_error &&
                left.calls() == 0 && right.calls() == 0 &&
@@ -320,7 +405,8 @@ void testExplicitAbortClosesServiceExactlyOnce() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     service.abort("camera source failed");
     service.abort("must not replace the first reason");
@@ -343,7 +429,8 @@ void testMalformedDetectorBatchAbortsTrial() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -362,7 +449,8 @@ void testDuplicateCandidateIdsAbortTrial() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -380,7 +468,8 @@ void testDetectorCandidateMustIntersectItsSourceImage() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::detector_error,
@@ -400,7 +489,8 @@ void testServiceOwnsSelectedFlags() {
     StaticDetector right({right_candidate});
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
 
     const auto result = service.process(stereoFrame());
     check(result.status == services::ProcessStatus::no_match,
@@ -423,7 +513,8 @@ void testArrivalOrderNeverDefinesStereoIdentity() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
     auto input = stereoFrame();
     check(input.left.metadata.receive_timestamp->nanoseconds >
               input.right.metadata.receive_timestamp->nanoseconds,
@@ -441,7 +532,8 @@ void testCaptureDeltaUsesConfiguredTemporalGate() {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
     auto within_tolerance = stereoFrame();
     within_tolerance.right.metadata.capture_timestamp = time(1050);
 
@@ -461,7 +553,8 @@ void testCaptureDeltaUsesConfiguredTemporalGate() {
     });
     fake::InMemoryTrialWriter late_writer;
     services::StereoObservationService late_service(
-        serviceConfig(), passingPreprocessor(), late_left, late_right, late_writer);
+        serviceConfig(), passingPreprocessor(), late_left, late_right,
+        passingObservationEstimator(), late_writer);
     auto outside_tolerance = stereoFrame();
     outside_tolerance.right.metadata.capture_timestamp = time(1101);
 
@@ -484,7 +577,8 @@ bool rejectsInvalidStereoFrame(ports::StereoFrame input) {
     });
     fake::InMemoryTrialWriter writer;
     services::StereoObservationService service(
-        serviceConfig(), passingPreprocessor(), left, right, writer);
+        serviceConfig(), passingPreprocessor(), left, right,
+        passingObservationEstimator(), writer);
     const auto result = service.process(input);
     return result.status == services::ProcessStatus::invalid_input &&
            !writer.abortReason().empty();
@@ -532,6 +626,8 @@ int main() {
     testUnselectedGatePassingPairIsRecordedAsRejected();
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
+    testEstimatorInfrastructureFailureAbortsTrial();
+    testMalformedEstimatorResultAbortsTrial();
     testInvalidStaticConfigFailsDuringServiceConstruction();
     testPreprocessFailureAbortsAfterRawEvidence();
     testMalformedPreprocessProductsAbortTrial();

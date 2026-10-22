@@ -107,6 +107,53 @@ bool detectionInsideImage(
            detection.center_px.y <= box.y + box.height;
 }
 
+std::int64_t integerMidpoint(
+    std::int64_t left,
+    std::int64_t right) noexcept {
+    return left / 2 + right / 2 + (left % 2 + right % 2) / 2;
+}
+
+bool validEstimationEvidence(
+    const ports::DirectObservationEvidence& evidence) noexcept {
+    return !evidence.method.empty() &&
+           (!evidence.disparity_px ||
+            (std::isfinite(*evidence.disparity_px) &&
+             *evidence.disparity_px > 0.0)) &&
+           (!evidence.disparity_stddev_px ||
+            (std::isfinite(*evidence.disparity_stddev_px) &&
+             *evidence.disparity_stddev_px >= 0.0)) &&
+           (!evidence.support_points || *evidence.support_points > 0);
+}
+
+bool validEstimationResult(
+    const ports::DirectObservationResult& result,
+    const core::StereoAssociationAttempt& association,
+    core::ObservationId observation_id) noexcept {
+    if (!validEstimationEvidence(result.evidence)) {
+        return false;
+    }
+    if (result.status == ports::DirectObservationStatus::rejected ||
+        result.status == ports::DirectObservationStatus::failed) {
+        return !result.observation.has_value();
+    }
+    if (result.status != ports::DirectObservationStatus::observation) {
+        return false;
+    }
+    if (!result.observation || !core::validate(*result.observation)) {
+        return false;
+    }
+    const auto& observation = *result.observation;
+    const auto expected_capture = integerMidpoint(
+        association.left_capture.nanoseconds,
+        association.right_capture.nanoseconds);
+    return observation.observation_id == observation_id &&
+           observation.source_pair_id == association.pair_id &&
+           observation.capture_reference.clock_domain ==
+               association.left_capture.clock_domain &&
+           observation.capture_reference.nanoseconds == expected_capture &&
+           observation.reprojection_error_px == association.epipolar_error_px;
+}
+
 }  // namespace
 
 StereoObservationService::StereoObservationService(
@@ -114,21 +161,18 @@ StereoObservationService::StereoObservationService(
     ports::StereoPreprocessor& preprocessor,
     ports::Detector& left_detector,
     ports::Detector& right_detector,
+    ports::DirectObservationEstimator& estimator,
     ports::TrialWriter& writer,
     ports::ObservationPublisher* publisher)
     : config_(std::move(config)),
       preprocessor_(preprocessor),
       left_detector_(left_detector),
       right_detector_(right_detector),
+      estimator_(estimator),
       writer_(writer),
       publisher_(publisher) {
     if (!algorithms::stereo::isValidAssociationConfig(config_.association)) {
         throw std::invalid_argument("invalid stereo association configuration");
-    }
-    if (!algorithms::stereo::isValidTriangulationConfig(
-            config_.calibration, config_.triangulation)) {
-        throw std::invalid_argument(
-            "invalid rectified stereo calibration/triangulation configuration");
     }
     const auto& gate = config_.gate;
     if (!std::isfinite(gate.min_depth_m) || gate.min_depth_m < 0.0 ||
@@ -355,14 +399,26 @@ StereoProcessResult StereoObservationService::process(
     if (!left_candidate || !right_candidate) {
         return fail(ProcessStatus::invalid_input, "selected candidate disappeared");
     }
-    auto triangulated = algorithms::stereo::triangulateRectifiedCenters(
+    auto estimated = estimator_.estimate({
+        *preprocess_result.frame,
         *left_candidate,
         *right_candidate,
         selected,
-        config_.calibration,
-        config_.triangulation,
-        next_observation_id_);
-    if (!triangulated) {
+        next_observation_id_,
+    });
+    if (!validEstimationResult(estimated, selected, next_observation_id_)) {
+        return fail(
+            ProcessStatus::estimator_error,
+            "direct observation estimator returned an invalid result");
+    }
+    if (estimated.status == ports::DirectObservationStatus::failed) {
+        return fail(
+            ProcessStatus::estimator_error,
+            estimated.message.empty()
+                ? "direct observation estimator failed"
+                : std::move(estimated.message));
+    }
+    if (estimated.status == ports::DirectObservationStatus::rejected) {
         selected.decision = core::AssociationDecision::rejected;
         selected.reject_reason =
             core::AssociationRejectReason::triangulation_failure;
@@ -373,10 +429,12 @@ StereoProcessResult StereoObservationService::process(
             ProcessStatus::no_match,
             std::nullopt,
             std::move(associations.attempts),
-            triangulated.message,
+            estimated.message.empty()
+                ? "direct observation estimator rejected the pair"
+                : std::move(estimated.message),
         };
     }
-    if (!passesGate(*triangulated.observation)) {
+    if (!passesGate(*estimated.observation)) {
         selected.decision = core::AssociationDecision::rejected;
         selected.reject_reason = core::AssociationRejectReason::quality_gate;
         if (!appendEvidence()) {
@@ -394,7 +452,7 @@ StereoProcessResult StereoObservationService::process(
     if (!appendEvidence()) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
-    const auto& observation = *triangulated.observation;
+    const auto& observation = *estimated.observation;
     if (!writeAccepted(writer_.append(observation), error)) {
         return fail(ProcessStatus::write_error, std::move(error));
     }
@@ -408,6 +466,7 @@ StereoProcessResult StereoObservationService::process(
         publication.left_detection = *left_candidate;
         publication.right_detection = *right_candidate;
         publication.association = selected;
+        publication.estimation = estimated.evidence;
         const auto published = publisher_->publish(publication);
         if (!published.success) {
             return fail(

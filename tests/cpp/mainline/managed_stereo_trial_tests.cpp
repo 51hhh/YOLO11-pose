@@ -147,6 +147,7 @@ void testManagedTrialOrdersStartupAndShutdown() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(
@@ -180,6 +181,7 @@ void testCameraStartFailureNeverStartsTrigger() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(
@@ -207,6 +209,7 @@ void testTriggerStartFailureStopsTriggerBeforeCamera() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(
@@ -238,6 +241,7 @@ void testFalseLifecycleStateIsRejected() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(
@@ -263,6 +267,7 @@ void testPrestartedHardwareIsNotTakenOver() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(
@@ -291,6 +296,7 @@ void testSourceFailureStillStopsHardwareInSafeOrder() {
         support::passingPreprocessor(),
         left,
         right,
+        support::passingObservationEstimator(),
         writer);
 
     const auto result = services::runManagedStereoTrial(

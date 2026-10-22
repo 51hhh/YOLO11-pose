@@ -33,6 +33,7 @@ struct CameraIdTag;
 struct ClockDomainIdTag;
 struct CoordinateFrameIdTag;
 struct PipelineIdTag;
+struct StereoDepthMethodIdTag;
 struct TrialIdTag;
 struct MappingIdTag;
 
@@ -40,6 +41,7 @@ using CameraId = StringId<CameraIdTag>;
 using ClockDomainId = StringId<ClockDomainIdTag>;
 using CoordinateFrameId = StringId<CoordinateFrameIdTag>;
 using PipelineId = StringId<PipelineIdTag>;
+using StereoDepthMethodId = StringId<StereoDepthMethodIdTag>;
 using TrialId = StringId<TrialIdTag>;
 using MappingId = StringId<MappingIdTag>;
 

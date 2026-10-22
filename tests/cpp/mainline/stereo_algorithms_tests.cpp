@@ -1,4 +1,5 @@
 #include "volleyball/algorithms/stereo/association.hpp"
+#include "volleyball/algorithms/stereo/rectified_center_estimator.hpp"
 #include "volleyball/algorithms/stereo/triangulation.hpp"
 
 #include "stereo_domain_fixtures.hpp"
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 
 namespace algorithms = volleyball::algorithms::stereo;
 namespace core = volleyball::core;
@@ -144,6 +146,41 @@ void testTriangulationConfigurationValidation() {
         "negative center uncertainty must fail config validation");
 }
 
+void testCenterEstimatorIsAnExplicitReferenceBackend() {
+    const ValidInputs inputs;
+    algorithms::RectifiedCenterEstimator estimator(
+        inputs.calibration, inputs.config);
+    const volleyball::ports::RectifiedStereoFrame rectified{};
+    const auto result = estimator.estimate({
+        rectified,
+        inputs.left,
+        inputs.right,
+        inputs.association,
+        7,
+    });
+    check(
+        result.status ==
+                volleyball::ports::DirectObservationStatus::observation &&
+            result.observation.has_value(),
+        "reference estimator must produce an observation for valid centers");
+    check(
+        result.evidence.method == core::StereoDepthMethodId{"detection_center"} &&
+            result.evidence.disparity_px == 50.0 &&
+            result.evidence.support_points == 1,
+        "reference estimator must identify its center-only evidence");
+
+    auto invalid = inputs.config;
+    invalid.center_sigma_px = -1.0;
+    bool rejected = false;
+    try {
+        algorithms::RectifiedCenterEstimator invalid_estimator(
+            inputs.calibration, invalid);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, "reference estimator must reject invalid static config");
+}
+
 }  // namespace
 
 int main() {
@@ -154,6 +191,7 @@ int main() {
     testInvalidAssociationConfigurationIsNotANoMatch();
     testAssociationRejectsExhaustedPairIdRange();
     testTriangulationConfigurationValidation();
+    testCenterEstimatorIsAnExplicitReferenceBackend();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

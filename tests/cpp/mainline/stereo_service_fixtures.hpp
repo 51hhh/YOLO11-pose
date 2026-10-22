@@ -1,5 +1,6 @@
 #pragma once
 
+#include "volleyball/algorithms/stereo/rectified_center_estimator.hpp"
 #include "volleyball/core/observation.hpp"
 #include "volleyball/ports/detector.hpp"
 #include "volleyball/ports/image_buffer.hpp"
@@ -162,6 +163,13 @@ inline StaticStereoPreprocessor& passingPreprocessor() {
     return preprocessor;
 }
 
+inline algorithms::stereo::RectifiedCenterEstimator&
+passingObservationEstimator() {
+    static algorithms::stereo::RectifiedCenterEstimator estimator(
+        calibration(), triangulationConfig());
+    return estimator;
+}
+
 class CollectingPublisher final : public ports::ObservationPublisher {
 public:
     [[nodiscard]] ports::PublishResult publish(
@@ -201,8 +209,6 @@ inline core::CameraFrameRecord frame(
 inline services::StereoObservationServiceConfig serviceConfig() {
     services::StereoObservationServiceConfig output;
     output.association = associationConfig();
-    output.calibration = calibration();
-    output.triangulation = triangulationConfig();
     output.gate.min_depth_m = 0.8;
     output.gate.max_depth_m = 20.0;
     output.gate.max_reprojection_error_px = 2.0;
