@@ -4,7 +4,7 @@
   "title": "Volleyball vision resolved runtime configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "rectification", "detector", "stereo", "tracking", "prediction", "recording", "publisher", "diagnostics"],
+  "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "tracking", "prediction", "recording", "publisher", "diagnostics"],
   "properties": {
     "schema_version": {"const": 1},
     "runtime": {
@@ -63,13 +63,28 @@
     },
     "calibration": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "file", "body_frame", "rig_frame", "world_frame"],
+      "required": ["id", "file", "format", "body_frame", "rig_frame", "world_frame"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "file": {"$ref": "#/$defs/path"},
+        "format": {"enum": ["opencv_yaml", "capture_v2_json"]},
         "body_frame": {"type": "string", "minLength": 1},
         "rig_frame": {"type": "string", "minLength": 1},
         "world_frame": {"type": "string", "minLength": 1}
+      }
+    },
+    "adapters": {
+      "type": "object", "additionalProperties": false,
+      "required": ["legacy_pipeline"],
+      "properties": {
+        "legacy_pipeline": {
+          "type": "object", "additionalProperties": false,
+          "required": ["executable", "base_config"],
+          "properties": {
+            "executable": {"$ref": "#/$defs/path"},
+            "base_config": {"$ref": "#/$defs/path"}
+          }
+        }
       }
     },
     "rectification": {
@@ -159,12 +174,14 @@
     },
     "recording": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "loss_policy", "atomic_publish", "verify_hashes"],
+      "required": ["enabled", "dataset_root", "schema_version", "raw_frames", "image_product", "image_format", "loss_policy", "atomic_publish", "verify_hashes"],
       "properties": {
         "enabled": {"type": "boolean"},
         "dataset_root": {"$ref": "#/$defs/path"},
         "schema_version": {"const": "2.1.0"},
         "raw_frames": {"enum": ["none", "selected", "all"]},
+        "image_product": {"enum": ["rectified_gray8"]},
+        "image_format": {"enum": ["pgm"]},
         "loss_policy": {"enum": ["fail_trial", "mark_dropped", "allow"]},
         "atomic_publish": {"const": true},
         "verify_hashes": {"type": "boolean"}

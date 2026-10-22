@@ -7,7 +7,8 @@ cameras:
   backend: hik_mvs
   sync:
     method: hardware_trigger
-    clock_domain: hik-device-clock
+    # 右目原始设备时间会按同步基线映射到左目设备时钟后再入契约。
+    clock_domain: hik-shared-device-clock
     trigger_source: Line0
     trigger_activation: RisingEdge
     estimated_error_ns: 100000.0

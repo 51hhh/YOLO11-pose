@@ -1,6 +1,7 @@
 calibration:
   id: vehicle-stereo-main
-  file: configs/calibration/vehicle-stereo-main.json
+  file: NX_volleyball/calibration/stereo_calib.yaml
+  format: opencv_yaml
   body_frame: base_link
   rig_frame: stereo_rig
   world_frame: world

@@ -45,10 +45,16 @@ cameras:
 
 calibration:
   id: vehicle-stereo-main
-  file: configs/calibration/vehicle-stereo-main.json
+  file: NX_volleyball/calibration/stereo_calib.yaml
+  format: opencv_yaml
   body_frame: base_link
   rig_frame: stereo_rig
   world_frame: world
+
+adapters:
+  legacy_pipeline:
+    executable: NX_volleyball/stereo_3d_pipeline/build/stereo_pipeline
+    base_config: NX_volleyball/stereo_3d_pipeline/config/pipeline_record_p0p1.yaml
 
 rectification:
   backend: opencv
@@ -105,6 +111,8 @@ recording:
   dataset_root: data/captures
   schema_version: 2.1.0
   raw_frames: none
+  image_product: rectified_gray8
+  image_format: pgm
   loss_policy: mark_dropped
   atomic_publish: true
   verify_hashes: true

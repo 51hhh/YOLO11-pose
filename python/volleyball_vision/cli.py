@@ -10,8 +10,12 @@ from typing import Sequence
 
 import yaml
 
+from .calibration import ensure_dataset_calibration
+from .capture import finalize_capture_stage, run_capture
 from .config import ConfigError, flatten, load_profile
 from .dataset import DatasetError, validate_dataset, validate_trial
+from .doctor import checks_as_dicts, run_doctor
+from .legacy_config import build_legacy_pipeline_config
 
 
 def _add_profile_arguments(parser: argparse.ArgumentParser) -> None:
@@ -68,6 +72,76 @@ def _config_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _config_render_legacy(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    payload = build_legacy_pipeline_config(config)
+    print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), end="")
+    print(f"# config_sha256: {config.fingerprint_sha256}", file=sys.stderr)
+    return 0
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    checks = run_doctor(config)
+    if args.json:
+        print(json.dumps(checks_as_dicts(checks), ensure_ascii=False, indent=2))
+    else:
+        for check in checks:
+            print(f"{check.status.upper():7s} {check.name}: {check.message}")
+    return 0 if all(check.ok for check in checks) else 3
+
+
+def _load_conditions(path: str | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    source = Path(path)
+    try:
+        value = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise DatasetError(f"conditions JSON 无效: {source}: {error}") from error
+    if not isinstance(value, dict):
+        raise DatasetError("conditions JSON 顶层必须是对象")
+    return value
+
+
+def _capture(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    checks = run_doctor(config)
+    errors = [check for check in checks if not check.ok]
+    if errors:
+        details = "\n".join(f"  - {check.name}: {check.message}" for check in errors)
+        raise DatasetError(f"采集前 doctor 未通过:\n{details}")
+    output = run_capture(
+        config,
+        trial_id=args.trial,
+        session_id=args.session,
+        ball_id=args.ball,
+        duration_s=args.duration,
+        conditions=_load_conditions(args.conditions),
+        notes=args.notes,
+        dataset_root=args.dataset_root,
+        keep_stage=args.keep_stage,
+        dry_run=args.dry_run,
+    )
+    label = "DRY_RUN stage" if args.dry_run else "OK trial"
+    print(f"{label}={output}")
+    return 0
+
+
+def _capture_finalize(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    output = finalize_capture_stage(args.stage, args.dataset_root, config)
+    print(f"OK trial={output}")
+    return 0
+
+
+def _calibrate_export(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    output = ensure_dataset_calibration(args.dataset_root, config)
+    print(f"OK calibration={output}")
+    return 0
+
+
 def _dataset_validate(args: argparse.Namespace) -> int:
     path = Path(args.path).resolve()
     verify_hashes = not args.no_verify_hashes
@@ -121,6 +195,47 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("left")
     diff.add_argument("right")
     diff.set_defaults(handler=_config_diff)
+
+    render_legacy = config_commands.add_parser(
+        "render-legacy", help="查看主线配置投影到旧 NX 适配器后的 YAML"
+    )
+    _add_profile_arguments(render_legacy)
+    render_legacy.set_defaults(handler=_config_render_legacy)
+
+    doctor = subparsers.add_parser("doctor", help="只读检查配置、模型、标定和运行环境")
+    _add_profile_arguments(doctor)
+    doctor.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    doctor.set_defaults(handler=_doctor)
+
+    capture = subparsers.add_parser("capture", help="执行无丢帧 v2.1 双目采集")
+    _add_profile_arguments(capture)
+    capture.add_argument("--trial", required=True, help="不可复用的 trial ID")
+    capture.add_argument("--session", required=True, help="采集 session ID")
+    capture.add_argument("--ball", required=True, help="实体排球 ID")
+    capture.add_argument("--duration", type=float, default=3.0, help="采集秒数，默认 3")
+    capture.add_argument("--conditions", help="球压、温湿度等 JSON 文件")
+    capture.add_argument("--notes", default="")
+    capture.add_argument("--dataset-root", help="覆盖 profile 中的数据集根目录")
+    capture.add_argument("--keep-stage", action="store_true", help="成功后仍保留中间文件")
+    capture.add_argument("--dry-run", action="store_true", help="只生成 staging 与旧管线配置")
+    capture.set_defaults(handler=_capture)
+
+    capture_finalize = subparsers.add_parser(
+        "capture-finalize", help="恢复并发布一次已完整结束的 staging"
+    )
+    _add_profile_arguments(capture_finalize)
+    capture_finalize.add_argument("--stage", required=True)
+    capture_finalize.add_argument("--dataset-root", required=True)
+    capture_finalize.set_defaults(handler=_capture_finalize)
+
+    calibrate = subparsers.add_parser("calibrate", help="标定格式转换与检查")
+    calibrate_commands = calibrate.add_subparsers(dest="calibrate_command", required=True)
+    calibrate_export = calibrate_commands.add_parser(
+        "export-contract", help="导出与校验 v2.1 校正相机标定"
+    )
+    _add_profile_arguments(calibrate_export)
+    calibrate_export.add_argument("--dataset-root", required=True)
+    calibrate_export.set_defaults(handler=_calibrate_export)
 
     dataset_parser = subparsers.add_parser("dataset", help="校验真实采集数据包")
     dataset_commands = dataset_parser.add_subparsers(dest="dataset_command", required=True)
