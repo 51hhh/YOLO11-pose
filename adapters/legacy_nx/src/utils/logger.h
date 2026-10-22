@@ -37,10 +37,10 @@ inline void logMsg(LogLevel level, const char* fmt, ...) {
     fputs(buf, stderr);
 }
 
-#define LOG_DEBUG(fmt, ...) stereo3d::logMsg(stereo3d::LogLevel::DEBUG, fmt, ##__VA_ARGS__)
-#define LOG_INFO(fmt, ...)  stereo3d::logMsg(stereo3d::LogLevel::INFO,  fmt, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...)  stereo3d::logMsg(stereo3d::LogLevel::WARN,  fmt, ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) stereo3d::logMsg(stereo3d::LogLevel::ERROR, fmt, ##__VA_ARGS__)
+#define LOG_DEBUG(...) stereo3d::logMsg(stereo3d::LogLevel::DEBUG, __VA_ARGS__)
+#define LOG_INFO(...)  stereo3d::logMsg(stereo3d::LogLevel::INFO,  __VA_ARGS__)
+#define LOG_WARN(...)  stereo3d::logMsg(stereo3d::LogLevel::WARN,  __VA_ARGS__)
+#define LOG_ERROR(...) stereo3d::logMsg(stereo3d::LogLevel::ERROR, __VA_ARGS__)
 
 }  // namespace stereo3d
 
