@@ -103,6 +103,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("src/detector_adapter.cpp", adapter_cmake)
         self.assertIn("volleyball::tensorrt_detector", adapter_cmake)
 
+    def test_nx_build_compiles_the_standalone_ros2_publisher(self) -> None:
+        legacy_cmake = (
+            ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        adapter_cmake = (
+            ROOT / "adapters" / "ros2" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("VOLLEYBALL_BUILD_ROS2_ADAPTER ON", legacy_cmake)
+        self.assertIn("volleyball::ros2_publisher", legacy_cmake)
+        self.assertIn("src/observation_publisher.cpp", adapter_cmake)
+        self.assertIn("ament_target_dependencies", adapter_cmake)
+
     def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
         gpio_cmake = (
             ROOT / "adapters" / "gpio" / "CMakeLists.txt"

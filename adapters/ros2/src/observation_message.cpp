@@ -51,6 +51,13 @@ bool sameOptionalResidual(
 
 }  // namespace
 
+bool isValid(const ObservationMessageConfig& config) noexcept {
+    return !config.header_frame_id.empty() &&
+           !config.ros_time_clock_domain.empty() &&
+           !config.primary_depth_method.empty() && config.source_epoch != 0 &&
+           config.class_id >= 0;
+}
+
 std::optional<std::uint8_t> legacyDepthMethodCode(
     const core::StereoDepthMethodId& method) noexcept {
     const std::string_view value = method.value();
@@ -70,10 +77,7 @@ std::optional<std::uint8_t> legacyDepthMethodCode(
 ObservationMessageResult makeObservationMessage(
     const ports::ObservationPublication& publication,
     const ObservationMessageConfig& config) {
-    if (config.header_frame_id.empty() ||
-        config.ros_time_clock_domain.empty() ||
-        config.primary_depth_method.empty() || config.source_epoch == 0 ||
-        config.class_id < 0) {
+    if (!isValid(config)) {
         return failure(
             ObservationMessageError::invalid_config,
             "ROS observation mapping config is incomplete");

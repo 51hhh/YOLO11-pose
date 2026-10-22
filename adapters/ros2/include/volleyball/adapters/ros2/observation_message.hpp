@@ -19,6 +19,9 @@ struct ObservationMessageConfig {
     std::int32_t class_id{0};
 };
 
+[[nodiscard]] bool isValid(
+    const ObservationMessageConfig& config) noexcept;
+
 struct ObservationMessage {
     std::int32_t stamp_sec{0};
     std::uint32_t stamp_nanosec{0};

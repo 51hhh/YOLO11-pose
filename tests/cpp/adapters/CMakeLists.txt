@@ -105,3 +105,17 @@ add_adapter_test(
 target_link_libraries(
   ros2_observation_message_tests PRIVATE volleyball::ros2_mapping
 )
+
+add_adapter_test(
+  ros2_observation_publisher_tests
+  ros2_observation_publisher_tests.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/ros2/src/observation_publisher.cpp
+)
+target_include_directories(
+  ros2_observation_publisher_tests BEFORE PRIVATE
+  ${PROJECT_SOURCE_DIR}/tests/cpp/fakes/ros2
+  ${PROJECT_SOURCE_DIR}/adapters/ros2/include
+)
+target_link_libraries(
+  ros2_observation_publisher_tests PRIVATE volleyball::ros2_mapping
+)

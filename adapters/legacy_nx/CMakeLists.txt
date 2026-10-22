@@ -33,6 +33,14 @@ if(NOT EXISTS
     "Mainline tensorrt adapter not found next to legacy_nx: "
     "${VOLLEYBALL_TENSORRT_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_ROS2_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ros2")
+if(NOT EXISTS
+   "${VOLLEYBALL_ROS2_ADAPTER_DIR}/include/volleyball/adapters/ros2/observation_publisher.hpp")
+  message(FATAL_ERROR
+    "Mainline ROS2 adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_ROS2_ADAPTER_DIR}")
+endif()
 set(VOLLEYBALL_LOGGING_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/logging")
 if(NOT EXISTS
@@ -72,6 +80,12 @@ if(ament_cmake_FOUND)
   set(USE_ROS2 ON)
   find_package(rclcpp REQUIRED)
   find_package(volleyball_interfaces REQUIRED)
+  set(VOLLEYBALL_BUILD_ROS2_ADAPTER ON CACHE BOOL "" FORCE)
+  add_subdirectory(
+    "${VOLLEYBALL_ROS2_ADAPTER_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}/mainline_ros2"
+    EXCLUDE_FROM_ALL
+  )
   message(STATUS "ROS2: ament_cmake found, ROS2 support enabled")
 else()
   if(REQUIRE_ROS2)
@@ -416,6 +430,7 @@ endif()
 
 # ROS2 链接
 if(USE_ROS2)
+  target_link_libraries(stereo_pipeline volleyball::ros2_publisher)
   ament_target_dependencies(stereo_pipeline rclcpp volleyball_interfaces)
   target_compile_definitions(stereo_pipeline PRIVATE HAS_ROS2)
 endif()
