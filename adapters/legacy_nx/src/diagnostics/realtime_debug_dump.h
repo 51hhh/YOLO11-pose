@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../pipeline/pipeline.h"
+#include "../pipeline/pipeline_callbacks.h"
 
 #include <vpi/Image.h>
 #include <opencv2/core.hpp>
@@ -48,8 +48,8 @@ private:
     bool reserveSlot();
     void releaseReservedSlot(bool enqueue, RealtimeDebugDumpJob* job);
     static bool copyGray(VPIImage img, cv::Mat& out);
-    void writeJob(const RealtimeDebugDumpJob& job);
-    void writerLoop();
+    bool writeJob(const RealtimeDebugDumpJob& job);
+    void writerLoop() noexcept;
 
     RealtimeDebugDumpConfig cfg_;
     std::atomic<bool> running_{false};

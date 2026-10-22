@@ -11,8 +11,14 @@ RealtimeDebugDumper::~RealtimeDebugDumper() {
 }
 
 void RealtimeDebugDumper::init(const RealtimeDebugDumpConfig& cfg) {
+    close();
     cfg_ = cfg;
     if (!cfg_.enabled) return;
+    captured_count_ = 0;
+    saved_count_ = 0;
+    dropped_count_ = 0;
+    reserved_count_ = 0;
+    queue_.clear();
     namespace fs = std::filesystem;
     std::error_code ec;
     fs::create_directories(cfg_.output_dir, ec);
@@ -23,7 +29,20 @@ void RealtimeDebugDumper::init(const RealtimeDebugDumpConfig& cfg) {
         return;
     }
     running_ = true;
-    writer_ = std::thread(&RealtimeDebugDumper::writerLoop, this);
+    try {
+        writer_ = std::thread(&RealtimeDebugDumper::writerLoop, this);
+    } catch (const std::exception& error) {
+        running_ = false;
+        cfg_.enabled = false;
+        LOG_WARN("RealtimeDebugDumper: failed to start writer: %s",
+                 error.what());
+        return;
+    } catch (...) {
+        running_ = false;
+        cfg_.enabled = false;
+        LOG_WARN("RealtimeDebugDumper: unknown failure starting writer");
+        return;
+    }
     LOG_INFO("RealtimeDebugDumper: output=%s stride=%d max_frames=%d",
              cfg_.output_dir.c_str(), cfg_.stride, cfg_.max_frames);
 }
@@ -90,6 +109,7 @@ void RealtimeDebugDumper::close() {
 
 bool RealtimeDebugDumper::reserveSlot() {
     std::lock_guard<std::mutex> lock(mtx_);
+    if (!running_) return false;
     const int reserved = reserved_count_;
     if (cfg_.max_frames > 0 &&
         captured_count_.load() + reserved >= cfg_.max_frames) {
@@ -109,9 +129,11 @@ void RealtimeDebugDumper::releaseReservedSlot(bool enqueue,
                                               RealtimeDebugDumpJob* job) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (reserved_count_ > 0) --reserved_count_;
-    if (enqueue && job) {
+    if (enqueue && job && running_) {
         queue_.push_back(std::move(*job));
         ++captured_count_;
+    } else if (enqueue && job) {
+        ++dropped_count_;
     }
 }
 

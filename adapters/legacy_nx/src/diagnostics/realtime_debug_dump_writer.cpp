@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <locale>
 #include <sstream>
 
 namespace {
@@ -177,10 +178,11 @@ cv::Mat makeDetectionPanel(const RealtimeDebugDumpJob& job) {
     return panel;
 }
 
-void writeSummaryJson(const RealtimeDebugDumpJob& job,
+bool writeSummaryJson(const RealtimeDebugDumpJob& job,
                       const std::filesystem::path& path) {
     std::ofstream out(path.string());
-    if (!out.is_open()) return;
+    if (!out.is_open()) return false;
+    out.imbue(std::locale::classic());
     out << "{\n";
     out << "  \"frame_id\": " << job.frame_id << ",\n";
     out << "  \"fps\": " << job.fps << ",\n";
@@ -222,11 +224,13 @@ void writeSummaryJson(const RealtimeDebugDumpJob& job,
     }
     out << "  ]\n";
     out << "}\n";
+    out.flush();
+    return static_cast<bool>(out);
 }
 
 }  // namespace
 
-void RealtimeDebugDumper::writeJob(const RealtimeDebugDumpJob& job) {
+bool RealtimeDebugDumper::writeJob(const RealtimeDebugDumpJob& job) {
     namespace fs = std::filesystem;
     std::ostringstream prefix;
     prefix << "frame_" << std::setw(6) << std::setfill('0') << job.frame_id;
@@ -242,26 +246,52 @@ void RealtimeDebugDumper::writeJob(const RealtimeDebugDumpJob& job) {
     } else {
         panel = makeDetectionPanel(job);
     }
-    cv::imwrite((root / (prefix.str() + "_zoom.png")).string(), panel);
-    writeSummaryJson(job, root / (prefix.str() + "_summary.json"));
-    ++saved_count_;
+    const bool image_written =
+        cv::imwrite((root / (prefix.str() + "_zoom.png")).string(), panel);
+    const bool summary_written =
+        writeSummaryJson(job, root / (prefix.str() + "_summary.json"));
+    return image_written && summary_written;
 }
 
-void RealtimeDebugDumper::writerLoop() {
-    while (true) {
-        RealtimeDebugDumpJob job;
-        {
-            std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait(lock, [this] { return !queue_.empty() || !running_; });
-            if (!running_ && queue_.empty()) break;
-            job = std::move(queue_.front());
-            queue_.pop_front();
+void RealtimeDebugDumper::writerLoop() noexcept {
+    try {
+        while (true) {
+            RealtimeDebugDumpJob job;
+            {
+                std::unique_lock<std::mutex> lock(mtx_);
+                cv_.wait(lock, [this] { return !queue_.empty() || !running_; });
+                if (!running_ && queue_.empty()) break;
+                job = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            try {
+                if (writeJob(job)) {
+                    ++saved_count_;
+                } else {
+                    ++dropped_count_;
+                    LOG_WARN("RealtimeDebugDumper: incomplete artifact frame=%d",
+                             job.frame_id);
+                }
+            } catch (const std::exception& error) {
+                ++dropped_count_;
+                LOG_WARN("RealtimeDebugDumper: write failed frame=%d: %s",
+                         job.frame_id, error.what());
+            } catch (...) {
+                ++dropped_count_;
+                LOG_WARN("RealtimeDebugDumper: unknown write failure frame=%d",
+                         job.frame_id);
+            }
         }
-        try {
-            writeJob(job);
-        } catch (const cv::Exception& e) {
-            LOG_WARN("RealtimeDebugDumper: write failed frame=%d: %s",
-                     job.frame_id, e.what());
-        }
+    } catch (const std::exception& error) {
+        running_ = false;
+        ++dropped_count_;
+        LOG_WARN("RealtimeDebugDumper: writer stopped after exception: %s",
+                 error.what());
+        cv_.notify_all();
+    } catch (...) {
+        running_ = false;
+        ++dropped_count_;
+        LOG_WARN("RealtimeDebugDumper: writer stopped after unknown exception");
+        cv_.notify_all();
     }
 }
