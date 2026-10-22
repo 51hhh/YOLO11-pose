@@ -22,6 +22,13 @@ FORBIDDEN_HARDWARE_INCLUDES = re.compile(
     r"MvCameraControl|gpiod|yaml-cpp)",
     re.IGNORECASE | re.MULTILINE,
 )
+FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS = re.compile(
+    r"(?:"
+    r"(?:buffer\.pitch\.)?planes?\s*\[[^\]]+\]"
+    r"|\b[a-zA-Z_]\w*plane\w*"
+    r")\s*\.\s*(?:data|pBase|offsetBytes)\b",
+    re.IGNORECASE,
+)
 
 
 def _git(*arguments: str) -> str:
@@ -83,6 +90,29 @@ def main() -> int:
         errors.append(
             "纯核心/算法/服务层禁止直接依赖硬件 SDK:\n    "
             + "\n    ".join(dependency_violations)
+        )
+
+    vpi_plane_access_violations: list[str] = []
+    legacy_source_root = ROOT / "NX_volleyball/stereo_3d_pipeline/src"
+    vpi_adapter = legacy_source_root / "utils/vpi_plane_access.h"
+    if legacy_source_root.exists():
+        for path in legacy_source_root.rglob("*"):
+            if path.suffix not in {
+                ".h", ".hpp", ".cc", ".cpp", ".cxx", ".cu"
+            }:
+                continue
+            if path == vpi_adapter:
+                continue
+            text = path.read_text(encoding="utf-8")
+            match = FORBIDDEN_DIRECT_VPI_PLANE_ADDRESS.search(text)
+            if match:
+                vpi_plane_access_violations.append(
+                    f"{path.relative_to(ROOT)}: {match.group(0)}"
+                )
+    if vpi_plane_access_violations:
+        errors.append(
+            "VPI pitch-linear 地址只能经 vpi_plane_access.h 访问:\n    "
+            + "\n    ".join(vpi_plane_access_violations)
         )
 
     if errors:

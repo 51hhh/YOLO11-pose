@@ -84,6 +84,23 @@ target_compile_options(async_grab_state_tests PRIVATE
 )
 add_test(NAME async_grab_state_tests COMMAND async_grab_state_tests)
 
+foreach(VPI_FAKE_MAJOR IN ITEMS 3 4)
+  set(VPI_PLANE_TEST_TARGET vpi${VPI_FAKE_MAJOR}_plane_access_tests)
+  add_executable(${VPI_PLANE_TEST_TARGET}
+    vpi_plane_access_tests.cpp
+  )
+  target_include_directories(${VPI_PLANE_TEST_TARGET} BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/vpi${VPI_FAKE_MAJOR}
+    ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+  )
+  target_compile_features(${VPI_PLANE_TEST_TARGET} PRIVATE cxx_std_17)
+  target_compile_options(${VPI_PLANE_TEST_TARGET} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+  )
+  add_test(NAME ${VPI_PLANE_TEST_TARGET}
+           COMMAND ${VPI_PLANE_TEST_TARGET})
+endforeach()
+
 add_executable(trt_engine_contract_tests
   trt_engine_contract_tests.cpp
   ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/detect/trt_engine_contract.cpp

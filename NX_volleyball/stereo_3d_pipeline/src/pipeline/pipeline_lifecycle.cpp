@@ -1,6 +1,7 @@
 #include "pipeline.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_plane_access.h"
 
 #include <cstdint>
 #include <chrono>
@@ -277,8 +278,8 @@ void Pipeline::grabLoop() {
         bool ok = false;
         if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
             ok = camera_->grabFramePair(
-                static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
-                static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+                vpiPlaneData(imgDataL.buffer.pitch.planes[0]),
+                vpiPlaneData(imgDataR.buffer.pitch.planes[0]),
                 imgDataL.buffer.pitch.planes[0].pitchBytes,
                 imgDataR.buffer.pitch.planes[0].pitchBytes,
                 1000, resL, resR);

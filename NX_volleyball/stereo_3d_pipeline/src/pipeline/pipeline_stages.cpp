@@ -1,6 +1,7 @@
 #include "pipeline.h"
 #include "pipeline_roi_match_helpers.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_plane_access.h"
 
 #include <vpi/algo/ConvertImageFormat.h>
 
@@ -38,8 +39,8 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
         bool grab_ok = false;
         if (stL == VPI_SUCCESS && stR == VPI_SUCCESS) {
             grab_ok = camera_->grabFramePair(
-                static_cast<uint8_t*>(imgDataL.buffer.pitch.planes[0].data),
-                static_cast<uint8_t*>(imgDataR.buffer.pitch.planes[0].data),
+                vpiPlaneData(imgDataL.buffer.pitch.planes[0]),
+                vpiPlaneData(imgDataR.buffer.pitch.planes[0]),
                 imgDataL.buffer.pitch.planes[0].pitchBytes,
                 imgDataR.buffer.pitch.planes[0].pitchBytes,
                 1000, resL, resR);
@@ -397,8 +398,8 @@ bool Pipeline::stage3_fuse(FrameSlot& slot, int slot_index) {
         return false;
     }
 
-    const int16_t* disp_ptr = static_cast<const int16_t*>(
-        dispData.buffer.pitch.planes[0].data);
+    const int16_t* disp_ptr = reinterpret_cast<const int16_t*>(
+        vpiPlaneData(dispData.buffer.pitch.planes[0]));
     int disp_pitch = dispData.buffer.pitch.planes[0].pitchBytes;
     if (!disp_ptr || disp_pitch <= 0) {
         LOG_ERROR("stage3_fuse: invalid disparity CUDA view "

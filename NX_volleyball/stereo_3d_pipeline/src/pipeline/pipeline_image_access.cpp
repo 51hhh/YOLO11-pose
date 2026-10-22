@@ -9,6 +9,7 @@
 
 #include "pipeline.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_plane_access.h"
 
 namespace stereo3d {
 namespace {
@@ -46,7 +47,7 @@ bool lockCudaView(FrameSlot& slot,
         return false;
     }
 
-    view.data = data.buffer.pitch.planes[0].data;
+    view.data = vpiPlaneData(data.buffer.pitch.planes[0]);
     view.pitchBytes = data.buffer.pitch.planes[0].pitchBytes;
     view.locked = true;
     view.locked_frame_id = slot.frame_id;

@@ -24,7 +24,7 @@ VPI remap 已经在 CUDA backend 上提交，也不代表左右 TensorRT 真正�
 - `hik_mvs_runtime`：检查 MVS 开发头与 `libMvCameraControl`；
 - `cuda_runtime`：检查 CUDA 根目录和 GPU 设备节点；
 - `tensorrt_sdk`：检查 `NvInfer.h`、`libnvinfer` 和 `libnvinfer_plugin`；
-- `vpi_sdk`：兼容 `/opt/nvidia/vpi2`、`vpi3`、`vpi4` 等目录，检查头文件和 `libnvvpi`；
+- `vpi_sdk`：发现 `/opt/nvidia/vpi2`、`vpi3`、`vpi4` 等目录中的头文件和 `libnvvpi`；这只证明 SDK 文件齐全，不等于当前源代码已用该具体版本完整编译；
 - `opencv_sdk`：检查旧工程 CMake 强制要求的 core、imgproc、features2d、
   calib3d、highgui、imgcodecs、cudastereo、cudaimgproc、cudafilters；
 - `legacy_linkage`：拒绝任何 `not found`，并确认当前二进制确实链接 MVS、
@@ -53,6 +53,11 @@ volleyball doctor --profile free-flight
 当前主线的 VPI remap/Gray 转换选择 CUDA backend；双路 YOLO 使用两个
 TensorRT detector 和各自 CUDA stream；ROI 候选集合由最终 profile 投影确定。
 这些代码路径事实仍需用 L4 证据确认目标机没有初始化失败、自动降级或被配置关闭。
+
+源码通过 `vpi_plane_access.h` 适配 VPI 2/3 的 `plane.data` 与 VPI 4 的
+`plane.pBase + offsetBytes`，并由仓库审计禁止绕过该边界。这个适配只解决
+pitch-linear 地址布局差异；`doctor` 的 L2 成功不能代替用目标机实际 VPI 版本
+完成 CMake configure、编译、链接和短帧运行。
 
 ## 推荐的目标机验收顺序
 

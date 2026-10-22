@@ -3,6 +3,7 @@
 #include "calibration/stereo_calibration.h"
 #include "stereo_depth_viewer_depth_utils.h"
 #include "utils/logger.h"
+#include "utils/vpi_plane_access.h"
 
 #include <vpi/Image.h>
 #include <vpi/Stream.h>
@@ -199,7 +200,7 @@ static bool uploadToVPI(VPIImage vpiImg, const cv::Mat& mat) {
     int h = mat.rows;
     int w = mat.cols;
     int dstPitch = data.buffer.pitch.planes[0].pitchBytes;
-    uint8_t* dst = reinterpret_cast<uint8_t*>(data.buffer.pitch.planes[0].data);
+    uint8_t* dst = stereo3d::vpiPlaneData(data.buffer.pitch.planes[0]);
     for (int y = 0; y < h; ++y) {
         memcpy(dst + y * dstPitch, mat.ptr(y), w * mat.elemSize());
     }
@@ -221,7 +222,8 @@ static cv::Mat downloadFromVPI(VPIImage vpiImg, int cvType) {
     int w = data.buffer.pitch.planes[0].width;
     int h = data.buffer.pitch.planes[0].height;
     int pitch = data.buffer.pitch.planes[0].pitchBytes;
-    uint8_t* src = reinterpret_cast<uint8_t*>(data.buffer.pitch.planes[0].data);
+    const uint8_t* src = stereo3d::vpiPlaneData(
+        data.buffer.pitch.planes[0]);
 
     cv::Mat mat(h, w, cvType);
     for (int y = 0; y < h; ++y) {

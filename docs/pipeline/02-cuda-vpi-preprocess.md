@@ -45,6 +45,8 @@ Stage 0 对每个 VPI lock/unlock、submit 和 stream sync 检查返回状态；
 
 VPI 图像以 CPU、CUDA、PVA、VIC 可访问标志创建。CUDA 地址按使用区间通过 `vpiImageLockData(...CUDA_PITCH_LINEAR...)` 获取，匹配的 `vpiImageUnlock()` 返回后立即清空，不跨帧缓存。
 
+VPI 2/3 的 pitch-linear 平面地址字段是 `data`，VPI 4 改为 `pBase + offsetBytes`。所有 raw、rectified、disparity、实验候选和 viewer 地址访问统一经过 `vpi_plane_access.h`；仓库审计拒绝在其他源文件中直接访问这些字段。该适配已用 VPI 3/4 结构头桩分别做编译和偏移语义测试，真实 SDK 的完整构建仍属于目标 NX 门禁。
+
 ## VPI/CUDA 图像锁契约
 
 NVIDIA 的 Image API 明确规定：`vpiImageLockData()` 返回的 buffer 只在图像保持 lock 时有效；图像可以有多个相容的 read lock，但每次 lock 都必须有一次 unlock。图像被外部 lock 时，VPI stream 不能对它执行不相容访问，否则会得到 `VPI_ERROR_BUFFER_LOCKED`。当前边界是：

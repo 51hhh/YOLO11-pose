@@ -110,6 +110,7 @@ GPU 浮点/算法版本可能导致微小差异，回归应按字段设置容差
 - async ROI 在真实球速与检测密度下的截止线分布；
 - TNR 路径的 Bayer 语义和视觉效果；当前关闭，不属于验收通过项。
 - 本次开发环境和已授权 A800 主机均无 VPI/JetPack，因而 CUDA/VPI/TensorRT 目标源的最终编译与上述故障注入仍必须在 Orin NX 完成。
+- VPI 3/4 的平面地址适配已用最小头桩通过严格编译和偏移测试，但这不是实际 VPI SDK ABI/API 构建证据；目标机报告必须记录 `NV_VPI_VERSION_STRING`、CMake configure 和完整链接结果。
 
 ## 执行命令
 

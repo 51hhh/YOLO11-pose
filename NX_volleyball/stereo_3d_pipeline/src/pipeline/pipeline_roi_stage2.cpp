@@ -4,6 +4,7 @@
 #include "pipeline_roi_match_helpers.h"
 #include "../stereo/neural_feature_matcher.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_plane_access.h"
 
 #include <algorithm>
 #include <chrono>
@@ -533,11 +534,11 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
             NVTX_RANGE_POP();
             return;
         } else {
-            input.left_cpu = static_cast<const uint8_t*>(
-                hostDataL.buffer.pitch.planes[0].data);
+            input.left_cpu = vpiPlaneData(
+                hostDataL.buffer.pitch.planes[0]);
             input.left_cpu_pitch = hostDataL.buffer.pitch.planes[0].pitchBytes;
-            input.right_cpu = static_cast<const uint8_t*>(
-                hostDataR.buffer.pitch.planes[0].data);
+            input.right_cpu = vpiPlaneData(
+                hostDataR.buffer.pitch.planes[0]);
             input.right_cpu_pitch = hostDataR.buffer.pitch.planes[0].pitchBytes;
         }
     }

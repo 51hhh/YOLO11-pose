@@ -3,6 +3,7 @@
 #include "roi_feature_match_common.h"
 #include "roi_feature_match_gpu_reduce.h"
 #include "../utils/logger.h"
+#include "../utils/vpi_plane_access.h"
 
 #include <cuda.h>
 
@@ -124,7 +125,8 @@ VPIImageData makeCudaPitchImageData(const uint8_t* ptr,
     data.buffer.pitch.planes[0].width = width;
     data.buffer.pitch.planes[0].height = height;
     data.buffer.pitch.planes[0].pitchBytes = pitch;
-    data.buffer.pitch.planes[0].data = const_cast<uint8_t*>(ptr);
+    setVpiPlaneData(data.buffer.pitch.planes[0],
+                    const_cast<uint8_t*>(ptr));
     return data;
 }
 
@@ -233,8 +235,8 @@ bool findVpiCudaScorePeak(VPIImage score,
     const int out_w = score_data.buffer.pitch.planes[0].width;
     const int out_h = score_data.buffer.pitch.planes[0].height;
     const int pitch = score_data.buffer.pitch.planes[0].pitchBytes;
-    const auto* score_gpu = static_cast<const float*>(
-        score_data.buffer.pitch.planes[0].data);
+    const auto* score_gpu = reinterpret_cast<const float*>(
+        vpiPlaneData(score_data.buffer.pitch.planes[0]));
 
     thread_local CudaTemplatePeakScratch scratch;
     bool ok = false;
@@ -275,8 +277,7 @@ void setScoreDebugPatchFromVpiImage(SparseFeatureDisparityResult& result,
     const int score_w = score_data.buffer.pitch.planes[0].width;
     const int score_h = score_data.buffer.pitch.planes[0].height;
     const int pitch = score_data.buffer.pitch.planes[0].pitchBytes;
-    const auto* base = static_cast<const uint8_t*>(
-        score_data.buffer.pitch.planes[0].data);
+    const auto* base = vpiPlaneData(score_data.buffer.pitch.planes[0]);
     if (!base || score_w <= 0 || score_h <= 0 || pitch <= 0) {
         vpiImageUnlock(score);
         return;
@@ -1985,10 +1986,8 @@ SparseFeatureDisparityResult matchVpiStereoDisparityGPU(
         result.low_confidence = true;
         return result;
     }
-    const auto* disp_base = static_cast<const uint8_t*>(
-        disp_data.buffer.pitch.planes[0].data);
-    const auto* conf_base = static_cast<const uint8_t*>(
-        conf_data.buffer.pitch.planes[0].data);
+    const auto* disp_base = vpiPlaneData(disp_data.buffer.pitch.planes[0]);
+    const auto* conf_base = vpiPlaneData(conf_data.buffer.pitch.planes[0]);
     const int disp_pitch = disp_data.buffer.pitch.planes[0].pitchBytes;
     const int conf_pitch = conf_data.buffer.pitch.planes[0].pitchBytes;
     std::vector<RobustMatchSample> samples;

@@ -69,6 +69,7 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 | CUDA/VPI stream | `src/pipeline/sync.h` |
 | VPI 图像的短期 CUDA view 锁边界 | `src/pipeline/pipeline_image_access.cpp` |
 | VPI 图像同步复制到 CPU 的统一锁边界 | `src/utils/vpi_image_copy.*` |
+| VPI 2/3 与 VPI 4 平面地址适配 | `src/utils/vpi_plane_access.h` |
 | Stage 0/1/全帧 Stage 2 | `src/pipeline/pipeline_stages.cpp` |
 | ROI 模式调度 | `src/pipeline/pipeline_loops.cpp` |
 | 异步 ROI 快照与 worker | `src/pipeline/pipeline_async_roi.cpp` |
