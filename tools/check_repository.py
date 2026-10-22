@@ -49,6 +49,8 @@ ALLOWED_HARDWARE_TOOL_FILES = {
     "adapters/legacy_nx/tools/capture_chessboard/args.cpp",
     "adapters/legacy_nx/tools/capture_chessboard/args.h",
     "adapters/legacy_nx/tools/capture_chessboard/main.cpp",
+    "adapters/legacy_nx/tools/capture_chessboard/output.cpp",
+    "adapters/legacy_nx/tools/capture_chessboard/output.h",
     "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.cpp",
     "adapters/legacy_nx/tools/hik_frame_metadata_probe/args.h",
     "adapters/legacy_nx/tools/hik_frame_metadata_probe/main.cpp",

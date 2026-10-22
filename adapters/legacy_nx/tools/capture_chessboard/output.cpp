@@ -1,0 +1,226 @@
+#include "output.h"
+
+#include <cerrno>
+#include <cstring>
+#include <exception>
+#include <ostream>
+#include <system_error>
+
+#if defined(__linux__)
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
+namespace capture_chessboard {
+namespace {
+
+std::filesystem::path partialPath(const std::filesystem::path& final_path) {
+    return final_path.parent_path() /
+           (final_path.stem().string() + ".partial" +
+            final_path.extension().string());
+}
+
+bool pathExists(
+    const std::filesystem::path& path,
+    bool& exists,
+    std::string& error_message) {
+    std::error_code error;
+    exists = std::filesystem::exists(path, error);
+    if (!error) return true;
+    error_message = "无法检查输出路径 " + path.string() + ": " +
+                    error.message();
+    return false;
+}
+
+void removeIfPresent(
+    const std::filesystem::path& path,
+    std::string* cleanup_error = nullptr) {
+    std::error_code error;
+    (void)std::filesystem::remove(path, error);
+    if (error && cleanup_error != nullptr && cleanup_error->empty()) {
+        *cleanup_error = "无法清理 " + path.string() + ": " +
+                         error.message();
+    }
+}
+
+void appendCleanupError(
+    std::string& error_message,
+    const std::string& cleanup_error) {
+    if (cleanup_error.empty()) return;
+    if (!error_message.empty()) error_message += "; ";
+    error_message += cleanup_error;
+}
+
+bool publishNoReplace(
+    const std::filesystem::path& temporary_path,
+    const std::filesystem::path& final_path,
+    std::string& error_message) {
+#if defined(__linux__) && defined(SYS_renameat2) && defined(RENAME_NOREPLACE)
+    if (::syscall(
+            SYS_renameat2,
+            AT_FDCWD,
+            temporary_path.c_str(),
+            AT_FDCWD,
+            final_path.c_str(),
+            RENAME_NOREPLACE) == 0) {
+        return true;
+    }
+    error_message = "无法无覆盖发布 " + final_path.string() + ": " +
+                    std::strerror(errno);
+    return false;
+#else
+    // 非 Linux 构建使用同目录硬链接保持“目标已存在即失败”的原子语义。
+    std::error_code error;
+    std::filesystem::create_hard_link(temporary_path, final_path, error);
+    if (error) {
+        error_message = "无法无覆盖发布 " + final_path.string() + ": " +
+                        error.message();
+        return false;
+    }
+    error.clear();
+    const bool removed = std::filesystem::remove(temporary_path, error);
+    if (!removed || error) {
+        std::error_code rollback_error;
+        (void)std::filesystem::remove(final_path, rollback_error);
+        error_message = "发布后无法移除临时文件 " +
+                        temporary_path.string();
+        return false;
+    }
+    return true;
+#endif
+}
+
+}  // namespace
+
+SyncInfo makeSyncInfo(
+    const stereo3d::GrabResult& left,
+    const stereo3d::GrabResult& right) {
+    SyncInfo sync;
+    sync.frame_number_delta =
+        static_cast<std::int64_t>(left.frame_number) -
+        static_cast<std::int64_t>(right.frame_number);
+    sync.frame_counter_delta =
+        static_cast<std::int64_t>(left.frame_counter) -
+        static_cast<std::int64_t>(right.frame_counter);
+    sync.trigger_delta =
+        static_cast<std::int64_t>(left.trigger_index) -
+        static_cast<std::int64_t>(right.trigger_index);
+    sync.timestamp_delta_ns =
+        static_cast<std::int64_t>(left.timestamp_us) -
+        static_cast<std::int64_t>(right.timestamp_us);
+    return sync;
+}
+
+bool writeMetadataHeader(std::ostream& metadata) {
+    metadata << "pair,file,left_frame_number,right_frame_number,"
+             << "left_frame_counter,right_frame_counter,"
+             << "left_trigger_index,right_trigger_index,"
+             << "left_timestamp_ns,right_timestamp_ns,"
+             << "frame_number_delta,frame_counter_delta,"
+             << "trigger_delta,timestamp_delta_ns\n";
+    metadata.flush();
+    return metadata.good();
+}
+
+bool writeMetadataRow(
+    std::ostream& metadata,
+    int pair_index,
+    const std::string& file_name,
+    const stereo3d::GrabResult& left,
+    const stereo3d::GrabResult& right,
+    const SyncInfo& sync) {
+    metadata << pair_index << ',' << file_name << ','
+             << left.frame_number << ',' << right.frame_number << ','
+             << left.frame_counter << ',' << right.frame_counter << ','
+             << left.trigger_index << ',' << right.trigger_index << ','
+             << left.timestamp_us << ',' << right.timestamp_us << ','
+             << sync.frame_number_delta << ',' << sync.frame_counter_delta << ','
+             << sync.trigger_delta << ',' << sync.timestamp_delta_ns << '\n';
+    metadata.flush();
+    return metadata.good();
+}
+
+bool publishPair(
+    const std::filesystem::path& final_left,
+    const std::filesystem::path& final_right,
+    const PairFileWriter& write_left,
+    const PairFileWriter& write_right,
+    const MetadataCommit& commit_metadata,
+    std::string& error_message) {
+    error_message.clear();
+    if (!write_left || !write_right || !commit_metadata) {
+        error_message = "成对输出回调不能为空";
+        return false;
+    }
+    if (final_left.empty() || final_right.empty() ||
+        final_left == final_right) {
+        error_message = "左右输出路径必须非空且不同";
+        return false;
+    }
+
+    const auto partial_left = partialPath(final_left);
+    const auto partial_right = partialPath(final_right);
+    for (const auto& path : {
+             final_left, final_right, partial_left, partial_right}) {
+        bool exists = false;
+        if (!pathExists(path, exists, error_message)) return false;
+        if (exists) {
+            error_message = "拒绝覆盖已有输出: " + path.string();
+            return false;
+        }
+    }
+
+    try {
+        if (!write_left(partial_left) || !write_right(partial_right)) {
+            error_message = "图片编码器未完成左右成对写入";
+            removeIfPresent(partial_left);
+            removeIfPresent(partial_right);
+            return false;
+        }
+    } catch (const std::exception& error) {
+        error_message = "图片编码异常: " + std::string(error.what());
+        removeIfPresent(partial_left);
+        removeIfPresent(partial_right);
+        return false;
+    } catch (...) {
+        error_message = "图片编码发生未知异常";
+        removeIfPresent(partial_left);
+        removeIfPresent(partial_right);
+        return false;
+    }
+
+    if (!publishNoReplace(partial_left, final_left, error_message)) {
+        removeIfPresent(partial_left);
+        removeIfPresent(partial_right);
+        return false;
+    }
+    if (!publishNoReplace(partial_right, final_right, error_message)) {
+        std::string cleanup_error;
+        removeIfPresent(final_left, &cleanup_error);
+        removeIfPresent(partial_right, &cleanup_error);
+        appendCleanupError(error_message, cleanup_error);
+        return false;
+    }
+
+    bool metadata_ok = false;
+    try {
+        metadata_ok = commit_metadata();
+    } catch (const std::exception& error) {
+        error_message = "metadata 提交异常: " + std::string(error.what());
+    } catch (...) {
+        error_message = "metadata 提交发生未知异常";
+    }
+    if (!metadata_ok) {
+        if (error_message.empty()) error_message = "metadata 提交失败";
+        std::string cleanup_error;
+        removeIfPresent(final_left, &cleanup_error);
+        removeIfPresent(final_right, &cleanup_error);
+        appendCleanupError(error_message, cleanup_error);
+        return false;
+    }
+    return true;
+}
+
+}  // namespace capture_chessboard

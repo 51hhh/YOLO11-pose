@@ -356,6 +356,7 @@ if(HIK_FOUND)
   add_executable(capture_chessboard
     tools/capture_chessboard/main.cpp
     tools/capture_chessboard/args.cpp
+    tools/capture_chessboard/output.cpp
     src/capture/hikvision_camera.cpp
     src/capture/pwm_trigger.cpp
   )

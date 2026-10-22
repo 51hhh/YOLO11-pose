@@ -124,6 +124,16 @@ target_include_directories(
 )
 
 add_legacy_nx_test(
+  capture_chessboard_output_tests
+  capture_chessboard_output_tests.cpp
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/capture_chessboard/output.cpp
+)
+target_include_directories(
+  capture_chessboard_output_tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
+)
+
+add_legacy_nx_test(
   stereo_calibrate_args_tests
   stereo_calibrate_args_tests.cpp
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx/tools/stereo_calibrate/args.cpp

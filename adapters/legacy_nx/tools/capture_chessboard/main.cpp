@@ -15,6 +15,7 @@
  */
 
 #include "args.h"
+#include "output.h"
 #include "capture/pwm_trigger.h"
 #include "capture/hikvision_camera.h"
 
@@ -40,53 +41,6 @@ static constexpr unsigned int GUI_GRAB_TIMEOUT_MS = 40;
 static constexpr unsigned int HEADLESS_GRAB_TIMEOUT_MS = 1000;
 static std::atomic<bool> g_quit{false};
 static void sigHandler(int) { g_quit.store(true); }
-
-struct SyncInfo {
-    int64_t frame_number_delta = 0;
-    int64_t frame_counter_delta = 0;
-    int64_t trigger_delta = 0;
-    int64_t timestamp_delta_ns = 0;
-};
-
-static SyncInfo makeSyncInfo(const stereo3d::GrabResult& resL,
-                             const stereo3d::GrabResult& resR) {
-    SyncInfo sync;
-    sync.frame_number_delta =
-        static_cast<int64_t>(resL.frame_number) -
-        static_cast<int64_t>(resR.frame_number);
-    sync.frame_counter_delta =
-        static_cast<int64_t>(resL.frame_counter) -
-        static_cast<int64_t>(resR.frame_counter);
-    sync.trigger_delta =
-        static_cast<int64_t>(resL.trigger_index) -
-        static_cast<int64_t>(resR.trigger_index);
-    sync.timestamp_delta_ns =
-        static_cast<int64_t>(resL.timestamp_us) -
-        static_cast<int64_t>(resR.timestamp_us);
-    return sync;
-}
-
-static void writeMetadataHeader(std::ofstream& metadata) {
-    metadata << "pair,file,left_frame_number,right_frame_number,"
-             << "left_frame_counter,right_frame_counter,left_trigger_index,right_trigger_index,"
-             << "left_timestamp_ns,right_timestamp_ns,frame_number_delta,frame_counter_delta,"
-             << "trigger_delta,timestamp_delta_ns\n";
-}
-
-static void writeMetadataRow(std::ofstream& metadata,
-                             int pair_index,
-                             const std::string& file_name,
-                             const stereo3d::GrabResult& resL,
-                             const stereo3d::GrabResult& resR,
-                             const SyncInfo& sync) {
-    metadata << pair_index << "," << file_name << ","
-             << resL.frame_number << "," << resR.frame_number << ","
-             << resL.frame_counter << "," << resR.frame_counter << ","
-             << resL.trigger_index << "," << resR.trigger_index << ","
-             << resL.timestamp_us << "," << resR.timestamp_us << ","
-             << sync.frame_number_delta << "," << sync.frame_counter_delta << ","
-             << sync.trigger_delta << "," << sync.timestamp_delta_ns << "\n";
-}
 
 static void drawStatus(cv::Mat& image,
                        int capture_count,
@@ -214,7 +168,16 @@ int main(int argc, char* argv[]) {
         camera.close();
         return 1;
     }
-    writeMetadataHeader(metadata);
+    if (!capture_chessboard::writeMetadataHeader(metadata)) {
+        fprintf(stderr, "[ERROR] Failed to write metadata header: %s\n",
+                metadata_path.string().c_str());
+        if (pwm) pwm->stop();
+        camera.stopGrabbing();
+        camera.close();
+        return 1;
+    }
+
+    bool runtime_failed = false;
 
     printf("==================================================\n");
     printf("Stereo Image Capture\n");
@@ -312,46 +275,42 @@ int main(int argc, char* argv[]) {
 
             char name[32];
             snprintf(name, sizeof(name), "%04d.png", captureCount);
-            std::string pathL = (fs::path(args.output_dir) / "left"  / name).string();
-            std::string pathR = (fs::path(args.output_dir) / "right" / name).string();
-            std::error_code file_error;
-            const bool left_exists = fs::exists(pathL, file_error);
-            if (file_error) {
-                fprintf(stderr,
-                        "\n[ERROR] Cannot inspect output path %s: %s\n",
-                        pathL.c_str(), file_error.message().c_str());
-                break;
-            }
-            const bool right_exists = fs::exists(pathR, file_error);
-            if (file_error) {
-                fprintf(stderr,
-                        "\n[ERROR] Cannot inspect output path %s: %s\n",
-                        pathR.c_str(), file_error.message().c_str());
-                break;
-            }
-            if (left_exists || right_exists) {
-                fprintf(stderr,
-                        "\n[ERROR] Refusing to overwrite existing pair %s\n",
-                        name);
-                break;
-            }
-            const SyncInfo sync = makeSyncInfo(resL, resR);
+            const fs::path pathL = left_dir / name;
+            const fs::path pathR = right_dir / name;
+            const capture_chessboard::SyncInfo sync =
+                capture_chessboard::makeSyncInfo(resL, resR);
 
             cv::Mat bayerSaveL(H, W, CV_8UC1, bufL.data());
             cv::Mat bayerSaveR(H, W, CV_8UC1, bufR.data());
             cv::Mat saveBgrL, saveBgrR;
             cv::cvtColor(bayerSaveL, saveBgrL, cv::COLOR_BayerBG2BGR);
             cv::cvtColor(bayerSaveR, saveBgrR, cv::COLOR_BayerBG2BGR);
-            const bool wroteL = cv::imwrite(pathL, saveBgrL);
-            const bool wroteR = cv::imwrite(pathR, saveBgrR);
-            if (!wroteL || !wroteR) {
-                fprintf(stderr, "\n[ERROR] Failed to save pair %s (left=%d right=%d)\n",
-                        name, wroteL ? 1 : 0, wroteR ? 1 : 0);
+            std::string publish_error;
+            const bool published = capture_chessboard::publishPair(
+                pathL,
+                pathR,
+                [&](const fs::path& path) {
+                    return cv::imwrite(path.string(), saveBgrL);
+                },
+                [&](const fs::path& path) {
+                    return cv::imwrite(path.string(), saveBgrR);
+                },
+                [&]() {
+                    return capture_chessboard::writeMetadataRow(
+                        metadata,
+                        captureCount,
+                        name,
+                        resL,
+                        resR,
+                        sync);
+                },
+                publish_error);
+            if (!published) {
+                fprintf(stderr, "\n[ERROR] Failed to save pair %s: %s\n",
+                        name, publish_error.c_str());
+                runtime_failed = true;
                 break;
             }
-
-            writeMetadataRow(metadata, captureCount, name, resL, resR, sync);
-            metadata.flush();
 
             captureCount++;
             lastCapture = now;
@@ -382,5 +341,12 @@ int main(int argc, char* argv[]) {
                args.output_dir.c_str());
     }
 
-    return 0;
+    if (args.auto_count > 0 && captureCount != args.auto_count) {
+        fprintf(stderr,
+                "[ERROR] Auto capture incomplete: requested=%d saved=%d\n",
+                args.auto_count,
+                captureCount);
+        runtime_failed = true;
+    }
+    return runtime_failed ? 1 : 0;
 }
