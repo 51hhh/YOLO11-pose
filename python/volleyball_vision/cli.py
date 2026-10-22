@@ -11,6 +11,7 @@ from typing import Sequence
 import yaml
 
 from .config import ConfigError, flatten, load_profile
+from .dataset import DatasetError, validate_dataset, validate_trial
 
 
 def _add_profile_arguments(parser: argparse.ArgumentParser) -> None:
@@ -67,6 +68,35 @@ def _config_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dataset_validate(args: argparse.Namespace) -> int:
+    path = Path(args.path).resolve()
+    verify_hashes = not args.no_verify_hashes
+    if (path / "metadata.json").is_file():
+        summary = validate_trial(path, verify_hashes=verify_hashes)
+        print(
+            f"OK trial={summary.trial_id} "
+            f"rows={sum(summary.table_rows.values())} raw_files={summary.raw_files}"
+        )
+        return 0
+    summary = validate_dataset(path, verify_hashes=verify_hashes)
+    print(
+        f"OK dataset={summary.root} calibrations={summary.calibrations} "
+        f"trials={len(summary.trials)}"
+    )
+    for trial in summary.trials:
+        print(
+            f"  {trial.trial_id}: rows={sum(trial.table_rows.values())} "
+            f"raw_files={trial.raw_files}"
+        )
+    if summary.partial_directories:
+        print(
+            "  WARNING unpublished partial directories: "
+            + ", ".join(summary.partial_directories),
+            file=sys.stderr,
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="volleyball")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -91,6 +121,17 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("left")
     diff.add_argument("right")
     diff.set_defaults(handler=_config_diff)
+
+    dataset_parser = subparsers.add_parser("dataset", help="校验真实采集数据包")
+    dataset_commands = dataset_parser.add_subparsers(dest="dataset_command", required=True)
+    dataset_validate = dataset_commands.add_parser("validate", help="校验数据集或单个 trial")
+    dataset_validate.add_argument("path")
+    dataset_validate.add_argument(
+        "--no-verify-hashes",
+        action="store_true",
+        help="只在快速诊断时跳过原始文件 SHA-256",
+    )
+    dataset_validate.set_defaults(handler=_dataset_validate)
     return parser
 
 
@@ -98,7 +139,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         return int(args.handler(args))
-    except ConfigError as error:
-        print(f"CONFIG_ERROR: {error}", file=sys.stderr)
+    except (ConfigError, DatasetError) as error:
+        prefix = "CONFIG_ERROR" if isinstance(error, ConfigError) else "DATASET_ERROR"
+        print(f"{prefix}: {error}", file=sys.stderr)
         return 2
 
