@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,17 @@ def build_mainline_pipeline_config(
         raise ConfigError("原生主线必须保存全部关联尝试")
     if not triangulation["propagate_covariance"]:
         raise ConfigError("原生主线必须传播直接观测协方差")
+    sync_error_ns = sync["estimated_error_ns"]
+    if (
+        isinstance(sync_error_ns, bool)
+        or not isinstance(sync_error_ns, (int, float))
+        or not math.isfinite(sync_error_ns)
+        or sync_error_ns < 0
+        or not float(sync_error_ns).is_integer()
+    ):
+        raise ConfigError(
+            "原生主线要求 cameras.sync.estimated_error_ns 为非负整数纳秒"
+        )
 
     model, artifact = resolve_model(config, project_root=root)
     calibration_file = (root / config.data["calibration"]["file"]).resolve()
@@ -179,7 +191,7 @@ def build_mainline_pipeline_config(
             "dla_core": 0,
         },
         "association": {
-            "max_capture_delta_ns": sync["estimated_error_ns"],
+            "max_capture_delta_ns": int(sync_error_ns),
             "epipolar_tolerance_px": association["epipolar_tolerance_px"],
             "adaptive_epipolar_height_ratio": association[
                 "adaptive_epipolar_height_ratio"

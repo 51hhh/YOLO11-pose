@@ -30,6 +30,8 @@ class MainlineConfigTests(unittest.TestCase):
         self.assertTrue(payload["publisher"]["enabled"])
         self.assertTrue(Path(payload["calibration"]["file"]).is_absolute())
         self.assertTrue(Path(payload["detector"]["engine_file"]).is_absolute())
+        self.assertIsInstance(payload["association"]["max_capture_delta_ns"], int)
+        self.assertEqual(payload["association"]["max_capture_delta_ns"], 100_000)
         self.assertEqual(
             payload["depth"]["method_order"],
             [
@@ -76,6 +78,15 @@ class MainlineConfigTests(unittest.TestCase):
             ),
         )
         with self.assertRaisesRegex(ConfigError, "尚不支持"):
+            build_mainline_pipeline_config(profile, project_root=ROOT)
+
+    def test_projection_rejects_fractional_sync_error_ns(self) -> None:
+        profile = load_profile(
+            "nx-rdk",
+            project_root=ROOT,
+            overrides=("cameras.sync.estimated_error_ns=100000.5",),
+        )
+        with self.assertRaisesRegex(ConfigError, "非负整数纳秒"):
             build_mainline_pipeline_config(profile, project_root=ROOT)
 
     def test_writer_is_exclusive_and_round_trips_yaml(self) -> None:
