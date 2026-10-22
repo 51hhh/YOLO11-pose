@@ -1,5 +1,7 @@
 #include "capture_v21_stage_recorder.h"
 
+#include "capture_v21_stage_schema.h"
+
 #include "logger.h"
 #include "vpi_image_copy.h"
 #include "../stereo/depth_match_contract.h"
@@ -10,13 +12,12 @@
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+#include <locale>
 #include <sstream>
 #include <utility>
 
 namespace stereo3d {
 namespace {
-
-constexpr int kStageSchemaVersion = 4;
 
 std::uint64_t realtimeNowNs() {
     return static_cast<std::uint64_t>(
@@ -112,25 +113,17 @@ bool CaptureV21StageRecorder::init(
         cfg_.enabled = false;
         return false;
     }
-    frames_file_
-        << "frame_id,host_capture_timestamp_ns,callback_timestamp_ns,"
-           "left_receive_monotonic_ns,right_receive_monotonic_ns,"
-           "left_receive_realtime_ns,right_receive_realtime_ns,"
-           "left_sdk_host_timestamp_raw,right_sdk_host_timestamp_raw,"
-           "left_device_timestamp_ns,right_device_timestamp_ns,"
-           "stereo_timestamp_residual_ns,trigger_sequence,"
-           "trigger_scheduled_monotonic_ns,trigger_edge_monotonic_ns,"
-           "trigger_edge_realtime_ns,trigger_write_uncertainty_ns,"
-           "left_frame_number,right_frame_number,"
-           "left_frame_counter,right_frame_counter,left_trigger_index,"
-           "right_trigger_index,raw_left,raw_right\n";
-    detections_file_
-        << "frame_id,camera_role,candidate_id,cx_px,cy_px,width_px,height_px,"
-           "confidence,class_id,selected\n";
-    pairs_file_
-        << "pair_id,frame_id,left_candidate_id,right_candidate_id,disparity_px,"
-           "epipolar_error_px,pair_score,semantic_confidence,x_rig_m,y_rig_m,"
-           "z_rig_m,accepted,reject_reason\n";
+    frames_file_.imbue(std::locale::classic());
+    detections_file_.imbue(std::locale::classic());
+    pairs_file_.imbue(std::locale::classic());
+    writeCaptureV21FrameHeader(frames_file_);
+    writeCaptureV21DetectionHeader(detections_file_);
+    writeCaptureV21PairHeader(pairs_file_);
+    if (!frames_file_ || !detections_file_ || !pairs_file_) {
+        LOG_ERROR("CaptureV21: failed to write staging CSV headers");
+        cfg_.enabled = false;
+        return false;
+    }
 
     queue_.clear();
     fatal_error_.clear();
@@ -359,31 +352,46 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
             return false;
         }
     }
-    frames_file_
-        << frame.frame_id << ','
-        << frame.metadata.host_capture_timestamp_ns << ','
-        << frame.callback_timestamp_ns << ','
-        << frame.metadata.left_receive_monotonic_ns << ','
-        << frame.metadata.right_receive_monotonic_ns << ','
-        << frame.metadata.left_receive_realtime_ns << ','
-        << frame.metadata.right_receive_realtime_ns << ','
-        << frame.metadata.left_sdk_host_timestamp_raw << ','
-        << frame.metadata.right_sdk_host_timestamp_raw << ','
-        << frame.metadata.left_device_timestamp_ns << ','
-        << frame.metadata.right_device_timestamp_ns << ','
-        << frame.metadata.stereo_timestamp_residual_ns << ','
-        << frame.metadata.trigger_sequence << ','
-        << frame.metadata.trigger_scheduled_monotonic_ns << ','
-        << frame.metadata.trigger_edge_monotonic_ns << ','
-        << frame.metadata.trigger_edge_realtime_ns << ','
-        << frame.metadata.trigger_write_uncertainty_ns << ','
-        << frame.metadata.left_frame_number << ','
-        << frame.metadata.right_frame_number << ','
-        << frame.metadata.left_frame_counter << ','
-        << frame.metadata.right_frame_counter << ','
-        << frame.metadata.left_trigger_index << ','
-        << frame.metadata.right_trigger_index << ','
-        << left_raw << ',' << right_raw << '\n';
+    CaptureV21FrameRow frame_row;
+    frame_row.frame_id = frame.frame_id;
+    frame_row.host_capture_timestamp_ns =
+        frame.metadata.host_capture_timestamp_ns;
+    frame_row.callback_timestamp_ns = frame.callback_timestamp_ns;
+    frame_row.left_receive_monotonic_ns =
+        frame.metadata.left_receive_monotonic_ns;
+    frame_row.right_receive_monotonic_ns =
+        frame.metadata.right_receive_monotonic_ns;
+    frame_row.left_receive_realtime_ns =
+        frame.metadata.left_receive_realtime_ns;
+    frame_row.right_receive_realtime_ns =
+        frame.metadata.right_receive_realtime_ns;
+    frame_row.left_sdk_host_timestamp_raw =
+        frame.metadata.left_sdk_host_timestamp_raw;
+    frame_row.right_sdk_host_timestamp_raw =
+        frame.metadata.right_sdk_host_timestamp_raw;
+    frame_row.left_device_timestamp_ns = frame.metadata.left_device_timestamp_ns;
+    frame_row.right_device_timestamp_ns =
+        frame.metadata.right_device_timestamp_ns;
+    frame_row.stereo_timestamp_residual_ns =
+        frame.metadata.stereo_timestamp_residual_ns;
+    frame_row.trigger_sequence = frame.metadata.trigger_sequence;
+    frame_row.trigger_scheduled_monotonic_ns =
+        frame.metadata.trigger_scheduled_monotonic_ns;
+    frame_row.trigger_edge_monotonic_ns =
+        frame.metadata.trigger_edge_monotonic_ns;
+    frame_row.trigger_edge_realtime_ns =
+        frame.metadata.trigger_edge_realtime_ns;
+    frame_row.trigger_write_uncertainty_ns =
+        frame.metadata.trigger_write_uncertainty_ns;
+    frame_row.left_frame_number = frame.metadata.left_frame_number;
+    frame_row.right_frame_number = frame.metadata.right_frame_number;
+    frame_row.left_frame_counter = frame.metadata.left_frame_counter;
+    frame_row.right_frame_counter = frame.metadata.right_frame_counter;
+    frame_row.left_trigger_index = frame.metadata.left_trigger_index;
+    frame_row.right_trigger_index = frame.metadata.right_trigger_index;
+    frame_row.raw_left = std::move(left_raw);
+    frame_row.raw_right = std::move(right_raw);
+    if (!writeCaptureV21FrameRow(frames_file_, frame_row)) return false;
 
     const auto accepted_index =
         selectSingleBallObservationPair(frame.pair_attempts);
@@ -399,17 +407,27 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
                                 const std::vector<bool>& selected) {
         for (std::size_t index = 0; index < candidates.size(); ++index) {
             const auto& detection = candidates[index];
-            detections_file_
-                << frame.frame_id << ',' << role << ',' << index << ','
-                << std::setprecision(9)
-                << detection.cx << ',' << detection.cy << ','
-                << detection.width << ',' << detection.height << ','
-                << detection.confidence << ',' << detection.class_id << ','
-                << (selected[index] ? "true" : "false") << '\n';
+            CaptureV21DetectionRow row;
+            row.frame_id = frame.frame_id;
+            row.camera_role = role;
+            row.candidate_id = index;
+            row.cx_px = detection.cx;
+            row.cy_px = detection.cy;
+            row.width_px = detection.width;
+            row.height_px = detection.height;
+            row.confidence = detection.confidence;
+            row.class_id = detection.class_id;
+            row.selected = selected[index];
+            if (!writeCaptureV21DetectionRow(detections_file_, row)) {
+                return false;
+            }
         }
+        return true;
     };
-    write_detections("left", frame.candidates_left, selected_left);
-    write_detections("right", frame.candidates_right, selected_right);
+    if (!write_detections("left", frame.candidates_left, selected_left) ||
+        !write_detections("right", frame.candidates_right, selected_right)) {
+        return false;
+    }
 
     for (std::size_t index = 0; index < frame.pair_attempts.size(); ++index) {
         const auto& attempt = frame.pair_attempts[index];
@@ -421,22 +439,23 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
         if (!accepted && reason == StereoRoiPairRejectReason::NONE) {
             reason = StereoRoiPairRejectReason::DEPTH_REJECTED;
         }
-        pairs_file_
-            << next_pair_id_++ << ',' << frame.frame_id << ','
-            << attempt.pair.left_index << ',' << attempt.pair.right_index << ','
-            << std::setprecision(9)
-            << attempt.pair.initial_disparity << ','
-            << attempt.pair.epipolar_dy << ','
-            << attempt.pair.score << ','
-            << attempt.pair.semantic_confidence << ',';
+        CaptureV21PairRow row;
+        row.pair_id = next_pair_id_++;
+        row.frame_id = frame.frame_id;
+        row.left_candidate_id = attempt.pair.left_index;
+        row.right_candidate_id = attempt.pair.right_index;
+        row.disparity_px = attempt.pair.initial_disparity;
+        row.epipolar_error_px = attempt.pair.epipolar_dy;
+        row.pair_score = attempt.pair.score;
+        row.semantic_confidence = attempt.pair.semantic_confidence;
+        row.accepted = accepted;
         if (accepted) {
-            pairs_file_ << attempt.x_rig_m << ',' << attempt.y_rig_m << ','
-                        << attempt.z_rig_m << ",true,";
+            row.position_rig_m = std::array<float, 3>{
+                attempt.x_rig_m, attempt.y_rig_m, attempt.z_rig_m};
         } else {
-            pairs_file_ << ",,,false,"
-                        << stereoRoiPairRejectReasonName(reason);
+            row.reject_reason = stereoRoiPairRejectReasonName(reason);
         }
-        pairs_file_ << '\n';
+        if (!writeCaptureV21PairRow(pairs_file_, row)) return false;
     }
     frames_file_.flush();
     detections_file_.flush();
@@ -459,7 +478,8 @@ void CaptureV21StageRecorder::writeStatus() {
         std::ios::out | std::ios::trunc);
     if (!status) return;
     status << "{\n"
-           << "  \"stage_schema_version\": " << kStageSchemaVersion << ",\n"
+           << "  \"stage_schema_version\": "
+           << kCaptureV21StageSchemaVersion << ",\n"
            << "  \"complete\": " << (complete ? "true" : "false") << ",\n"
            << "  \"fatal_error\": \"" << jsonEscape(fatal) << "\",\n"
            << "  \"frames_captured\": " << captured_frames_.load() << ",\n"

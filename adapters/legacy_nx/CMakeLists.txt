@@ -240,6 +240,7 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth_track.cpp
   src/fusion/trajectory_predictor.cpp
   src/fusion/trajectory_predictor_fit.cpp
+  src/utils/capture_v21_stage_schema.cpp
   src/utils/capture_v21_stage_recorder.cpp
   src/utils/vpi_image_copy.cpp
   src/track/nanotrack_trt.cpp

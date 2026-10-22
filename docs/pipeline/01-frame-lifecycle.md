@@ -138,5 +138,6 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - 运行/失败/清理状态：`src/pipeline/pipeline_run_state.h`
 - 四阶段循环：`src/pipeline/pipeline_loops.cpp`
 - 异步槽位快照：`src/pipeline/pipeline_async_roi.cpp`
-- 采集深拷贝：`src/utils/capture_v21_stage_recorder.cpp`
+- 采集深拷贝、队列和收尾：`src/utils/capture_v21_stage_recorder.cpp`
+- 可在主机验证的 staging CSV 合同：`src/utils/capture_v21_stage_schema.*`
 
