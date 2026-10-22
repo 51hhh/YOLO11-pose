@@ -9,6 +9,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <type_traits>
 
 namespace {
 
@@ -38,6 +39,10 @@ bool unstable_timestamp_offset = false;
 bool fail_next_left_grab = false;
 float frame_exposure_us = 9867.0F;
 int failures = 0;
+
+static_assert(std::is_base_of_v<
+              volleyball::ports::ManagedCameraSource,
+              hik_mvs::HikStereoCameraSource>);
 
 void check(bool condition, const char* message) {
     if (!condition) {

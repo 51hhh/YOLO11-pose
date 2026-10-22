@@ -6,6 +6,7 @@
 #pragma once
 
 #include "volleyball/adapters/gpio/trigger_events.hpp"
+#include "volleyball/ports/trigger_controller.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -28,7 +29,7 @@ namespace volleyball::adapters::gpio {
  * MONOTONIC/REALTIME 两个时钟域中的观测时间。默认对应 Orin NX 的
  * gpiochip2 line 7。
  */
-class PWMTrigger {
+class PWMTrigger final : public ports::TriggerController {
 public:
     PWMTrigger(
         const std::string& chip_name = "gpiochip2",
@@ -41,13 +42,14 @@ public:
     PWMTrigger& operator=(const PWMTrigger&) = delete;
 
     bool start();
-    void stop();
+    [[nodiscard]] bool start(std::string& error) override;
+    void stop() noexcept override;
 
     /** 返回频率和占空比能否表示为非零的整数纳秒高、低电平。 */
     [[nodiscard]] static bool isTimingValid(
         double frequency,
         double duty_cycle) noexcept;
-    [[nodiscard]] bool isRunning() const;
+    [[nodiscard]] bool isRunning() const noexcept override;
     [[nodiscard]] bool eventForSequence(
         std::uint64_t sequence,
         PWMTriggerEdgeEvent& event) const;

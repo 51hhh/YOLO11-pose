@@ -18,7 +18,10 @@ target_compile_features(volleyball_gpio PUBLIC cxx_std_17)
 target_compile_options(volleyball_gpio PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
-target_link_libraries(volleyball_gpio PUBLIC Threads::Threads)
+target_link_libraries(volleyball_gpio PUBLIC
+  Threads::Threads
+  volleyball::ports
+)
 
 if(VOLLEYBALL_GPIO_WITH_GPIOD)
   find_path(VOLLEYBALL_GPIOD_INCLUDE_DIR gpiod.h REQUIRED)

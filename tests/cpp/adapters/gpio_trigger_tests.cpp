@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -14,6 +15,10 @@ void check(bool condition, const char* message) {
         std::cerr << "FAILED: " << message << '\n';
     }
 }
+
+static_assert(std::is_base_of_v<
+              volleyball::ports::TriggerController,
+              volleyball::adapters::gpio::PWMTrigger>);
 
 volleyball::adapters::gpio::PWMTriggerEdgeEvent event(std::uint64_t sequence) {
     return {

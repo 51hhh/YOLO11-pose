@@ -42,7 +42,7 @@ struct HikStereoCameraSourceConfig {
 
 // 把海康双目 SDK 帧适配为平台无关 CameraSource。相机必须先 start()，
 // 调用方随后启动 GPIO，再把本对象交给 StereoPipelineRunner。
-class HikStereoCameraSource final : public ports::CameraSource {
+class HikStereoCameraSource final : public ports::ManagedCameraSource {
 public:
     HikStereoCameraSource(
         HikStereoCameraSourceConfig config,
@@ -52,9 +52,9 @@ public:
     HikStereoCameraSource(const HikStereoCameraSource&) = delete;
     HikStereoCameraSource& operator=(const HikStereoCameraSource&) = delete;
 
-    [[nodiscard]] bool start(std::string& error);
-    void stop() noexcept;
-    [[nodiscard]] bool isStarted() const noexcept;
+    [[nodiscard]] bool start(std::string& error) override;
+    void stop() noexcept override;
+    [[nodiscard]] bool isStarted() const noexcept override;
     [[nodiscard]] ports::SourceResult next() override;
 
 private:

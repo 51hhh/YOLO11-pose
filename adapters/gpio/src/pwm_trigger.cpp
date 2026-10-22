@@ -66,7 +66,16 @@ bool PWMTrigger::start() {
     return false;
 }
 
-void PWMTrigger::stop() {
+bool PWMTrigger::start(std::string& error) {
+    error.clear();
+    if (start()) {
+        return true;
+    }
+    error = "cannot start the configured GPIO trigger";
+    return false;
+}
+
+void PWMTrigger::stop() noexcept {
     running_.store(false);
     if (thread_.joinable()) thread_.join();
 
@@ -89,7 +98,7 @@ void PWMTrigger::stop() {
     }
 }
 
-bool PWMTrigger::isRunning() const {
+bool PWMTrigger::isRunning() const noexcept {
     return running_.load();
 }
 
