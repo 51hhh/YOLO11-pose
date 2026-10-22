@@ -15,6 +15,11 @@
 `detection_center`，只用于主机测试和回放几何基线，任何声明 `roi_multi_point` 的实机
 profile 都必须注入后续迁出的 ROI/CUDA 实现。
 
+成功估计的证据与 3D 组成 `EstimatedDirectObservation`，由 `TrialWriter` 原子接收。
+主线 v6 的 `observations_v6.csv` 保存实际方法、精化视差、标准差和支持点数；最终 v2.1
+accepted pair 使用该精化视差。检测中心初始视差不会丢失，而是保留在
+`raw/audit/associations_v6.csv`，因此两种误差可以离线分别统计。
+
 ## 当前有效算法层级
 
 最终投影会启用多种候选，但它们的作用不同：

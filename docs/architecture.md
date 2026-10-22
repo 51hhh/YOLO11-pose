@@ -49,7 +49,7 @@ NX GPIO 上升沿 ────────┐
 
 `StereoObservationService` 负责一次双目观测用例：先校验并保存原始配对帧，再调用 `StereoPreprocessor` 生成与来源帧强绑定的校正 BGR/Gray 图，之后调用两侧检测器、保存全部候选并枚举全部配对尝试。最终选中的 2D 配对连同校正图传给 `DirectObservationEstimator`，服务只接受与观测 ID、pair ID、曝光中点和重投影语义一致的直接 3D，再写入或发布。预处理输出若交换帧身份、改变尺寸、缺少图像或使用错误像素格式，整次 trial 会明确失败；原始 Bayer 事实仍留在未发布 staging 中供排障。任何必需写入失败同样会使本次 trial 失败。
 
-2D 关联里的 `disparity_px` 是检测中心形成的门控证据，ROI 估计器返回的精化视差是另一条事实，二者不得相互覆盖。`DirectObservationEvidence` 因而独立携带实际方法、精化视差、视差离散度和支持点数。估计器返回 `rejected` 表示合法的算法无测量，配对会以 `triangulation_failure` 保存；返回 `failed` 表示 CUDA、图像访问或其他基础设施故障，整个 trial 必须中止，不能降级成一次普通漏检。
+2D 关联里的 `disparity_px` 是检测中心形成的门控证据，ROI 估计器返回的精化视差是另一条事实，二者不得相互覆盖。`DirectObservationEvidence` 因而独立携带实际方法、精化视差、视差离散度和支持点数，并与 `TriangulatedObservation` 组合成不可拆开的 `EstimatedDirectObservation` 交给写入器。主线 v6 staging 会保存这组证据；发布 v2.1 时 accepted pair 使用精化视差，初始门控视差仍在原始审计表中。估计器返回 `rejected` 表示合法的算法无测量，配对会以 `triangulation_failure` 保存；返回 `failed` 表示 CUDA、图像访问或其他基础设施故障，整个 trial 必须中止，不能降级成一次普通漏检。
 
 `StereoPipelineRunner` 负责一个 trial 的平台无关生命周期。它从 `CameraSource` 逐项读取配对帧，把帧交给 `StereoObservationService`，并区分正常流结束、可容忍的连续超时、超时越限、数据源错误和源协议错误。只有 `end_of_stream` 能触发 `finalize`；其他终止路径统一 `abort`，同一 runner 不能运行第二次。相机线程、SDK 句柄、GPU 缓冲和 detector 资源仍属于 adapter，runner 不接管硬件所有权，也不是实机可执行入口。
 

@@ -19,7 +19,7 @@ python3 tools/check_repository.py
 git diff --check
 ```
 
-通过条件：全部命令返回 0；配置指纹稳定；C++ v5 表头与 Python 镜像契约一致；v5 staging 能发布并通过独立 v2.1 校验；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序和断裂的候选—配对—观测关系都被拒绝。
+通过条件：全部命令返回 0；配置指纹稳定；C++ v6 表头与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；实际深度方法必须来自冻结配置，accepted pair 使用精化测量视差而不是初始门控视差；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序和断裂的候选—配对—观测关系都被拒绝。
 
 ## B. NX 构建与只读自检
 

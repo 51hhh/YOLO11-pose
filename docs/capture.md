@@ -51,15 +51,23 @@ GPIO 上升沿，则该帧不发布；不得退回 USB 到达时刻、SDK 主机
 
 ## 数据包
 
-最终对外格式固定为 v2.1.0。内部暂存目前有两个明确版本：
+最终对外格式固定为 v2.1.0。内部暂存目前有两个可发布版本：
 
 - v4：当前 `volleyball capture` 调用旧 NX 管线产生的聚合行格式；
-- v5：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试和直接观测的格式。
+- v6：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试、直接观测及其实际深度方法证据的格式。
 
-v5 使用 `frames_v5.csv`、`detections_v5.csv`、`associations_v5.csv`、
-`observations_v5.csv` 与最后写入的 `status_v5.json`。任一表仍有 `.partial`、状态计数
-不一致、原图集合不一致或跨表引用不闭合时，finalizer 必须拒绝。v4/v5 只在
-staging 内兼容，均不能绕过校验直接冒充正式 trial。
+v6 使用 `frames_v6.csv`、`detections_v6.csv`、`associations_v6.csv`、
+`observations_v6.csv` 与最后写入的 `status_v6.json`。`observations_v6.csv` 额外保存
+`depth_method`、`measurement_disparity_px`、`disparity_stddev_px` 和
+`support_points`；方法必须属于冻结配置的候选集合，测量视差必须为正。任一表仍有
+`.partial`、状态计数不一致、原图集合不一致或跨表引用不闭合时，finalizer 必须拒绝。
+v4/v6 只在 staging 内兼容，均不能绕过校验直接冒充正式 trial。
+
+`associations_v6.csv:disparity_px` 保留检测中心形成的初始 2D 配对门控视差；它不等于
+ROI 多点等算法最终用于 3D 的精化视差。发布 v2.1 时，accepted pair 的
+`stereo_pairs.csv:disparity_px` 使用 `measurement_disparity_px`，初始值随完整 v6 表归档在
+`raw/audit/`；拒绝配对没有 3D 测量，继续保留其初始门控视差。这样离线标定既能复核
+配对，又不会误用与 XYZ 不一致的视差。
 
 ```text
 dataset-root/
@@ -99,7 +107,7 @@ dataset-root/
 - 单球数据每个曝光时刻最多保留一个 `accepted` 配对：先取语义置信度最高者，再取几何配对代价最低者，完全相同时按稳定的原始顺序选择；staging 原表仍原样保存在 `raw/audit/`，便于复核或重新选择；
 - `detections_2d.selected=true` 的集合必须与所有 accepted 配对引用的左右候选完全一致；
 - 相机时基下每个 accepted 配对必须恰好生成一条 `trajectory.csv` 直接观测；左右帧引用、3D 位置、协方差和误差必须数值一致，不能只让外键“看起来能对上”；
-- 原始图像、staging 原表和生成的旧管线配置；
+- 原始图像、staging 原表、每条直接观测实际采用的深度方法/精化视差证据和生成的旧管线配置；
 - 球 ID、可获得的球压、温湿度、气流和实验备注；
 - 所有原始文件的路径、大小与 SHA-256。
 
@@ -119,9 +127,9 @@ dataset-root/
 
 发布方式为同文件系统 staging 到正式目录的原子重命名。失败目录保留以便诊断，不能被当作有效 trial。
 
-主线 v5 finalizer 还会把左右设备时钟、NX 实时时钟和 NX 单调时钟分别拟合到配置的
+主线 v6 finalizer 还会把左右设备时钟、NX 实时时钟和 NX 单调时钟分别拟合到配置的
 轨迹参考时钟。最终 `camera_frames.csv` 使用单一参考时钟，但各原始时钟值、时钟域和
-拟合输入会完整保留在 `raw/audit/*_v5.csv`；不能为了适配单列格式而在 staging 中先把
+拟合输入会完整保留在 `raw/audit/*_v6.csv`；不能为了适配单列格式而在 staging 中先把
 它们伪装成同一时钟。
 
 ## 建议的 conditions.json
