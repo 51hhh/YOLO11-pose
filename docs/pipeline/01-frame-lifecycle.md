@@ -116,6 +116,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - detect event 记录失败时禁止等待槽位中旧 event，改为直接同步真正的源 stream，并把本帧交给 fail-trial；
 - 任一图像 CUDA view 必须携带 `locked_frame_id`，消费者同时校验 lock、帧号、地址和 pitch；解锁后立即清空地址，禁止跨帧复用；
 - Stage 2 需要 host Gray 时，左右 VPI image 必须同时 lock/unlock 成功；基础设施失败不能退化为“没有纹理候选”；
+- 当前首选所依赖的 P1 GPU batch 若 H2D、kernel、D2H 或 collect 同步失败，必须沿 `processing_failed` 进入帧失败；空 vector 不得被解释成普通候选无效并继续发布 bbox/circle 回退；
 - 全帧 Stage 3 使用显式成功状态区分“计算成功但没有有效视差”和 Coordinate3D CUDA/图像锁失败，后一种必须使帧失败；
 - ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；
 - 异步 ROI 快照 event 失败、handoff 不完整或 worker 异常会随 `AsyncRoiResult.processing_failed` 回到主线程；buffer 先归还，结果不进入 HybridDepth，并以 `grab_failed` 发布，而不是伪装成 `predict_only`；

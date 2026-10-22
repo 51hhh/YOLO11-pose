@@ -258,6 +258,7 @@ private:
         std::vector<Object3D> results;
         std::vector<StereoRoiPairAttempt> pair_attempts;
         std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
+        bool processing_failed = false;
     };
     struct RoiStage2Input {
         int frame_id = -1;
@@ -289,6 +290,7 @@ private:
         std::vector<P2FeatureDiagnosticResultRow> p2_artifact_rows;
         bool predict_only = false;
         bool detection_only = false;
+        bool processing_failed = false;
     };
     DualYoloMatchOutput matchDualYoloDetections(
         const std::vector<Detection>& left_detections,

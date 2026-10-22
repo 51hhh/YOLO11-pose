@@ -672,7 +672,9 @@ void Pipeline::pipelineLoopROI() {
                     }
                     slot.bbox_source = BboxSource::YOLO;
                     // 用 YOLO 结果刷新 tracker template
-                    tracker_handle_detect_result(slot);
+                    if (!slot.grab_failed) {
+                        tracker_handle_detect_result(slot);
+                    }
                     checkCudaFrame(
                         cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
                         "synchronize ROI Stage2 before image unlock");

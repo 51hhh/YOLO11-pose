@@ -172,6 +172,15 @@ Pipeline::RoiStage2Output Pipeline::runRoiStage2Core(
             input.frame_id,
             &match_stats);
 
+        if (semantic_match.processing_failed) {
+            LOG_ERROR("[Pipeline] DualYOLO depth infrastructure failed: frame=%d",
+                      input.frame_id);
+            output.pair_attempts = std::move(semantic_match.pair_attempts);
+            output.p2_artifact_rows = std::move(semantic_match.p2_artifact_rows);
+            output.processing_failed = true;
+            return output;
+        }
+
         int semantic_valid = count_valid(semantic_match.results);
         globalPerf().record("Stage2_DualYoloMatch", tdual.elapsedMs());
 
@@ -315,6 +324,11 @@ void Pipeline::applyRoiStage2Output(FrameSlot& slot,
     slot.detector_candidates_right =
         std::move(output.detector_candidates_right);
     slot.stereo_pair_attempts = std::move(output.pair_attempts);
+    if (output.processing_failed) {
+        slot.grab_failed = true;
+        slot.results.clear();
+        return;
+    }
     if (output.detection_only) {
         slot.results.clear();
         return;
@@ -588,6 +602,11 @@ void Pipeline::stage2_roi_match_fuse(FrameSlot& slot, int slot_index) {
                       slot.frame_id, (int)status);
             unlock_ok = false;
         }
+    }
+    if (output.processing_failed) {
+        LOG_ERROR("[Pipeline] ROI Stage2 reported infrastructure failure: frame=%d",
+                  slot.frame_id);
+        core_ok = false;
     }
     if (!core_ok || !unlock_ok) {
         slot.grab_failed = true;

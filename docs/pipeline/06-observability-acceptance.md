@@ -11,7 +11,7 @@
 | 取流 | `Stage0_WaitGrab`、FrameCounter 跳变、左右到达时间差 |
 | 前处理 | `Stage0_Process`、`Stage1_WaitRect`、`Stage0_VpiCudaLock/Unlock`、`Rectified_VpiCudaLock/Unlock`、Bayer stream 错误 |
 | YOLO | `Stage1_DetectSubmit`、`Stage2_WaitYOLOComplete`、左右提交标志 |
-| ROI | `Stage2_DualYoloMatch`、各候选 attempted/valid/selected |
+| ROI | `Stage2_DualYoloMatch`、`Stage2_DualYoloGpuCandidatesInfrastructureFailure`、各候选 attempted/valid/selected |
 | 异步队列 | pending depth、free buffers、worker busy、replace/drop/no-buffer |
 | buffer 所有权 | `Stage2_AsyncRoiBufferQuarantined`、`Stage2_AsyncRoiDropDiagnosticBusy`、copy/event/stream drain 错误 |
 | 截止线 | `Stage2_AsyncRoiOverDeadline`、stale pending/ready/result drop |
@@ -84,6 +84,7 @@ fusion/callback
 - 在 USB 抓帧等待中注入停止：已接受请求完成并解锁后 Stage 0 才可继续；不得读取上一帧 `grab_done_ok`，不得产生无 payload 的额外 frame；
 - 注入 VPI host/CUDA view 非法尺寸、CUDA D2H 失败或 unlock 失败：显示/诊断/基线/v2.1 复制均返回失败并清空目标图；实时诊断的 `dropped` 计数增加，正式采集不得写出部分图像；
 - 注入 raw/ROI host view 的空地址、过小宽高或 pitch，以及同步 ROI 核心异常：不得调用相机写入无效 raw 缓冲，不得进入 HybridDepth predict-only；所有已取得的 VPI lock 必须释放，帧以 `grab_failed` 发布；
+- 注入 P1 GPU 候选 batch 的 H2D、kernel launch、D2H 或 collect 同步失败：同步/异步 Stage 2 都必须发布 `grab_failed`，不得把空候选当作算法拒绝后改发 bbox/circle 深度；
 - 注入异步 ROI 的缺失/失败 snapshot event 与 worker 异常：`Stage2_AsyncRoiFailed` 增加，buffer 可再次取得，worker 继续处理下一任务；失败帧不得进入 HybridDepth，也不得被记为正常 `predict_only`；
 - 注入异步 ROI copy event/stream 同步失败：失败 buffer 必须被隔离且不再进入 free pool；当前帧进入 `grab_failed`，不能在 pending-replace 或下一次 snapshot 中复用该显存；
 - 让 P2 诊断持有 source snapshot 后触发 pending-replace：旧 buffer 必须等最后一个诊断引用释放后才回池，新帧不得原地覆盖；

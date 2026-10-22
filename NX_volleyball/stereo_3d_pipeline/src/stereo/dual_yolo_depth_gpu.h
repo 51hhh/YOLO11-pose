@@ -144,15 +144,6 @@ public:
     bool ready() const { return ready_; }
     int maxPairs() const { return max_pairs_; }
 
-    std::vector<DualYoloGpuCandidate> matchPairs(
-        const uint8_t* left_gpu, int left_pitch,
-        const uint8_t* right_gpu, int right_pitch,
-        const uint8_t* left_bgr_gpu, int left_bgr_pitch,
-        const uint8_t* right_bgr_gpu, int right_bgr_pitch,
-        int img_width, int img_height,
-        const std::vector<DualYoloGpuDetectionPair>& pairs,
-        cudaStream_t stream);
-
     bool submitPairs(
         const uint8_t* left_gpu, int left_pitch,
         const uint8_t* right_gpu, int right_pitch,
@@ -162,7 +153,7 @@ public:
         const std::vector<DualYoloGpuDetectionPair>& pairs,
         cudaStream_t stream);
 
-    std::vector<DualYoloGpuCandidate> collectPairs();
+    bool collectPairs(std::vector<DualYoloGpuCandidate>* output);
     bool hasPendingPairs() const { return pending_active_; }
 
 private:

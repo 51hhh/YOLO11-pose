@@ -122,6 +122,21 @@ target_compile_options(pipeline_streams_tests PRIVATE
 )
 add_test(NAME pipeline_streams_tests COMMAND pipeline_streams_tests)
 
+add_executable(dual_yolo_depth_gpu_tests
+  dual_yolo_depth_gpu_tests.cpp
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src/stereo/dual_yolo_depth_gpu.cpp
+)
+target_include_directories(dual_yolo_depth_gpu_tests BEFORE PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/fakes/gpu
+  ${PROJECT_SOURCE_DIR}/NX_volleyball/stereo_3d_pipeline/src
+)
+target_compile_features(dual_yolo_depth_gpu_tests PRIVATE cxx_std_17)
+target_compile_options(dual_yolo_depth_gpu_tests PRIVATE
+  # 旧 logger 宏使用 GNU 的空 __VA_ARGS__ 扩展，不能与 -Wpedantic 同开。
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Werror>
+)
+add_test(NAME dual_yolo_depth_gpu_tests COMMAND dual_yolo_depth_gpu_tests)
+
 foreach(VPI_FAKE_MAJOR IN ITEMS 3 4)
   set(VPI_PLANE_TEST_TARGET vpi${VPI_FAKE_MAJOR}_plane_access_tests)
   add_executable(${VPI_PLANE_TEST_TARGET}

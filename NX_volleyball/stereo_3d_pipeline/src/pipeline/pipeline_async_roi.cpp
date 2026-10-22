@@ -3376,6 +3376,12 @@ void Pipeline::asyncRoiWorkerLoop() {
                         roi_postprocess_mutex_);
                     output = runRoiStage2Core(task.input);
                 }
+                if (output.processing_failed) {
+                    processing_failed = true;
+                    LOG_ERROR("[AsyncROI] Stage2 core reported infrastructure "
+                              "failure: frame=%d",
+                              task.frame_id);
+                }
                 for (auto& row : output.p2_artifact_rows) {
                     if (row.frame_id < 0) {
                         row.frame_id = task.frame_id;
@@ -3386,7 +3392,8 @@ void Pipeline::asyncRoiWorkerLoop() {
                     row.triggers = task.p2_feature_decision.realtime_triggers;
                     row.deadline_ms = config_.async_roi_deadline_ms;
                 }
-                if (artifact_buffer && !output.p2_artifact_rows.empty()) {
+                if (!processing_failed &&
+                    artifact_buffer && !output.p2_artifact_rows.empty()) {
                     P2FeatureDiagnosticBuffer artifact_view;
                     artifact_view.left_gray_gpu = artifact_buffer->left_gray_gpu;
                     artifact_view.left_gray_pitch =
@@ -3399,8 +3406,10 @@ void Pipeline::asyncRoiWorkerLoop() {
                         output.p2_artifact_rows, artifact_view,
                         task.input.width, task.input.height);
                 }
-                writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
-                writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
+                if (!processing_failed) {
+                    writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
+                    writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
+                }
             } else {
                 output.detections = task.input.left_detections;
                 output.predict_only = true;

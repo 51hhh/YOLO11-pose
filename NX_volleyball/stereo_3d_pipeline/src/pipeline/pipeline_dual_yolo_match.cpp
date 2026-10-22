@@ -801,6 +801,7 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
 
     std::vector<DualYoloGpuCandidate> gpu_candidates;
     bool gpu_candidates_pending = false;
+    bool gpu_candidates_failed = false;
     Clock::time_point gpu_candidates_start{};
     if (gpu_candidate_refine_enabled &&
         !left_detections.empty() &&
@@ -829,17 +830,11 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
                                 std::chrono::duration<double, std::milli>(
                                     Clock::now() - gpu_candidates_start).count());
             if (!gpu_candidates_pending) {
-                gpu_candidates = dual_yolo_depth_gpu_->matchPairs(
-                    left_gpu, left_gpu_pitch,
-                    right_gpu, right_gpu_pitch,
-                    left_bgr_gpu, left_bgr_pitch,
-                    right_bgr_gpu, right_bgr_pitch,
-                    img_width, img_height,
-                    gpu_pairs,
-                    stream);
-                const double gpu_ms = std::chrono::duration<double, std::milli>(
-                    Clock::now() - gpu_candidates_start).count();
-                globalPerf().record("Stage2_DualYoloGpuCandidates", gpu_ms);
+                gpu_candidates_failed = true;
+                LOG_ERROR("DualYolo GPU candidate batch submit failed: frame=%d",
+                          frame_id);
+                globalPerf().record(
+                    "Stage2_DualYoloGpuCandidatesInfrastructureFailure", 0.0);
             }
         }
     }
@@ -849,7 +844,13 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
             return;
         }
         const auto collect_start = Clock::now();
-        gpu_candidates = dual_yolo_depth_gpu_->collectPairs();
+        if (!dual_yolo_depth_gpu_->collectPairs(&gpu_candidates)) {
+            gpu_candidates_failed = true;
+            LOG_ERROR("DualYolo GPU candidate batch collect failed: frame=%d",
+                      frame_id);
+            globalPerf().record(
+                "Stage2_DualYoloGpuCandidatesInfrastructureFailure", 0.0);
+        }
         globalPerf().record("Stage2_DualYoloGpuCandidatesCollect",
                             std::chrono::duration<double, std::milli>(
                                 Clock::now() - collect_start).count());
@@ -3273,7 +3274,8 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
         }
         return nullptr;
     };
-    if (!direct_pairs.empty() && p2_inline_feature_jobs_enabled) {
+    if (!gpu_candidates_failed &&
+        !direct_pairs.empty() && p2_inline_feature_jobs_enabled) {
         std::vector<const StereoRoiPair*> early_pairs;
         std::vector<bool> early_left_used(left_detections.size(), false);
         std::vector<bool> early_right_used(right_detections.size(), false);
@@ -3461,6 +3463,12 @@ Pipeline::DualYoloMatchOutput Pipeline::matchDualYoloDetections(
     }
 
     collect_gpu_candidates();
+
+    if (gpu_candidates_failed) {
+        output.processing_failed = true;
+        if (stats) *stats = local_stats;
+        return output;
+    }
 
     auto find_pair_attempt = [&](int left_index,
                                  int right_index) -> StereoRoiPairAttempt* {
