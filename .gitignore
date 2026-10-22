@@ -32,7 +32,6 @@
 /data/
 /runs/
 /configs/calibration/images*/
-/adapters/legacy_nx/test_logs/
 
 # 临时文件
 *.tmp

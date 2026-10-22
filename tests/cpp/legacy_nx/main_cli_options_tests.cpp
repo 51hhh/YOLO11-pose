@@ -38,21 +38,19 @@ int main() {
     {
         const auto options = parse({
             "stereo_pipeline", "--config", "/tmp/generated.yaml",
-            "--visualize", "--debug-feature-matches-dir", "/tmp/matches"});
-        check(!options.should_exit, "supported diagnostic options must parse");
+            "--visualize"});
+        check(!options.should_exit, "supported runtime options must parse");
         check(options.config_path == "/tmp/generated.yaml",
               "explicit config path must be preserved");
         check(options.enable_display, "visualization flag must be preserved");
-        check(options.debug_feature_matches,
-              "feature-match directory must enable one-shot diagnostics");
-        check(options.debug_feature_matches_dir == "/tmp/matches",
-              "feature-match output directory must be preserved");
     }
 
     for (const char* retired : {
              "--recording-out",
              "--record-baseline-clip",
              "--debug-realtime-dump",
+             "--debug-feature-matches",
+             "--debug-feature-matches-dir",
              "--visualizels",
          }) {
         const auto options = parse({"stereo_pipeline", retired});

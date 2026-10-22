@@ -195,8 +195,6 @@ set(PIPELINE_SOURCES
   src/main_optional_config_loaders.cpp
   src/pipeline/pipeline.cpp
   src/pipeline/pipeline_async_roi.cpp
-  src/pipeline/pipeline_debug.cpp
-  src/pipeline/pipeline_debug_utils.cpp
   src/pipeline/pipeline_detection.cpp
   src/pipeline/pipeline_depth_modes.cpp
   src/pipeline/pipeline_dual_yolo_match.cpp

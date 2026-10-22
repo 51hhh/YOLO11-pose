@@ -12,8 +12,7 @@
 namespace {
 
 const char* kUsage =
-    "Usage: %s [--config <path>] [--visualize] "
-    "[--debug-feature-matches] [--debug-feature-matches-dir <dir>]\n";
+    "Usage: %s [--config <path>] [--visualize]\n";
 
 bool hasValue(int i, int argc, char* argv[]) {
     return i + 1 < argc && argv[i + 1][0] != '-';
@@ -23,8 +22,6 @@ void printHelp(const char* argv0) {
     printf(kUsage, argv0);
     printf("  --config, -c                  Pipeline configuration YAML\n");
     printf("  --visualize, -v               Show detection + distance overlay window\n");
-    printf("  --debug-feature-matches       Capture one stereo pair and export ROI feature-match images\n");
-    printf("  --debug-feature-matches-dir   Output directory for feature-match images\n");
 }
 
 void failMissingValue(MainCliOptions& options,
@@ -51,15 +48,6 @@ MainCliOptions parseMainCliOptions(int argc, char* argv[]) {
             return options;
         } else if (arg == "--visualize" || arg == "--display" || arg == "-v") {
             options.enable_display = true;
-        } else if (arg == "--debug-feature-matches") {
-            options.debug_feature_matches = true;
-        } else if (arg == "--debug-feature-matches-dir" &&
-                   hasValue(i, argc, argv)) {
-            options.debug_feature_matches = true;
-            options.debug_feature_matches_dir = argv[++i];
-        } else if (arg == "--debug-feature-matches-dir") {
-            failMissingValue(options, argv[0], arg);
-            return options;
         } else if (arg == "--help" || arg == "-h") {
             printHelp(argv[0]);
             options.should_exit = true;

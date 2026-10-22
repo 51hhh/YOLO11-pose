@@ -42,6 +42,7 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "adapters/legacy_nx/benchmark_results/",
     "adapters/legacy_nx/diagnose_output/",
     "adapters/legacy_nx/raw_observation_data.csv",
+    "adapters/legacy_nx/test_logs/",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_HARDWARE_TOOL_FILES = {

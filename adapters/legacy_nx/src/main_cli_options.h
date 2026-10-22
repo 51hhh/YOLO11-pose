@@ -11,8 +11,6 @@
 struct MainCliOptions {
     std::string config_path = "config/base_pipeline.yaml";
     bool enable_display = false;
-    bool debug_feature_matches = false;
-    std::string debug_feature_matches_dir = "test_logs/feature_match_debug";
     bool should_exit = false;
     int exit_code = 0;
 };

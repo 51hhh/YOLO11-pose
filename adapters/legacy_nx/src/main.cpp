@@ -62,8 +62,6 @@ int main(int argc, char* argv[]) {
 
     std::string config_path = cli.config_path;
     bool enable_display = cli.enable_display;
-    bool debug_feature_matches = cli.debug_feature_matches;
-    std::string debug_feature_matches_dir = cli.debug_feature_matches_dir;
 
     // 注册信号
     signal(SIGINT,  signalHandler);
@@ -85,17 +83,6 @@ int main(int argc, char* argv[]) {
 
     // 初始化 Pipeline
     stereo3d::Pipeline pipeline;
-
-    if (debug_feature_matches) {
-        LOG_INFO("Feature match debug output: %s", debug_feature_matches_dir.c_str());
-        if (!pipeline.init(cfg)) {
-            LOG_ERROR("Pipeline init failed");
-            return 1;
-        }
-        const bool ok = pipeline.debugFeatureMatchesOnce(debug_feature_matches_dir);
-        pipeline.printPerfReport();
-        return ok ? 0 : 1;
-    }
 
     // 初始化可选落点预测、正式 v2.1 采集和诊断输出。
     stereo3d::TrajectoryPredictor predictor;
