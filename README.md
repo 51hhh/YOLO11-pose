@@ -52,7 +52,8 @@ python3 tools/check_repository.py
 | `services/` | 将端口与算法编排为观测用例 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
 | `adapters/capture_v21/` | 与硬件无关的 v2.1 staging 序列化适配器 |
-| `adapters/legacy_nx/` | 海康 MVS、GPIO、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
+| `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
+| `adapters/legacy_nx/` | 海康 MVS、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
@@ -61,7 +62,7 @@ python3 tools/check_repository.py
 | `tests/cpp/legacy_nx/` | 旧 NX 适配器测试及其 SDK/CUDA/VPI 桩 |
 | `tools/` | 仅保留仓库维护门禁；不提供第二套运行入口，也不放一次性实验脚本 |
 
-旧 NX 实现仍承载海康 MVS、CUDA、TensorRT、GPIO 和 ROS2 的实机代码，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
+旧 NX 实现仍承载海康 MVS、CUDA、TensorRT 和 ROS2 的实机代码，并复用已提取的 GPIO 与 v2.1 适配器，但不再定义顶层配置或数据契约。迁移边界见 [迁移说明](docs/migration.md)。
 
 ## 配置与运行
 

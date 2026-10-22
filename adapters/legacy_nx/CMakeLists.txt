@@ -9,6 +9,14 @@ if(NOT EXISTS
     "Mainline capture_v21 adapter not found next to legacy_nx: "
     "${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}")
 endif()
+set(VOLLEYBALL_GPIO_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../gpio")
+if(NOT EXISTS
+   "${VOLLEYBALL_GPIO_ADAPTER_DIR}/include/volleyball/adapters/gpio/pwm_trigger.hpp")
+  message(FATAL_ERROR
+    "Mainline GPIO adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_GPIO_ADAPTER_DIR}")
+endif()
 
 # ==================== ROS2 ament_cmake ====================
 option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
@@ -185,6 +193,7 @@ endif()
 include_directories(
   ${CMAKE_SOURCE_DIR}/src
   ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/include
+  ${VOLLEYBALL_GPIO_ADAPTER_DIR}/include
   ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}
@@ -197,7 +206,7 @@ endif()
 # ==================== 源文件 ====================
 set(PIPELINE_SOURCES
   src/main.cpp
-  src/capture/pwm_trigger.cpp
+  ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
   src/main_cli_options.cpp
   src/main_config_loaders.cpp
   src/main_dual_yolo_config.cpp
@@ -371,7 +380,7 @@ if(HIK_FOUND)
     tools/capture_chessboard/output.cpp
     tools/common/atomic_file.cpp
     src/capture/hikvision_camera.cpp
-    src/capture/pwm_trigger.cpp
+    ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
   )
   set_target_properties(capture_chessboard PROPERTIES CXX_STANDARD 17)
   target_include_directories(capture_chessboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -395,7 +404,7 @@ if(HIK_FOUND)
     tools/hik_frame_metadata_probe/camera_session.cpp
     tools/hik_frame_metadata_probe/pair_audit.cpp
     tools/common/parallel_tasks.cpp
-    src/capture/pwm_trigger.cpp
+    ${VOLLEYBALL_GPIO_ADAPTER_DIR}/src/pwm_trigger.cpp
   )
   set_target_properties(hik_frame_metadata_probe PROPERTIES CXX_STANDARD 17)
   target_include_directories(hik_frame_metadata_probe PRIVATE ${CMAKE_SOURCE_DIR}/src)

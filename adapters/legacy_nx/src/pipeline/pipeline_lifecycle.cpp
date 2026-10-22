@@ -17,7 +17,7 @@ void Pipeline::attachPwmTriggerMetadata(
     FrameSlot& slot,
     std::uint32_t frame_counter) const {
     if (!pwm_trigger_ || frame_counter == 0) return;
-    PWMTriggerEdgeEvent event;
+    volleyball::adapters::gpio::PWMTriggerEdgeEvent event;
     if (!pwm_trigger_->eventForSequence(frame_counter, event)) return;
     slot.trigger_sequence = event.sequence;
     slot.trigger_scheduled_monotonic_ns = event.scheduled_monotonic_ns;

@@ -1,12 +1,11 @@
 /**
- * @file pwm_trigger.h
+ * @file pwm_trigger.hpp
  * @brief 双目相机同步所用 GPIO PWM 触发器接口。
  */
 
-#ifndef STEREO_3D_PIPELINE_PWM_TRIGGER_H_
-#define STEREO_3D_PIPELINE_PWM_TRIGGER_H_
+#pragma once
 
-#include "pwm_trigger_events.h"
+#include "volleyball/adapters/gpio/trigger_events.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -20,7 +19,7 @@ struct gpiod_chip;
 struct gpiod_line;
 #endif
 
-namespace stereo3d {
+namespace volleyball::adapters::gpio {
 
 /**
  * 通过 libgpiod 或 sysfs 输出周期触发信号。
@@ -99,6 +98,4 @@ private:
     std::thread thread_;
 };
 
-}  // namespace stereo3d
-
-#endif  // STEREO_3D_PIPELINE_PWM_TRIGGER_H_
+}  // namespace volleyball::adapters::gpio

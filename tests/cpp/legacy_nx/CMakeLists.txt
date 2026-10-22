@@ -19,13 +19,6 @@ add_legacy_nx_test(
 )
 
 add_legacy_nx_test(
-  trigger_edge_history_tests
-  trigger_edge_history_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/capture/pwm_trigger.cpp"
-)
-target_compile_definitions(trigger_edge_history_tests PRIVATE NO_GPIOD=1)
-
-add_legacy_nx_test(
   hik_camera_sync_tests
   hik_camera_sync_tests.cpp
   "${LEGACY_NX_SOURCE_DIR}/capture/hikvision_camera.cpp"

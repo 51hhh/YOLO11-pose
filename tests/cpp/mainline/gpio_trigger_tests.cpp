@@ -1,4 +1,4 @@
-#include "capture/pwm_trigger.h"
+#include "volleyball/adapters/gpio/pwm_trigger.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -15,7 +15,7 @@ void check(bool condition, const char* message) {
     }
 }
 
-stereo3d::PWMTriggerEdgeEvent event(std::uint64_t sequence) {
+volleyball::adapters::gpio::PWMTriggerEdgeEvent event(std::uint64_t sequence) {
     return {
         sequence,
         1000 + sequence * 100,
@@ -26,11 +26,11 @@ stereo3d::PWMTriggerEdgeEvent event(std::uint64_t sequence) {
 }
 
 void testLookupIsStableAndBounded() {
-    stereo3d::PWMTriggerEventHistory history(3);
+    volleyball::adapters::gpio::PWMTriggerEventHistory history(3);
     history.push(event(1));
     history.push(event(2));
     history.push(event(3));
-    stereo3d::PWMTriggerEdgeEvent output;
+    volleyball::adapters::gpio::PWMTriggerEdgeEvent output;
     check(history.find(2, output), "retained trigger must be found");
     check(output.edge_realtime_ns == 2200, "trigger fields must remain unchanged");
     history.push(event(4));
@@ -41,7 +41,7 @@ void testLookupIsStableAndBounded() {
 }
 
 void testNonMonotonicEventsAreRejected() {
-    stereo3d::PWMTriggerEventHistory history;
+    volleyball::adapters::gpio::PWMTriggerEventHistory history;
     history.push(event(2));
     history.push(event(2));
     history.push(event(1));
@@ -51,8 +51,9 @@ void testNonMonotonicEventsAreRejected() {
 }
 
 void testPwmTriggerExposesEmptySessionBeforeStart() {
-    stereo3d::PWMTrigger trigger("gpiochip-test", 0, 90.0, 50.0);
-    stereo3d::PWMTriggerEdgeEvent output;
+    volleyball::adapters::gpio::PWMTrigger trigger(
+        "gpiochip-test", 0, 90.0, 50.0);
+    volleyball::adapters::gpio::PWMTriggerEdgeEvent output;
     check(
         !trigger.eventForSequence(1, output),
         "unstarted PWM session must not fabricate trigger events");
@@ -62,7 +63,7 @@ void testPwmTriggerExposesEmptySessionBeforeStart() {
 }
 
 void testPwmTimingRejectsNonFiniteAndUnrepresentableValues() {
-    using stereo3d::PWMTrigger;
+    using volleyball::adapters::gpio::PWMTrigger;
     check(PWMTrigger::isTimingValid(90.0, 50.0),
           "normal camera trigger timing must be valid");
     check(PWMTrigger::isTimingValid(1.0, 0.000001),

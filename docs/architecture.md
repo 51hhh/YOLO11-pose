@@ -55,7 +55,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Adapters 与运行入口
 
-`adapters` 实现实际硬件、存储格式和外部系统。硬件无关的 v2.1 staging 序列化位于 `adapters/capture_v21`，同时供主机契约测试和旧 NX 录制线程使用；现有 MVS/CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。当前唯一用户入口是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+`adapters` 实现实际硬件、存储格式和外部系统。硬件无关的 v2.1 staging 序列化位于 `adapters/capture_v21`，GPIO 周期触发与上升沿审计位于 `adapters/gpio`；二者都由根工程直接编译测试，并供旧 NX 管线复用。现有 MVS/CUDA/VPI/TensorRT/ROS2 代码仍集中在 `adapters/legacy_nx`。当前唯一用户入口是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 

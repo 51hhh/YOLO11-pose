@@ -209,7 +209,8 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     // 初始化 PWM 触发器 (硬件触发模式时)
     if (camera_ && config_.camera.use_trigger) {
-        pwm_trigger_ = std::make_unique<PWMTrigger>(
+        pwm_trigger_ =
+            std::make_unique<volleyball::adapters::gpio::PWMTrigger>(
             config_.trigger_chip,
             config_.trigger_line,
             config_.trigger_freq_hz,

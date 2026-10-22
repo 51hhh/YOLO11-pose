@@ -31,7 +31,7 @@
 #ifndef HIK_CAMERA_ENABLED
 namespace stereo3d { class HikvisionCamera; }  // 仅 class 需 forward declare
 #endif
-#include "../capture/pwm_trigger.h"
+#include "volleyball/adapters/gpio/pwm_trigger.hpp"
 #include "../calibration/stereo_calibration.h"
 #include "../rectify/vpi_rectifier.h"
 #include "../detect/trt_detector.h"
@@ -448,7 +448,7 @@ private:
 
 #ifdef HIK_CAMERA_ENABLED
     std::unique_ptr<HikvisionCamera> camera_;    ///< 双目相机 (单实例管理左右)
-    std::unique_ptr<PWMTrigger> pwm_trigger_;     ///< GPIO PWM 触发器
+    std::unique_ptr<volleyball::adapters::gpio::PWMTrigger> pwm_trigger_;
 
     // ===== 异步采集线程 =====
     // 按需模式: pipeline 请求 → 采集线程写入 VPI host-mapped Image → 通知完成

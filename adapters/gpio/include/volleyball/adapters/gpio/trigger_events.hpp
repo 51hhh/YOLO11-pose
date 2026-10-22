@@ -1,17 +1,16 @@
 /**
- * @file pwm_trigger_events.h
+ * @file trigger_events.hpp
  * @brief 有界保存 GPIO 上升沿的多时钟时间戳，供相机帧按触发序号关联。
  */
 
-#ifndef STEREO_3D_PIPELINE_PWM_TRIGGER_EVENTS_H_
-#define STEREO_3D_PIPELINE_PWM_TRIGGER_EVENTS_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 
-namespace stereo3d {
+namespace volleyball::adapters::gpio {
 
 struct PWMTriggerEdgeEvent {
     std::uint64_t sequence = 0;
@@ -70,6 +69,4 @@ private:
     std::deque<PWMTriggerEdgeEvent> events_;
 };
 
-}  // namespace stereo3d
-
-#endif  // STEREO_3D_PIPELINE_PWM_TRIGGER_EVENTS_H_
+}  // namespace volleyball::adapters::gpio

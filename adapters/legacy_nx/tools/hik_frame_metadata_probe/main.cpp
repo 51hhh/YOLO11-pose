@@ -1,7 +1,7 @@
 #include "args.h"
 #include "camera_session.h"
 #include "pair_audit.h"
-#include "capture/pwm_trigger.h"
+#include "volleyball/adapters/gpio/pwm_trigger.hpp"
 #include "../common/parallel_tasks.h"
 
 #include <cstdio>
@@ -110,9 +110,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::unique_ptr<stereo3d::PWMTrigger> pwm;
+    std::unique_ptr<volleyball::adapters::gpio::PWMTrigger> pwm;
     if (args.start_pwm) {
-        pwm = std::make_unique<stereo3d::PWMTrigger>(
+        pwm = std::make_unique<volleyball::adapters::gpio::PWMTrigger>(
             args.trigger_chip, args.trigger_line, args.pwm_hz, 50.0);
         if (!pwm->start()) {
             std::fprintf(
@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
         if (!audit.recordPair(sample_index, left_meta, right_meta)) continue;
 
         if (pwm) {
-            stereo3d::PWMTriggerEdgeEvent edge;
+            volleyball::adapters::gpio::PWMTriggerEdgeEvent edge;
             const bool mapping_matches =
                 left_meta.frame_counter == right_meta.frame_counter &&
                 pwm->eventForSequence(left_meta.frame_counter, edge) &&

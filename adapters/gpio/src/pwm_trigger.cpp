@@ -1,4 +1,4 @@
-#include "pwm_trigger.h"
+#include "volleyball/adapters/gpio/pwm_trigger.hpp"
 
 #include <cerrno>
 #include <cmath>
@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-namespace stereo3d {
+namespace volleyball::adapters::gpio {
 
 PWMTrigger::PWMTrigger(
     const std::string& chip_name,
@@ -564,4 +564,4 @@ void PWMTrigger::loopGpiod() noexcept {
 }
 #endif
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::gpio

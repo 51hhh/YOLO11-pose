@@ -105,6 +105,7 @@ CMAKE_SOURCE_GROUPS = (
     ("algorithms/stereo/src", "algorithms/stereo/CMakeLists.txt"),
     ("services/src", "services/CMakeLists.txt"),
     ("adapters/capture_v21/src", "adapters/capture_v21/CMakeLists.txt"),
+    ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),

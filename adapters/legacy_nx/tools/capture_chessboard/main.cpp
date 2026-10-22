@@ -16,7 +16,7 @@
 
 #include "args.h"
 #include "output.h"
-#include "capture/pwm_trigger.h"
+#include "volleyball/adapters/gpio/pwm_trigger.hpp"
 #include "capture/hikvision_camera.h"
 
 #include <opencv2/opencv.hpp>
@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
     // PWM trigger is started after both cameras enter grabbing state.
     // Starting PWM earlier can give the two USB cameras different local
     // FrameCounter phases, which breaks strict watermarked pair matching.
-    std::unique_ptr<stereo3d::PWMTrigger> pwm;
+    std::unique_ptr<volleyball::adapters::gpio::PWMTrigger> pwm;
 
     stereo3d::CameraConfig cfg;
     cfg.exposure_us = static_cast<float>(args.exposure_us);
@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (!args.free_run && !args.no_pwm) {
-        pwm = std::make_unique<stereo3d::PWMTrigger>(
+        pwm = std::make_unique<volleyball::adapters::gpio::PWMTrigger>(
             args.trigger_chip, args.trigger_line, args.pwm_hz, PWM_DUTY);
         if (!pwm->start()) {
             fprintf(stderr,
