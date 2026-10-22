@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 
@@ -99,7 +100,24 @@ StereoObservationService::StereoObservationService(
       left_detector_(left_detector),
       right_detector_(right_detector),
       writer_(writer),
-      publisher_(publisher) {}
+      publisher_(publisher) {
+    if (!algorithms::stereo::isValidAssociationConfig(config_.association)) {
+        throw std::invalid_argument("invalid stereo association configuration");
+    }
+    if (!algorithms::stereo::isValidTriangulationConfig(
+            config_.calibration, config_.triangulation)) {
+        throw std::invalid_argument(
+            "invalid rectified stereo calibration/triangulation configuration");
+    }
+    const auto& gate = config_.gate;
+    if (!std::isfinite(gate.min_depth_m) || gate.min_depth_m < 0.0 ||
+        !std::isfinite(gate.max_depth_m) ||
+        gate.max_depth_m <= gate.min_depth_m ||
+        !std::isfinite(gate.max_reprojection_error_px) ||
+        gate.max_reprojection_error_px < 0.0) {
+        throw std::invalid_argument("invalid stereo observation quality gate");
+    }
+}
 
 StereoProcessResult StereoObservationService::fail(
     ProcessStatus status,

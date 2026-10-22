@@ -22,6 +22,10 @@ struct TriangulationResult {
     }
 };
 
+[[nodiscard]] bool isValidTriangulationConfig(
+    const core::RectifiedStereoCalibration& calibration,
+    const TriangulationConfig& config) noexcept;
+
 [[nodiscard]] TriangulationResult triangulateRectifiedCenters(
     const core::Detection2D& left,
     const core::Detection2D& right,

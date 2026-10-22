@@ -98,6 +98,8 @@ void testInvalidAssociationConfigurationIsNotANoMatch() {
     const auto inputs = ValidInputs{};
     auto config = support::associationConfig();
     config.min_shifted_iou = std::numeric_limits<double>::quiet_NaN();
+    check(!algorithms::isValidAssociationConfig(config),
+          "association config validator must reject NaN thresholds");
     const auto batch = algorithms::associateCandidates(
         {inputs.left},
         {inputs.right},
@@ -122,6 +124,26 @@ void testAssociationRejectsExhaustedPairIdRange() {
     check(batch.attempts.empty(), "pair ID exhaustion must emit no wrapped ID");
 }
 
+void testTriangulationConfigurationValidation() {
+    const auto inputs = ValidInputs{};
+    check(
+        algorithms::isValidTriangulationConfig(
+            inputs.calibration, inputs.config),
+        "valid rectified triangulation config must pass");
+
+    auto calibration = inputs.calibration;
+    calibration.right.fx += 1.0;
+    check(
+        !algorithms::isValidTriangulationConfig(calibration, inputs.config),
+        "mismatched rectified projections must fail config validation");
+
+    auto config = inputs.config;
+    config.center_sigma_px = -1.0;
+    check(
+        !algorithms::isValidTriangulationConfig(inputs.calibration, config),
+        "negative center uncertainty must fail config validation");
+}
+
 }  // namespace
 
 int main() {
@@ -131,6 +153,7 @@ int main() {
     testCalibrationMustDescribeSharedRectifiedProjection();
     testInvalidAssociationConfigurationIsNotANoMatch();
     testAssociationRejectsExhaustedPairIdRange();
+    testTriangulationConfigurationValidation();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

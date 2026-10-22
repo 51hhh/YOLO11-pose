@@ -7,18 +7,6 @@
 namespace volleyball::algorithms::stereo {
 namespace {
 
-bool validConfig(const AssociationConfig& config) noexcept {
-    return config.max_capture_delta_ns >= 0 &&
-           std::isfinite(config.epipolar_tolerance_px) &&
-           config.epipolar_tolerance_px >= 0.0 &&
-           std::isfinite(config.max_size_ratio) &&
-           config.max_size_ratio >= 1.0 &&
-           std::isfinite(config.min_shifted_iou) &&
-           config.min_shifted_iou >= 0.0 && config.min_shifted_iou <= 1.0 &&
-           std::isfinite(config.max_disparity_px) &&
-           config.max_disparity_px > 0.0;
-}
-
 double scoreOf(const core::Detection2D& detection) noexcept {
     return detection.score.value_or(0.0);
 }
@@ -90,6 +78,18 @@ core::AssociationRejectReason classify(
 
 }  // namespace
 
+bool isValidAssociationConfig(const AssociationConfig& config) noexcept {
+    return config.max_capture_delta_ns >= 0 &&
+           std::isfinite(config.epipolar_tolerance_px) &&
+           config.epipolar_tolerance_px >= 0.0 &&
+           std::isfinite(config.max_size_ratio) &&
+           config.max_size_ratio >= 1.0 &&
+           std::isfinite(config.min_shifted_iou) &&
+           config.min_shifted_iou >= 0.0 && config.min_shifted_iou <= 1.0 &&
+           std::isfinite(config.max_disparity_px) &&
+           config.max_disparity_px > 0.0;
+}
+
 AssociationBatch associateCandidates(
     const std::vector<core::Detection2D>& left,
     const std::vector<core::Detection2D>& right,
@@ -98,7 +98,7 @@ AssociationBatch associateCandidates(
     const AssociationConfig& config,
     core::PairId first_pair_id) {
     AssociationBatch output;
-    if (!validConfig(config)) {
+    if (!isValidAssociationConfig(config)) {
         output.message = "invalid stereo association configuration";
         return output;
     }

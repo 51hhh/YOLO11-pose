@@ -34,6 +34,16 @@ bool validCalibration(
 
 }  // namespace
 
+bool isValidTriangulationConfig(
+    const core::RectifiedStereoCalibration& calibration,
+    const TriangulationConfig& config) noexcept {
+    return validCalibration(calibration) &&
+           std::isfinite(config.center_sigma_px) &&
+           config.center_sigma_px >= 0.0 &&
+           std::isfinite(config.min_disparity_px) &&
+           config.min_disparity_px > 0.0;
+}
+
 TriangulationResult triangulateRectifiedCenters(
     const core::Detection2D& left,
     const core::Detection2D& right,
@@ -62,11 +72,7 @@ TriangulationResult triangulateRectifiedCenters(
             "association does not reference the supplied left/right candidates",
         };
     }
-    if (!validCalibration(calibration) ||
-        !std::isfinite(config.center_sigma_px) ||
-        config.center_sigma_px < 0.0 ||
-        !std::isfinite(config.min_disparity_px) ||
-        config.min_disparity_px <= 0.0) {
+    if (!isValidTriangulationConfig(calibration, config)) {
         return {std::nullopt, "invalid rectified stereo calibration/config"};
     }
     const double disparity = left.center_px.x - right.center_px.x;

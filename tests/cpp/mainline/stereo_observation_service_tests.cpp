@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace core = volleyball::core;
@@ -167,7 +168,8 @@ void testObservationGateRejectsSelectedPair() {
         "quality gate failure must be explicit in the retained pair");
 }
 
-void testInvalidAssociationConfigAbortsInsteadOfReportingNoMatch() {
+bool serviceConstructionRejects(
+    services::StereoObservationServiceConfig config) {
     StaticDetector left({
         detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
     });
@@ -175,15 +177,35 @@ void testInvalidAssociationConfigAbortsInsteadOfReportingNoMatch() {
         detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
     });
     fake::InMemoryTrialWriter writer;
+    try {
+        services::StereoObservationService service(
+            std::move(config), left, right, writer);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void testInvalidStaticConfigFailsDuringServiceConstruction() {
     auto config = serviceConfig();
     config.association.max_size_ratio = 0.5;
-    services::StereoObservationService service(config, left, right, writer);
+    check(serviceConstructionRejects(config),
+          "invalid association config must fail before processing");
 
-    const auto result = service.process(stereoFrame());
-    check(result.status == services::ProcessStatus::invalid_input,
-          "invalid association config must be reported as invalid input");
-    check(!writer.abortReason().empty(),
-          "invalid association config must abort the partial trial");
+    config = serviceConfig();
+    config.calibration.right.fx += 1.0;
+    check(serviceConstructionRejects(config),
+          "incompatible rectified calibration must fail before processing");
+
+    config = serviceConfig();
+    config.triangulation.center_sigma_px = -1.0;
+    check(serviceConstructionRejects(config),
+          "invalid triangulation config must fail before processing");
+
+    config = serviceConfig();
+    config.gate.max_depth_m = config.gate.min_depth_m;
+    check(serviceConstructionRejects(config),
+          "invalid observation gate must fail before processing");
 }
 
 void testDetectorFailureAbortsTrial() {
@@ -417,7 +439,7 @@ int main() {
     testUnselectedGatePassingPairIsRecordedAsRejected();
     testTriangulationFailureRejectsSelectedPair();
     testObservationGateRejectsSelectedPair();
-    testInvalidAssociationConfigAbortsInsteadOfReportingNoMatch();
+    testInvalidStaticConfigFailsDuringServiceConstruction();
     testDetectorFailureAbortsTrial();
     testExplicitAbortClosesServiceExactlyOnce();
     testMalformedDetectorBatchAbortsTrial();

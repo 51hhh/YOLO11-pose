@@ -32,6 +32,9 @@ struct AssociationBatch {
     [[nodiscard]] bool ok() const noexcept { return message.empty(); }
 };
 
+[[nodiscard]] bool isValidAssociationConfig(
+    const AssociationConfig& config) noexcept;
+
 // 保留笛卡尔积中的每一次尝试；best 只是对已接受项的确定性选择。
 [[nodiscard]] AssociationBatch associateCandidates(
     const std::vector<core::Detection2D>& left,
