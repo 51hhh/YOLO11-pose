@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure CPU C++ core
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
       - name: Build CPU C++ core
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
       - name: Run CPU C++ tests
