@@ -6,7 +6,9 @@
 
 namespace volleyball::ports {
 
-enum class WriteStatus { accepted, backpressure, failed };
+// 采集模式的队列背压必须由写入器内部阻塞吸收；返回层只表达本条记录
+// 已经被接管，或 trial 必须失败，避免调用方误以为存在未实现的重试协议。
+enum class WriteStatus { accepted, failed };
 
 struct WriteResult {
     WriteStatus status{WriteStatus::failed};
