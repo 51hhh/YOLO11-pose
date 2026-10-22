@@ -129,40 +129,40 @@ add_legacy_nx_test(
 
 # 标定与硬件验收辅助工具
 add_legacy_nx_test(
-  hik_metadata_probe_args_tests
-  tools/hik_metadata_probe_args_tests.cpp
+  hik_frame_metadata_probe_args_tests
+  tools/hik_frame_metadata_probe/args_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/hik_frame_metadata_probe/args.cpp
 )
 target_include_directories(
-  hik_metadata_probe_args_tests PRIVATE
+  hik_frame_metadata_probe_args_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
 
 add_legacy_nx_test(
-  hik_metadata_probe_camera_tests
-  tools/hik_metadata_probe_camera_tests.cpp
+  hik_frame_metadata_probe_camera_session_tests
+  tools/hik_frame_metadata_probe/camera_session_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/hik_frame_metadata_probe/camera_session.cpp
 )
 target_include_directories(
-  hik_metadata_probe_camera_tests BEFORE PRIVATE
+  hik_frame_metadata_probe_camera_session_tests BEFORE PRIVATE
   "${VOLLEYBALL_MVS_FAKE_INCLUDE_DIR}"
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
 
 add_legacy_nx_test(
-  hik_metadata_probe_pair_audit_tests
-  tools/hik_metadata_probe_pair_audit_tests.cpp
+  hik_frame_metadata_probe_pair_audit_tests
+  tools/hik_frame_metadata_probe/pair_audit_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/hik_frame_metadata_probe/pair_audit.cpp
 )
 target_include_directories(
-  hik_metadata_probe_pair_audit_tests BEFORE PRIVATE
+  hik_frame_metadata_probe_pair_audit_tests BEFORE PRIVATE
   "${VOLLEYBALL_MVS_FAKE_INCLUDE_DIR}"
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
 
 add_legacy_nx_test(
   capture_chessboard_args_tests
-  tools/capture_chessboard_args_tests.cpp
+  tools/capture_chessboard/args_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/capture_chessboard/args.cpp
 )
 target_include_directories(
@@ -172,7 +172,7 @@ target_include_directories(
 
 add_legacy_nx_test(
   capture_chessboard_output_tests
-  tools/capture_chessboard_output_tests.cpp
+  tools/capture_chessboard/output_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/capture_chessboard/output.cpp
   ${LEGACY_NX_TOOL_DIR}/common/atomic_file.cpp
 )
@@ -182,19 +182,19 @@ target_include_directories(
 )
 
 add_legacy_nx_test(
-  tool_parallel_tasks_tests
-  tools/tool_parallel_tasks_tests.cpp
+  common_parallel_tasks_tests
+  tools/common/parallel_tasks_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/common/parallel_tasks.cpp
 )
 target_include_directories(
-  tool_parallel_tasks_tests PRIVATE
+  common_parallel_tasks_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/adapters/legacy_nx
 )
-target_link_libraries(tool_parallel_tasks_tests PRIVATE Threads::Threads)
+target_link_libraries(common_parallel_tasks_tests PRIVATE Threads::Threads)
 
 add_legacy_nx_test(
   stereo_calibrate_args_tests
-  tools/stereo_calibrate_args_tests.cpp
+  tools/stereo_calibrate/args_tests.cpp
   ${LEGACY_NX_TOOL_DIR}/stereo_calibrate/args.cpp
 )
 target_include_directories(

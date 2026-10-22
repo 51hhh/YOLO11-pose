@@ -145,6 +145,6 @@ int main() {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
     }
-    std::cout << "Capture chessboard argument tests passed\n";
+    std::cout << "capture_chessboard args tests passed\n";
     return EXIT_SUCCESS;
 }

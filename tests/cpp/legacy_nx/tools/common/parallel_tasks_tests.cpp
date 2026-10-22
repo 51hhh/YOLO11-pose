@@ -71,6 +71,6 @@ int main() {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
     }
-    std::cout << "tool parallel task tests passed\n";
+    std::cout << "parallel_tasks tests passed\n";
     return EXIT_SUCCESS;
 }

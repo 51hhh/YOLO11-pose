@@ -212,6 +212,6 @@ int main() {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
     }
-    std::cout << "capture chessboard output tests passed\n";
+    std::cout << "capture_chessboard output tests passed\n";
     return EXIT_SUCCESS;
 }

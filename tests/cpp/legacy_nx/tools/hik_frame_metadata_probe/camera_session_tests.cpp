@@ -352,6 +352,6 @@ int main() {
         std::cerr << failures << " test(s) failed\n";
         return 1;
     }
-    std::cout << "hik metadata camera tests passed\n";
+    std::cout << "hik_frame_metadata_probe camera session tests passed\n";
     return 0;
 }

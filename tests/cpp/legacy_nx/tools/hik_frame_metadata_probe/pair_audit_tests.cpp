@@ -128,6 +128,6 @@ int main() {
         std::cerr << failures << " test(s) failed\n";
         return 1;
     }
-    std::cout << "hik metadata pair audit tests passed\n";
+    std::cout << "hik_frame_metadata_probe pair audit tests passed\n";
     return 0;
 }

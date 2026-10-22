@@ -98,6 +98,6 @@ int main() {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
     }
-    std::cout << "Hik metadata probe argument tests passed\n";
+    std::cout << "hik_frame_metadata_probe args tests passed\n";
     return EXIT_SUCCESS;
 }

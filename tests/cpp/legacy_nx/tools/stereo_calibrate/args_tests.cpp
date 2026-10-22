@@ -127,6 +127,6 @@ int main() {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;
     }
-    std::cout << "Stereo calibrate argument tests passed\n";
+    std::cout << "stereo_calibrate args tests passed\n";
     return EXIT_SUCCESS;
 }
