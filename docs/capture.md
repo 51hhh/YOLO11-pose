@@ -51,6 +51,16 @@ GPIO 上升沿，则该帧不发布；不得退回 USB 到达时刻、SDK 主机
 
 ## 数据包
 
+最终对外格式固定为 v2.1.0。内部暂存目前有两个明确版本：
+
+- v4：当前 `volleyball capture` 调用旧 NX 管线产生的聚合行格式；
+- v5：主线 `TrialWriter` 直接保存逐相机帧、全部检测、全部关联尝试和直接观测的格式。
+
+v5 使用 `frames_v5.csv`、`detections_v5.csv`、`associations_v5.csv`、
+`observations_v5.csv` 与最后写入的 `status_v5.json`。任一表仍有 `.partial`、状态计数
+不一致、原图集合不一致或跨表引用不闭合时，finalizer 必须拒绝。v4/v5 只在
+staging 内兼容，均不能绕过校验直接冒充正式 trial。
+
 ```text
 dataset-root/
 ├── calibrations/<calibration_id>.json
@@ -108,6 +118,11 @@ dataset-root/
 - 同名 trial 已存在。
 
 发布方式为同文件系统 staging 到正式目录的原子重命名。失败目录保留以便诊断，不能被当作有效 trial。
+
+主线 v5 finalizer 还会把左右设备时钟、NX 实时时钟和 NX 单调时钟分别拟合到配置的
+轨迹参考时钟。最终 `camera_frames.csv` 使用单一参考时钟，但各原始时钟值、时钟域和
+拟合输入会完整保留在 `raw/audit/*_v5.csv`；不能为了适配单列格式而在 staging 中先把
+它们伪装成同一时钟。
 
 ## 建议的 conditions.json
 

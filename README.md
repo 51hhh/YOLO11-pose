@@ -52,11 +52,11 @@ python3 tools/check_repository.py
 | `algorithms/stereo/` | 纯双目关联、三角化和协方差传播 |
 | `services/` | 将端口与算法编排为观测用例 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
-| `adapters/capture_v21/` | 与硬件无关的 v2.1 staging 序列化适配器 |
+| `adapters/capture_v21/` | 与硬件无关的主线 v5 staging 原子写入适配器；最终格式仍是 v2.1 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
 | `adapters/legacy_nx/` | CUDA/VPI、TensorRT 与 ROS2 的 NX 兼容管线 |
-| `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
+| `python/volleyball_vision/` | 配置、v4/v5 staging 校验与 v2.1 发布、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |
 | `tests/contract/`、`tests/unit/` | 数据包契约与 Python 组件测试 |
 | `tests/trial_factory.py` | `unit` 与 `contract` 共用的最小有效 trial 夹具；测试模块之间不互相导入 |
@@ -127,7 +127,7 @@ volleyball capture \
 volleyball dataset validate data/captures
 ```
 
-采集先写入同文件系统的隐藏 staging 目录，完成帧数、触发、配对、时钟、表格、原始图像和 SHA-256 检查后才原子发布。崩溃后的完整 staging 可以显式恢复：
+采集先写入同文件系统的隐藏 staging 目录，完成帧数、触发、配对、时钟、表格、原始图像和 SHA-256 检查后才原子发布。当前 CLI 实机入口仍由旧 NX 适配器产生 v4 staging；新 C++ 端口链产生逐事实 v5 staging。二者共享同一最终化命令并发布为同一个冻结的 v2.1 trial，版本不会被混写。崩溃后的完整 staging 可以显式恢复：
 
 ```bash
 volleyball capture-finalize \
