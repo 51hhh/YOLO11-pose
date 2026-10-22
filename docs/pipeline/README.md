@@ -54,8 +54,13 @@ GPIO 上升沿
 ```bash
 PYTHONPATH=python python3 -m volleyball_vision config render --profile nx-rdk
 PYTHONPATH=python python3 -m volleyball_vision config render-legacy --profile nx-rdk
+PYTHONPATH=python python3 -m volleyball_vision config pipeline-report --profile nx-rdk
 PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 ```
+
+`pipeline-report` 把上述两层配置汇总为可测试的阶段、候选角色和 stream 启用表，
+并明确标记为 L1 配置投影证据。它不能替代目标机上的 SDK/链接门禁、启动日志、
+逐帧计数或 Nsight 时间线。
 
 `free-flight` 的同步、无丢帧执行策略由 mode 在普通 `render-legacy` 阶段就固定；
 真正执行 `volleyball capture` 时只再注入 staging 路径、帧数、图像产品和采集身份。

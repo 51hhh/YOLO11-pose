@@ -16,6 +16,14 @@ VPI remap 已经在 CUDA backend 上提交，也不代表左右 TensorRT 真正�
 `volleyball doctor` 只完成 L1–L3。L4 必须在 Orin NX 上启动真实管线后验收，
 不能由开发机静态检查替代。
 
+可用下面的只读报告集中查看 L1。报告同时列出“资源会分配”和“当前 profile 会
+提交逐帧工作”，避免仅凭 stream 名或候选字段判断启用状态：
+
+```bash
+volleyball config pipeline-report --profile nx-rdk
+volleyball config pipeline-report --profile nx-rdk --format json
+```
+
 ## `doctor` 检查范围
 
 对 `nx-rdk` 和 `free-flight`：

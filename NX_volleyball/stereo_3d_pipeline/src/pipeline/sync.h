@@ -3,9 +3,9 @@
  * @brief CUDA Event/Stream 同步工具
  *
  * 管理 Pipeline 使用的所有 CUDA Streams:
- *   - streamPVA : Stage 0 校正 (PVA backend)
- *   - streamDLA : Stage 1 左目检测 (DLA/GPU 推理)
- *   - streamDLA_R : Stage 1 右目检测 (双路 YOLO 测试)
+ *   - vpiStreamPVA : Stage 0 校正（历史名称，backend 由配置决定）
+ *   - cudaStreamDLA : Stage 1 左目检测（历史名称，不代表必然使用 DLA）
+ *   - cudaStreamDLA_R : Stage 1 右目检测（历史名称，不代表必然使用 DLA）
  *   - streamGPU : Stage 2 视差 (GPU CUDA)
  *   - streamFuse: Stage 3 融合
  */
@@ -22,17 +22,18 @@ namespace stereo3d {
 /**
  * @brief Pipeline 同步上下文
  *
- * 封装 Pipeline 所需的全部 CUDA Stream 和 VPI Stream。
- * DLA Stream 和 GPU Stream 独立工作，实现 Stage 1 / Stage 2 并行。
+ * 封装 Pipeline 主执行图固定创建的 CUDA/VPI stream。异步 ROI 与 P2 诊断的
+ * 条件 stream 由 Pipeline 单独持有，不在本结构中。左右检测 stream 和 GPU
+ * stream 可独立工作，但实际 backend 与并发仍须由最终配置和运行轨迹确认。
  */
 struct PipelineStreams {
     // ===== VPI Streams =====
-    VPIStream vpiStreamPVA  = nullptr;   ///< PVA backend (Stage 0 校正)
+    VPIStream vpiStreamPVA  = nullptr;   ///< 历史名称：Stage 0 校正，可选 PVA/CUDA/VIC
     VPIStream vpiStreamGPU  = nullptr;   ///< CUDA backend (Stage 2 视差)
 
     // ===== CUDA Streams =====
-    cudaStream_t cudaStreamDLA  = nullptr;   ///< 左目检测推理 CUDA Stream
-    cudaStream_t cudaStreamDLA_R = nullptr;  ///< 右目检测推理 CUDA Stream
+    cudaStream_t cudaStreamDLA  = nullptr;   ///< 历史名称：左目检测 CUDA Stream
+    cudaStream_t cudaStreamDLA_R = nullptr;  ///< 历史名称：右目检测 CUDA Stream
     cudaStream_t cudaStreamGPU  = nullptr;   ///< GPU 视差 CUDA Stream
     cudaStream_t cudaStreamFuse = nullptr;   ///< 融合 Stage CUDA Stream
     cudaStream_t cudaStreamBGR  = nullptr;   ///< Bayer→BGR CUDA kernel Stream

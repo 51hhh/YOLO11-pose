@@ -16,6 +16,7 @@ from .config import ConfigError, flatten, load_profile
 from .dataset import DatasetError, validate_dataset, validate_trial
 from .doctor import checks_as_dicts, run_doctor
 from .legacy_config import build_legacy_pipeline_config
+from .pipeline_report import build_pipeline_report
 from .replay import run_replay
 from .runtime import run_runtime
 
@@ -79,6 +80,16 @@ def _config_render_legacy(args: argparse.Namespace) -> int:
     payload = build_legacy_pipeline_config(config)
     print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), end="")
     print(f"# config_sha256: {config.fingerprint_sha256}", file=sys.stderr)
+    return 0
+
+
+def _config_pipeline_report(args: argparse.Namespace) -> int:
+    config = load_profile(args.profile, overrides=args.set)
+    payload = build_pipeline_report(config)
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), end="")
     return 0
 
 
@@ -275,6 +286,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_profile_arguments(render_legacy)
     render_legacy.set_defaults(handler=_config_render_legacy)
+
+    pipeline_report = config_commands.add_parser(
+        "pipeline-report",
+        help="汇总帧生命周期、候选、并发流和输出的 L1 启用意图",
+    )
+    _add_profile_arguments(pipeline_report)
+    pipeline_report.add_argument(
+        "--format", choices=("yaml", "json"), default="yaml"
+    )
+    pipeline_report.set_defaults(handler=_config_pipeline_report)
 
     doctor = subparsers.add_parser("doctor", help="只读检查配置、模型、标定和运行环境")
     _add_profile_arguments(doctor)
