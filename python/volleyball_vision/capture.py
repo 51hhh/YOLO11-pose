@@ -19,14 +19,25 @@ from .legacy_config import write_legacy_pipeline_config
 from .model_manifest import resolve_model, sha256_file
 
 
-STAGE_SCHEMA_VERSION = 1
+STAGE_SCHEMA_VERSION = 3
 STAGE_FRAME_COLUMNS = [
     "frame_id",
     "host_capture_timestamp_ns",
     "callback_timestamp_ns",
+    "left_receive_monotonic_ns",
+    "right_receive_monotonic_ns",
+    "left_receive_realtime_ns",
+    "right_receive_realtime_ns",
+    "left_sdk_host_timestamp_raw",
+    "right_sdk_host_timestamp_raw",
     "left_device_timestamp_ns",
     "right_device_timestamp_ns",
     "stereo_timestamp_residual_ns",
+    "trigger_sequence",
+    "trigger_scheduled_monotonic_ns",
+    "trigger_edge_monotonic_ns",
+    "trigger_edge_realtime_ns",
+    "trigger_write_uncertainty_ns",
     "left_frame_number",
     "right_frame_number",
     "left_frame_counter",
@@ -194,6 +205,13 @@ def build_capture_context(
         "notes": notes,
         "profile": config.profile,
         "config_sha256": config.fingerprint_sha256,
+        "exposure_timestamp": {
+            "source": config.data["cameras"]["sync"]["exposure_timestamp_source"],
+            "delay_ns": config.data["cameras"]["sync"]["exposure_delay_ns"],
+            "delay_uncertainty_ns": config.data["cameras"]["sync"][
+                "exposure_delay_uncertainty_ns"
+            ],
+        },
         "perception_pipeline": pipeline,
     }
 
@@ -214,15 +232,20 @@ def _shared_capture_timestamps(row: Mapping[str, str]) -> tuple[int, int]:
     return left, left - residual
 
 
-def _fit_host_clock_mapping(
-    frames: list[dict[str, str]],
-    shared_left_ns: list[int],
+def _fit_clock_mapping(
+    source_times_ns: list[int],
+    reference_times_ns: list[int],
+    *,
+    source_clock: str,
     reference_clock: str,
+    mapping_id: str,
+    source: str,
+    validity_source_times_ns: Iterable[int] = (),
 ) -> dict[str, Any] | None:
     points = [
-        (_int(row, "host_capture_timestamp_ns"), reference)
-        for row, reference in zip(frames, shared_left_ns)
-        if _int(row, "host_capture_timestamp_ns") > 0
+        (source_time, reference_time)
+        for source_time, reference_time in zip(source_times_ns, reference_times_ns)
+        if source_time > 0
     ]
     if not points:
         return None
@@ -241,11 +264,11 @@ def _fit_host_clock_mapping(
         abs(reference_anchor + round((source - source_anchor) * scale) - reference)
         for source, reference in points
     ]
-    callback_times = [_int(row, "callback_timestamp_ns") for row in frames]
-    all_source = [source for source, _ in points] + callback_times
+    all_source = [source_time for source_time, _ in points]
+    all_source.extend(value for value in validity_source_times_ns if value > 0)
     return {
-        "mapping_id": "nx-realtime-to-camera-0001",
-        "source_clock_domain": "nx-realtime",
+        "mapping_id": mapping_id,
+        "source_clock_domain": source_clock,
         "reference_clock_domain": reference_clock,
         "source_anchor_ns": source_anchor,
         "reference_anchor_ns": reference_anchor,
@@ -253,8 +276,15 @@ def _fit_host_clock_mapping(
         "uncertainty_ns": max(100_000.0, float(max(residuals, default=0))),
         "valid_from_source_ns": min(all_source),
         "valid_to_source_ns": max(all_source),
-        "source": "capture-stage-affine-fit",
+        "source": source,
     }
+
+
+def _map_timestamp(timestamp_ns: int, mapping: Mapping[str, Any]) -> int:
+    scale = 1.0 + float(mapping["drift_ppm"]) * 1.0e-6
+    return int(mapping["reference_anchor_ns"]) + round(
+        (timestamp_ns - int(mapping["source_anchor_ns"])) * scale
+    )
 
 
 def _environment_record(
@@ -295,6 +325,17 @@ def finalize_capture_stage(
         raise DatasetError("capture status schema 版本不兼容")
     if not status.get("complete"):
         raise DatasetError(f"采集未完整结束: {status.get('fatal_error') or 'unknown'}")
+    if context.get("config_sha256") != config.fingerprint_sha256:
+        raise DatasetError("staging 使用的配置指纹与 finalize 配置不一致")
+    expected_exposure = {
+        "source": config.data["cameras"]["sync"]["exposure_timestamp_source"],
+        "delay_ns": config.data["cameras"]["sync"]["exposure_delay_ns"],
+        "delay_uncertainty_ns": config.data["cameras"]["sync"][
+            "exposure_delay_uncertainty_ns"
+        ],
+    }
+    if context.get("exposure_timestamp") != expected_exposure:
+        raise DatasetError("staging 曝光时间语义与 finalize 配置不一致")
     for counter in ("dropped_frames", "copy_failures", "write_failures"):
         if int(status.get(counter, 0)) != 0:
             raise DatasetError(f"采集存在 {counter}={status[counter]}，fail_trial 禁止发布")
@@ -331,11 +372,27 @@ def finalize_capture_stage(
 
     host_times = [_int(row, "host_capture_timestamp_ns") for row in frames]
     callback_times = [_int(row, "callback_timestamp_ns") for row in frames]
+    left_receive_monotonic = [
+        _int(row, "left_receive_monotonic_ns") for row in frames
+    ]
+    right_receive_monotonic = [
+        _int(row, "right_receive_monotonic_ns") for row in frames
+    ]
+    left_receive_realtime = [
+        _int(row, "left_receive_realtime_ns") for row in frames
+    ]
+    right_receive_realtime = [
+        _int(row, "right_receive_realtime_ns") for row in frames
+    ]
     left_device_times = [_int(row, "left_device_timestamp_ns") for row in frames]
     right_device_times = [_int(row, "right_device_timestamp_ns") for row in frames]
     timestamp_series = (
         host_times,
         callback_times,
+        left_receive_monotonic,
+        right_receive_monotonic,
+        left_receive_realtime,
+        right_receive_realtime,
         left_device_times,
         right_device_times,
     )
@@ -344,6 +401,10 @@ def finalize_capture_stage(
     for name, values in (
         ("host_capture_timestamp_ns", host_times),
         ("callback_timestamp_ns", callback_times),
+        ("left_receive_monotonic_ns", left_receive_monotonic),
+        ("right_receive_monotonic_ns", right_receive_monotonic),
+        ("left_receive_realtime_ns", left_receive_realtime),
+        ("right_receive_realtime_ns", right_receive_realtime),
         ("left_device_timestamp_ns", left_device_times),
         ("right_device_timestamp_ns", right_device_times),
     ):
@@ -351,6 +412,82 @@ def finalize_capture_stage(
             raise DatasetError(f"{name} 必须严格递增")
     if any(callback < capture for capture, callback in zip(host_times, callback_times)):
         raise DatasetError("callback_timestamp_ns 不得早于 host_capture_timestamp_ns")
+
+    trigger_sequences = [_int(row, "trigger_sequence") for row in frames]
+    scheduled_monotonic = [
+        _int(row, "trigger_scheduled_monotonic_ns") for row in frames
+    ]
+    edge_monotonic = [_int(row, "trigger_edge_monotonic_ns") for row in frames]
+    edge_realtime = [_int(row, "trigger_edge_realtime_ns") for row in frames]
+    write_uncertainty = [
+        _int(row, "trigger_write_uncertainty_ns") for row in frames
+    ]
+    if any(value <= 0 for value in trigger_sequences):
+        raise DatasetError("trigger_sequence 必须为正整数")
+    if any(
+        (sequence & 0xFFFFFFFF) != counter
+        for sequence, counter in zip(trigger_sequences, left_counters)
+    ):
+        raise DatasetError("trigger_sequence 必须与相机 FrameCounter 对齐")
+    if any(
+        right != left + 1
+        for left, right in zip(trigger_sequences, trigger_sequences[1:])
+    ):
+        raise DatasetError("GPIO 触发序列出现缺口")
+    for name, values in (
+        ("trigger_scheduled_monotonic_ns", scheduled_monotonic),
+        ("trigger_edge_monotonic_ns", edge_monotonic),
+        ("trigger_edge_realtime_ns", edge_realtime),
+    ):
+        if any(value <= 0 for value in values):
+            raise DatasetError(f"{name} 必须为正整数纳秒")
+        if any(right <= left for left, right in zip(values, values[1:])):
+            raise DatasetError(f"{name} 必须严格递增")
+    if any(value < 0 for value in write_uncertainty):
+        raise DatasetError("trigger_write_uncertainty_ns 不得为负")
+    if any(
+        edge < scheduled
+        for edge, scheduled in zip(edge_monotonic, scheduled_monotonic)
+    ):
+        raise DatasetError("GPIO 上升沿时间不得早于计划时间")
+    if any(edge > host for edge, host in zip(edge_realtime, host_times)):
+        raise DatasetError("GPIO 上升沿不得晚于相机主机采集时间")
+    for role, receive_mono, receive_real in (
+        ("left", left_receive_monotonic, left_receive_realtime),
+        ("right", right_receive_monotonic, right_receive_realtime),
+    ):
+        if any(
+            receive < edge
+            for receive, edge in zip(receive_mono, edge_monotonic)
+        ):
+            raise DatasetError(f"{role} USB 单调时钟到达时间早于 GPIO 上升沿")
+        if any(
+            receive < edge
+            for receive, edge in zip(receive_real, edge_realtime)
+        ):
+            raise DatasetError(f"{role} USB 实时时钟到达时间早于 GPIO 上升沿")
+    if any(
+        callback < max(left_receive, right_receive)
+        for callback, left_receive, right_receive in zip(
+            callback_times,
+            left_receive_realtime,
+            right_receive_realtime,
+        )
+    ):
+        raise DatasetError("callback_timestamp_ns 不得早于左右 USB 帧到达时间")
+
+    frame_period_ns = 1.0e9 / config.data["runtime"]["nominal_fps"]
+    period_tolerance_ns = max(
+        frame_period_ns * 0.25,
+        float(config.data["cameras"]["sync"]["estimated_error_ns"] or 0.0) * 4.0,
+    )
+    for index in range(1, len(frames)):
+        trigger_period = edge_monotonic[index] - edge_monotonic[index - 1]
+        camera_period = left_device_times[index] - left_device_times[index - 1]
+        if abs(trigger_period - frame_period_ns) > period_tolerance_ns:
+            raise DatasetError("GPIO 触发周期偏离配置帧率，疑似调度异常或漏触发")
+        if abs(camera_period - trigger_period) > period_tolerance_ns:
+            raise DatasetError("相机设备时间与 GPIO 触发序列不一致，疑似漏曝光")
 
     configured_sync_error = config.data["cameras"]["sync"]["estimated_error_ns"]
     if configured_sync_error is not None:
@@ -365,9 +502,78 @@ def finalize_capture_stage(
     ensure_dataset_calibration(root, config, project_root=project_root)
     left_id = config.data["cameras"]["left"]["id"]
     right_id = config.data["cameras"]["right"]["id"]
-    capture_times = [_shared_capture_timestamps(row) for row in frames]
-    origin_ns = min(round((left + right) / 2) for left, right in capture_times)
+    hardware_times = [_shared_capture_timestamps(row) for row in frames]
     camera_clock = config.data["cameras"]["sync"]["clock_domain"]
+    hardware_midpoints = [
+        round((left + right) / 2) for left, right in hardware_times
+    ]
+    trigger_mapping = _fit_clock_mapping(
+        edge_monotonic,
+        hardware_midpoints,
+        source_clock="nx-monotonic",
+        reference_clock=camera_clock,
+        mapping_id="nx-gpio-monotonic-to-camera-0001",
+        source="nx-gpio-rising-edge-affine-fit",
+        validity_source_times_ns=(
+            *scheduled_monotonic,
+            *left_receive_monotonic,
+            *right_receive_monotonic,
+            *(
+                edge - uncertainty
+                for edge, uncertainty in zip(edge_monotonic, write_uncertainty)
+            ),
+            *(
+                edge + uncertainty
+                for edge, uncertainty in zip(edge_monotonic, write_uncertainty)
+            ),
+        ),
+    )
+    realtime_mapping = _fit_clock_mapping(
+        edge_realtime,
+        hardware_midpoints,
+        source_clock="nx-realtime",
+        reference_clock=camera_clock,
+        mapping_id="nx-realtime-to-camera-0001",
+        source="paired-gpio-clock-read-affine-fit",
+        validity_source_times_ns=(
+            *host_times,
+            *callback_times,
+            *left_receive_realtime,
+            *right_receive_realtime,
+        ),
+    )
+    if trigger_mapping is None or realtime_mapping is None:
+        raise DatasetError("无法建立 NX GPIO 到相机设备时钟的映射")
+    edge_uncertainty_ns = max(write_uncertainty, default=0) + int(
+        expected_exposure["delay_uncertainty_ns"]
+    )
+    trigger_mapping["uncertainty_ns"] = (
+        float(trigger_mapping["uncertainty_ns"]) + edge_uncertainty_ns
+    )
+    realtime_mapping["uncertainty_ns"] = (
+        float(realtime_mapping["uncertainty_ns"]) + edge_uncertainty_ns
+    )
+    exposure_delay_ns = int(expected_exposure["delay_ns"])
+    exposure_times = [
+        _map_timestamp(timestamp, trigger_mapping) + exposure_delay_ns
+        for timestamp in edge_monotonic
+    ]
+    left_receive_times = [
+        _map_timestamp(timestamp, trigger_mapping)
+        for timestamp in left_receive_monotonic
+    ]
+    right_receive_times = [
+        _map_timestamp(timestamp, trigger_mapping)
+        for timestamp in right_receive_monotonic
+    ]
+    inference_done_times = [
+        _map_timestamp(timestamp, realtime_mapping)
+        for timestamp in callback_times
+    ]
+    if any(right <= left for left, right in zip(exposure_times, exposure_times[1:])):
+        raise DatasetError("映射后的曝光开始时间必须严格递增")
+    capture_times = [(timestamp, timestamp) for timestamp in exposure_times]
+    origin_ns = exposure_times[0]
     metadata = {
         "trial_id": context["trial_id"],
         "session_id": context["session_id"],
@@ -386,15 +592,16 @@ def finalize_capture_stage(
         "capture": {
             "nominal_fps": config.data["runtime"]["nominal_fps"],
             "sync_method": config.data["cameras"]["sync"]["method"],
-            "estimated_sync_error_s": (
-                None
-                if config.data["cameras"]["sync"]["estimated_error_ns"] is None
-                else config.data["cameras"]["sync"]["estimated_error_ns"] * 1.0e-9
-            ),
+            "estimated_sync_error_s": max(
+                float(config.data["cameras"]["sync"]["estimated_error_ns"] or 0.0),
+                float(trigger_mapping["uncertainty_ns"]),
+                float(realtime_mapping["uncertainty_ns"]),
+            )
+            * 1.0e-9,
             "trajectory_timebase": {
                 "clock_domain": camera_clock,
                 "origin_ns": origin_ns,
-                "timestamp_semantics": "stereo_midpoint_capture",
+                "timestamp_semantics": "hardware_trigger",
             },
         },
         "conditions": context.get("conditions", {}),
@@ -404,16 +611,26 @@ def finalize_capture_stage(
     frame_lookup = dict(zip(frame_ids, capture_times))
     raw_mode = config.data["recording"]["raw_frames"]
     with TrialPackageWriter(root, metadata, project_root=project_root) as writer:
-        for row, (left_capture, right_capture) in zip(frames, capture_times):
+        for (
+            row,
+            (left_hardware, right_hardware),
+            exposure_start,
+            left_receive,
+            right_receive,
+            inference_done,
+        ) in zip(
+            frames,
+            hardware_times,
+            exposure_times,
+            left_receive_times,
+            right_receive_times,
+            inference_done_times,
+        ):
             frame_id = _int(row, "frame_id")
             common = {
                 "frame_index": frame_id,
                 "clock_domain": camera_clock,
-                "exposure_start_ns": None,
-                "receive_timestamp_ns": None,
-                "inference_done_timestamp_ns": None,
-                "exposure_us": config.data["cameras"]["left"]["exposure_us"],
-                "gain_db": config.data["cameras"]["left"]["gain_db"],
+                "exposure_start_ns": exposure_start,
                 "roi_x": 0,
                 "roi_y": 0,
                 "roi_width": config.data["rectification"]["output_resolution"][0],
@@ -422,24 +639,33 @@ def finalize_capture_stage(
                 "dropped": False,
                 "drop_reason": None,
             }
-            writer.append(
-                "camera_frames",
-                {
-                    **common,
-                    "camera_id": left_id,
-                    "hardware_timestamp_ns": left_capture,
-                    "capture_timestamp_ns": left_capture,
-                },
-            )
-            writer.append(
-                "camera_frames",
-                {
-                    **common,
-                    "camera_id": right_id,
-                    "hardware_timestamp_ns": right_capture,
-                    "capture_timestamp_ns": right_capture,
-                },
-            )
+            for camera_id, hardware_timestamp, receive_timestamp, camera_config in (
+                (
+                    left_id,
+                    left_hardware,
+                    left_receive,
+                    config.data["cameras"]["left"],
+                ),
+                (
+                    right_id,
+                    right_hardware,
+                    right_receive,
+                    config.data["cameras"]["right"],
+                ),
+            ):
+                writer.append(
+                    "camera_frames",
+                    {
+                        **common,
+                        "camera_id": camera_id,
+                        "hardware_timestamp_ns": hardware_timestamp,
+                        "capture_timestamp_ns": exposure_start,
+                        "receive_timestamp_ns": receive_timestamp,
+                        "inference_done_timestamp_ns": inference_done,
+                        "exposure_us": camera_config["exposure_us"],
+                        "gain_db": camera_config["gain_db"],
+                    },
+                )
 
         pipeline_id = context["perception_pipeline"]["pipeline_id"]
         for row in detections:
@@ -552,33 +778,76 @@ def finalize_capture_stage(
             )
             sample_index += 1
 
-        mapping = _fit_host_clock_mapping(
+        writer.append("clock_mappings", trigger_mapping)
+        writer.append("clock_mappings", realtime_mapping)
+        for row, (left_capture, right_capture), left_receive, right_receive in zip(
             frames,
-            [left for left, _ in capture_times],
-            camera_clock,
-        )
-        if mapping is not None:
-            writer.append("clock_mappings", mapping)
-            for row, (left_capture, right_capture) in zip(frames, capture_times):
-                callback_ns = _int(row, "callback_timestamp_ns")
-                frame_id = _int(row, "frame_id")
-                for camera_id, capture_ns in ((left_id, left_capture), (right_id, right_capture)):
-                    writer.append(
-                        "processing_timings",
-                        {
-                            "event_id": f"callback-{camera_id}-{frame_id}",
-                            "stage": "legacy_frame_callback",
-                            "input_type": "camera_frame",
-                            "input_id": f"{camera_id}:{frame_id}",
-                            "capture_reference_ns": capture_ns,
-                            "start_timestamp_ns": callback_ns,
-                            "done_timestamp_ns": callback_ns,
-                            "clock_domain": "nx-realtime",
-                            "queue_depth": None,
-                            "valid": True,
-                            "source": pipeline_id,
-                        },
-                    )
+            capture_times,
+            left_receive_monotonic,
+            right_receive_monotonic,
+        ):
+            callback_ns = _int(row, "callback_timestamp_ns")
+            frame_id = _int(row, "frame_id")
+            for camera_id, capture_ns in (
+                (left_id, left_capture),
+                (right_id, right_capture),
+            ):
+                writer.append(
+                    "processing_timings",
+                    {
+                        "event_id": f"callback-{camera_id}-{frame_id}",
+                        "stage": "legacy_frame_callback",
+                        "input_type": "camera_frame",
+                        "input_id": f"{camera_id}:{frame_id}",
+                        "capture_reference_ns": capture_ns,
+                        "start_timestamp_ns": callback_ns,
+                        "done_timestamp_ns": callback_ns,
+                        "clock_domain": "nx-realtime",
+                        "queue_depth": None,
+                        "valid": True,
+                        "source": pipeline_id,
+                    },
+                )
+            edge_ns = _int(row, "trigger_edge_monotonic_ns")
+            uncertainty_ns = _int(row, "trigger_write_uncertainty_ns")
+            edge_start_ns = edge_ns - uncertainty_ns // 2
+            edge_done_ns = edge_start_ns + uncertainty_ns
+            writer.append(
+                "processing_timings",
+                {
+                    "event_id": f"gpio-trigger-{_int(row, 'trigger_sequence')}",
+                    "stage": "gpio_rising_edge_write",
+                    "input_type": "trigger_event",
+                    "input_id": str(_int(row, "trigger_sequence")),
+                    "capture_reference_ns": left_capture,
+                    "start_timestamp_ns": edge_start_ns,
+                    "done_timestamp_ns": edge_done_ns,
+                    "clock_domain": "nx-monotonic",
+                    "queue_depth": None,
+                    "valid": True,
+                    "source": "nx-gpio-pwm",
+                },
+            )
+            for camera_id, receive_ns, capture_ns in (
+                (left_id, left_receive, left_capture),
+                (right_id, right_receive, right_capture),
+            ):
+                writer.append(
+                    "processing_timings",
+                    {
+                        "event_id": f"usb-receive-{camera_id}-{frame_id}",
+                        "stage": "camera_frame_receive",
+                        "input_type": "camera_frame",
+                        "input_id": f"{camera_id}:{frame_id}",
+                        "capture_reference_ns": capture_ns,
+                        "start_timestamp_ns": receive_ns,
+                        "done_timestamp_ns": receive_ns,
+                        "clock_domain": "nx-monotonic",
+                        "queue_depth": None,
+                        "valid": True,
+                        "source": "hik-mvs-usb",
+                    },
+                )
 
         environment = _environment_record(
             context.get("conditions", {}),

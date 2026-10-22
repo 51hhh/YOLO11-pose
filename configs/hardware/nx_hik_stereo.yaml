@@ -12,6 +12,10 @@ cameras:
     trigger_source: Line0
     trigger_activation: RisingEdge
     estimated_error_ns: 100000.0
+    # GPIO 写高的时刻是本系统的曝光开始事实；若后续实测相机输入延迟，只改下面两项。
+    exposure_timestamp_source: nx_gpio_rising_edge
+    exposure_delay_ns: 0
+    exposure_delay_uncertainty_ns: 0
   left:
     id: hik-00D39342665
     serial: "00D39342665"

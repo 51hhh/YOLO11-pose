@@ -15,7 +15,7 @@
 namespace stereo3d {
 namespace {
 
-constexpr int kStageSchemaVersion = 1;
+constexpr int kStageSchemaVersion = 3;
 
 std::uint64_t realtimeNowNs() {
     return static_cast<std::uint64_t>(
@@ -68,6 +68,7 @@ bool CaptureV21StageRecorder::init(
     if (cfg_.output_dir.empty() || cfg_.frame_limit < 0 ||
         cfg_.queue_capacity == 0 || cfg_.overflow_policy != "block" ||
         cfg_.loss_policy != "fail_trial" ||
+        cfg_.exposure_timestamp_source != "nx_gpio_rising_edge" ||
         (cfg_.raw_frames != "none" && cfg_.raw_frames != "selected" &&
          cfg_.raw_frames != "all") ||
         cfg_.image_product != "rectified_gray8" ||
@@ -119,8 +120,14 @@ bool CaptureV21StageRecorder::init(
     }
     frames_file_
         << "frame_id,host_capture_timestamp_ns,callback_timestamp_ns,"
+           "left_receive_monotonic_ns,right_receive_monotonic_ns,"
+           "left_receive_realtime_ns,right_receive_realtime_ns,"
+           "left_sdk_host_timestamp_raw,right_sdk_host_timestamp_raw,"
            "left_device_timestamp_ns,right_device_timestamp_ns,"
-           "stereo_timestamp_residual_ns,left_frame_number,right_frame_number,"
+           "stereo_timestamp_residual_ns,trigger_sequence,"
+           "trigger_scheduled_monotonic_ns,trigger_edge_monotonic_ns,"
+           "trigger_edge_realtime_ns,trigger_write_uncertainty_ns,"
+           "left_frame_number,right_frame_number,"
            "left_frame_counter,right_frame_counter,left_trigger_index,"
            "right_trigger_index,raw_left,raw_right\n";
     detections_file_
@@ -142,6 +149,7 @@ bool CaptureV21StageRecorder::init(
     last_frame_id_ = -1;
     last_left_counter_ = 0;
     last_right_counter_ = 0;
+    last_trigger_sequence_ = 0;
     have_previous_frame_ = false;
     capture_complete_ = false;
     status_publishable_ = false;
@@ -233,6 +241,52 @@ void CaptureV21StageRecorder::record(const FrameCallbackData& frame) {
         setFatal("left/right hardware frame counters disagree");
         return;
     }
+    if (frame.metadata.trigger_sequence == 0 ||
+        frame.metadata.trigger_edge_monotonic_ns == 0 ||
+        frame.metadata.trigger_edge_realtime_ns == 0 ||
+        frame.metadata.trigger_scheduled_monotonic_ns == 0) {
+        ++dropped_frames_;
+        setFatal("frame has no NX GPIO trigger-edge timestamp");
+        return;
+    }
+    if (static_cast<std::uint32_t>(frame.metadata.trigger_sequence) !=
+        frame.metadata.left_frame_counter) {
+        ++dropped_frames_;
+        setFatal("GPIO trigger sequence does not match camera FrameCounter");
+        return;
+    }
+    if (have_previous_frame_ &&
+        frame.metadata.trigger_sequence != last_trigger_sequence_ + 1) {
+        ++dropped_frames_;
+        setFatal("GPIO trigger sequence contains a gap");
+        return;
+    }
+    if (frame.metadata.trigger_edge_monotonic_ns <
+        frame.metadata.trigger_scheduled_monotonic_ns) {
+        ++dropped_frames_;
+        setFatal("GPIO trigger edge predates its scheduled time");
+        return;
+    }
+    if (frame.metadata.left_receive_monotonic_ns == 0 ||
+        frame.metadata.right_receive_monotonic_ns == 0 ||
+        frame.metadata.left_receive_realtime_ns == 0 ||
+        frame.metadata.right_receive_realtime_ns == 0) {
+        ++dropped_frames_;
+        setFatal("frame has no per-camera USB receive timestamp");
+        return;
+    }
+    if (frame.metadata.left_receive_monotonic_ns <
+            frame.metadata.trigger_edge_monotonic_ns ||
+        frame.metadata.right_receive_monotonic_ns <
+            frame.metadata.trigger_edge_monotonic_ns ||
+        frame.metadata.left_receive_realtime_ns <
+            frame.metadata.trigger_edge_realtime_ns ||
+        frame.metadata.right_receive_realtime_ns <
+            frame.metadata.trigger_edge_realtime_ns) {
+        ++dropped_frames_;
+        setFatal("camera USB receive timestamp predates GPIO trigger edge");
+        return;
+    }
 
     QueuedFrame queued;
     queued.frame_id = frame.frame_id;
@@ -279,6 +333,7 @@ void CaptureV21StageRecorder::record(const FrameCallbackData& frame) {
     last_frame_id_ = frame.frame_id;
     last_left_counter_ = frame.metadata.left_frame_counter;
     last_right_counter_ = frame.metadata.right_frame_counter;
+    last_trigger_sequence_ = frame.metadata.trigger_sequence;
     have_previous_frame_ = true;
     const int captured = ++captured_frames_;
     if (cfg_.frame_limit > 0 && captured >= cfg_.frame_limit) {
@@ -330,9 +385,20 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
         << frame.frame_id << ','
         << frame.metadata.host_capture_timestamp_ns << ','
         << frame.callback_timestamp_ns << ','
+        << frame.metadata.left_receive_monotonic_ns << ','
+        << frame.metadata.right_receive_monotonic_ns << ','
+        << frame.metadata.left_receive_realtime_ns << ','
+        << frame.metadata.right_receive_realtime_ns << ','
+        << frame.metadata.left_sdk_host_timestamp_raw << ','
+        << frame.metadata.right_sdk_host_timestamp_raw << ','
         << frame.metadata.left_device_timestamp_ns << ','
         << frame.metadata.right_device_timestamp_ns << ','
         << frame.metadata.stereo_timestamp_residual_ns << ','
+        << frame.metadata.trigger_sequence << ','
+        << frame.metadata.trigger_scheduled_monotonic_ns << ','
+        << frame.metadata.trigger_edge_monotonic_ns << ','
+        << frame.metadata.trigger_edge_realtime_ns << ','
+        << frame.metadata.trigger_write_uncertainty_ns << ','
         << frame.metadata.left_frame_number << ','
         << frame.metadata.right_frame_number << ','
         << frame.metadata.left_frame_counter << ','

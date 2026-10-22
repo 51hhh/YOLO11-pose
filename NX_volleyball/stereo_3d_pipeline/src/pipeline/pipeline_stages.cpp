@@ -40,6 +40,12 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
                     std::chrono::system_clock::now().time_since_epoch()).count();
             slot.host_capture_timestamp_ns = chooseCaptureTimestampNs(
                 resL.host_timestamp, resR.host_timestamp, fallback_capture_ns);
+            slot.left_receive_monotonic_ns = resL.receive_monotonic_ns;
+            slot.right_receive_monotonic_ns = resR.receive_monotonic_ns;
+            slot.left_receive_realtime_ns = resL.receive_realtime_ns;
+            slot.right_receive_realtime_ns = resR.receive_realtime_ns;
+            slot.left_sdk_host_timestamp_raw = resL.host_timestamp;
+            slot.right_sdk_host_timestamp_raw = resR.host_timestamp;
             slot.left_timestamp_us = resL.timestamp_us;
             slot.right_timestamp_us = resR.timestamp_us;
             slot.left_frame_number = resL.frame_number;
@@ -48,6 +54,7 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             slot.right_frame_counter = resR.frame_counter;
             slot.left_trigger_index = resL.trigger_index;
             slot.right_trigger_index = resR.trigger_index;
+            attachPwmTriggerMetadata(slot, resL.frame_counter);
             slot.stereo_timestamp_residual_ns =
                 resL.stereo_timestamp_residual_ns;
         } else {

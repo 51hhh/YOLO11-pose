@@ -291,6 +291,9 @@ stereo3d::CaptureV21StageRecorderConfig loadCaptureV21StageRecorderConfig(
             cfg.pipeline_id = capture["pipeline_id"].as<std::string>();
         if (capture["loss_policy"])
             cfg.loss_policy = capture["loss_policy"].as<std::string>();
+        if (capture["exposure_timestamp_source"])
+            cfg.exposure_timestamp_source =
+                capture["exposure_timestamp_source"].as<std::string>();
     } catch (const std::exception& error) {
         LOG_ERROR("capture_v21 config: %s", error.what());
         cfg.valid = false;

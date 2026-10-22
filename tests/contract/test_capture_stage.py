@@ -64,6 +64,11 @@ class CaptureStageTests(unittest.TestCase):
             "notes": "fixture",
             "profile": "free-flight",
             "config_sha256": profile.fingerprint_sha256,
+            "exposure_timestamp": {
+                "source": "nx_gpio_rising_edge",
+                "delay_ns": 0,
+                "delay_uncertainty_ns": 0,
+            },
             "perception_pipeline": pipeline,
         }
         stage = root / "stage"
@@ -77,6 +82,16 @@ class CaptureStageTests(unittest.TestCase):
         for frame_id in range(2):
             left_device = 1_000_000_000 + frame_id * 11_111_111
             host = 2_000_000_000 + frame_id * 11_111_111
+            trigger_monotonic = 3_000_010_000 + frame_id * 11_111_111
+            trigger_realtime = host - 2_000_000
+            # 刻意让左右 USB 到达先后在相邻帧间反转；配对仍必须由
+            # FrameCounter/触发序号决定，不得由主机到达顺序决定。
+            if frame_id == 0:
+                left_receive_delay = 1_500_000
+                right_receive_delay = 1_000_000
+            else:
+                left_receive_delay = 900_000
+                right_receive_delay = 1_600_000
             left_rel = f"raw/left-{frame_id}.pgm"
             right_rel = f"raw/right-{frame_id}.pgm"
             (stage / left_rel).write_bytes(b"P5\n1 1\n255\n\x00")
@@ -86,9 +101,28 @@ class CaptureStageTests(unittest.TestCase):
                     "frame_id": frame_id,
                     "host_capture_timestamp_ns": host,
                     "callback_timestamp_ns": host + 1_000_000,
+                    "left_receive_monotonic_ns": (
+                        trigger_monotonic + left_receive_delay
+                    ),
+                    "right_receive_monotonic_ns": (
+                        trigger_monotonic + right_receive_delay
+                    ),
+                    "left_receive_realtime_ns": (
+                        trigger_realtime + left_receive_delay
+                    ),
+                    "right_receive_realtime_ns": (
+                        trigger_realtime + right_receive_delay
+                    ),
+                    "left_sdk_host_timestamp_raw": host - 600_000,
+                    "right_sdk_host_timestamp_raw": host - 500_000,
                     "left_device_timestamp_ns": left_device,
                     "right_device_timestamp_ns": left_device - 50_000,
                     "stereo_timestamp_residual_ns": 100,
+                    "trigger_sequence": 100 + frame_id,
+                    "trigger_scheduled_monotonic_ns": trigger_monotonic - 10_000,
+                    "trigger_edge_monotonic_ns": trigger_monotonic,
+                    "trigger_edge_realtime_ns": trigger_realtime,
+                    "trigger_write_uncertainty_ns": 1_000,
                     "left_frame_number": 10 + frame_id,
                     "right_frame_number": 20 + frame_id,
                     "left_frame_counter": 100 + frame_id,
@@ -170,6 +204,57 @@ class CaptureStageTests(unittest.TestCase):
             self.assertEqual(summary.trials[0].table_rows["trajectory"], 2)
             metadata = json.loads((trial / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["capture"]["trajectory_timebase"]["clock_domain"], "hik-shared-device-clock")
+            self.assertEqual(
+                metadata["capture"]["trajectory_timebase"]["timestamp_semantics"],
+                "hardware_trigger",
+            )
+            with (trial / "camera_frames.csv").open(encoding="utf-8") as handle:
+                camera_frames = list(csv.DictReader(handle))
+            self.assertEqual(
+                camera_frames[0]["capture_timestamp_ns"],
+                camera_frames[1]["capture_timestamp_ns"],
+            )
+            self.assertEqual(
+                camera_frames[0]["exposure_start_ns"],
+                camera_frames[0]["capture_timestamp_ns"],
+            )
+            left_frames = [
+                row
+                for row in camera_frames
+                if row["camera_id"] == "hik-00D39342665"
+            ]
+            right_frames = [
+                row
+                for row in camera_frames
+                if row["camera_id"] == "hik-00219471413"
+            ]
+            self.assertGreater(
+                int(left_frames[0]["receive_timestamp_ns"]),
+                int(right_frames[0]["receive_timestamp_ns"]),
+            )
+            self.assertLess(
+                int(left_frames[1]["receive_timestamp_ns"]),
+                int(right_frames[1]["receive_timestamp_ns"]),
+            )
+            self.assertTrue(
+                all(row["inference_done_timestamp_ns"] for row in camera_frames)
+            )
+            with (trial / "processing_timing.csv").open(encoding="utf-8") as handle:
+                timings = list(csv.DictReader(handle))
+            self.assertEqual(
+                sum(row["stage"] == "gpio_rising_edge_write" for row in timings),
+                2,
+            )
+            self.assertEqual(
+                sum(row["stage"] == "camera_frame_receive" for row in timings),
+                4,
+            )
+            with (trial / "clock_mappings.csv").open(encoding="utf-8") as handle:
+                mappings = list(csv.DictReader(handle))
+            self.assertEqual(
+                {row["source_clock_domain"] for row in mappings},
+                {"nx-monotonic", "nx-realtime"},
+            )
             self.assertGreaterEqual(len(metadata["raw_manifest"]), 9)
 
     def test_stage_with_frame_gap_is_not_publishable(self) -> None:
@@ -216,6 +301,8 @@ class CaptureStageTests(unittest.TestCase):
             for role in ("left", "right"):
                 rows[0][f"{role}_frame_counter"] = str(0xFFFFFFFF)
                 rows[1][f"{role}_frame_counter"] = "0"
+            rows[0]["trigger_sequence"] = str(0xFFFFFFFF)
+            rows[1]["trigger_sequence"] = str(0x100000000)
             (stage / "frames.csv").unlink()
             _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
             trial = finalize_capture_stage(
@@ -225,6 +312,37 @@ class CaptureStageTests(unittest.TestCase):
                 project_root=ROOT,
             )
             self.assertTrue((trial / "metadata.json").is_file())
+
+    def test_trigger_sequence_must_match_camera_counter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            with (stage / "frames.csv").open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            rows[1]["trigger_sequence"] = "102"
+            (stage / "frames.csv").unlink()
+            _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
+            with self.assertRaisesRegex(Exception, "FrameCounter"):
+                finalize_capture_stage(stage, root / "dataset", profile, project_root=ROOT)
+
+    def test_usb_receive_time_must_follow_trigger_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            with (stage / "frames.csv").open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            rows[0]["left_receive_monotonic_ns"] = str(
+                int(rows[0]["trigger_edge_monotonic_ns"]) - 1
+            )
+            (stage / "frames.csv").unlink()
+            _write_csv(stage / "frames.csv", STAGE_FRAME_COLUMNS, rows)
+            with self.assertRaisesRegex(Exception, "USB.*GPIO"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
 
 
 if __name__ == "__main__":

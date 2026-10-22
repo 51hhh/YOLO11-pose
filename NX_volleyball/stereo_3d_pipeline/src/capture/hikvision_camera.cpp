@@ -401,6 +401,15 @@ bool HikvisionCamera::grabOneFrame(void* handle, uint8_t* dst, int pitch,
         return false;
     }
 
+    // 每台相机在各自的取帧线程内独立打点。USB 到达先后可以与曝光
+    // 顺序不同，因此这两组时间只用于传输延迟/乱序审计，不用于左右配对。
+    result.receive_monotonic_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    result.receive_realtime_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
     auto& info = frameOut.stFrameInfo;
     int srcWidth  = info.nWidth;
     int srcHeight = info.nHeight;

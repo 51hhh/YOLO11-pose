@@ -39,6 +39,7 @@ struct CaptureV21StageRecorderConfig {
     std::string right_camera_id;
     std::string pipeline_id;
     std::string loss_policy = "fail_trial";
+    std::string exposure_timestamp_source;
 };
 
 class CaptureV21StageRecorder {
@@ -102,6 +103,7 @@ private:
     int last_frame_id_ = -1;
     std::uint32_t last_left_counter_ = 0;
     std::uint32_t last_right_counter_ = 0;
+    std::uint64_t last_trigger_sequence_ = 0;
     bool have_previous_frame_ = false;
 
     bool copyGrayImage(VPIImage image, cv::Mat& out) const;

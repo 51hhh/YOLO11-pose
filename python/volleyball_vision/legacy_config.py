@@ -147,6 +147,9 @@ def build_legacy_pipeline_config(
             "right_camera_id": right["id"],
             "pipeline_id": detector["model_id"],
             "loss_policy": config.data["recording"]["loss_policy"],
+            "exposure_timestamp_source": cameras["sync"][
+                "exposure_timestamp_source"
+            ],
         }
     return result
 

@@ -435,6 +435,9 @@ private:
     // 设计: grab 与 stage1/stage2 并行, 实现 pipeline/camera 解耦
     std::thread grab_thread_;
     void grabLoop();
+    void attachPwmTriggerMetadata(
+        FrameSlot& slot,
+        std::uint32_t frame_counter) const;
 
     std::mutex grab_mutex_;
     std::condition_variable grab_request_cv_;  ///< pipeline→grab: 请求采集

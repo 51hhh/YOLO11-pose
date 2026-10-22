@@ -423,6 +423,12 @@ def _validate_trial_tables(
             )
             if semantics == "stereo_midpoint_capture":
                 expected = round((left_ns + right_ns) / 2) - origin_ns
+            elif semantics == "hardware_trigger":
+                if left_ns != right_ns:
+                    raise DatasetError(
+                        f"{prefix}: hardware_trigger 要求左右 capture_timestamp_ns 相同"
+                    )
+                expected = left_ns - origin_ns
             elif semantics == "left_capture":
                 expected = left_ns - origin_ns
             elif semantics == "right_capture":
@@ -438,6 +444,9 @@ def _validate_trial_tables(
         done = int(row["done_timestamp_ns"])
         if done < start:
             raise DatasetError(f"{prefix}: done_timestamp_ns 早于 start_timestamp_ns")
+        timing_clock = row["clock_domain"]
+        _mapped_timestamp_ns(start, timing_clock, reference_clock, mappings_by_source)
+        _mapped_timestamp_ns(done, timing_clock, reference_clock, mappings_by_source)
         if row["input_type"] == "camera_frame":
             try:
                 camera_id, frame_index_text = row["input_id"].rsplit(":", 1)

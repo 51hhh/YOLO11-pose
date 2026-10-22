@@ -255,6 +255,14 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         errors.append("capture 模式必须启用 recording")
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
         errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
+    sync = cameras["sync"]
+    if sync["exposure_timestamp_source"] == "nx_gpio_rising_edge":
+        if sync["method"] != "hardware_trigger":
+            errors.append("nx_gpio_rising_edge 只允许用于 hardware_trigger")
+        if sync["trigger_activation"] != "RisingEdge":
+            errors.append("nx_gpio_rising_edge 要求 trigger_activation=RisingEdge")
+    if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
+        errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
 
     manifest_path = root / "models" / "manifest.yaml"
     manifest = _load_yaml(manifest_path)

@@ -53,6 +53,12 @@ enum class TrackerState {
  */
 struct FrameMetadata {
     uint64_t host_capture_timestamp_ns = 0;
+    uint64_t left_receive_monotonic_ns = 0;
+    uint64_t right_receive_monotonic_ns = 0;
+    uint64_t left_receive_realtime_ns = 0;
+    uint64_t right_receive_realtime_ns = 0;
+    int64_t left_sdk_host_timestamp_raw = 0;
+    int64_t right_sdk_host_timestamp_raw = 0;
     uint64_t left_device_timestamp_ns = 0;
     uint64_t right_device_timestamp_ns = 0;
     // 兼容旧 CSV/ROS 字段；新采集代码必须使用上面的纳秒字段。
@@ -64,6 +70,12 @@ struct FrameMetadata {
     uint32_t right_frame_counter = 0;
     uint32_t left_trigger_index = 0;
     uint32_t right_trigger_index = 0;
+    // NX GPIO 同一上升沿同时触发左右相机；序号从本次 PWM 启动的 1 开始。
+    uint64_t trigger_sequence = 0;
+    uint64_t trigger_scheduled_monotonic_ns = 0;
+    uint64_t trigger_edge_monotonic_ns = 0;
+    uint64_t trigger_edge_realtime_ns = 0;
+    uint64_t trigger_write_uncertainty_ns = 0;
     int64_t frame_counter_delta = 0;
     int64_t frame_number_delta = 0;
     int64_t timestamp_delta_us = 0;
@@ -100,6 +112,12 @@ struct FrameSlot {
     bool grab_failed = false;             ///< 抓取失败标记 (帧同步跳变等)
     uint64_t left_timestamp_us = 0;
     uint64_t host_capture_timestamp_ns = 0;
+    uint64_t left_receive_monotonic_ns = 0;
+    uint64_t right_receive_monotonic_ns = 0;
+    uint64_t left_receive_realtime_ns = 0;
+    uint64_t right_receive_realtime_ns = 0;
+    int64_t left_sdk_host_timestamp_raw = 0;
+    int64_t right_sdk_host_timestamp_raw = 0;
     uint64_t right_timestamp_us = 0;
     uint32_t left_frame_number = 0;
     uint32_t right_frame_number = 0;
@@ -107,6 +125,11 @@ struct FrameSlot {
     uint32_t right_frame_counter = 0;
     uint32_t left_trigger_index = 0;
     uint32_t right_trigger_index = 0;
+    uint64_t trigger_sequence = 0;
+    uint64_t trigger_scheduled_monotonic_ns = 0;
+    uint64_t trigger_edge_monotonic_ns = 0;
+    uint64_t trigger_edge_realtime_ns = 0;
+    uint64_t trigger_write_uncertainty_ns = 0;
     int64_t stereo_timestamp_residual_ns = 0;
 
     // =========== Stage 0: 原始图像 ===========
@@ -247,9 +270,17 @@ struct FrameSlot {
         frame_id = -1;
         left_timestamp_us = right_timestamp_us = 0;
         host_capture_timestamp_ns = 0;
+        left_receive_monotonic_ns = right_receive_monotonic_ns = 0;
+        left_receive_realtime_ns = right_receive_realtime_ns = 0;
+        left_sdk_host_timestamp_raw = right_sdk_host_timestamp_raw = 0;
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        trigger_sequence = 0;
+        trigger_scheduled_monotonic_ns = 0;
+        trigger_edge_monotonic_ns = 0;
+        trigger_edge_realtime_ns = 0;
+        trigger_write_uncertainty_ns = 0;
         stereo_timestamp_residual_ns = 0;
         p2_depth_modes_enabled = false;
         p2_depth_mode_mask = 0;
@@ -284,9 +315,18 @@ struct FrameSlot {
         frame_id = -1;
         grab_failed = false;
         left_timestamp_us = right_timestamp_us = 0;
+        host_capture_timestamp_ns = 0;
+        left_receive_monotonic_ns = right_receive_monotonic_ns = 0;
+        left_receive_realtime_ns = right_receive_realtime_ns = 0;
+        left_sdk_host_timestamp_raw = right_sdk_host_timestamp_raw = 0;
         left_frame_number = right_frame_number = 0;
         left_frame_counter = right_frame_counter = 0;
         left_trigger_index = right_trigger_index = 0;
+        trigger_sequence = 0;
+        trigger_scheduled_monotonic_ns = 0;
+        trigger_edge_monotonic_ns = 0;
+        trigger_edge_realtime_ns = 0;
+        trigger_write_uncertainty_ns = 0;
         stereo_timestamp_residual_ns = 0;
         p2_depth_modes_enabled = false;
         p2_depth_mode_mask = 0;
@@ -338,6 +378,12 @@ inline uint64_t chooseCaptureTimestampNs(
 inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     FrameMetadata meta;
     meta.host_capture_timestamp_ns = slot.host_capture_timestamp_ns;
+    meta.left_receive_monotonic_ns = slot.left_receive_monotonic_ns;
+    meta.right_receive_monotonic_ns = slot.right_receive_monotonic_ns;
+    meta.left_receive_realtime_ns = slot.left_receive_realtime_ns;
+    meta.right_receive_realtime_ns = slot.right_receive_realtime_ns;
+    meta.left_sdk_host_timestamp_raw = slot.left_sdk_host_timestamp_raw;
+    meta.right_sdk_host_timestamp_raw = slot.right_sdk_host_timestamp_raw;
     meta.left_device_timestamp_ns = slot.left_timestamp_us;
     meta.right_device_timestamp_ns = slot.right_timestamp_us;
     meta.left_timestamp_us = slot.left_timestamp_us;
@@ -348,6 +394,13 @@ inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
     meta.right_frame_counter = slot.right_frame_counter;
     meta.left_trigger_index = slot.left_trigger_index;
     meta.right_trigger_index = slot.right_trigger_index;
+    meta.trigger_sequence = slot.trigger_sequence;
+    meta.trigger_scheduled_monotonic_ns =
+        slot.trigger_scheduled_monotonic_ns;
+    meta.trigger_edge_monotonic_ns = slot.trigger_edge_monotonic_ns;
+    meta.trigger_edge_realtime_ns = slot.trigger_edge_realtime_ns;
+    meta.trigger_write_uncertainty_ns =
+        slot.trigger_write_uncertainty_ns;
     meta.frame_counter_delta =
         static_cast<int64_t>(slot.left_frame_counter) -
         static_cast<int64_t>(slot.right_frame_counter);

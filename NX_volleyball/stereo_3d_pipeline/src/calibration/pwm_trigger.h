@@ -17,7 +17,10 @@
 
 #pragma once
 
+#include "pwm_trigger_events.h"
+
 #include <atomic>
+#include <cstdint>
 #include <thread>
 #include <string>
 #include <cstdio>
@@ -56,10 +59,13 @@ public:
     PWMTrigger& operator=(const PWMTrigger&) = delete;
 
     bool start() {
+        if (running_.load()) return true;
         if (frequency_ <= 0 || duty_cycle_ < 0 || duty_cycle_ > 100) {
             fprintf(stderr, "[PWM] Invalid params: freq=%.1f duty=%.1f\n", frequency_, duty_cycle_);
             return false;
         }
+        event_history_.clear();
+        next_sequence_.store(0);
 #ifndef NO_GPIOD
         // Try libgpiod first
         if (startGpiod()) return true;
@@ -91,7 +97,47 @@ public:
 
     bool isRunning() const { return running_.load(); }
 
+    [[nodiscard]] bool eventForSequence(
+        std::uint64_t sequence,
+        PWMTriggerEdgeEvent& event) const {
+        return event_history_.find(sequence, event);
+    }
+
+    [[nodiscard]] std::uint64_t latestEventSequence() const {
+        return event_history_.latestSequence();
+    }
+
 private:
+    static std::uint64_t timespecNs(const struct timespec& value) {
+        return static_cast<std::uint64_t>(value.tv_sec) * 1000000000ULL +
+               static_cast<std::uint64_t>(value.tv_nsec);
+    }
+
+    static std::uint64_t midpoint(std::uint64_t first, std::uint64_t second) {
+        return first / 2ULL + second / 2ULL +
+               (first % 2ULL + second % 2ULL) / 2ULL;
+    }
+
+    void recordRisingEdge(
+        const struct timespec& scheduled,
+        const struct timespec& monotonic_before,
+        const struct timespec& monotonic_after,
+        const struct timespec& realtime_before,
+        const struct timespec& realtime_after) {
+        const std::uint64_t before_mono = timespecNs(monotonic_before);
+        const std::uint64_t after_mono = timespecNs(monotonic_after);
+        const std::uint64_t before_real = timespecNs(realtime_before);
+        const std::uint64_t after_real = timespecNs(realtime_after);
+        PWMTriggerEdgeEvent event;
+        event.sequence = next_sequence_.fetch_add(1) + 1;
+        event.scheduled_monotonic_ns = timespecNs(scheduled);
+        event.edge_monotonic_ns = midpoint(before_mono, after_mono);
+        event.edge_realtime_ns = midpoint(before_real, after_real);
+        event.write_uncertainty_ns =
+            after_mono >= before_mono ? after_mono - before_mono : 0;
+        event_history_.push(event);
+    }
+
     static bool writeExact(int fd, const char* data, size_t len) {
         size_t total = 0;
         while (total < len) {
@@ -153,7 +199,14 @@ private:
 
     /// Absolute-time sleep using kernel hrtimer (jitter < 50μs with SCHED_FIFO)
     static void sleepUntil(const struct timespec& target) {
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &target, nullptr);
+        // TIMER_ABSTIME 在信号中断后仍使用同一个截止时刻，必须重试；否则下一次
+        // GPIO 写高可能早于计划边沿，破坏“PWM 边沿即曝光开始”的采集契约。
+        while (clock_nanosleep(
+                   CLOCK_MONOTONIC,
+                   TIMER_ABSTIME,
+                   &target,
+                   nullptr) == EINTR) {
+        }
     }
 
     // ==================== sysfs GPIO backend ====================
@@ -248,7 +301,20 @@ private:
         clock_gettime(CLOCK_MONOTONIC, &next);
 
         while (running_.load(std::memory_order_relaxed)) {
-            (void)writeExact(sysfs_fd_, "1", 1);
+            struct timespec monotonic_before{}, monotonic_after{};
+            struct timespec realtime_before{}, realtime_after{};
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
+            clock_gettime(CLOCK_REALTIME, &realtime_before);
+            const bool edge_ok = writeExact(sysfs_fd_, "1", 1);
+            clock_gettime(CLOCK_REALTIME, &realtime_after);
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
+            if (!edge_ok) {
+                fprintf(stderr, "[PWM] GPIO rising-edge write failed: %s\n",
+                        strerror(errno));
+                break;
+            }
+            recordRisingEdge(next, monotonic_before, monotonic_after,
+                             realtime_before, realtime_after);
             lseek(sysfs_fd_, 0, SEEK_SET);
             timespecAdd(next, high_ns);
             sleepUntil(next);
@@ -304,7 +370,20 @@ private:
         clock_gettime(CLOCK_MONOTONIC, &next);
 
         while (running_.load(std::memory_order_relaxed)) {
-            gpiod_line_set_value(line_, 1);
+            struct timespec monotonic_before{}, monotonic_after{};
+            struct timespec realtime_before{}, realtime_after{};
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
+            clock_gettime(CLOCK_REALTIME, &realtime_before);
+            const int edge_status = gpiod_line_set_value(line_, 1);
+            clock_gettime(CLOCK_REALTIME, &realtime_after);
+            clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
+            if (edge_status < 0) {
+                fprintf(stderr, "[PWM] GPIO rising-edge write failed: %s\n",
+                        strerror(errno));
+                break;
+            }
+            recordRisingEdge(next, monotonic_before, monotonic_after,
+                             realtime_before, realtime_after);
             timespecAdd(next, high_ns);
             sleepUntil(next);
 
@@ -329,6 +408,8 @@ private:
     int sysfs_fd_;
     int sysfs_gpio_num_ = -1;
     std::atomic<bool> running_;
+    std::atomic<std::uint64_t> next_sequence_{0};
+    PWMTriggerEventHistory event_history_;
     std::thread thread_;
 };
 

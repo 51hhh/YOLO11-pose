@@ -138,6 +138,12 @@ bool asyncRoiNeedsHostImages(const PipelineConfig::DualYoloConfig& cfg) {
 
 void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
     slot.host_capture_timestamp_ns = meta.host_capture_timestamp_ns;
+    slot.left_receive_monotonic_ns = meta.left_receive_monotonic_ns;
+    slot.right_receive_monotonic_ns = meta.right_receive_monotonic_ns;
+    slot.left_receive_realtime_ns = meta.left_receive_realtime_ns;
+    slot.right_receive_realtime_ns = meta.right_receive_realtime_ns;
+    slot.left_sdk_host_timestamp_raw = meta.left_sdk_host_timestamp_raw;
+    slot.right_sdk_host_timestamp_raw = meta.right_sdk_host_timestamp_raw;
     slot.left_timestamp_us = meta.left_device_timestamp_ns != 0
         ? meta.left_device_timestamp_ns : meta.left_timestamp_us;
     slot.right_timestamp_us = meta.right_device_timestamp_ns != 0
@@ -148,6 +154,13 @@ void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
     slot.right_frame_counter = meta.right_frame_counter;
     slot.left_trigger_index = meta.left_trigger_index;
     slot.right_trigger_index = meta.right_trigger_index;
+    slot.trigger_sequence = meta.trigger_sequence;
+    slot.trigger_scheduled_monotonic_ns =
+        meta.trigger_scheduled_monotonic_ns;
+    slot.trigger_edge_monotonic_ns = meta.trigger_edge_monotonic_ns;
+    slot.trigger_edge_realtime_ns = meta.trigger_edge_realtime_ns;
+    slot.trigger_write_uncertainty_ns =
+        meta.trigger_write_uncertainty_ns;
     slot.stereo_timestamp_residual_ns = meta.stereo_timestamp_residual_ns;
     slot.grab_failed = meta.grab_failed;
     slot.is_detect_frame = meta.is_detect_frame;

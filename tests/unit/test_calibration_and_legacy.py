@@ -53,6 +53,10 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
         self.assertEqual(rendered["capture_v21"]["overflow_policy"], "block")
         self.assertEqual(rendered["capture_v21"]["frame_limit"], 270)
         self.assertEqual(
+            rendered["capture_v21"]["exposure_timestamp_source"],
+            "nx_gpio_rising_edge",
+        )
+        self.assertEqual(
             rendered["detector"]["dual_yolo"]["epipolar_y_tolerance"],
             profile.data["stereo"]["association"]["epipolar_tolerance_px"],
         )

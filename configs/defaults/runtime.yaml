@@ -24,6 +24,9 @@ cameras:
     trigger_source: null
     trigger_activation: null
     estimated_error_ns: null
+    exposure_timestamp_source: recorded
+    exposure_delay_ns: 0
+    exposure_delay_uncertainty_ns: 0
   left:
     id: left-camera
     serial: replay-left

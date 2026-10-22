@@ -48,13 +48,16 @@
         "backend": {"enum": ["hik_mvs", "recorded"]},
         "sync": {
           "type": "object", "additionalProperties": false,
-          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "estimated_error_ns"],
+          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "estimated_error_ns", "exposure_timestamp_source", "exposure_delay_ns", "exposure_delay_uncertainty_ns"],
           "properties": {
             "method": {"enum": ["hardware_trigger", "shared_clock", "recorded"]},
             "clock_domain": {"type": "string", "minLength": 1},
             "trigger_source": {"type": ["string", "null"]},
             "trigger_activation": {"type": ["string", "null"]},
-            "estimated_error_ns": {"type": ["number", "null"], "minimum": 0}
+            "estimated_error_ns": {"type": ["number", "null"], "minimum": 0},
+            "exposure_timestamp_source": {"enum": ["nx_gpio_rising_edge", "recorded", "unavailable"]},
+            "exposure_delay_ns": {"type": "integer", "minimum": 0},
+            "exposure_delay_uncertainty_ns": {"type": "integer", "minimum": 0}
           }
         },
         "left": {"$ref": "#/$defs/camera"},

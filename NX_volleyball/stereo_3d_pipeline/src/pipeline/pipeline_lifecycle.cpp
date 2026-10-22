@@ -10,6 +10,21 @@
 
 namespace stereo3d {
 
+#ifdef HIK_CAMERA_ENABLED
+void Pipeline::attachPwmTriggerMetadata(
+    FrameSlot& slot,
+    std::uint32_t frame_counter) const {
+    if (!pwm_trigger_ || frame_counter == 0) return;
+    PWMTriggerEdgeEvent event;
+    if (!pwm_trigger_->eventForSequence(frame_counter, event)) return;
+    slot.trigger_sequence = event.sequence;
+    slot.trigger_scheduled_monotonic_ns = event.scheduled_monotonic_ns;
+    slot.trigger_edge_monotonic_ns = event.edge_monotonic_ns;
+    slot.trigger_edge_realtime_ns = event.edge_realtime_ns;
+    slot.trigger_write_uncertainty_ns = event.write_uncertainty_ns;
+}
+#endif
+
 Pipeline::Pipeline() = default;
 
 Pipeline::~Pipeline() {
@@ -274,6 +289,12 @@ void Pipeline::grabLoop() {
                     std::chrono::system_clock::now().time_since_epoch()).count();
             slot.host_capture_timestamp_ns = chooseCaptureTimestampNs(
                 resL.host_timestamp, resR.host_timestamp, fallback_capture_ns);
+            slot.left_receive_monotonic_ns = resL.receive_monotonic_ns;
+            slot.right_receive_monotonic_ns = resR.receive_monotonic_ns;
+            slot.left_receive_realtime_ns = resL.receive_realtime_ns;
+            slot.right_receive_realtime_ns = resR.receive_realtime_ns;
+            slot.left_sdk_host_timestamp_raw = resL.host_timestamp;
+            slot.right_sdk_host_timestamp_raw = resR.host_timestamp;
             slot.left_timestamp_us = resL.timestamp_us;
             slot.right_timestamp_us = resR.timestamp_us;
             slot.left_frame_number = resL.frame_number;
@@ -282,6 +303,7 @@ void Pipeline::grabLoop() {
             slot.right_frame_counter = resR.frame_counter;
             slot.left_trigger_index = resL.trigger_index;
             slot.right_trigger_index = resR.trigger_index;
+            attachPwmTriggerMetadata(slot, resL.frame_counter);
             slot.stereo_timestamp_residual_ns =
                 resL.stereo_timestamp_residual_ns;
         } else {
