@@ -1,5 +1,5 @@
 /**
- * @file crop_resize.cu
+ * @file neural_feature_crop_resize.cu
  * @brief CUDA kernels: 从 U8 灰度/BGR 全帧裁剪+缩放正方形 ROI patch
  *
  * 双线性插值, 边界 clamp, 输出归一化 float [0,1]

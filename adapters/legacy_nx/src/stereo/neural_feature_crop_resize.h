@@ -3,7 +3,7 @@
 #include <cstdint>
 
 /**
- * @brief CUDA kernel: 从 U8 灰度图像中裁剪 ROI 并 bilinear resize 到正方形目标尺寸
+ * @brief 神经特征候选使用的 CUDA ROI 裁剪与缩放入口。
  *
  * 自动将 (cx,cy,w,h) + context_factor 转换为正方形搜索区域，
  * 避免非方形 ROI 导致的宽高比畸变。

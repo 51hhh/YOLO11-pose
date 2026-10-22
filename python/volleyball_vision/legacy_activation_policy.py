@@ -88,6 +88,4 @@ def apply_legacy_activation_policy(
         }
     )
 
-    # tracking.enabled 是高层 3D 状态估计；旧 tracker 块是另一套图像 SOT。
-    _mapping(payload, "tracker")["enabled"] = False
     _mapping(payload, "display")["enable"] = False

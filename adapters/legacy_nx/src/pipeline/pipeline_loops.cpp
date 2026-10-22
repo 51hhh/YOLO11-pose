@@ -323,7 +323,6 @@ void Pipeline::pipelineLoopROI() {
         const FrameSlot& newer = slots_[frame_id % RING_BUFFER_SIZE];
         return newer.frame_id == frame_id &&
                !newer.grab_failed &&
-               newer.is_detect_frame &&
                detectEventsReady(newer);
     };
 
@@ -394,8 +393,6 @@ void Pipeline::pipelineLoopROI() {
     {
         int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
         auto& slot = slots_[slot_idx];
-        slot.is_detect_frame = true;  // 首帧必为检测帧
-
         if (slot.grab_failed) {
             publishRoiFrameCallbacks(slot);
         } else if (sync_rect_for_detect(slot, slot_idx)) {
@@ -446,8 +443,7 @@ void Pipeline::pipelineLoopROI() {
 
         // ====================================================================
         // Phase B: Stage1 — 提交检测 (与 grab 并行, ~3ms)
-        //   此帧已在上一轮 Phase D 中完成 rectify
-        //   SOT 模式: 检测帧→YOLO enqueue, 填充帧→tracker infill
+        //   此帧已在上一轮 Phase D 中完成 rectify，每帧均提交 YOLO。
         // ====================================================================
         if (next_detect_frame < next_grab_frame) {
             int slot_idx = next_detect_frame % RING_BUFFER_SIZE;
@@ -457,78 +453,17 @@ void Pipeline::pipelineLoopROI() {
                 publishRoiFrameCallbacks(slot);
                 next_detect_frame++;
             } else {
-                // 判断是否为检测帧
-                // 固定节拍检测：按 detect_interval 控制 YOLO 频率，
-                // 不再因 tracker 是否处于 TRACKING 状态而抢跑检测。
-                bool is_detect = !tracker_ ||
-                                 (slot.frame_id % effective_detect_interval_ == 0);
-                slot.is_detect_frame = is_detect;
-
-                if (is_detect) {
-                    // ---- YOLO 检测帧 ----
-                    if (sync_rect_for_detect(slot, slot_idx)) {
-                        ScopedTimer t1("Stage1_DetectSubmit");
-                        stage1_detect(slot, slot_idx);
-                        const double stage1_ms = t1.elapsedMs();
-                        globalPerf().record("Stage1_DetectSubmit", stage1_ms);
-                        if (stage1_ms > kStage1SubmitOutlierMs) {
-                            LOG_WARN("[PerfOutlier] Stage1_DetectSubmit frame=%d slot=%d ms=%.2f right_submitted=%d",
-                                     slot.frame_id, slot_idx, stage1_ms,
-                                     slot.right_detection_submitted ? 1 : 0);
-                        }
-                        recordDetectDoneEvents(slot);
+                if (sync_rect_for_detect(slot, slot_idx)) {
+                    ScopedTimer t1("Stage1_DetectSubmit");
+                    stage1_detect(slot, slot_idx);
+                    const double stage1_ms = t1.elapsedMs();
+                    globalPerf().record("Stage1_DetectSubmit", stage1_ms);
+                    if (stage1_ms > kStage1SubmitOutlierMs) {
+                        LOG_WARN("[PerfOutlier] Stage1_DetectSubmit frame=%d slot=%d ms=%.2f right_submitted=%d",
+                                 slot.frame_id, slot_idx, stage1_ms,
+                                 slot.right_detection_submitted ? 1 : 0);
                     }
-                } else {
-                    // ---- Tracker 填充帧 ----
-                    // 等 rectify 完成 (tracker 需要 rectified BGR)
-                    const VPIStatus tracker_rect_status =
-                        vpiStreamSync(streams_.vpiStreamPVA);
-                    if (tracker_rect_status != VPI_SUCCESS) {
-                        LOG_ERROR("[Pipeline] tracker rectification sync failed: "
-                                  "frame=%d status=%d",
-                                  slot.frame_id, (int)tracker_rect_status);
-                        slot.grab_failed = true;
-                    }
-                    if (!slot.grab_failed) {
-                        lockRectifiedCudaViews(slot);
-                    }
-                    if (!slot.grab_failed) {
-                        checkCudaFrame(
-                            cudaStreamSynchronize(streams_.cudaStreamGPU), slot,
-                            "synchronize tracker input stream");
-                    }
-
-                    // *** GPU Power Control: 强制等待所有之前的YOLO任务完成 ***
-                    // 防止YOLO+tracker并行运行导致功率爆口
-                    // 在detect_interval=3的策略下，最近的YOLO应该已在Phase C collect了
-                    // 等待检测完成
-                    {
-                        ScopedTimer tw("Stage1_WaitYOLOComplete");
-                        if (!slot.grab_failed) {
-                            checkCudaFrame(
-                                cudaStreamSynchronize(streams_.cudaStreamDLA), slot,
-                                "synchronize previous left YOLO before tracker");
-                        }
-                        if (!slot.grab_failed && dualYoloEnabled()) {
-                            checkCudaFrame(
-                                cudaStreamSynchronize(streams_.cudaStreamDLA_R), slot,
-                                "synchronize previous right YOLO before tracker");
-                        }
-                        globalPerf().record("Stage1_WaitYOLOComplete", tw.elapsedMs());
-                    }
-
-                    if (!slot.grab_failed) {
-                        ScopedTimer tt("Stage1_TrackerInfill");
-                        tracker_infill(slot);
-                        globalPerf().record("Stage1_TrackerInfill", tt.elapsedMs());
-                    }
-                    // 标记 "detect done" 让 Phase C 的等待逻辑兼容
-                    if (!slot.grab_failed && checkCudaFrame(
-                            cudaEventRecord(slot.evtDetectDone,
-                                            streams_.cudaStreamGPU),
-                            slot, "record tracker completion event")) {
-                        slot.detect_done_event_recorded = true;
-                    }
+                    recordDetectDoneEvents(slot);
                 }
                 next_detect_frame++;
             }
@@ -537,9 +472,7 @@ void Pipeline::pipelineLoopROI() {
         drain_async_outputs();
 
         // ====================================================================
-        // Phase C: Stage2 — ROI 匹配 + 融合帧 N-1 (与 grab 并行, ~0.1ms)
-        //   检测帧: collect YOLO → ROI match → depth fuse + 刷新 tracker template
-        //   填充帧: tracker bbox → ROI match → depth fuse
+        // Phase C: Stage2 — collect YOLO → ROI 匹配 → 深度融合
         // ====================================================================
         if (next_fuse_frame < next_detect_frame - 1) {
             int slot_idx = next_fuse_frame % RING_BUFFER_SIZE;
@@ -564,7 +497,6 @@ void Pipeline::pipelineLoopROI() {
 
             if (config_.drop_stale_roi_frames &&
                 !config_.detection_only &&
-                slot.is_detect_frame &&
                 next_fuse_frame + 1 < next_detect_frame &&
                 newer_yolo_ready(next_fuse_frame + 1)) {
                 ++stale_drop_count;
@@ -596,7 +528,7 @@ void Pipeline::pipelineLoopROI() {
                 break;
             }
 
-            if (slot.is_detect_frame) {
+            {
                 // ---- YOLO 检测帧: 完全等待DLA + collect + ROI + depth ----
                 // *** GPU Power Control: 显式同步确保YOLO完全finish ***
                 {
@@ -635,10 +567,6 @@ void Pipeline::pipelineLoopROI() {
                     ScopedTimer t2("Stage2_ROIMatchFuseSubmit");
                     const bool submitted = submitAsyncRoiStage2(slot, slot_idx);
                     globalPerf().record("Stage2_ROIMatchFuseSubmit", t2.elapsedMs());
-                    slot.bbox_source = BboxSource::YOLO;
-                    if (!slot.grab_failed) {
-                        tracker_handle_detect_result(slot);
-                    }
                     const bool snapshot_ready =
                         waitAsyncRoiSlotSnapshotDone(
                             slot_idx, "roi_async_snapshot_release");
@@ -670,11 +598,6 @@ void Pipeline::pipelineLoopROI() {
                         stage2_roi_match_fuse(slot, slot_idx);
                         globalPerf().record("Stage2_ROIMatchFuse", t2.elapsedMs());
                     }
-                    slot.bbox_source = BboxSource::YOLO;
-                    // 用 YOLO 结果刷新 tracker template
-                    if (!slot.grab_failed) {
-                        tracker_handle_detect_result(slot);
-                    }
                     checkCudaFrame(
                         cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
                         "synchronize ROI Stage2 before image unlock");
@@ -686,19 +609,6 @@ void Pipeline::pipelineLoopROI() {
                     publishRoiFrameCallbacks(slot);
                     account_output_frame(slot.frame_id);
                 }
-            } else {
-                // ---- Tracker 填充帧: tracker bbox → ROI + depth ----
-                {
-                    ScopedTimer t2("Stage2_ROIFuseTracker");
-                    stage2_roi_fuse_tracker(slot, slot_idx);
-                    globalPerf().record("Stage2_ROIFuseTracker", t2.elapsedMs());
-                }
-                checkCudaFrame(
-                    cudaStreamSynchronize(streams_.cudaStreamFuse), slot,
-                    "synchronize tracker ROI Stage2 before image unlock");
-                unlockRectifiedCudaViews(slot);
-                publishRoiFrameCallbacks(slot);
-                account_output_frame(slot.frame_id);
             }
 
             next_fuse_frame++;

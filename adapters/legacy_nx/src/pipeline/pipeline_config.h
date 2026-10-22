@@ -156,19 +156,6 @@ struct PipelineConfig {
     NeuralFeatureConfig neural_superpoint;
     NeuralFeatureConfig neural_aliked;
 
-    // SOT Tracker 补帧 (YOLO 检测间隙帧)
-    struct TrackerConfig {
-        bool enabled = false;              ///< 是否启用 SOT 补帧
-        std::string type = "nanotrack";    ///< "nanotrack" | "mixformer"
-        std::string engine_path;           ///< TRT 引擎路径 (backbone / template backbone)
-        std::string search_engine_path;    ///< NanoTrack search backbone 引擎 (双backbone模式)
-        std::string head_engine_path;      ///< NanoTrack head 引擎路径
-        int detect_interval = 3;           ///< YOLO 检测间隔 (每N帧一次)
-        int lost_threshold = 5;            ///< 连续无输出帧数 -> LOST
-        float min_confidence = 0.3f;       ///< tracker 最低置信度
-        bool gpu_sync_mode = false;        ///< NX模式: 强制GPU同步防止YOLO/tracker并行(省电) vs 异步管线(服务器)
-    } tracker;
-
     // 视差
     int max_disparity = 128;
     int window_size   = 5;

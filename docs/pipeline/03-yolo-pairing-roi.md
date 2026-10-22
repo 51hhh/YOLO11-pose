@@ -18,7 +18,7 @@
 | NMS IoU | 0.40 |
 | 每侧最大检测数 | 10 |
 | 后端 | TensorRT GPU |
-| C++ SOT 补帧 | 关闭，因此每帧双路 YOLO |
+| 检测节拍 | 每帧双路 YOLO |
 
 推理后处理支持两类 engine：
 

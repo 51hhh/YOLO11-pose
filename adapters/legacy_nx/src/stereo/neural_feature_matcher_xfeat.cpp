@@ -1,7 +1,7 @@
 #include "neural_feature_matcher.h"
 
 #include "neural_feature_matcher_helpers.h"
-#include "track/crop_resize.h"
+#include "neural_feature_crop_resize.h"
 #include "../utils/profiler.h"
 
 #include <algorithm>

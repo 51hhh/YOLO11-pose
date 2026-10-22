@@ -18,8 +18,6 @@
 #include "pipeline.h"
 #include "pipeline_depth_modes.h"
 #include "../stereo/neural_feature_matcher.h"
-#include "../track/nanotrack_trt.h"
-#include "../track/mixformer_trt.h"
 #include "volleyball/logging/log.hpp"
 #include <vpi/algo/ConvertImageFormat.h>
 #include <algorithm>
@@ -30,8 +28,6 @@ namespace stereo3d {
 
 bool Pipeline::init(const PipelineConfig& config) {
     config_ = config;
-    config_.tracker.detect_interval = std::max(1, config_.tracker.detect_interval);
-
     LOG_INFO("========================================");
     LOG_INFO("Stereo 3D Pipeline (4-Stage)");
     LOG_INFO("========================================");
@@ -426,41 +422,6 @@ bool Pipeline::init(const PipelineConfig& config) {
         }
     }
 
-    // 8b. 初始化 SOT Tracker (YOLO 帧间填充)
-    if (config_.tracker.enabled) {
-        const auto& tcfg = config_.tracker;
-        if (tcfg.type == "nanotrack") {
-            tracker_ = std::make_unique<NanoTrackTRT>();
-        } else if (tcfg.type == "mixformer") {
-            tracker_ = std::make_unique<MixFormerTRT>();
-        } else {
-            LOG_ERROR("Unknown tracker type: %s (supported: nanotrack, mixformer)", tcfg.type.c_str());
-            return false;
-        }
-        bool init_ok = false;
-        if (tcfg.type == "nanotrack" && !tcfg.search_engine_path.empty()) {
-            if (tcfg.head_engine_path.empty()) {
-                LOG_ERROR("NanoTrack dual-backbone requires head_engine_path");
-                return false;
-            }
-            auto* nt = dynamic_cast<NanoTrackTRT*>(tracker_.get());
-            if (nt) init_ok = nt->initDualBackbone(tcfg.engine_path, tcfg.search_engine_path,
-                                                    tcfg.head_engine_path, streams_.cudaStreamGPU);
-        } else {
-            init_ok = tracker_->init(tcfg.engine_path, tcfg.head_engine_path, streams_.cudaStreamGPU);
-        }
-        if (!init_ok) {
-            LOG_ERROR("Failed to initialize SOT tracker (%s)", tcfg.type.c_str());
-            return false;
-        }
-        tracker_state_ = TrackerState::IDLE;
-        tracker_lost_count_ = 0;
-        effective_detect_interval_ = tcfg.detect_interval;
-        LOG_INFO("SOT Tracker initialized: %s (interval=%d, lost_thr=%d)",
-                 tcfg.type.c_str(), tcfg.detect_interval, tcfg.lost_threshold);
-
-    }
-
     // 9. 初始化立体匹配 (根据策略选择)
     if (config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
         config_.detection_only) {
@@ -631,8 +592,7 @@ bool Pipeline::init(const PipelineConfig& config) {
                 }
             }
         }
-        const bool need_roi_matcher =
-            config_.tracker.enabled || !dual_yolo_depth_only;
+        const bool need_roi_matcher = !dual_yolo_depth_only;
         if (need_roi_matcher) {
             // ROI 模式: 多点块匹配, 不需要全帧视差
             LOG_INFO("Initializing ROI Stereo Matcher (maxDisp=%d, patchR=%d)...",
@@ -699,15 +659,6 @@ bool Pipeline::init(const PipelineConfig& config) {
             LOG_ERROR("Failed to initialize full-frame Coordinate3D fusion");
             return false;
         }
-    }
-
-    if (config_.async_roi_stage2 &&
-        config_.tracker.enabled &&
-        config_.tracker.detect_interval > 1) {
-        LOG_WARN("Async ROI Stage2 disabled because tracker detect_interval=%d "
-                 "would allow out-of-order HybridDepth updates; use "
-                 "detect_interval=1 or disable tracker for async ROI",
-                 config_.tracker.detect_interval);
     }
 
     if (asyncRoiStage2Configured() && !initAsyncRoiStage2()) {

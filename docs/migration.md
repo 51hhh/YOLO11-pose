@@ -23,7 +23,7 @@
              → legacy YAML 生成 → 旧 NX 可执行文件
 ```
 
-旧目录中的生产 YAML 现阶段仍是投影所需的基础模板，但不得直接作为新的部署入口。深度候选由主线 `candidate_methods` 完整覆盖旧 `depth_modes`；`legacy_activation_policy.py` 还会统一覆盖 TNR、DLA、双路检测、全帧视差、神经特征、异步 ROI、P2 诊断、图像 SOT 和显示等启用开关。正式 P0/P1 使用的 bbox 视差一致性、亚像素几何门限、fallback 搜索范围和圆拟合采样上限也已提升到主线 schema；其余已禁用实验候选的数值仍需在启用前决定删除或提升，不能直接修改模板投入正式 profile。
+旧目录中的生产 YAML 现阶段仍是投影所需的基础模板，但不得直接作为新的部署入口。深度候选由主线 `candidate_methods` 完整覆盖旧 `depth_modes`；`legacy_activation_policy.py` 还会统一覆盖 TNR、DLA、双路检测、全帧视差、神经特征、异步 ROI、P2 诊断和显示等启用开关。永远关闭且没有正式模型资产的旧图像 SOT 已直接删除。正式 P0/P1 使用的 bbox 视差一致性、亚像素几何门限、fallback 搜索范围和圆拟合采样上限也已提升到主线 schema；其余已禁用实验候选的数值仍需在启用前决定删除或提升，不能直接修改模板投入正式 profile。
 
 ## 迁移阶段
 

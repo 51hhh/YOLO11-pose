@@ -80,7 +80,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 
 显示、显式启用的实时诊断和 v2.1 采集需要把 VPI 图像复制到 CPU。它们统一经 `vpi_image_copy` 执行同步复制：VPI read lock 必须覆盖整个 OpenCV/CUDA copy，且无论尺寸校验、分配、拷贝还是解锁失败，输出 `cv::Mat` 都被清空并向调用方返回失败。诊断支路不能缓存 VPI 指针，也不能把半张图当成有效帧。
 
-当前投影中 C++ SOT tracker 为关闭，因此每帧都是 YOLO 检测帧。实时 profile 允许：
+旧的图像 SOT 补帧分支已经删除，因此每帧都是 YOLO 检测帧。实时 profile 允许：
 
 - 当更新帧的 YOLO 已就绪时丢弃过期 ROI 任务；
 - pending ROI 只保留较新的任务；

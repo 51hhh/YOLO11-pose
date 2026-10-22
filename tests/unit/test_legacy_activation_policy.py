@@ -38,7 +38,6 @@ def _hostile_template() -> dict[str, object]:
             "p2_diagnostic_results_enabled": True,
             "p2_diagnostic_artifacts_enabled": True,
         },
-        "tracker": {"enabled": True},
         "display": {"enable": True},
     }
 
@@ -75,7 +74,6 @@ class LegacyActivationPolicyTests(unittest.TestCase):
         self.assertFalse(performance["p2_diagnostic_lane_decision_enabled"])
         self.assertFalse(performance["p2_diagnostic_results_enabled"])
         self.assertFalse(performance["p2_diagnostic_artifacts_enabled"])
-        self.assertFalse(payload["tracker"]["enabled"])
         self.assertFalse(payload["display"]["enable"])
 
     def test_capture_profile_disables_lossy_execution_without_stage(self) -> None:

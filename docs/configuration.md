@@ -95,7 +95,7 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 
 `diagnostics.metrics_interval_frames` 会投影为旧管线的 `performance.log_interval`。当前旧 logger 输出带单调时钟、线程和级别前缀的文本，不是逐行 JSON，因此主线固定 `diagnostics.json_logs=false`；把它改成 `true` 会在配置校验阶段被拒绝。性能计时当前是管线固有观测能力，也不能用配置伪装为已关闭。
 
-旧 ROI 管线当前固定初始化 3D `kalman_ca` 混合深度跟踪，NX 原始观测 publisher 固定使用 keep-last/best-effort 的 sensor-data QoS。因此 live profile 只接受 `tracking.enabled=true`、`tracking.filter=kalman_ca` 和 `publisher.qos=sensor_data`。这里的根层 tracking 与已关闭的旧 C++ 图像 SOT `tracker.enabled` 不是同一个功能。
+旧 ROI 管线当前固定初始化 3D `kalman_ca` 混合深度跟踪，NX 原始观测 publisher 固定使用 keep-last/best-effort 的 sensor-data QoS。因此 live profile 只接受 `tracking.enabled=true`、`tracking.filter=kalman_ca` 和 `publisher.qos=sensor_data`。已删除的旧 C++ 图像 SOT 与这项 3D 状态估计无关。
 
 ### 深度候选与最终选择
 
@@ -122,7 +122,7 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 严格投影到旧 NX adapter，不能再通过修改 `base_pipeline.yaml` 改变正式 profile。
 
 同样，`legacy_activation_policy.py` 会集中覆盖 TNR、DLA、双路 YOLO、全帧视差、
-神经特征、异步 ROI、P2 诊断、图像 SOT 和显示等功能开关。实时 profile 才允许
+神经特征、异步 ROI、P2 诊断和显示等功能开关。实时 profile 才允许
 异步/丢旧帧；采集 profile 即使只执行 `render-legacy` 也保持同步无丢帧语义。
 旧模板暂时仍保存已禁用实验候选和诊断工具的兼容数值，但它们不再有权自行开启处理支路；
 当前正式 P0/P1 几何路径使用的上述门限均由主线配置拥有。

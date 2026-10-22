@@ -22,34 +22,6 @@
 namespace stereo3d {
 
 /**
- * @brief SOT 跟踪结果
- */
-struct SOTResult {
-    float cx, cy, width, height;
-    float confidence;
-    bool valid;
-    SOTResult() : cx(0), cy(0), width(0), height(0), confidence(0), valid(false) {}
-};
-
-/**
- * @brief bbox 来源
- */
-enum class BboxSource {
-    NONE,       ///< 无检测
-    YOLO,       ///< YOLO 检测
-    TRACKER     ///< SOT 补帧
-};
-
-/**
- * @brief Tracker 状态
- */
-enum class TrackerState {
-    IDLE,       ///< 无目标
-    TRACKING,   ///< 正常跟踪
-    LOST        ///< 目标丢失，等待 YOLO 重检测
-};
-
-/**
  * @brief Per-frame stereo sync metadata exposed to callbacks and recorders.
  */
 struct FrameMetadata {
@@ -88,7 +60,6 @@ struct FrameMetadata {
     int64_t timestamp_delta_us = 0;
     int64_t stereo_timestamp_residual_ns = 0;
     bool grab_failed = false;
-    bool is_detect_frame = true;
     bool p2_depth_modes_enabled = false;
     uint32_t p2_depth_mode_mask = 0;
     bool p2_feature_job_scaffold_enabled = false;
@@ -171,10 +142,6 @@ struct FrameSlot {
     // ROI 路径的失败帧可能在提交阶段和融合阶段都被看见，回调必须恰好一次。
     bool roi_callbacks_published = false;
 
-    // =========== SOT Tracker 补帧 ===========
-    SOTResult sot_bbox_result;            ///< SOT tracker 输出
-    BboxSource bbox_source = BboxSource::NONE; ///< 最终 bbox 来源
-    bool is_detect_frame = true;          ///< 是否为 YOLO 检测帧
     bool p2_depth_modes_enabled = false;
     uint32_t p2_depth_mode_mask = 0;
     bool p2_feature_job_scaffold_enabled = false;
@@ -298,9 +265,6 @@ struct FrameSlot {
         detect_right_done_event_recorded = false;
         roi_callbacks_published = false;
         results.clear();
-        sot_bbox_result = SOTResult();
-        bbox_source = BboxSource::NONE;
-        is_detect_frame = true;
         frame_id = -1;
         left_timestamp_us = right_timestamp_us = 0;
         host_capture_timestamp_ns = 0;
@@ -350,9 +314,6 @@ struct FrameSlot {
         detect_right_done_event_recorded = false;
         roi_callbacks_published = false;
         results.clear();
-        sot_bbox_result = SOTResult();
-        bbox_source = BboxSource::NONE;
-        is_detect_frame = true;
         frame_id = -1;
         grab_failed = false;
         left_timestamp_us = right_timestamp_us = 0;
@@ -463,7 +424,6 @@ inline FrameMetadata makeFrameMetadata(const FrameSlot& slot) {
          static_cast<int64_t>(slot.right_timestamp_us)) / 1000;
     meta.stereo_timestamp_residual_ns = slot.stereo_timestamp_residual_ns;
     meta.grab_failed = slot.grab_failed;
-    meta.is_detect_frame = slot.is_detect_frame;
     meta.p2_depth_modes_enabled = slot.p2_depth_modes_enabled;
     meta.p2_depth_mode_mask = slot.p2_depth_mode_mask;
     meta.p2_feature_job_scaffold_enabled = slot.p2_feature_job_scaffold_enabled;

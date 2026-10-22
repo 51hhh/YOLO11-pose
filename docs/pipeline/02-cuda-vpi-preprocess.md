@@ -61,15 +61,15 @@ NVIDIA 的 Image API 明确规定：`vpiImageLockData()` 返回的 buffer 只在
 |---|---|---|---|
 | `rawL/rawR` | READ | Bayer CUDA kernel | `cudaStreamBGR` 已排空 |
 | `tempBGR_L/R` | WRITE | Bayer CUDA kernel | `cudaStreamBGR` 已排空，之后才允许 VPI remap 读取 |
-| `rectBGR_vpiL/R` | READ | BGR YOLO、可选彩色 ROI、tracker 模板 | 对应 TensorRT/ROI/快照工作完成 |
+| `rectBGR_vpiL/R` | READ | BGR YOLO、可选彩色 ROI | 对应 TensorRT/ROI/快照工作完成 |
 | `rectGray_vpiL/R` | READ | Gray YOLO、ROI/特征点、异步快照 | 对应 TensorRT/ROI/快照工作完成 |
 
 生产者与消费者的顺序如下：
 
 1. VPI 生产 rectified 图后先 `vpiStreamSync`；
 2. pipeline 为本帧取得所需 BGR/Gray CUDA view，并记录 `locked_frame_id`；
-3. YOLO、tracker、ROI 或异步快照只接受“已锁且帧号一致”的 view；
-4. 同步实时 ROI 在候选计算和 tracker 模板刷新完成后释放；异步 ROI 必须等整帧 D2D/D2H 快照 event 完成后释放；
+3. YOLO、ROI 或异步快照只接受“已锁且帧号一致”的 view；
+4. 同步实时 ROI 在候选计算完成后释放；异步 ROI 必须等整帧 D2D/D2H 快照 event 完成后释放；
 5. FrameCallback 在 view 释放后运行，回调可重新以 host read lock 深拷贝图像；
 6. 槽位只有在 view 全部释放后才能 `reset()` 和重新写入。
 
@@ -96,7 +96,7 @@ Stage 0 涉及：
 | `cudaStreamBGR` | 左右 Bayer→BGR kernel | 开 | 每帧显式 synchronize |
 | `cudaStreamDLA` | 左 YOLO preprocess/infer/decode/D2H | 开；名称不表示实际用了 DLA | 左 detect event/源 stream fallback |
 | `cudaStreamDLA_R` | 右 YOLO preprocess/infer/decode/D2H | 开；当前 engine 为 CUDA GPU | 右 detect event/源 stream fallback |
-| `cudaStreamGPU` | rect-done event、全帧/旧 tracker 协调 | 开但当前主线负载很轻 | event 或最终 synchronize |
+| `cudaStreamGPU` | rect-done event 与全帧协调 | 开但当前主线负载很轻 | event 或最终 synchronize |
 | `cudaStreamFuse` | 同步 ROI Stage 2 与融合支路 | 开 | Stage 2 结束同步/最终清理 |
 | `cudaStreamP2Ncc` | inline CUDA template/NCC | 开且当前候选启用 | P2 worker join + 最终 synchronize |
 | `cudaStreamP2XFeat/SuperPoint/Aliked` | inline 神经特征 | 候选关闭，不创建 stream 或 worker | 若启用则 worker join + 最终 synchronize |

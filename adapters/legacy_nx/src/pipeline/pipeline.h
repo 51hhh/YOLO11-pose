@@ -38,7 +38,6 @@
 #include "../stereo/neural_feature_config.h"
 #include "../fusion/coordinate_3d.h"
 #include "../fusion/hybrid_depth.h"
-#include "../track/sot_tracker.h"
 #include "../utils/profiler.h"
 
 #include <vpi/algo/TemporalNoiseReduction.h>
@@ -144,11 +143,6 @@ private:
 
     // ROI 模式专用 Stage
     void stage2_roi_match_fuse(FrameSlot& slot, int slot_index);
-    void stage2_roi_fuse_tracker(FrameSlot& slot, int slot_index); ///< tracker bbox → ROI match + depth
-
-    // SOT Tracker 辅助
-    void tracker_handle_detect_result(FrameSlot& slot);  ///< 检测帧: 用 YOLO bbox 刷新 tracker template
-    void tracker_infill(FrameSlot& slot);                ///< 非检测帧: 运行 SOT 推理填充 bbox
 
     // Dual DLA 帧分配: 偶数帧→DLA0, 奇数帧→DLA1
     TRTDetector* getDetector(int frame_id) const;
@@ -522,12 +516,6 @@ private:
     P2InlineFeatureWorker p2_inline_xfeat_worker_;
     P2InlineFeatureWorker p2_inline_superpoint_worker_;
     P2InlineFeatureWorker p2_inline_aliked_worker_;
-
-    // ===== SOT Tracker =====
-    std::unique_ptr<SOTTracker> tracker_;           ///< SOT 补帧跟踪器
-    TrackerState tracker_state_ = TrackerState::IDLE;
-    int tracker_lost_count_ = 0;                    ///< 连续丢失帧数
-    int effective_detect_interval_ = 3;             ///< 运行时检测间隔 (LOST 时=1)
 
     // ===== VPI TNR 资源 =====
     VPIPayload tnrPayloadL_ = nullptr;     ///< 左目 TNR payload

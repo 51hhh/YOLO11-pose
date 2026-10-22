@@ -43,6 +43,8 @@ FORBIDDEN_TRACKED_PREFIXES = (
     "adapters/legacy_nx/diagnose_output/",
     "adapters/legacy_nx/raw_observation_data.csv",
     "adapters/legacy_nx/test_logs/",
+    "adapters/legacy_nx/src/pipeline/pipeline_tracker.cpp",
+    "adapters/legacy_nx/src/track/",
 )
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_TEST_ROOT_FILES = {

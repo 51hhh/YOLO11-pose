@@ -92,7 +92,7 @@ bool Pipeline::recordDetectDoneEvents(FrameSlot& slot) const {
         ok = false;
     }
 
-    if (dualYoloEnabled() && slot.is_detect_frame && slot.right_detection_submitted) {
+    if (dualYoloEnabled() && slot.right_detection_submitted) {
         const cudaError_t right_status = cudaEventRecord(
             slot.evtDetectRightDone, getRightDLAStream(slot.frame_id));
         if (checkCudaFrame(right_status, slot,
@@ -141,8 +141,7 @@ bool Pipeline::waitDetectDone(cudaStream_t stream, FrameSlot& slot) const {
         "wait for left detect completion event",
         "fallback synchronize left detector stream");
 
-    if (dualYoloEnabled() && slot.is_detect_frame &&
-        slot.right_detection_submitted) {
+    if (dualYoloEnabled() && slot.right_detection_submitted) {
         wait_or_fallback_sync(
             true, slot.detect_right_done_event_recorded,
             slot.evtDetectRightDone, getRightDLAStream(slot.frame_id),
@@ -161,8 +160,7 @@ bool Pipeline::synchronizeDetectDone(FrameSlot& slot,
 }
 
 bool Pipeline::detectEventsReady(const FrameSlot& slot) const {
-    if (!slot.is_detect_frame || !slot.detection_submitted ||
-        !slot.detect_done_event_recorded) {
+    if (!slot.detection_submitted || !slot.detect_done_event_recorded) {
         return false;
     }
 
@@ -196,8 +194,7 @@ bool Pipeline::detectEventsReady(const FrameSlot& slot) const {
 
 void Pipeline::collectRightDetections(FrameSlot& slot, int slot_index) {
     slot.detections_right.clear();
-    if (!dualYoloEnabled() || !slot.is_detect_frame ||
-        !slot.right_detection_submitted) {
+    if (!dualYoloEnabled() || !slot.right_detection_submitted) {
         return;
     }
 

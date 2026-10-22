@@ -170,7 +170,6 @@ void restoreFrameMetadata(FrameSlot& slot, const FrameMetadata& meta) {
         meta.trigger_write_uncertainty_ns;
     slot.stereo_timestamp_residual_ns = meta.stereo_timestamp_residual_ns;
     slot.grab_failed = meta.grab_failed;
-    slot.is_detect_frame = meta.is_detect_frame;
     slot.p2_depth_modes_enabled = meta.p2_depth_modes_enabled;
     slot.p2_depth_mode_mask = meta.p2_depth_mode_mask;
     slot.p2_feature_job_scaffold_enabled =
@@ -644,8 +643,7 @@ bool synchronizeAuxiliaryCudaStream(cudaStream_t stream, const char* name) {
 bool Pipeline::asyncRoiStage2Configured() const {
     return config_.async_roi_stage2 &&
            config_.disparity_strategy == DisparityStrategy::ROI_ONLY &&
-           !config_.detection_only &&
-           (!config_.tracker.enabled || config_.tracker.detect_interval <= 1);
+           !config_.detection_only;
 }
 
 bool Pipeline::initAsyncRoiStage2() {
@@ -3525,7 +3523,6 @@ std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
             } else {
                 applyRoiStage2Output(*live_slot, std::move(result.output));
             }
-            live_slot->bbox_source = BboxSource::YOLO;
             publishRoiFrameCallbacks(*live_slot);
             accepted.push_back(live_slot->frame_id);
         } else {
@@ -3534,7 +3531,6 @@ std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
             restoreFrameMetadata(shadow, result.metadata);
             shadow.grab_failed = result.processing_failed;
             shadow.detections_right = std::move(result.right_detections);
-            shadow.bbox_source = BboxSource::YOLO;
             if (!result.processing_failed) {
                 applyRoiStage2Output(shadow, std::move(result.output));
             }

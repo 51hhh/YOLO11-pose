@@ -36,8 +36,7 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 
 - `async_roi_stage2=true`；
 - `stereo.strategy=roi_only`；
-- 不是 detection-only；
-- 未启用 tracker，或 tracker 每帧都检测。
+- 不是 detection-only。
 
 当前 `nx-rdk` 满足这些条件。提交时：
 
@@ -62,7 +61,6 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 | async ROI Stage 2 | 开 | 强制关 | 无 |
 | 丢 stale ROI | 允许 | 强制关 | 无 |
 | 主队列 | 3，`drop_oldest` | 256，`block` | 64，`block` |
-| C++ SOT tracker | 关 | 关 | 无 |
 | NX 内预测 | 关 | 关 | 离线 |
 | ROS2 直接观测 | 开 | 关 | 关 |
 | v2.1 capture | 关 | 开 | 读取 |
@@ -89,13 +87,12 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 | ORB/BRISK/AKAZE/SIFT | 否或惰性 | 否 | 否 | 字段可为空 |
 | XFeat/SuperPoint/ALIKED | 配置对象存在 | 否 | 否 | 字段可为空 |
 | TNR | 否 | 否 | 否 | 否 |
-| C++ tracker | 否 | 否 | 否 | bbox source 恒为 YOLO |
 
 ## 配置投影边界
 
 根配置不是逐键一一映射旧 C++ 配置，目前需要特别关注：
 
-- 根层 `tracking.enabled=true` 不会打开旧 C++ `tracker.enabled`；最终投影仍为 false；
+- 根层 `tracking.enabled=true` 只表示 3D `kalman_ca` 状态估计；已删除的旧图像 SOT 不再拥有配置入口；
 - 根层 `candidate_methods` 会完整重写旧 `depth_modes`，不再继承模板中的隐藏候选；
 - `primary_method/fallback_methods` 会在投影前校验旧选择器是否能忠实实现；当前只允许两个实时首选和固定相对回退顺序；
 - 根层 subpixel、关联、相机、模型、校正和发布参数会明确投影；

@@ -299,7 +299,7 @@ bool Pipeline::stage1_detect(FrameSlot& slot, int slot_index) {
     }
     slot.detection_submitted = true;
 
-    if (dualYoloEnabled() && slot.is_detect_frame) {
+    if (dualYoloEnabled()) {
         auto* detR = getRightDetector();
         auto streamR = getRightDLAStream(slot.frame_id);
         if (!detR || !streamR) {

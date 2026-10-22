@@ -268,7 +268,7 @@ def build_pipeline_report(
             allocated=live_pipeline,
             per_frame_work=live_pipeline,
             backend="cuda",
-            work="rectification completion event and optional tracker/full-frame coordination",
+            work="rectification completion event and full-frame coordination",
         ),
         _stream(
             "cuda_fuse",
@@ -465,9 +465,6 @@ def build_pipeline_report(
         "tracking": {
             "high_level_state_estimation": bool(data["tracking"]["enabled"]),
             "filter": data["tracking"]["filter"],
-            "legacy_image_sot": bool(
-                legacy is not None and legacy["tracker"]["enabled"]
-            ),
         },
         "outputs": {
             "publisher_enabled": bool(publisher["enabled"]),

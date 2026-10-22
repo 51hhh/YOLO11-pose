@@ -300,7 +300,6 @@ set(PIPELINE_SOURCES
   src/pipeline/pipeline_roi_match_helpers.cpp
   src/pipeline/pipeline_roi_stage2.cpp
   src/pipeline/pipeline_stages.cpp
-  src/pipeline/pipeline_tracker.cpp
   src/calibration/stereo_calibration.cpp
   src/rectify/vpi_rectifier.cpp
   src/stereo/vpi_stereo.cpp
@@ -335,8 +334,6 @@ set(PIPELINE_SOURCES
   ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/src/stage_schema.cpp
   src/capture/capture_v21_stage_recorder.cpp
   src/utils/vpi_image_copy.cpp
-  src/track/nanotrack_trt.cpp
-  src/track/mixformer_trt.cpp
 )
 
 # CUDA 源文件
@@ -350,7 +347,7 @@ set(CUDA_SOURCES
   src/stereo/roi_feature_match_gpu_profile.cu
   src/stereo/neural_feature_xfeat_gpu_postprocess.cu
   src/stereo/neural_feature_direct_gpu_postprocess.cu
-  src/track/crop_resize.cu
+  src/stereo/neural_feature_crop_resize.cu
 )
 
 # 相机源文件 (可选)
