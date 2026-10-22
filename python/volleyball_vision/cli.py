@@ -95,11 +95,14 @@ def _doctor(args: argparse.Namespace) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, overrides=args.set)
-    checks = run_doctor(config)
-    errors = [check for check in checks if not check.ok]
-    if errors:
-        details = "\n".join(f"  - {check.name}: {check.message}" for check in errors)
-        raise DatasetError(f"启动前 doctor 未通过:\n{details}")
+    # dry-run 只生成可审计配置和命令，不接触硬件；开发机也应能使用。
+    # 真正启动时仍必须通过完整的模型、NX、GPIO、MVS、CUDA 与 ROS2 门禁。
+    if not args.dry_run:
+        checks = run_doctor(config)
+        errors = [check for check in checks if not check.ok]
+        if errors:
+            details = "\n".join(f"  - {check.name}: {check.message}" for check in errors)
+            raise DatasetError(f"启动前 doctor 未通过:\n{details}")
     result = run_runtime(
         config,
         generated_config=args.generated_config,
