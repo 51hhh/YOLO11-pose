@@ -279,7 +279,10 @@ def build_pipeline_report(
         ),
         _stream(
             "cuda_p2_ncc",
-            allocated=live_pipeline,
+            allocated=depth_enabled
+            and p2_scaffold
+            and p2_realtime
+            and cuda_template,
             per_frame_work=depth_enabled
             and p2_scaffold
             and p2_realtime
@@ -289,7 +292,10 @@ def build_pipeline_report(
         ),
         _stream(
             "cuda_p2_xfeat",
-            allocated=live_pipeline,
+            allocated=depth_enabled
+            and p2_scaffold
+            and p2_realtime
+            and neural_xfeat,
             per_frame_work=depth_enabled
             and p2_scaffold
             and p2_realtime
@@ -299,7 +305,10 @@ def build_pipeline_report(
         ),
         _stream(
             "cuda_p2_superpoint",
-            allocated=live_pipeline,
+            allocated=depth_enabled
+            and p2_scaffold
+            and p2_realtime
+            and neural_superpoint,
             per_frame_work=depth_enabled
             and p2_scaffold
             and p2_realtime
@@ -309,7 +318,10 @@ def build_pipeline_report(
         ),
         _stream(
             "cuda_p2_aliked",
-            allocated=live_pipeline,
+            allocated=depth_enabled
+            and p2_scaffold
+            and p2_realtime
+            and neural_aliked,
             per_frame_work=depth_enabled
             and p2_scaffold
             and p2_realtime

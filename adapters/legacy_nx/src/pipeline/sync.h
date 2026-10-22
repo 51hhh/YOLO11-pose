@@ -19,6 +19,13 @@
 
 namespace stereo3d {
 
+struct PipelineStreamRequirements {
+    bool p2_ncc = false;
+    bool p2_xfeat = false;
+    bool p2_superpoint = false;
+    bool p2_aliked = false;
+};
+
 /**
  * @brief Pipeline 同步上下文
  *
@@ -46,7 +53,7 @@ struct PipelineStreams {
      * @brief 初始化所有 Streams
      * @return true 全部成功
      */
-    bool init() {
+    bool init(const PipelineStreamRequirements& requirements) {
         cudaError_t err;
 
         // VPI Streams (VIC backend added for hardware remap)
@@ -100,40 +107,50 @@ struct PipelineStreams {
             return false;
         }
 
-        err = cudaStreamCreateWithFlags(&cudaStreamP2Ncc, cudaStreamNonBlocking);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "[Sync] Failed to create P2 NCC stream: %s\n",
-                    cudaGetErrorString(err));
-            destroy();
-            return false;
+        if (requirements.p2_ncc) {
+            err = cudaStreamCreateWithFlags(
+                &cudaStreamP2Ncc, cudaStreamNonBlocking);
+            if (err != cudaSuccess) {
+                fprintf(stderr, "[Sync] Failed to create P2 NCC stream: %s\n",
+                        cudaGetErrorString(err));
+                destroy();
+                return false;
+            }
         }
 
-        err = cudaStreamCreateWithFlags(&cudaStreamP2XFeat, cudaStreamNonBlocking);
-        if (err != cudaSuccess) {
-            fprintf(stderr, "[Sync] Failed to create P2 XFeat stream: %s\n",
-                    cudaGetErrorString(err));
-            destroy();
-            return false;
+        if (requirements.p2_xfeat) {
+            err = cudaStreamCreateWithFlags(
+                &cudaStreamP2XFeat, cudaStreamNonBlocking);
+            if (err != cudaSuccess) {
+                fprintf(stderr, "[Sync] Failed to create P2 XFeat stream: %s\n",
+                        cudaGetErrorString(err));
+                destroy();
+                return false;
+            }
         }
 
-        err = cudaStreamCreateWithFlags(&cudaStreamP2SuperPoint,
-                                        cudaStreamNonBlocking);
-        if (err != cudaSuccess) {
-            fprintf(stderr,
-                    "[Sync] Failed to create P2 SuperPoint stream: %s\n",
-                    cudaGetErrorString(err));
-            destroy();
-            return false;
+        if (requirements.p2_superpoint) {
+            err = cudaStreamCreateWithFlags(
+                &cudaStreamP2SuperPoint, cudaStreamNonBlocking);
+            if (err != cudaSuccess) {
+                fprintf(stderr,
+                        "[Sync] Failed to create P2 SuperPoint stream: %s\n",
+                        cudaGetErrorString(err));
+                destroy();
+                return false;
+            }
         }
 
-        err = cudaStreamCreateWithFlags(&cudaStreamP2Aliked,
-                                        cudaStreamNonBlocking);
-        if (err != cudaSuccess) {
-            fprintf(stderr,
-                    "[Sync] Failed to create P2 ALIKED stream: %s\n",
-                    cudaGetErrorString(err));
-            destroy();
-            return false;
+        if (requirements.p2_aliked) {
+            err = cudaStreamCreateWithFlags(
+                &cudaStreamP2Aliked, cudaStreamNonBlocking);
+            if (err != cudaSuccess) {
+                fprintf(stderr,
+                        "[Sync] Failed to create P2 ALIKED stream: %s\n",
+                        cudaGetErrorString(err));
+                destroy();
+                return false;
+            }
         }
 
         return true;

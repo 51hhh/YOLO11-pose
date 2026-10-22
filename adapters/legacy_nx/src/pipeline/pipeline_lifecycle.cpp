@@ -286,6 +286,7 @@ void Pipeline::p2InlineFeatureWorkerLoop(P2InlineFeatureWorker* worker,
 }
 
 bool Pipeline::startP2InlineFeatureWorkers() {
+    bool started_any = false;
     auto start_one = [&](P2InlineFeatureWorker& worker,
                          const char* label) -> bool {
         if (worker.thread.joinable()) {
@@ -306,17 +307,25 @@ bool Pipeline::startP2InlineFeatureWorkers() {
                       label, e.what());
             return false;
         }
+        started_any = true;
         return true;
     };
 
-    if (!start_one(p2_inline_ncc_worker_, "NCC") ||
-        !start_one(p2_inline_xfeat_worker_, "XFeat") ||
-        !start_one(p2_inline_superpoint_worker_, "SuperPoint") ||
-        !start_one(p2_inline_aliked_worker_, "ALIKED")) {
+    const bool started =
+        (!streams_.cudaStreamP2Ncc ||
+         start_one(p2_inline_ncc_worker_, "NCC")) &&
+        (!streams_.cudaStreamP2XFeat ||
+         start_one(p2_inline_xfeat_worker_, "XFeat")) &&
+        (!streams_.cudaStreamP2SuperPoint ||
+         start_one(p2_inline_superpoint_worker_, "SuperPoint")) &&
+        (!streams_.cudaStreamP2Aliked ||
+         start_one(p2_inline_aliked_worker_, "ALIKED"));
+    if (!started) {
         shutdownP2InlineFeatureWorkers();
         return false;
     }
-    p2_inline_feature_workers_ready_.store(true, std::memory_order_release);
+    p2_inline_feature_workers_ready_.store(
+        started_any, std::memory_order_release);
     return true;
 }
 
@@ -348,7 +357,7 @@ void Pipeline::shutdownP2InlineFeatureWorkers() {
 bool Pipeline::submitP2InlineFeatureTask(P2InlineFeatureWorker& worker,
                                          std::function<void()> task) {
     if (!p2_inline_feature_workers_ready_.load(std::memory_order_acquire) ||
-        !task) {
+        !worker.thread.joinable() || !task) {
         return false;
     }
     {

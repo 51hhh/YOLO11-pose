@@ -38,7 +38,16 @@ bool Pipeline::init(const PipelineConfig& config) {
 
     // 1. 初始化 CUDA/VPI Streams
     LOG_INFO("Initializing streams...");
-    if (!streams_.init()) {
+    const bool inline_p2 = config_.p2_feature_job_scaffold_enabled &&
+                           config_.p2_realtime_lane_decision_enabled;
+    PipelineStreamRequirements stream_requirements;
+    stream_requirements.p2_ncc =
+        inline_p2 && config_.dual_yolo.depth_roi_cuda_template_match;
+    stream_requirements.p2_xfeat = inline_p2 && config_.neural_xfeat.enabled;
+    stream_requirements.p2_superpoint =
+        inline_p2 && config_.neural_superpoint.enabled;
+    stream_requirements.p2_aliked = inline_p2 && config_.neural_aliked.enabled;
+    if (!streams_.init(stream_requirements)) {
         LOG_ERROR("Failed to initialize streams");
         return false;
     }

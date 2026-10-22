@@ -59,7 +59,7 @@ class PipelineReportTests(unittest.TestCase):
             "cuda_p2_superpoint",
             "cuda_p2_aliked",
         ):
-            self.assertTrue(streams[stream_id]["allocated"])
+            self.assertFalse(streams[stream_id]["allocated"])
             self.assertFalse(streams[stream_id]["per_frame_work"])
         self.assertTrue(streams["async_roi_copy"]["allocated"])
         self.assertFalse(streams["p2_diagnostic_core"]["allocated"])

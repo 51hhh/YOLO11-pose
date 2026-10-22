@@ -93,7 +93,7 @@ Stage 0 涉及：
 | `cudaStreamGPU` | rect-done event、全帧/旧 tracker 协调 | 开但当前主线负载很轻 | event 或最终 synchronize |
 | `cudaStreamFuse` | 同步 ROI Stage 2 与融合支路 | 开 | Stage 2 结束同步/最终清理 |
 | `cudaStreamP2Ncc` | inline CUDA template/NCC | 开且当前候选启用 | P2 worker join + 最终 synchronize |
-| `cudaStreamP2XFeat/SuperPoint/Aliked` | inline 神经特征 | stream/线程已创建，候选关闭所以不应有逐帧 kernel | 最终 synchronize |
+| `cudaStreamP2XFeat/SuperPoint/Aliked` | inline 神经特征 | 候选关闭，不创建 stream 或 worker | 若启用则 worker join + 最终 synchronize |
 | `async_roi_copy_stream_` | FrameSlot→异步缓冲的 Gray D2D，按需 Gray D2H/BGR D2D | 实时开，采集关 | slot/buffer copy event + 停止时同步 |
 | `async_roi_stream_` | 异步 ROI 几何、NCC、多点候选 | 实时开，采集关 | worker 完成 + 停止时同步 |
 | `p2_feature_diag_copy_stream_` | 独立诊断图像副本 | 当前诊断 lane 关，不创建 | 若启用则 copy event + 停止时同步 |
@@ -141,7 +141,7 @@ Stage 0 涉及：
 以下是待实测候选，不是当前已实现结论：
 
 - 用可证明正确的 VPI/CUDA 互操作消除 Bayer 后和 remap 后的 CPU 硬同步；
-- 按 profile 条件分配 full-frame disparity、TNR 和关闭算法的资源；
+- 按 profile 条件分配 full-frame disparity 和 TNR 资源；P2 候选的 stream/worker 已按最终配置创建；
 - 用 Nsight Systems 检查左右 YOLO 是否与下一帧 USB 等待/Stage 0 重叠；
 - 比较 CUDA、VIC 和 PVA remap 的延迟、功耗及像素一致性；
 - 若修改色彩路径，必须重新验证 YOLO 精度、标定 remap 顺序和 Bayer pattern，不能只以帧率决定。
