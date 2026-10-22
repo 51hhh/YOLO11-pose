@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`adapters/legacy_nx` 保留成熟的 CUDA 校正、TensorRT、ROI 深度和 ROS2 实现，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine 的静态 I/O 验证、检测值类型、单输出/DFL CPU 解码和 NMS 已经迁入 `adapters/tensorrt`，旧运行时和后续主线 detector 共用这些实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
+`adapters/legacy_nx` 保留成熟的 CUDA 校正、TensorRT、ROI 深度和 ROS2 实现，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine 的静态 I/O 验证、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码和 NMS 已经迁入 `adapters/tensorrt`，旧运行时和后续主线 detector 共用这些实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
 旧的轨迹 CSV、baseline clip 录制器和一次性特征匹配导出入口已经删除；它们既不满足 v2.1 原始事实契约，也无法由正式 profile 到达。真实图像、候选、配对和直接 3D 只允许通过 `volleyball capture` 驱动的 v2.1 staging 写入，低频排障截图则由显式诊断配置控制。
 

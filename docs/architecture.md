@@ -69,7 +69,7 @@ NX GPIO 上升沿 ────────┐
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机必须先进入抓取状态，调用方再启动 GPIO；停止、异常和 GPIO 生命周期最终由尚待建立的应用层统一编排。
 
-现有 CUDA/VPI/TensorRT/ROS2 运行时代码仍集中在 `adapters/legacy_nx`。TensorRT engine 的无 SDK I/O 契约、检测值类型、单输出/DFL CPU 解码和 NMS 已进入 `adapters/tensorrt`，旧 detector 也改为链接这些唯一实现；实际 TensorRT 上下文、CUDA 图像预处理和 GPU DFL kernel 仍未迁出。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，平台无关服务也已显式建立 `StereoPreprocessor` 与 `DirectObservationEstimator` 契约，但真实 CUDA/VPI 预处理、TensorRT detector、ROI 多点估计器尚未实现这些新端口，更未组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
+现有 CUDA/VPI/TensorRT/ROS2 运行时代码仍集中在 `adapters/legacy_nx`。TensorRT engine 的无 SDK I/O 契约、单输出布局与类别契约、检测值类型、单输出/DFL CPU 解码和 NMS 已进入 `adapters/tensorrt`，旧 detector 也改为链接这些唯一实现；实际 TensorRT 上下文、CUDA 图像预处理和 GPU DFL kernel 仍未迁出。正式磁盘 `TrialWriter` 的主线 staging 写入与 v2.1 finalizer 已迁出，平台无关服务也已显式建立 `StereoPreprocessor` 与 `DirectObservationEstimator` 契约，但真实 CUDA/VPI 预处理、TensorRT detector、ROI 多点估计器尚未实现这些新端口，更未组装成新的原生应用入口。当前唯一用户入口仍是 Python 包导出的 `volleyball` CLI，旧 NX 工程由 CLI 生成配置并由根工程 ExternalProject 隔离构建。仓库不保留没有可执行实现的空应用层目录。
 
 ## 三条独立时间链
 
