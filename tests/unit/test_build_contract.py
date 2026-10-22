@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import unittest
+
+from volleyball_vision.capture import (
+    STAGE_DETECTION_COLUMNS,
+    STAGE_FRAME_COLUMNS,
+    STAGE_PAIR_COLUMNS,
+    STAGE_SCHEMA_VERSION,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +40,41 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('option(REQUIRE_HIK ', adapter_cmake)
         self.assertIn("if(REQUIRE_HIK)", adapter_cmake)
         self.assertIn("message(FATAL_ERROR", adapter_cmake)
+
+    def test_cpp_and_python_capture_stage_contracts_match(self) -> None:
+        header = (
+            ROOT
+            / "adapters"
+            / "legacy_nx"
+            / "src"
+            / "utils"
+            / "capture_v21_stage_schema.h"
+        ).read_text(encoding="utf-8")
+
+        version = re.search(
+            r"kCaptureV21StageSchemaVersion\s*=\s*(\d+)\s*;",
+            header,
+        )
+        self.assertIsNotNone(version)
+        assert version is not None
+        self.assertEqual(int(version.group(1)), STAGE_SCHEMA_VERSION)
+
+        def columns(name: str) -> list[str]:
+            declaration = re.search(
+                rf"\b{name}\s*=\s*\{{(?P<body>.*?)\}};",
+                header,
+                flags=re.DOTALL,
+            )
+            self.assertIsNotNone(declaration, name)
+            assert declaration is not None
+            return re.findall(r'"([^"\\]+)"', declaration.group("body"))
+
+        self.assertEqual(columns("kCaptureV21FrameColumns"), STAGE_FRAME_COLUMNS)
+        self.assertEqual(
+            columns("kCaptureV21DetectionColumns"),
+            STAGE_DETECTION_COLUMNS,
+        )
+        self.assertEqual(columns("kCaptureV21PairColumns"), STAGE_PAIR_COLUMNS)
 
 
 if __name__ == "__main__":
