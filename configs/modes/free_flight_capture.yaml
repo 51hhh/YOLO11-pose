@@ -1,5 +1,6 @@
 runtime:
   mode: capture
+  max_consecutive_timeouts: 0
   queue:
     capacity: 256
     overflow_policy: block

@@ -9,10 +9,12 @@
     "schema_version": {"const": 1},
     "runtime": {
       "type": "object", "additionalProperties": false,
-      "required": ["mode", "nominal_fps", "queue", "threading"],
+      "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue", "threading"],
       "properties": {
         "mode": {"enum": ["runtime", "capture", "replay"]},
         "nominal_fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "source_timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
+        "max_consecutive_timeouts": {"type": "integer", "minimum": 0, "maximum": 1000},
         "queue": {
           "type": "object", "additionalProperties": false,
           "required": ["capacity", "overflow_policy"],
@@ -95,8 +97,17 @@
     },
     "adapters": {
       "type": "object", "additionalProperties": false,
-      "required": ["legacy_pipeline"],
+      "required": ["active_pipeline", "mainline_pipeline", "legacy_pipeline"],
       "properties": {
+        "active_pipeline": {"enum": ["mainline", "legacy"]},
+        "mainline_pipeline": {
+          "type": "object", "additionalProperties": false,
+          "required": ["executable", "source_epoch_file"],
+          "properties": {
+            "executable": {"$ref": "#/$defs/path"},
+            "source_epoch_file": {"$ref": "#/$defs/absolute_path"}
+          }
+        },
         "legacy_pipeline": {
           "type": "object", "additionalProperties": false,
           "required": ["executable", "base_config"],
@@ -117,7 +128,7 @@
     },
     "detector": {
       "type": "object", "additionalProperties": false,
-      "required": ["backend", "model_id", "per_camera", "input_resolution", "input_format", "resize_mode", "confidence_threshold", "nms_iou_threshold", "max_detections", "center_method"],
+      "required": ["backend", "model_id", "per_camera", "input_resolution", "input_format", "resize_mode", "confidence_threshold", "nms_iou_threshold", "max_detections", "class_id", "center_method"],
       "properties": {
         "backend": {"enum": ["tensorrt", "onnxruntime", "recorded"]},
         "model_id": {"type": "string", "minLength": 1},
@@ -128,6 +139,7 @@
         "confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1},
         "nms_iou_threshold": {"type": "number", "minimum": 0, "maximum": 1},
         "max_detections": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "class_id": {"type": "integer", "minimum": 0},
         "center_method": {"enum": ["bbox_center", "circle_fit", "keypoints", "segmentation_centroid"]}
       }
     },
@@ -252,6 +264,7 @@
   },
   "$defs": {
     "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "absolute_path": {"type": "string", "minLength": 2, "pattern": "^/(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
     "resolution": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}], "items": false},
     "camera": {
       "type": "object", "additionalProperties": false,

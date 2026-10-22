@@ -3,6 +3,8 @@ schema_version: 1
 runtime:
   mode: runtime
   nominal_fps: 90.0
+  source_timeout_ms: 1000
+  max_consecutive_timeouts: 3
   queue:
     capacity: 3
     overflow_policy: drop_oldest
@@ -66,6 +68,10 @@ calibration:
   world_frame: world
 
 adapters:
+  active_pipeline: legacy
+  mainline_pipeline:
+    executable: build/nx-mainline-release/apps/nx_mainline/volleyball_nx_mainline
+    source_epoch_file: /run/volleyball/nx_source_epoch
   legacy_pipeline:
     executable: build/nx-legacy-superbuild/legacy_nx/stereo_pipeline
     base_config: adapters/legacy_nx/config/base_pipeline.yaml
@@ -84,6 +90,7 @@ detector:
   confidence_threshold: 0.30
   nms_iou_threshold: 0.40
   max_detections: 10
+  class_id: 0
   center_method: bbox_center
 
 stereo:
