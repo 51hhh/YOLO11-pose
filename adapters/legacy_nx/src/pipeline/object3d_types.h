@@ -27,10 +27,10 @@ struct Object3D {
     float x, y, z;         ///< 3D 坐标 (米)
     float vx, vy, vz;      ///< 3D 速度 (m/s)
     float ax, ay, az;       ///< 3D 加速度 (m/s²)
-    float raw_x, raw_y, raw_z; ///< 未经 Kalman 的当前帧观测, raw_mode 录制用
-    int raw_observation_valid; ///< 1=raw_x/raw_y/raw_z 有效
+    float raw_x, raw_y, raw_z; ///< 当前帧直接双目三角化测量，不含单目/融合/Kalman
+    int raw_observation_valid; ///< 1=raw_x/raw_y/raw_z 是有效直接双目测量
     float predicted_z;      ///< Kalman update 前的 z 预测, -1=无有效先验
-    float innovation_z;     ///< z 观测创新: raw_z - predicted_z
+    float innovation_z;     ///< 内部融合 z_obs 的创新: z_obs - predicted_z
     float innovation_norm;  ///< z 创新归一化值: innovation_z / sqrt(Pzz_prior + Rz)
     float kalman_sigma_z;   ///< Kalman update 后 z 标准差估计
     float z_mono;          ///< 单目测距 (m), 校准用

@@ -189,14 +189,20 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         // Step 2: 计算单目深度
         float z_mono = monoDepth(det);
 
-        // Step 3: 查找对应的双目结果 (始终记录原始值供校准)
+        // Step 3: 查找对应的直接双目结果。raw_* 是跨模块的
+        // 测量来源契约，不允许用 roi.z 中的其他派生状态冒充。
         float z_stereo = -1.0f;
         bool has_stereo = false;
         bool stereo_is_fallback = false;
         if (i < roi_results.size()) {
             const auto& roi = roi_results[i];
-            z_stereo = roi_results[i].z;  // 原始值 (可能为-1)
-            has_stereo = roi_results[i].confidence > config_.min_confidence && z_stereo > 0;
+            z_stereo = roi.raw_z;
+            has_stereo = roi.raw_observation_valid &&
+                         std::isfinite(roi.raw_x) &&
+                         std::isfinite(roi.raw_y) &&
+                         std::isfinite(roi.raw_z) &&
+                         roi.confidence > config_.min_confidence &&
+                         z_stereo > 0.0f;
             stereo_is_fallback = roi.stereo_match_source == 2 ||
                                  roi.stereo_match_source == 3;
         }
@@ -313,10 +319,13 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         obj.x  = track->x();    obj.y  = track->y();    obj.z  = track->z();
         obj.vx = track->vx();   obj.vy = track->vy();   obj.vz = track->vz();
         obj.ax = track->ax();   obj.ay = track->ay();   obj.az = track->az();
-        obj.raw_x = obs_x;
-        obj.raw_y = obs_y;
-        obj.raw_z = z_obs;
-        obj.raw_observation_valid = 1;
+        // x/y/z 是旧管线内部的混合+Kalman 状态；raw_* 只能是
+        // 当前帧直接双目三角化测量。单目、偏差校正、融合和预测
+        // 都不得生成或改写 raw 测量。
+        obj.raw_x = 0.0f;
+        obj.raw_y = 0.0f;
+        obj.raw_z = -1.0f;
+        obj.raw_observation_valid = 0;
         obj.predicted_z = predicted_z;
         obj.innovation_z = innovation_z;
         obj.innovation_norm = innovation_norm;
@@ -327,7 +336,19 @@ std::vector<Object3D> HybridDepthEstimator::estimate(
         obj.z_mono = z_mono;
         obj.z_stereo = z_stereo;
         if (i < roi_results.size()) {
-            copyRoiCandidateFields(roi_results[i], obj);
+            const auto& direct = roi_results[i];
+            copyRoiCandidateFields(direct, obj);
+            if (direct.raw_observation_valid &&
+                std::isfinite(direct.raw_x) &&
+                std::isfinite(direct.raw_y) &&
+                std::isfinite(direct.raw_z) &&
+                direct.raw_z >= config_.min_depth &&
+                direct.raw_z < config_.max_depth) {
+                obj.raw_x = direct.raw_x;
+                obj.raw_y = direct.raw_y;
+                obj.raw_z = direct.raw_z;
+                obj.raw_observation_valid = 1;
+            }
         }
         obj.depth_method = method;
 

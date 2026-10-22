@@ -4,6 +4,8 @@
 
 `adapters/legacy_nx` 保留成熟的海康 MVS、GPIO、CUDA 校正、TensorRT、ROI 深度和 ROS2 实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
+旧 `HybridDepth` 可以为内部关联使用 bbox 单目深度、双目深度和 Kalman 状态，但其输出中的 `raw_*` 只能原样传递当前帧已验证的直接双目三角化测量。纯单目、单/双目融合、偏差校正和预测结果均不得设置 `raw_observation_valid`，因此 NX 的 ROS2 publisher 不会把派生状态冒充为直接测量。
+
 主线目前已有 `CameraSource → StereoPipelineRunner → StereoObservationService → TrialWriter/ObservationPublisher` 的平台无关编排，并用脚本相机源覆盖结束、超时、错误和中止语义。这只完成了新用例层的装配边界；海康、GPIO、TensorRT/CUDA 和 ROS2 仍在旧 adapter 内，因此尚不能建立或宣称新的实机入口。
 
 根工程通过 `nx-legacy-release` 预设将旧工程作为 ExternalProject 编译。这样可以复用实机能力，同时防止旧工程的全局 CUDA、VPI、MVS、OpenCV 和 ROS2 依赖进入 `libs/core`、`ports`、`algorithms` 或 `services`。

@@ -29,7 +29,13 @@ stereo3d::Detection detection(float cx, float confidence, int class_id = 0) {
 
 stereo3d::Object3D stereoObservation(float z, float confidence = 1.0f) {
     stereo3d::Object3D obj;
+    obj.x = 0.25f;
+    obj.y = -0.15f;
     obj.z = z;
+    obj.raw_x = obj.x;
+    obj.raw_y = obj.y;
+    obj.raw_z = obj.z;
+    obj.raw_observation_valid = 1;
     obj.confidence = confidence;
     obj.stereo_match_source = 1;
     obj.stereo_depth_source = 1;
@@ -61,6 +67,57 @@ int main() {
         check(result.size() == 1, "valid stereo observation must produce output");
         check(!result.empty() && std::abs(result[0].raw_z - 10.0f) < 1e-4f,
               "valid stereo depth must remain available as raw observation");
+        check(!result.empty() && std::abs(result[0].raw_x - 0.25f) < 1e-4f &&
+                  std::abs(result[0].raw_y + 0.15f) < 1e-4f,
+              "direct stereo coordinates must survive hybrid tracking unchanged");
+    }
+
+    {
+        auto cfg = config();
+        cfg.stereo_min_z = 8.0f;
+        cfg.mono_max_z = 12.0f;
+        stereo3d::HybridDepthEstimator estimator;
+        estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, cfg);
+        const auto result = estimator.estimate(
+            {detection(0.0f, 0.9f)}, {stereoObservation(10.0f)}, 0.01);
+        check(result.size() == 1,
+              "transition-band stereo observation must produce output");
+        check(!result.empty() && result[0].depth_method == 2,
+              "transition-band fixture must exercise mono/stereo fusion");
+        check(!result.empty() && std::abs(result[0].z - result[0].raw_z) > 0.1f,
+              "filtered fused depth must differ from the direct stereo fixture");
+        check(!result.empty() && std::abs(result[0].raw_x - 0.25f) < 1e-4f &&
+                  std::abs(result[0].raw_y + 0.15f) < 1e-4f &&
+                  std::abs(result[0].raw_z - 10.0f) < 1e-4f,
+              "fusion must not overwrite direct stereo raw coordinates");
+    }
+
+    {
+        stereo3d::HybridDepthEstimator estimator;
+        estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, config());
+        const auto result = estimator.estimate(
+            {detection(0.0f, 0.9f)}, {}, 0.01);
+        check(result.size() == 1,
+              "mono-only observation may still update the local legacy tracker");
+        check(!result.empty() && result[0].depth_method == 0,
+              "missing stereo input must select mono-only internal depth");
+        check(!result.empty() && result[0].raw_observation_valid == 0 &&
+                  result[0].raw_z < 0.0f,
+              "mono-only depth must never be exposed as a raw stereo observation");
+    }
+
+    {
+        auto unproven_stereo = stereoObservation(10.0f);
+        unproven_stereo.raw_observation_valid = 0;
+        stereo3d::HybridDepthEstimator estimator;
+        estimator.init(1000.0f, 0.853154f, 0.0f, 0.0f, config());
+        const auto result = estimator.estimate(
+            {detection(0.0f, 0.9f)}, {unproven_stereo}, 0.01);
+        check(result.size() == 1,
+              "unproven stereo payload may fall back to local mono tracking");
+        check(!result.empty() && result[0].depth_method == 0 &&
+                  result[0].raw_observation_valid == 0,
+              "roi.z without an explicit raw-valid flag must not become stereo truth");
     }
 
     {
