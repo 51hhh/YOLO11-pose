@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Display is throttled independently from 100Hz capture/trigger.
+        // Display is throttled independently from the configured trigger rate.
         if (!args.headless) {
             auto preview_now = std::chrono::steady_clock::now();
             const double preview_dt =

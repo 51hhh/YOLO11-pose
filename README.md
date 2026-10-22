@@ -26,7 +26,7 @@ USB 传输可能让左右图像乱序到达。代码因此使用随图像 payloa
 ## 快速开始
 
 ```bash
-cd /home/rick/rl/YOLO11-pose
+cd YOLO11-pose
 python3 -m pip install -e '.[test]'
 
 volleyball config validate --profile nx-rdk

@@ -71,7 +71,7 @@ detector:
       roi_corner_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_texture_points: false # heavier sparse feature A/B mode; enable offline or after profiling budget is available
       roi_binary_points: false  # heavier sparse feature A/B mode; enable offline or after profiling budget is available
-      roi_orb_points: false    # true OpenCV CUDA ORB path when GPU image is available; slower A/B mode, not default 100fps
+      roi_orb_points: false    # true OpenCV CUDA ORB path when GPU image is available; slower A/B mode, not default 90 Hz
       roi_brisk_points: false  # no true CUDA BRISK backend on current NX; legacy GPU-lite/CPU debug only
       roi_akaze_points: false  # no true CUDA AKAZE backend on current NX; legacy GPU-lite/CPU debug only
       roi_sift_points: false   # no true CUDA SIFT backend on current NX; realtime path uses true OpenCV CPU SIFT
@@ -79,7 +79,7 @@ detector:
       roi_patch_iou_color_edge: false # disabled: 2026-07-04 artifacts showed systematic wrong color-edge match
       roi_cuda_template_match: true # P2 self-written CUDA Template/NCC small ROI epipolar candidate
       roi_cuda_stereo_bm: false # P2 OpenCV CUDA StereoBM small ROI dense disparity candidate
-      roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 100fps
+      roi_cuda_stereo_sgm: false # disabled: combined run was too slow for stable 90 Hz
       roi_ring_edge_profile: false # P2 CUDA volleyball ring/edge profile small-range epipolar candidate
       roi_vpi_template_match: false # disabled: current stable config removes VPI tail latency
       roi_vpi_stereo_disparity: false # P2 VPI CUDA StereoDisparity small ROI candidate
@@ -89,11 +89,11 @@ detector:
       roi_cuda_sift: false # P2 third-party CUDA-SIFT candidate
       roi_libsgm: false # P2 Fixstars libSGM candidate
       roi_cuda_hough_circle: false # P2 CUDA Canny/HoughCircles circle refinement candidate
-      roi_center_patch: true   # P1 100fps training candidate; record z_roi_center_patch
+      roi_center_patch: true   # P1 90 Hz training candidate; record z_roi_center_patch
       roi_subpixel: true       # P1 CUDA multi-point candidate; record z_roi_multi_point
       epipolar_fallback: true  # single-side miss -> bounded epipolar search candidate
-      fallback_template: false # CPU fallback; keep off in 100fps realtime config
-      fallback_feature_points: false # CPU fallback; keep off in 100fps realtime config
+      fallback_template: false # CPU fallback; keep off in 90 Hz realtime config
+      fallback_feature_points: false # CPU fallback; keep off in 90 Hz realtime config
     fallback_to_roi_match: false       # legacy full ROI texture match, keep off for dual-YOLO test
     gpu_candidate_refine: true         # direct dual-YOLO ROI candidates run in one CUDA batch
     fallback_epipolar_search: true     # left/right single-side miss -> bounded epipolar search
@@ -160,7 +160,7 @@ neural_feature_matching_xfeat:
   final_disp_gate_px: 999.0
   min_score: 0.0
   use_lightglue: false
-  gpu_postprocess: true # required for the stable 100fps XFeat sidecar path
+  gpu_postprocess: true # required for the XFeat sidecar path when enabled
   soft_topk_scoring: true
   match_margin: 0.0
   min_spatial_quadrants: 0

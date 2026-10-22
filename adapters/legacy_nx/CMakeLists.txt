@@ -58,7 +58,7 @@ set(STEREO_OPENCV_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
 message(STATUS "OpenCV: ${OpenCV_VERSION}")
 
 # OpenCV CUDA ORB 是可选后端。缺少 cudafeatures2d 时禁用 ORB 候选，
-# 但不阻塞默认 100fps 实时管线构建。
+# 但不阻塞默认 90 Hz 实时管线构建。
 find_package(OpenCV QUIET COMPONENTS cudafeatures2d)
 if(OpenCV_cudafeatures2d_FOUND)
   set(HAS_OPENCV_CUDAFEATURES2D ON)
