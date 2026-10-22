@@ -1,4 +1,5 @@
 add_library(volleyball_services STATIC
+  src/managed_stereo_trial.cpp
   src/stereo_observation_service.cpp
   src/stereo_pipeline_runner.cpp
 )

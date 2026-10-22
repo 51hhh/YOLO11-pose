@@ -21,6 +21,9 @@ enum class RunStatus {
     source_protocol_error,
     processing_error,
     finalize_error,
+    camera_start_error,
+    trigger_start_error,
+    lifecycle_error,
 };
 
 struct RunSummary {

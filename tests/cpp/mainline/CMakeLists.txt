@@ -39,3 +39,12 @@ target_link_libraries(stereo_pipeline_runner_tests PRIVATE
   volleyball::services
   volleyball::fake_adapters
 )
+
+add_mainline_test(
+  managed_stereo_trial_tests
+  managed_stereo_trial_tests.cpp
+)
+target_link_libraries(managed_stereo_trial_tests PRIVATE
+  volleyball::services
+  volleyball::fake_adapters
+)
