@@ -1,0 +1,69 @@
+{
+  "schema_version": "2.1.0",
+  "provenance": {
+    "repository": "volleyball-dynamics",
+    "revision": "db5255b4c6580a162e6ed5f6a1aaa8de3b6d8fab"
+  },
+  "tables": {
+    "trajectory": {
+      "file": "trajectory.csv",
+      "required": true,
+      "columns": ["sample_index", "timestamp_s", "left_frame_index", "right_frame_index", "x_m", "y_m", "z_m", "confidence", "reprojection_error_px", "cov_xx_m2", "cov_xy_m2", "cov_xz_m2", "cov_yy_m2", "cov_yz_m2", "cov_zz_m2"]
+    },
+    "camera_frames": {
+      "file": "camera_frames.csv",
+      "required": true,
+      "columns": ["camera_id", "frame_index", "hardware_timestamp_ns", "clock_domain", "exposure_start_ns", "capture_timestamp_ns", "receive_timestamp_ns", "inference_done_timestamp_ns", "exposure_us", "gain_db", "roi_x", "roi_y", "roi_width", "roi_height", "pixel_format", "dropped", "drop_reason"]
+    },
+    "detections_2d": {
+      "file": "detections_2d.csv",
+      "required": true,
+      "columns": ["camera_id", "frame_index", "candidate_id", "u_px", "v_px", "radius_px", "bbox_x", "bbox_y", "bbox_w", "bbox_h", "du_dt_pxps", "dv_dt_pxps", "score", "cov_uu_px2", "cov_uv_px2", "cov_vv_px2", "selected", "source"]
+    },
+    "stereo_pairs": {
+      "file": "stereo_pairs.csv",
+      "required": true,
+      "columns": ["pair_id", "left_frame_index", "right_frame_index", "left_candidate_id", "right_candidate_id", "left_capture_ns", "right_capture_ns", "delta_t_lr_ns", "disparity_px", "epipolar_error_px", "x_rig_m", "y_rig_m", "z_rig_m", "cov_xx_m2", "cov_xy_m2", "cov_xz_m2", "cov_yy_m2", "cov_yz_m2", "cov_zz_m2", "accepted", "reject_reason"]
+    },
+    "vehicle_states": {
+      "file": "vehicle_state.csv",
+      "required": true,
+      "columns": ["timestamp_ns", "clock_domain", "frame_id", "x_m", "y_m", "z_m", "qw", "qx", "qy", "qz", "vx_mps", "vy_mps", "vz_mps", "wx_radps", "wy_radps", "wz_radps", "cov_pose_00", "cov_pose_01", "cov_pose_02", "cov_pose_03", "cov_pose_04", "cov_pose_05", "cov_pose_11", "cov_pose_12", "cov_pose_13", "cov_pose_14", "cov_pose_15", "cov_pose_22", "cov_pose_23", "cov_pose_24", "cov_pose_25", "cov_pose_33", "cov_pose_34", "cov_pose_35", "cov_pose_44", "cov_pose_45", "cov_pose_55", "cov_twist_00", "cov_twist_01", "cov_twist_02", "cov_twist_03", "cov_twist_04", "cov_twist_05", "cov_twist_11", "cov_twist_12", "cov_twist_13", "cov_twist_14", "cov_twist_15", "cov_twist_22", "cov_twist_23", "cov_twist_24", "cov_twist_25", "cov_twist_33", "cov_twist_34", "cov_twist_35", "cov_twist_44", "cov_twist_45", "cov_twist_55", "valid", "source"]
+    },
+    "surface_states": {
+      "file": "surface_state.csv",
+      "required": true,
+      "columns": ["timestamp_ns", "clock_domain", "surface_id", "frame_id", "x_m", "y_m", "z_m", "qw", "qx", "qy", "qz", "vx_mps", "vy_mps", "vz_mps", "wx_radps", "wy_radps", "wz_radps", "command_id", "encoder_position_rad", "encoder_velocity_radps", "valid", "source"]
+    },
+    "contact_events": {
+      "file": "contact_events.csv",
+      "required": true,
+      "columns": ["event_id", "timestamp_ns", "clock_domain", "event_source", "piezo", "acceleration_peak_mps2", "audio_peak", "motor_current_a", "contact_x_m", "contact_y_m", "contact_z_m", "confidence", "notes"]
+    },
+    "environment": {
+      "file": "environment.csv",
+      "required": true,
+      "columns": ["timestamp_ns", "clock_domain", "air_temperature_c", "relative_humidity", "static_pressure_pa", "wind_x_mps", "wind_y_mps", "wind_z_mps", "hvac_state", "source"]
+    },
+    "clock_mappings": {
+      "file": "clock_mappings.csv",
+      "required": true,
+      "columns": ["mapping_id", "source_clock_domain", "reference_clock_domain", "source_anchor_ns", "reference_anchor_ns", "drift_ppm", "uncertainty_ns", "valid_from_source_ns", "valid_to_source_ns", "source"]
+    },
+    "processing_timings": {
+      "file": "processing_timing.csv",
+      "required": true,
+      "columns": ["event_id", "stage", "input_type", "input_id", "capture_reference_ns", "start_timestamp_ns", "done_timestamp_ns", "clock_domain", "queue_depth", "valid", "source"]
+    },
+    "reference_trajectory": {
+      "file": "reference_trajectory.csv",
+      "required": false,
+      "columns": ["timestamp_ns", "frame_id", "x_m", "y_m", "z_m", "cov_xx_m2", "cov_xy_m2", "cov_xz_m2", "cov_yy_m2", "cov_yz_m2", "cov_zz_m2", "source"]
+    },
+    "reference_spin": {
+      "file": "reference_spin.csv",
+      "required": false,
+      "columns": ["timestamp_ns", "frame_id", "wx_radps", "wy_radps", "wz_radps", "cov_xx_rad2ps2", "cov_xy_rad2ps2", "cov_xz_rad2ps2", "cov_yy_rad2ps2", "cov_yz_rad2ps2", "cov_zz_rad2ps2", "source"]
+    }
+  }
+}

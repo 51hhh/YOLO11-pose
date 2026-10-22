@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://volleyball.local/contracts/capture/2.1.0/calibration.schema.json",
+  "title": "Vehicle-mounted stereo calibration 2.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "calibration_type", "calibration_id", "created_at_utc", "body_frame_id", "camera_roles", "estimated_sync_error_s", "cameras", "baseline_m", "notes"],
+  "properties": {
+    "schema_version": {"const": "2.1.0"},
+    "calibration_type": {"const": "vehicle_mounted_stereo"},
+    "calibration_id": {"$ref": "#/$defs/identifier"},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "body_frame_id": {"type": "string", "minLength": 1},
+    "camera_roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": {"$ref": "#/$defs/identifier"},
+        "right": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "estimated_sync_error_s": {"type": ["number", "null"], "minimum": 0},
+    "cameras": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"$ref": "#/$defs/camera"}
+    },
+    "baseline_m": {"type": "number", "exclusiveMinimum": 0},
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "matrix4": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["camera_id", "image_size_px", "camera_matrix", "distortion_model", "distortion_coefficients", "transform_body_from_camera", "rms_reprojection_error_px", "clock_domain", "extrinsic_covariance"],
+      "properties": {
+        "camera_id": {"$ref": "#/$defs/identifier"},
+        "image_size_px": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}], "items": false},
+        "camera_matrix": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}},
+        "distortion_model": {"type": "string", "minLength": 1},
+        "distortion_coefficients": {"type": "array", "items": {"type": "number"}},
+        "transform_body_from_camera": {"$ref": "#/$defs/matrix4"},
+        "rms_reprojection_error_px": {"type": "number", "minimum": 0},
+        "clock_domain": {"type": "string", "minLength": 1},
+        "extrinsic_covariance": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "array", "minItems": 6, "maxItems": 6, "items": {"type": "array", "minItems": 6, "maxItems": 6, "items": {"type": "number"}}}
+          ]
+        }
+      }
+    }
+  }
+}

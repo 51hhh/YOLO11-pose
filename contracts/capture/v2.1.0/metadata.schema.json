@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://volleyball.local/contracts/capture/2.1.0/metadata.schema.json",
+  "title": "Volleyball stereo capture metadata 2.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capture_layout", "trial_id", "session_id", "ball_id", "calibration_id", "captured_at_utc", "trajectory_kind", "coordinate_frame", "capture", "trajectory", "source_files", "conditions", "notes", "perception_pipelines", "sidecars", "raw_manifest"],
+  "properties": {
+    "schema_version": {"const": "2.1.0"},
+    "capture_layout": {"const": "vehicle_stereo_v2"},
+    "trial_id": {"$ref": "#/$defs/identifier"},
+    "session_id": {"$ref": "#/$defs/identifier"},
+    "ball_id": {"$ref": "#/$defs/identifier"},
+    "calibration_id": {"$ref": "#/$defs/identifier"},
+    "captured_at_utc": {"type": "string", "format": "date-time"},
+    "trajectory_kind": {"enum": ["free_flight", "impact", "mixed"]},
+    "coordinate_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "origin", "x_axis", "y_axis", "z_axis", "handedness"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "origin": {"type": "string", "minLength": 1},
+        "x_axis": {"type": "string", "minLength": 1},
+        "y_axis": {"type": "string", "minLength": 1},
+        "z_axis": {"type": "string", "minLength": 1},
+        "handedness": {"const": "right"}
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nominal_fps", "sync_method", "estimated_sync_error_s", "trajectory_timebase"],
+      "properties": {
+        "nominal_fps": {"type": "number", "exclusiveMinimum": 0},
+        "sync_method": {"enum": ["hardware_trigger", "shared_clock", "flash", "audio", "software", "unknown"]},
+        "estimated_sync_error_s": {"type": ["number", "null"], "minimum": 0},
+        "trajectory_timebase": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clock_domain", "origin_ns", "timestamp_semantics"],
+          "properties": {
+            "clock_domain": {"type": "string", "minLength": 1},
+            "origin_ns": {"type": "integer", "minimum": 0},
+            "timestamp_semantics": {"enum": ["stereo_midpoint_capture", "left_capture", "right_capture", "hardware_trigger", "reference_sensor", "estimated_state_time"]}
+          }
+        }
+      }
+    },
+    "trajectory": {"$ref": "#/$defs/table"},
+    "source_files": {"type": "object", "additionalProperties": {"$ref": "#/$defs/relativePath"}},
+    "conditions": {"type": "object"},
+    "notes": {"type": "string"},
+    "perception_pipelines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pipeline_id", "detector_family", "detector_version", "code_revision", "config_sha256", "weights_sha256", "input_size_px", "resize_mode", "score_threshold", "nms_iou_threshold", "center_method", "fingerprint_sha256"],
+        "properties": {
+          "pipeline_id": {"$ref": "#/$defs/identifier"},
+          "detector_family": {"type": "string", "minLength": 1},
+          "detector_version": {"type": "string", "minLength": 1},
+          "code_revision": {"type": "string", "minLength": 1},
+          "config_sha256": {"$ref": "#/$defs/sha256"},
+          "weights_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+          "input_size_px": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 1}, {"type": "integer", "minimum": 1}], "items": false},
+          "resize_mode": {"enum": ["native", "stretch", "letterbox", "crop", "other"]},
+          "score_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+          "nms_iou_threshold": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+          "center_method": {"type": "string", "minLength": 1},
+          "fingerprint_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "sidecars": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["camera_frames", "detections_2d", "stereo_pairs", "vehicle_states", "surface_states", "contact_events", "environment", "clock_mappings", "processing_timings"],
+      "properties": {
+        "camera_frames": {"$ref": "#/$defs/table"},
+        "detections_2d": {"$ref": "#/$defs/table"},
+        "stereo_pairs": {"$ref": "#/$defs/table"},
+        "vehicle_states": {"$ref": "#/$defs/table"},
+        "surface_states": {"$ref": "#/$defs/table"},
+        "contact_events": {"$ref": "#/$defs/table"},
+        "environment": {"$ref": "#/$defs/table"},
+        "clock_mappings": {"$ref": "#/$defs/table"},
+        "processing_timings": {"$ref": "#/$defs/table"},
+        "reference_trajectory": {"$ref": "#/$defs/table"},
+        "reference_spin": {"$ref": "#/$defs/table"}
+      }
+    },
+    "raw_manifest": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "relative_path", "sha256", "size_bytes"],
+        "properties": {
+          "label": {"$ref": "#/$defs/identifier"},
+          "relative_path": {"$ref": "#/$defs/relativePath"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "size_bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "row_count", "columns"],
+      "properties": {
+        "file": {"$ref": "#/$defs/relativePath"},
+        "row_count": {"type": "integer", "minimum": 0},
+        "columns": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}
