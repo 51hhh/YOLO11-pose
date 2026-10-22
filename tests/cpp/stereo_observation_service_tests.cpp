@@ -141,6 +141,7 @@ core::Detection2D detection(core::CameraRole role, const char* camera,
 
 services::StereoObservationServiceConfig config() {
     services::StereoObservationServiceConfig output;
+    output.association.max_capture_delta_ns = 100;
     output.association.epipolar_tolerance_px = 2.0;
     output.association.max_size_ratio = 2.0;
     output.association.min_shifted_iou = 0.5;
@@ -391,6 +392,48 @@ void testArrivalOrderNeverDefinesStereoIdentity() {
           "USB arrival order must not alter watermark-aligned pairing");
 }
 
+void testCaptureDeltaUsesConfiguredTemporalGate() {
+    StaticDetector left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(config(), left, right, writer);
+    auto within_tolerance = stereoFrame();
+    within_tolerance.right.metadata.capture_timestamp = time(1050);
+
+    const auto accepted = service.process(within_tolerance);
+    check(accepted.status == services::ProcessStatus::observation,
+          "bounded left/right capture offset must remain usable");
+    check(
+        writer.associations().size() == 1 &&
+            writer.associations()[0].delta_t_lr_ns == 50,
+        "measured capture delta must be retained in the pair evidence");
+
+    StaticDetector late_left({
+        detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
+    });
+    StaticDetector late_right({
+        detection(core::CameraRole::right, "right", 0, 650.0, 500.0, 0.95),
+    });
+    fake::InMemoryTrialWriter late_writer;
+    services::StereoObservationService late_service(
+        config(), late_left, late_right, late_writer);
+    auto outside_tolerance = stereoFrame();
+    outside_tolerance.right.metadata.capture_timestamp = time(1101);
+
+    const auto rejected = late_service.process(outside_tolerance);
+    check(rejected.status == services::ProcessStatus::no_match,
+          "capture offset beyond tolerance must not produce 3D");
+    check(
+        late_writer.associations().size() == 1 &&
+            late_writer.associations()[0].reject_reason ==
+                core::AssociationRejectReason::temporal_mismatch,
+        "temporal rejection must remain auditable");
+}
+
 bool rejectsInvalidStereoFrame(ports::StereoFrame input) {
     StaticDetector left({
         detection(core::CameraRole::left, "left", 0, 700.0, 500.0, 0.95),
@@ -452,6 +495,7 @@ int main() {
     testDuplicateCandidateIdsAbortTrial();
     testServiceOwnsSelectedFlags();
     testArrivalOrderNeverDefinesStereoIdentity();
+    testCaptureDeltaUsesConfiguredTemporalGate();
     testStereoFrameIdentityAndBufferContract();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";

@@ -164,12 +164,10 @@ StereoProcessResult StereoObservationService::process(
         return fail(ProcessStatus::invalid_input, "invalid left/right stereo frame");
     }
     if (frame.left.metadata.capture_timestamp.clock_domain !=
-            frame.right.metadata.capture_timestamp.clock_domain ||
-        frame.left.metadata.capture_timestamp.nanoseconds !=
-            frame.right.metadata.capture_timestamp.nanoseconds) {
+            frame.right.metadata.capture_timestamp.clock_domain) {
         return fail(
             ProcessStatus::invalid_input,
-            "hardware-triggered stereo frames must share one exposure timestamp");
+            "stereo frames must use one mapped capture clock domain");
     }
 
     std::string error;

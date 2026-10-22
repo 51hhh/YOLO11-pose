@@ -18,6 +18,10 @@ bool sameClock(
     return !timestamp || timestamp->clock_domain == expected;
 }
 
+bool nonnegative(const std::optional<Timestamp>& timestamp) noexcept {
+    return !timestamp || timestamp->nanoseconds >= 0;
+}
+
 bool finite(const Covariance2D& covariance) noexcept {
     return std::all_of(
         covariance.upper.begin(), covariance.upper.end(),
@@ -44,6 +48,15 @@ DomainValidationResult validate(const CameraFrameRecord& frame) noexcept {
         return failure(
             DomainError::clock_domain_mismatch,
             "all camera frame timestamps must use one declared clock domain");
+    }
+    if (frame.hardware_timestamp.nanoseconds < 0 ||
+        frame.capture_timestamp.nanoseconds < 0 ||
+        !nonnegative(frame.exposure_start) ||
+        !nonnegative(frame.receive_timestamp) ||
+        !nonnegative(frame.inference_done_timestamp)) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "camera frame timestamps must be non-negative");
     }
     std::int64_t previous = frame.exposure_start
         ? frame.exposure_start->nanoseconds
@@ -118,6 +131,12 @@ DomainValidationResult validate(
         return failure(
             DomainError::clock_domain_mismatch,
             "stereo captures must use the same camera clock domain");
+    }
+    if (attempt.left_capture.nanoseconds < 0 ||
+        attempt.right_capture.nanoseconds < 0) {
+        return failure(
+            DomainError::invalid_numeric_value,
+            "stereo capture timestamps must be non-negative");
     }
     const auto measured_delta =
         attempt.right_capture.nanoseconds - attempt.left_capture.nanoseconds;

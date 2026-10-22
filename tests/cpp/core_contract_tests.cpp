@@ -100,6 +100,12 @@ void testFrameValidation() {
     check(
         core::validate(frame).error == core::DomainError::missing_drop_reason,
         "dropped frame must retain a reason");
+
+    frame = validFrame();
+    frame.hardware_timestamp.nanoseconds = -1;
+    check(
+        core::validate(frame).error == core::DomainError::invalid_numeric_value,
+        "camera timestamps must not be negative");
 }
 
 void testAssociationValidation() {
@@ -115,6 +121,12 @@ void testAssociationValidation() {
     check(
         core::validate(attempt).error == core::DomainError::invalid_decision_reason,
         "rejected association requires a reason");
+
+    attempt.reject_reason = core::AssociationRejectReason::epipolar_error;
+    attempt.left_capture.nanoseconds = -1;
+    check(
+        core::validate(attempt).error == core::DomainError::invalid_numeric_value,
+        "association timestamps must not be negative");
 }
 
 void testWriterSeparatesRawAndDerivedTypes() {

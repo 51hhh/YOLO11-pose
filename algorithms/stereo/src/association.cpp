@@ -41,9 +41,15 @@ core::AssociationRejectReason classify(
     const core::Detection2D& right,
     const AssociationConfig& config,
     double disparity,
-    double epipolar_error) noexcept {
+    double epipolar_error,
+    std::int64_t capture_delta_ns,
+    bool capture_delta_valid) noexcept {
     if (!core::validate(left) || !core::validate(right)) {
         return core::AssociationRejectReason::quality_gate;
+    }
+    if (!capture_delta_valid || config.max_capture_delta_ns < 0 ||
+        std::abs(capture_delta_ns) > config.max_capture_delta_ns) {
+        return core::AssociationRejectReason::temporal_mismatch;
     }
     if (disparity <= 0.0) {
         return core::AssociationRejectReason::nonpositive_disparity;
@@ -82,6 +88,11 @@ AssociationBatch associateCandidates(
     AssociationBatch output;
     output.attempts.reserve(left.size() * right.size());
     double best_score = -std::numeric_limits<double>::infinity();
+    const bool capture_delta_valid =
+        left_capture.nanoseconds >= 0 && right_capture.nanoseconds >= 0;
+    const std::int64_t capture_delta_ns = capture_delta_valid
+        ? right_capture.nanoseconds - left_capture.nanoseconds
+        : 0;
 
     for (const auto& left_candidate : left) {
         for (const auto& right_candidate : right) {
@@ -94,7 +105,9 @@ AssociationBatch associateCandidates(
                 right_candidate,
                 config,
                 disparity,
-                epipolar_error);
+                epipolar_error,
+                capture_delta_ns,
+                capture_delta_valid);
 
             core::StereoAssociationAttempt attempt;
             attempt.pair_id = first_pair_id + output.attempts.size();
@@ -104,8 +117,7 @@ AssociationBatch associateCandidates(
             attempt.right_candidate_id = right_candidate.candidate_id;
             attempt.left_capture = left_capture;
             attempt.right_capture = right_capture;
-            attempt.delta_t_lr_ns =
-                right_capture.nanoseconds - left_capture.nanoseconds;
+            attempt.delta_t_lr_ns = capture_delta_ns;
             attempt.disparity_px = disparity;
             attempt.epipolar_error_px = epipolar_error;
             attempt.decision = rejection == core::AssociationRejectReason::none

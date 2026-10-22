@@ -3,12 +3,14 @@
 #include "volleyball/core/observation.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
 namespace volleyball::algorithms::stereo {
 
 struct AssociationConfig {
+    std::int64_t max_capture_delta_ns{0};
     double epipolar_tolerance_px{2.0};
     double max_size_ratio{2.0};
     double min_shifted_iou{0.05};
