@@ -1,13 +1,14 @@
 #include "pipeline.h"
 #include "pipeline_roi_match_helpers.h"
+#include "volleyball/adapters/cuda_preprocess/kernels.hpp"
 #include "volleyball/logging/log.hpp"
-#include "../rectify/bayer_to_bgr.h"
 #include "../utils/vpi_plane_access.h"
 
 #include <vpi/algo/ConvertImageFormat.h>
 
-#include <cstdint>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 
 namespace stereo3d {
 
@@ -119,23 +120,25 @@ void Pipeline::stage0_grab_and_rectify(FrameSlot& slot, bool grab_preloaded) {
             return;
         }
 
-        launchBayerToBGR8(
-            static_cast<const unsigned char*>(slot.rawL_gpu.data),
-            static_cast<unsigned char*>(slot.tempBGR_L_gpu.data),
-            rw, rh,
-            slot.rawL_gpu.pitchBytes,
-            slot.tempBGR_L_gpu.pitchBytes,
-            streams_.cudaStreamBGR);
-        cudaError_t launch_err = cudaGetLastError();
-        if (launch_err == cudaSuccess) {
-            launchBayerToBGR8(
-                static_cast<const unsigned char*>(slot.rawR_gpu.data),
-                static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
-                rw, rh,
-                slot.rawR_gpu.pitchBytes,
-                slot.tempBGR_R_gpu.pitchBytes,
+        cudaError_t launch_err =
+            volleyball::adapters::cuda_preprocess::launchBayerRggbToBgr8(
+                static_cast<const unsigned char*>(slot.rawL_gpu.data),
+                static_cast<std::size_t>(slot.rawL_gpu.pitchBytes),
+                static_cast<unsigned char*>(slot.tempBGR_L_gpu.data),
+                static_cast<std::size_t>(slot.tempBGR_L_gpu.pitchBytes),
+                rw,
+                rh,
                 streams_.cudaStreamBGR);
-            launch_err = cudaGetLastError();
+        if (launch_err == cudaSuccess) {
+            launch_err =
+                volleyball::adapters::cuda_preprocess::launchBayerRggbToBgr8(
+                    static_cast<const unsigned char*>(slot.rawR_gpu.data),
+                    static_cast<std::size_t>(slot.rawR_gpu.pitchBytes),
+                    static_cast<unsigned char*>(slot.tempBGR_R_gpu.data),
+                    static_cast<std::size_t>(slot.tempBGR_R_gpu.pitchBytes),
+                    rw,
+                    rh,
+                    streams_.cudaStreamBGR);
         }
 
         // 即使其中一个 launch 失败，也要排空已成功提交的 kernel 后再 unlock。

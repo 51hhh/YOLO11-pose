@@ -240,22 +240,3 @@ cudaError_t launchRemapBgrToBgrGray8(
 }
 
 }  // namespace volleyball::adapters::cuda_preprocess
-
-extern "C" void launchBayerToBGR8(
-    const unsigned char* bayer,
-    unsigned char* bgr,
-    int width,
-    int height,
-    int bayer_pitch,
-    int bgr_pitch,
-    cudaStream_t stream) {
-    static_cast<void>(
-        volleyball::adapters::cuda_preprocess::launchBayerRggbToBgr8(
-            bayer,
-            static_cast<std::size_t>(bayer_pitch),
-            bgr,
-            static_cast<std::size_t>(bgr_pitch),
-            width,
-            height,
-            stream));
-}
