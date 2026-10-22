@@ -47,7 +47,6 @@ FORBIDDEN_TRACKED_PREFIXES = (
 ALLOWED_TOOL_FILES = {"tools/check_repository.py"}
 ALLOWED_TEST_ROOT_FILES = {
     "tests/__init__.py",
-    "tests/trial_factory.py",
 }
 ALLOWED_HARDWARE_TOOL_FILES = {
     "adapters/legacy_nx/tools/CMakeLists.txt",
@@ -397,7 +396,7 @@ def main() -> int:
     )
     if unexpected_test_root_files:
         errors.append(
-            "tests 根目录只保留包入口和跨套件夹具:\n    "
+            "tests 根目录只保留包入口，公共夹具进入 tests/support/:\n    "
             + "\n    ".join(unexpected_test_root_files)
         )
 
@@ -412,7 +411,7 @@ def main() -> int:
             coupled_test_modules.append(f"{path}: {match.group(0).strip()}")
     if coupled_test_modules:
         errors.append(
-            "测试模块不得相互导入，公共造数逻辑应进入 tests/trial_factory.py:\n    "
+            "测试模块不得相互导入，公共造数逻辑应进入 tests/support/:\n    "
             + "\n    ".join(coupled_test_modules)
         )
 

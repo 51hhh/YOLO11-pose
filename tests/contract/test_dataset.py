@@ -12,7 +12,7 @@ from volleyball_vision.dataset import (
     validate_dataset,
     validate_trial,
 )
-from tests.trial_factory import (
+from tests.support.trial_factory import (
     calibration_fixture as _calibration,
     detection_fixture as _detection,
     frame_fixture as _frame,

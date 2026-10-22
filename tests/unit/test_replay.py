@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tests.trial_factory import write_valid_trial
+from tests.support.trial_factory import write_valid_trial
 from volleyball_vision.config import load_profile
 from volleyball_vision.dataset import DatasetError, validate_trial
 from volleyball_vision.replay import run_replay

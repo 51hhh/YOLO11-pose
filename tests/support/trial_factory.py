@@ -11,7 +11,7 @@ from volleyball_vision.dataset import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _identity_with_x(x_m: float) -> list[list[float]]:
