@@ -100,6 +100,8 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("src/cuda/preprocess.cu", adapter_cmake)
         self.assertIn("src/cuda/dfl_decode.cu", adapter_cmake)
         self.assertIn("src/runtime.cpp", adapter_cmake)
+        self.assertIn("src/detector_adapter.cpp", adapter_cmake)
+        self.assertIn("volleyball::tensorrt_detector", adapter_cmake)
 
     def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
         gpio_cmake = (

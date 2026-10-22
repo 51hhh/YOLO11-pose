@@ -61,5 +61,18 @@ if(CMAKE_CUDA_COMPILER)
       CUDA::cudart
     )
     target_compile_features(volleyball_tensorrt_runtime PUBLIC cxx_std_17)
+
+    add_library(volleyball_tensorrt_detector
+      src/detector_adapter.cpp
+    )
+    add_library(volleyball::tensorrt_detector ALIAS volleyball_tensorrt_detector)
+
+    target_include_directories(volleyball_tensorrt_detector PUBLIC include)
+    target_link_libraries(volleyball_tensorrt_detector PUBLIC
+      volleyball::tensorrt_runtime
+      volleyball::tensorrt_mapping
+      volleyball::ports
+    )
+    target_compile_features(volleyball_tensorrt_detector PUBLIC cxx_std_17)
   endif()
 endif()
