@@ -40,6 +40,8 @@ src/stereo/   ROI、特征与深度候选
 src/fusion/   兼容性融合和本地诊断预测
 src/pipeline/ 实时流水线编排
 src/ros/      ROS2 发布适配
+src/diagnostics/ 可选实时调试 artifact 写出
+src/ui/       本地显示与点击测距叠加
 src/utils/    v2.1 staging 记录与底层工具
 tools/        按可执行程序分目录的标定与硬件诊断入口
 ```
