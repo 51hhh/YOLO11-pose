@@ -158,3 +158,13 @@ if(TARGET volleyball::cuda_preprocess_kernels)
     COMMAND cuda_preprocess_kernels_tests
   )
 endif()
+
+if(TARGET volleyball::cuda_stereo_preprocessor)
+  add_adapter_test(
+    cuda_stereo_preprocessor_tests
+    cuda_stereo_preprocessor_tests.cpp
+  )
+  target_link_libraries(cuda_stereo_preprocessor_tests PRIVATE
+    volleyball::cuda_stereo_preprocessor
+  )
+endif()

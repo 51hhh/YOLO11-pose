@@ -38,4 +38,26 @@ if(CMAKE_CUDA_COMPILER)
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
   )
+
+  add_library(volleyball_cuda_stereo_preprocessor STATIC
+    src/cuda_stereo_preprocessor.cpp
+  )
+  add_library(
+    volleyball::cuda_stereo_preprocessor
+    ALIAS volleyball_cuda_stereo_preprocessor
+  )
+  target_include_directories(volleyball_cuda_stereo_preprocessor PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
+  target_link_libraries(volleyball_cuda_stereo_preprocessor PUBLIC
+    volleyball::cuda_preprocess_kernels
+    volleyball::ports
+    CUDA::cudart
+  )
+  target_compile_features(
+    volleyball_cuda_stereo_preprocessor PUBLIC cxx_std_17
+  )
+  target_compile_options(volleyball_cuda_stereo_preprocessor PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Wconversion>
+  )
 endif()

@@ -47,6 +47,12 @@ void testLoadsCheckedInCalibrationAndBuildsMaps() {
     check(std::abs(value.getFocalLength() - 827.4286F) < 1.0e-3F,
           "projection focal length must scale with output resolution");
 
+    calibration::StereoRemapMaps portable_maps;
+    check(value.buildRemapMaps(portable_maps, 720, 540) &&
+              portable_maps.hasExpectedShape() &&
+              portable_maps.width == 720 && portable_maps.height == 540,
+          "calibration must materialize an OpenCV-independent map asset");
+
     check(!value.buildRemapMaps(
               left_x, left_y, right_x, right_y, 720, 400) &&
               left_x.empty() && left_y.empty() &&

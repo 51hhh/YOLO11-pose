@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "volleyball/adapters/cuda_preprocess/remap_maps.hpp"
+
 #include <cstdint>
 #include <string>
 
@@ -75,6 +77,12 @@ public:
     bool buildRemapMaps(cv::Mat& map1L, cv::Mat& map2L,
                         cv::Mat& map1R, cv::Mat& map2R,
                         int width, int height) const;
+
+    // 生成不暴露 OpenCV 所有权的紧密浮点映射，供 CUDA 预处理器长期持有。
+    bool buildRemapMaps(
+        StereoRemapMaps& maps,
+        int width,
+        int height) const;
 
 private:
     cv::Mat K1_, D1_, P1_, R1_;   // 左目

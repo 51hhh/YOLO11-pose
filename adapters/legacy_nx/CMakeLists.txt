@@ -399,6 +399,7 @@ set_target_properties(stereo_pipeline PROPERTIES
 target_link_libraries(stereo_pipeline
   volleyball::stereo_calibration
   volleyball::cuda_preprocess_kernels
+  volleyball::cuda_stereo_preprocessor
   volleyball::tensorrt_runtime
   # VPI
   vpi

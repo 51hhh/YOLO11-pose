@@ -6,7 +6,9 @@
 #include "volleyball/adapters/cuda_preprocess/stereo_calibration.hpp"
 #include "volleyball/logging/log.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <exception>
 
 namespace volleyball::adapters::cuda_preprocess {
 
@@ -109,6 +111,8 @@ bool StereoCalibration::buildRemapMaps(
         map2L.release();
         map1R.release();
         map2R.release();
+        P1_scaled_.release();
+        P2_scaled_.release();
     };
 
     if (width <= 0 || height <= 0) {
@@ -162,6 +166,57 @@ bool StereoCalibration::buildRemapMaps(
 
     LOG_INFO("Built remap LUTs: %dx%d", width, height);
     return true;
+}
+
+bool StereoCalibration::buildRemapMaps(
+    StereoRemapMaps& maps,
+    int width,
+    int height) const {
+    maps = {};
+    cv::Mat left_x;
+    cv::Mat left_y;
+    cv::Mat right_x;
+    cv::Mat right_y;
+    if (!buildRemapMaps(
+            left_x, left_y, right_x, right_y, width, height)) {
+        return false;
+    }
+
+    try {
+        const std::size_t count =
+            static_cast<std::size_t>(width) *
+            static_cast<std::size_t>(height);
+        maps.width = static_cast<std::uint32_t>(width);
+        maps.height = static_cast<std::uint32_t>(height);
+        maps.left_x.resize(count);
+        maps.left_y.resize(count);
+        maps.right_x.resize(count);
+        maps.right_y.resize(count);
+
+        const auto copyMap = [width, height](
+                                 const cv::Mat& source,
+                                 std::vector<float>& destination) {
+            for (int row = 0; row < height; ++row) {
+                const float* begin = source.ptr<float>(row);
+                std::copy(
+                    begin,
+                    begin + width,
+                    destination.begin() +
+                        static_cast<std::size_t>(row) *
+                            static_cast<std::size_t>(width));
+            }
+        };
+        copyMap(left_x, maps.left_x);
+        copyMap(left_y, maps.left_y);
+        copyMap(right_x, maps.right_x);
+        copyMap(right_y, maps.right_y);
+    } catch (const std::exception& exception) {
+        LOG_ERROR("Cannot materialize stereo remap maps: %s",
+                  exception.what());
+        maps = {};
+        return false;
+    }
+    return maps.hasExpectedShape();
 }
 
 }  // namespace volleyball::adapters::cuda_preprocess

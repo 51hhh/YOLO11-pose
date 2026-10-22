@@ -103,6 +103,18 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("src/detector_adapter.cpp", adapter_cmake)
         self.assertIn("volleyball::tensorrt_detector", adapter_cmake)
 
+    def test_nx_build_compiles_the_standalone_cuda_preprocessor(self) -> None:
+        legacy_cmake = (
+            ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        adapter_cmake = (
+            ROOT / "adapters" / "cuda_preprocess" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("volleyball::cuda_stereo_preprocessor", legacy_cmake)
+        self.assertIn("src/cuda_stereo_preprocessor.cpp", adapter_cmake)
+        self.assertIn("src/cuda/preprocess_kernels.cu", adapter_cmake)
+
     def test_nx_build_compiles_the_standalone_ros2_publisher(self) -> None:
         legacy_cmake = (
             ROOT / "adapters" / "legacy_nx" / "CMakeLists.txt"
