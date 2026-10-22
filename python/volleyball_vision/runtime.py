@@ -55,15 +55,20 @@ def _command(
     root: Path,
     config: ResolvedConfig,
     generated_config: Path,
+    *,
+    visualize: bool,
 ) -> tuple[str, ...]:
     executable = (
         root / config.data["adapters"]["legacy_pipeline"]["executable"]
     ).resolve()
-    return (
+    command = (
         str(executable),
         "--config",
         str(generated_config),
     )
+    if visualize:
+        command += ("--visualize",)
+    return command
 
 
 def run_runtime(
@@ -71,6 +76,7 @@ def run_runtime(
     *,
     generated_config: str | Path | None = None,
     dry_run: bool = False,
+    visualize: bool = False,
     project_root: str | Path | None = None,
 ) -> RuntimeLaunchResult:
     root = find_project_root(project_root)
@@ -79,7 +85,7 @@ def run_runtime(
     if generated_config is not None:
         output = Path(generated_config).resolve()
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written)
+        command = _command(root, config, written, visualize=visualize)
         if dry_run:
             return RuntimeLaunchResult(command, written, True, None)
         completed = subprocess.run(command, cwd=root, check=False)
@@ -94,13 +100,13 @@ def run_runtime(
         directory = Path(tempfile.mkdtemp(prefix="volleyball-runtime-"))
         output = directory / f"{config.profile}-{config.fingerprint_sha256[:12]}.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written)
+        command = _command(root, config, written, visualize=visualize)
         return RuntimeLaunchResult(command, written, True, None)
 
     with tempfile.TemporaryDirectory(prefix="volleyball-runtime-") as directory:
         output = Path(directory) / "pipeline.yaml"
         written = _write_generated_config(output, config, root)
-        command = _command(root, config, written)
+        command = _command(root, config, written, visualize=visualize)
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
             raise DatasetError(f"NX 实时管线退出码为 {completed.returncode}")

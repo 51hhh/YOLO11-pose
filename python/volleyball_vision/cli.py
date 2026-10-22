@@ -118,6 +118,7 @@ def _run(args: argparse.Namespace) -> int:
         config,
         generated_config=args.generated_config,
         dry_run=args.dry_run,
+        visualize=args.visualize,
     )
     if args.dry_run:
         print(f"DRY_RUN config={result.generated_config}")
@@ -306,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument(
         "--generated-config",
         help="保留投影后的旧 NX YAML；为防误覆盖，路径必须不存在",
+    )
+    runtime.add_argument(
+        "--visualize",
+        action="store_true",
+        help="显示检测与深度叠加窗口（需要图形环境）",
     )
     runtime.add_argument("--dry-run", action="store_true", help="只生成配置并显示命令")
     runtime.set_defaults(handler=_run)

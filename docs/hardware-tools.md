@@ -55,6 +55,7 @@ volleyball config pipeline-report --profile nx-rdk
 volleyball doctor --profile nx-rdk
 volleyball run --profile nx-rdk --dry-run
 volleyball run --profile nx-rdk
+volleyball run --profile nx-rdk --visualize  # 需要图形环境
 ```
 
 自由飞行数据使用 `volleyball capture --profile free-flight ...`，以便生成完整 v2.1 元数据、逐帧原始引用、哈希和原子发布记录。

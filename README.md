@@ -88,6 +88,9 @@ NX 构建使用根工程预设，旧工程在隔离的 ExternalProject 中编译
 cmake --preset nx-legacy-release
 cmake --build --preset nx-legacy-release --parallel
 volleyball run --profile nx-rdk
+
+# 调试时显示检测与深度叠加窗口
+volleyball run --profile nx-rdk --visualize
 ```
 
 ## 真实采集

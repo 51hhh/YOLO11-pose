@@ -58,6 +58,25 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(rendered["capture_v21"]["enabled"])
             self.assertTrue(rendered["ros2"]["enable"])
 
+    def test_visualize_is_forwarded_through_unified_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "pipeline.yaml"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                returncode = main(
+                    (
+                        "run",
+                        "--profile",
+                        "nx-rdk",
+                        "--generated-config",
+                        str(destination),
+                        "--visualize",
+                        "--dry-run",
+                    )
+                )
+            self.assertEqual(returncode, 0)
+            self.assertIn(f"--config {destination} --visualize", output.getvalue())
+
     def test_generated_config_never_overwrites_existing_file(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
         with tempfile.TemporaryDirectory() as directory:
