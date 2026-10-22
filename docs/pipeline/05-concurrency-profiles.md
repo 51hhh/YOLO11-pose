@@ -14,7 +14,7 @@
 | Fuse CUDA stream | detection event 等待、部分融合任务 | 开启 |
 | Async ROI copy stream | Gray D2D、必要时 Gray D2H/BGR D2D | 仅实时异步开启 |
 | Async ROI worker | 关联、ROI 候选、深度计算 | 仅实时异步开启 |
-| P2 inline worker/stream | NCC、XFeat、SuperPoint、ALIKED 作业框架 | 四组 worker/stream 会创建；当前只有 NCC 候选有逐帧任务，神经候选关闭 |
+| P2 inline worker/stream | NCC、XFeat、SuperPoint、ALIKED 作业框架 | 正式 profile 均未启用，不应分配或提交逐帧任务 |
 | P2 diagnostic worker/stream | 独立低优先级候选和 artifact/CSV | 当前 diagnostic lane 关闭，因此不创建 |
 | capture writer | 写 v2.1 staging | 仅真实采集开启 |
 
@@ -82,8 +82,8 @@ core/copy 和 `PipelineStreams` 任一同步失败，都不算正常停止。辅
 | shifted-IoU | 无独立图像 | 每 pair | 仅 gate | 配对字段保存 |
 | ROI multi-point | 是 | pair 通过后 | 首选 | 候选字段保存 |
 | circle/radial/edge/bbox | 是 | pair 通过后 | legacy 回退 | 候选字段保存 |
-| center patch | 是 | pair 通过后 | 当前否 | 候选字段保存 |
-| CUDA template/NCC | 是 | pair 通过后 | 当前否 | 候选字段保存 |
+| center patch | 否 | 不执行 | 当前否 | 无 |
+| CUDA template/NCC | 否 | 不执行 | 当前否 | 无 |
 | ORB/BRISK/AKAZE/SIFT | 否或惰性 | 否 | 否 | 字段可为空 |
 | XFeat/SuperPoint/ALIKED | 配置对象存在 | 否 | 否 | 字段可为空 |
 

@@ -138,8 +138,6 @@ class CalibrationAndLegacyConfigTests(unittest.TestCase):
                 "roi_edge_centroid",
                 "roi_radial_center",
                 "roi_edge_pair_center",
-                "roi_cuda_template_match",
-                "roi_center_patch",
                 "roi_subpixel",
                 "epipolar_fallback",
             },

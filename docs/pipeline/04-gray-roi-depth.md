@@ -31,9 +31,9 @@ accepted pair 使用该精化视差。检测中心初始视差不会丢失，而
 | edge centroid | 是 | Sobel 边缘加权质心 | 旧回退可选 |
 | radial center | 是 | ROI 径向/圆几何代理 | 旧回退可选 |
 | edge-pair center | 是 | 左右边缘中点 | 旧回退可选 |
-| center patch | 是 | 中心小块 ZNCC 搜索 | 记录候选，不在当前旧回退集合中 |
+| center patch | 否 | 中心小块 ZNCC 搜索 | 实验候选，正式 profile 未启用 |
 | multi-point subpixel | 是 | 多点 ZNCC + 稳健聚合 | 当前首选 |
-| CUDA template/NCC | 是 | 自定义 CCOEFF_NORMED CUDA | 记录/训练候选，不在当前最终选择集合中 |
+| CUDA template/NCC | 否 | 自定义 CCOEFF_NORMED CUDA | 实验候选，正式 profile 未启用 |
 | epipolar fallback | 是 | 单侧检出时的极线搜索/圆代理 | 旧回退可选 |
 | ORB/BRISK/AKAZE/SIFT 等 | 否 | 稀疏关键点 | 当前关闭 |
 | XFeat/SuperPoint/ALIKED | 否 | TensorRT 神经特征 | 当前关闭 |
@@ -86,7 +86,7 @@ accepted pair 使用该精化视差。检测中心初始视差不会丢失，而
 STEREO_CUDA_TEMPLATE_BACKEND=opencv
 ```
 
-当前它虽启用计算，但 `DepthCandidateMethod::ROI_CUDA_TEMPLATE_MATCH` 不属于最终旧回退候选集合，因此主要用于候选记录、离线比较和后续训练，不应把它的计数误报成最终发布深度来源。
+当前正式 profile 不启用该分支；若后续为离线候选评估重新开启，必须同时增加逐候选证据保存，不能只计算后丢弃结果，也不能把它误报成最终发布深度来源。
 
 ## 最终候选选择
 

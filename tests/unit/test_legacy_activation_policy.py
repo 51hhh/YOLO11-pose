@@ -68,7 +68,7 @@ class LegacyActivationPolicyTests(unittest.TestCase):
         self.assertTrue(performance["drop_stale_roi_frames"])
         self.assertTrue(performance["async_roi_stage2"])
         self.assertEqual(performance["async_roi_buffers"], 3)
-        self.assertTrue(performance["p2_realtime_lane_decision_enabled"])
+        self.assertFalse(performance["p2_realtime_lane_decision_enabled"])
         self.assertFalse(performance["p2_diagnostic_lane_decision_enabled"])
         self.assertFalse(performance["p2_diagnostic_results_enabled"])
         self.assertFalse(performance["p2_diagnostic_artifacts_enabled"])

@@ -40,12 +40,8 @@ class PipelineReportTests(unittest.TestCase):
         }
         self.assertEqual(candidates["roi_multi_point"]["selection_role"], "primary")
         self.assertEqual(candidates["circle_center"]["selection_role"], "fallback")
-        self.assertEqual(candidates["center_patch"]["selection_role"], "computed_only")
-        self.assertEqual(
-            candidates["cuda_template_match"]["selection_role"],
-            "computed_only",
-        )
-        self.assertTrue(candidates["cuda_template_match"]["compute_enabled"])
+        self.assertNotIn("center_patch", candidates)
+        self.assertNotIn("cuda_template_match", candidates)
 
         streams = {
             item["id"]: item for item in report["concurrency"]["streams"]
@@ -53,7 +49,7 @@ class PipelineReportTests(unittest.TestCase):
         self.assertTrue(streams["vpi_rectification"]["per_frame_work"])
         self.assertFalse(streams["vpi_full_frame_disparity"]["allocated"])
         self.assertFalse(streams["vpi_full_frame_disparity"]["per_frame_work"])
-        self.assertTrue(streams["cuda_p2_ncc"]["per_frame_work"])
+        self.assertFalse(streams["cuda_p2_ncc"]["per_frame_work"])
         self.assertTrue(streams["cuda_pipeline_gpu"]["per_frame_work"])
         for stream_id in (
             "cuda_p2_xfeat",

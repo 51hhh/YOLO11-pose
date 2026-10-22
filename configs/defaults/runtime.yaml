@@ -99,7 +99,7 @@ stereo:
   triangulation:
     backend: opencv
     primary_method: roi_multi_point
-    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges, center_patch, cuda_template_match, epipolar_fallback]
+    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges, epipolar_fallback]
     fallback_methods: [epipolar_fallback, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     propagate_covariance: true
     subpixel:
