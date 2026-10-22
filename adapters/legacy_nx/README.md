@@ -1,6 +1,6 @@
 # Jetson NX 实机适配器
 
-本目录隔离 CUDA/VPI、TensorRT 和 ROS2 等尚未迁出的平台依赖，并复用根目录 `adapters/hik_mvs`、`adapters/gpio` 与 `adapters/capture_v21`。它负责兼容编排硬件帧、观测与采集记录，但不拥有顶层配置、数据契约或用户工作流。
+本目录隔离 CUDA/VPI、TensorRT 和 ROS2 等尚未迁出的平台依赖，并复用根目录 `adapters/hik_mvs`、`adapters/gpio`、`adapters/capture_v21` 与 `adapters/tensorrt` 中已经独立的能力。它负责兼容编排硬件帧、观测与采集记录，但不拥有顶层配置、数据契约或用户工作流。
 
 日常运行统一使用仓库根目录安装的 `volleyball` 命令。不要直接复制或修改本目录的 YAML 作为实验配置；`config/base_pipeline.yaml` 只是主线配置投影到旧 C++ 字段时使用的兼容模板，其自身默认关闭发布、预测和写盘。
 

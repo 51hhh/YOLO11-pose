@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`adapters/legacy_nx` 保留成熟的 CUDA 校正、TensorRT、ROI 深度和 ROS2 实现，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
+`adapters/legacy_nx` 保留成熟的 CUDA 校正、TensorRT、ROI 深度和 ROS2 实现，并复用已提取到 `adapters/hik_mvs` 与 `adapters/gpio` 的相机和 GPIO 实现。TensorRT engine 的静态 I/O 验证已经迁入 `adapters/tensorrt`，旧运行时和后续主线 detector 共用同一契约。重构不会一次性重写这些高风险硬件代码，而是先冻结外部契约，再逐步拆分其内部边界。
 
 旧的轨迹 CSV、baseline clip 录制器和一次性特征匹配导出入口已经删除；它们既不满足 v2.1 原始事实契约，也无法由正式 profile 到达。真实图像、候选、配对和直接 3D 只允许通过 `volleyball capture` 驱动的 v2.1 staging 写入，低频排障截图则由显式诊断配置控制。
 
@@ -30,7 +30,7 @@
 1. **冻结契约（已完成）**：v2.1 数据、强类型核心、配置和 CI 已建立；
 2. **包裹旧实现（已完成）**：主线 CLI 负责 doctor、配置生成、采集 staging 和最终发布；
 3. **提取算法与用例编排（已完成主机门禁）**：纯关联/三角化已进入 `algorithms/stereo`，平台无关 runner 已覆盖 trial 的正常与故障终态；仍需逐项用录制数据对比旧实现；
-4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v6 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界；写入和发布端口均获得左右帧、选中候选、接受配对、实际深度方法和直接 3D 的完整证据；CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator` 的端口和失败语义已建立，但其真实实现、TensorRT/CUDA `Detector` 和 ROS2 `ObservationPublisher` 实现仍待迁出旧工程；
+4. **提取适配器（进行中）**：GPIO 触发、海康相机及其 `CameraSource` 桥、主线 v6 `TrialWriter` 与 v2.1 finalizer 已迁入独立边界，TensorRT engine I/O 契约也已从旧目录迁出并由两层共用；写入和发布端口均获得左右帧、选中候选、接受配对、实际深度方法和直接 3D 的完整证据；CUDA/VPI `StereoPreprocessor`、ROI/CUDA `DirectObservationEstimator` 的端口和失败语义已建立，但其真实实现、TensorRT/CUDA `Detector` 运行时和 ROS2 `ObservationPublisher` 实现仍待迁出旧工程；
 5. **替换可执行入口（已建立生命周期骨架）**：相机与触发的安全启停已进入平台无关服务；待预处理、检测和发布适配器完成后建立配置装配及原生进程入口，旧管线只保留回归基准；
 6. **删除兼容层（未开始）**：只有在同一批实机数据、性能和输出契约均通过时执行。
 
