@@ -82,6 +82,7 @@ fusion/callback
 - 在 USB 抓帧等待中注入停止：已接受请求完成并解锁后 Stage 0 才可继续；不得读取上一帧 `grab_done_ok`，不得产生无 payload 的额外 frame；
 - 注入 VPI host/CUDA view 非法尺寸、CUDA D2H 失败或 unlock 失败：显示/诊断/基线/v2.1 复制均返回失败并清空目标图；实时诊断的 `dropped` 计数增加，正式采集不得写出部分图像；
 - 注入 raw/ROI host view 的空地址、过小宽高或 pitch，以及同步 ROI 核心异常：不得调用相机写入无效 raw 缓冲，不得进入 HybridDepth predict-only；所有已取得的 VPI lock 必须释放，帧以 `grab_failed` 发布；
+- 注入异步 ROI 的缺失/失败 snapshot event 与 worker 异常：`Stage2_AsyncRoiFailed` 增加，buffer 可再次取得，worker 继续处理下一任务；失败帧不得进入 HybridDepth，也不得被记为正常 `predict_only`；
 - writer 队列使用 block，不丢旧帧；
 - `status.json.complete=true`；
 - captured、written 数相等，drop/copy/write failure 全为 0；

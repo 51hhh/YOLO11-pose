@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cuda_runtime.h>
 #include <cmath>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -3133,95 +3134,151 @@ void Pipeline::asyncRoiWorkerLoop() {
         RoiStage2Output output;
         const auto t0 = Clock::now();
         bool copy_ready = true;
+        bool processing_failed = false;
         AsyncRoiBuffer* artifact_buffer = nullptr;
-        if (task.copy_event_recorded &&
-            task.buffer_index >= 0 &&
-            task.buffer_index < static_cast<int>(async_roi_buffers_.size())) {
-            auto& buffer =
-                async_roi_buffers_[static_cast<size_t>(task.buffer_index)];
-            if (buffer.copy_done) {
-                const auto copy_wait_start = Clock::now();
-                const cudaError_t copy_err =
-                    cudaEventSynchronize(buffer.copy_done);
-                const double copy_wait_ms =
-                    std::chrono::duration<double, std::milli>(
-                        Clock::now() - copy_wait_start).count();
-                globalPerf().record("Stage2_AsyncRoiCopyWait", copy_wait_ms);
-                buffer.copy_event_recorded = false;
-                if (copy_err != cudaSuccess) {
+        try {
+            if (!task.copy_event_recorded ||
+                task.buffer_index < 0 ||
+                task.buffer_index >=
+                    static_cast<int>(async_roi_buffers_.size())) {
+                copy_ready = false;
+                processing_failed = true;
+                LOG_ERROR("[AsyncROI] Invalid snapshot handoff: "
+                          "frame=%d event=%d buffer=%d",
+                          task.frame_id,
+                          task.copy_event_recorded ? 1 : 0,
+                          task.buffer_index);
+            } else {
+                auto& buffer =
+                    async_roi_buffers_[static_cast<size_t>(task.buffer_index)];
+                if (!buffer.copy_done) {
                     copy_ready = false;
-                    LOG_WARN("[AsyncROI] Copy event failed frame=%d err=%s",
-                             task.frame_id, cudaGetErrorString(copy_err));
-                }
-                if (copy_ready) {
-                    artifact_buffer = &buffer;
-                }
-            }
-        }
-        if (copy_ready) {
-            if (task.host_gray_valid) {
-                globalPerf().record("Stage2_AsyncRoiHostGrayTask", 0.0);
-            }
-            if (task.bgr_valid) {
-                globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
-            }
-            const bool p2_inline_enabled =
-                task.input.p2_inline_feature_jobs_enabled;
-            if (p2_inline_enabled &&
-                task.p2_feature_decision.p2_depth_modes_enabled) {
-                globalPerf().record("Stage2_P2FeatureJobInlineStage2", 0.0);
-            }
-            if (!p2_inline_enabled &&
-                task.p2_feature_decision.p2_depth_modes_enabled) {
-                if (p2DiagnosticOnlyFeatureJobsEnabled(config_)) {
-                    globalPerf().record(
-                        "Stage2_P2FeatureJobInlineSkippedDiagnosticOnly",
-                        0.0);
+                    processing_failed = true;
+                    LOG_ERROR("[AsyncROI] Missing snapshot event: "
+                              "frame=%d buffer=%d",
+                              task.frame_id, task.buffer_index);
                 } else {
-                    globalPerf().record(
-                        "Stage2_P2FeatureJobInlineSkippedSelective",
-                        0.0);
+                    const auto copy_wait_start = Clock::now();
+                    const cudaError_t copy_err =
+                        cudaEventSynchronize(buffer.copy_done);
+                    const double copy_wait_ms =
+                        std::chrono::duration<double, std::milli>(
+                            Clock::now() - copy_wait_start).count();
+                    globalPerf().record("Stage2_AsyncRoiCopyWait", copy_wait_ms);
+                    buffer.copy_event_recorded = false;
+                    if (copy_err != cudaSuccess) {
+                        copy_ready = false;
+                        processing_failed = true;
+                        LOG_ERROR("[AsyncROI] Copy event failed frame=%d err=%s",
+                                  task.frame_id,
+                                  cudaGetErrorString(copy_err));
+                    }
+                    if (copy_ready) {
+                        artifact_buffer = &buffer;
+                    }
                 }
             }
-            if (p2_inline_enabled &&
-                task.p2_feature_decision.split_feature_jobs &&
-                !task.p2_feature_jobs.empty()) {
-                globalPerf().record("Stage2_P2FeatureJobInlineFallback", 0.0);
-            }
-            std::lock_guard<std::mutex> post_lock(roi_postprocess_mutex_);
-            output = runRoiStage2Core(task.input);
-            for (auto& row : output.p2_artifact_rows) {
-                if (row.frame_id < 0) {
-                    row.frame_id = task.frame_id;
+            if (copy_ready) {
+                if (task.host_gray_valid) {
+                    globalPerf().record("Stage2_AsyncRoiHostGrayTask", 0.0);
                 }
-                row.metadata = task.metadata;
-                row.depth_mode_mask =
-                    task.p2_feature_decision.depth_mode_mask;
-                row.triggers = task.p2_feature_decision.realtime_triggers;
-                row.deadline_ms = config_.async_roi_deadline_ms;
+                if (task.bgr_valid) {
+                    globalPerf().record("Stage2_AsyncRoiBgrTask", 0.0);
+                }
+                const bool p2_inline_enabled =
+                    task.input.p2_inline_feature_jobs_enabled;
+                if (p2_inline_enabled &&
+                    task.p2_feature_decision.p2_depth_modes_enabled) {
+                    globalPerf().record("Stage2_P2FeatureJobInlineStage2", 0.0);
+                }
+                if (!p2_inline_enabled &&
+                    task.p2_feature_decision.p2_depth_modes_enabled) {
+                    if (p2DiagnosticOnlyFeatureJobsEnabled(config_)) {
+                        globalPerf().record(
+                            "Stage2_P2FeatureJobInlineSkippedDiagnosticOnly",
+                            0.0);
+                    } else {
+                        globalPerf().record(
+                            "Stage2_P2FeatureJobInlineSkippedSelective",
+                            0.0);
+                    }
+                }
+                if (p2_inline_enabled &&
+                    task.p2_feature_decision.split_feature_jobs &&
+                    !task.p2_feature_jobs.empty()) {
+                    globalPerf().record("Stage2_P2FeatureJobInlineFallback", 0.0);
+                }
+                {
+                    std::lock_guard<std::mutex> post_lock(
+                        roi_postprocess_mutex_);
+                    output = runRoiStage2Core(task.input);
+                }
+                for (auto& row : output.p2_artifact_rows) {
+                    if (row.frame_id < 0) {
+                        row.frame_id = task.frame_id;
+                    }
+                    row.metadata = task.metadata;
+                    row.depth_mode_mask =
+                        task.p2_feature_decision.depth_mode_mask;
+                    row.triggers = task.p2_feature_decision.realtime_triggers;
+                    row.deadline_ms = config_.async_roi_deadline_ms;
+                }
+                if (artifact_buffer && !output.p2_artifact_rows.empty()) {
+                    P2FeatureDiagnosticBuffer artifact_view;
+                    artifact_view.left_gray_gpu = artifact_buffer->left_gray_gpu;
+                    artifact_view.left_gray_pitch =
+                        artifact_buffer->left_gray_pitch;
+                    artifact_view.right_gray_gpu =
+                        artifact_buffer->right_gray_gpu;
+                    artifact_view.right_gray_pitch =
+                        artifact_buffer->right_gray_pitch;
+                    writeP2FeatureDiagnosticArtifacts(
+                        output.p2_artifact_rows, artifact_view,
+                        task.input.width, task.input.height);
+                }
+                writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
+                writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
+            } else {
+                output.detections = task.input.left_detections;
+                output.predict_only = true;
             }
-            if (artifact_buffer && !output.p2_artifact_rows.empty()) {
-                P2FeatureDiagnosticBuffer artifact_view;
-                artifact_view.left_gray_gpu = artifact_buffer->left_gray_gpu;
-                artifact_view.left_gray_pitch = artifact_buffer->left_gray_pitch;
-                artifact_view.right_gray_gpu = artifact_buffer->right_gray_gpu;
-                artifact_view.right_gray_pitch = artifact_buffer->right_gray_pitch;
-                writeP2FeatureDiagnosticArtifacts(output.p2_artifact_rows,
-                                                  artifact_view,
-                                                  task.input.width,
-                                                  task.input.height);
-            }
-            writeP2FeatureDiagnosticResults(output.p2_artifact_rows);
-            writeP2FeatureDiagnosticPointDebug(output.p2_artifact_rows);
-        } else {
-            output.detections = task.input.left_detections;
-            output.predict_only = true;
+        } catch (const std::exception& error) {
+            processing_failed = true;
+            LOG_ERROR("[AsyncROI] Worker failed frame=%d error=%s",
+                      task.frame_id, error.what());
+        } catch (...) {
+            processing_failed = true;
+            LOG_ERROR("[AsyncROI] Worker failed frame=%d unknown error",
+                      task.frame_id);
         }
         const double elapsed_ms =
             std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         globalPerf().record("Stage2_AsyncRoiWorker", elapsed_ms);
         if (elapsed_ms > static_cast<double>(config_.async_roi_deadline_ms)) {
             globalPerf().record("Stage2_AsyncRoiOverDeadline", elapsed_ms);
+        }
+        if (processing_failed) {
+            globalPerf().record("Stage2_AsyncRoiFailed", elapsed_ms);
+            const auto drain_start = Clock::now();
+            cudaError_t core_drain = cudaSuccess;
+            cudaError_t copy_drain = cudaSuccess;
+            if (async_roi_stream_) {
+                core_drain = cudaStreamSynchronize(async_roi_stream_);
+            }
+            if (async_roi_copy_stream_) {
+                copy_drain = cudaStreamSynchronize(async_roi_copy_stream_);
+            }
+            const double drain_ms =
+                std::chrono::duration<double, std::milli>(
+                    Clock::now() - drain_start).count();
+            globalPerf().record("Stage2_AsyncRoiFailureDrain", drain_ms);
+            if (core_drain != cudaSuccess || copy_drain != cudaSuccess) {
+                LOG_ERROR("[AsyncROI] Failure drain failed frame=%d "
+                          "core=%s copy=%s",
+                          task.frame_id,
+                          cudaGetErrorString(core_drain),
+                          cudaGetErrorString(copy_drain));
+            }
         }
 
         {
@@ -3240,6 +3297,7 @@ void Pipeline::asyncRoiWorkerLoop() {
                 result.frame_id = task.frame_id;
                 result.slot_index = task.slot_index;
                 result.elapsed_ms = elapsed_ms;
+                result.processing_failed = processing_failed;
                 result.metadata = task.metadata;
                 result.right_detections = task.input.right_detections;
                 result.output = std::move(output);
@@ -3281,7 +3339,12 @@ std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
         }
 
         if (live_slot) {
-            applyRoiStage2Output(*live_slot, std::move(result.output));
+            if (result.processing_failed) {
+                live_slot->grab_failed = true;
+                live_slot->results.clear();
+            } else {
+                applyRoiStage2Output(*live_slot, std::move(result.output));
+            }
             live_slot->bbox_source = BboxSource::YOLO;
             publishRoiFrameCallbacks(*live_slot);
             accepted.push_back(live_slot->frame_id);
@@ -3289,9 +3352,12 @@ std::vector<int> Pipeline::drainCompletedAsyncRoiStage2() {
             FrameSlot shadow;
             shadow.frame_id = result.frame_id;
             restoreFrameMetadata(shadow, result.metadata);
+            shadow.grab_failed = result.processing_failed;
             shadow.detections_right = std::move(result.right_detections);
             shadow.bbox_source = BboxSource::YOLO;
-            applyRoiStage2Output(shadow, std::move(result.output));
+            if (!result.processing_failed) {
+                applyRoiStage2Output(shadow, std::move(result.output));
+            }
             publishRoiResultCallback(shadow);
             accepted.push_back(shadow.frame_id);
             globalPerf().record("Stage2_AsyncRoiAcceptedReusedSlot",

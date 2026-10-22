@@ -341,6 +341,7 @@ private:
         int frame_id = -1;
         int slot_index = -1;
         double elapsed_ms = 0.0;
+        bool processing_failed = false;
         FrameMetadata metadata;
         std::vector<Detection> right_detections;
         RoiStage2Output output;

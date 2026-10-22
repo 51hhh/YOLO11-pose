@@ -118,6 +118,7 @@ Phase A 一旦发出抓帧请求，本轮 Phase C 的失败、主动 stale drop 
 - Stage 2 需要 host Gray 时，左右 VPI image 必须同时 lock/unlock 成功；基础设施失败不能退化为“没有纹理候选”；
 - 全帧 Stage 3 使用显式成功状态区分“计算成功但没有有效视差”和 Coordinate3D CUDA/图像锁失败，后一种必须使帧失败；
 - ROI 失败帧可能同时经过提交和融合阶段，`roi_callbacks_published` 保证 Result/Frame 回调至多一次；
+- 异步 ROI 快照 event 失败、handoff 不完整或 worker 异常会随 `AsyncRoiResult.processing_failed` 回到主线程；buffer 先归还，结果不进入 HybridDepth，并以 `grab_failed` 发布，而不是伪装成 `predict_only`；
 - 采集模式仍会触发帧回调，让 fail-trial 录制器立即停止，而不是静默制造序号缺口；
 - 停止时先让 pipeline 排空已提交的工作，再关闭 ROI/P2 worker 和 grab 线程，最后同步所有 stream 并停止 PWM/相机；
 - 停止发生在 USB 等待期间时，已接受的抓帧必须完成握手；`running=false` 本身绝不能唤醒 `waitGrab()` 并复用上一帧成功状态；

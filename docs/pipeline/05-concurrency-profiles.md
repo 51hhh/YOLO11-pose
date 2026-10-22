@@ -19,6 +19,8 @@
 
 pipeline 与 grab 线程之间不是无界队列，而是一个可测试的 single-flight 状态机：同一时刻最多一个 active 请求；重叠请求被拒绝；停止后拒绝新请求，但已接受请求必须写完并发出 completion。completion 才转移 raw 图像所有权，`running` 标志不承担图像完成语义。
 
+异步 ROI worker 的 snapshot completion 也承担所有权转移语义。worker 必须收到有效 buffer 和已记录 event，等待 event 成功后才可读取快照；CUDA event 错误或 worker 异常会产生显式失败结果。失败路径先排空 ROI core/copy stream，再归还 buffer，防止异常发生在 kernel 提交之后时复用仍被 GPU 读取的内存。`roi_postprocess_mutex_` 只包围共享 matcher/core 调用，artifact/CSV 写入不持有该锁，避免诊断 I/O 反向阻塞同步候选。
+
 ## 实时异步 ROI 数据流
 
 异步 Stage 2 只有同时满足以下条件才可启动：
