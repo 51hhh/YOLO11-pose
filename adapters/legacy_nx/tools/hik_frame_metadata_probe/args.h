@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <string>
 
 namespace hik_metadata_probe {
@@ -17,8 +18,11 @@ struct Args {
     std::string trigger_chip = "gpiochip2";
     unsigned int trigger_line = 7;
     double pwm_hz = 100.0;
+    bool help_requested = false;
 };
 
 bool parseArgs(int argc, char** argv, Args& args);
+bool validateArgs(const Args& args);
+void printUsage(const char* argv0, std::FILE* stream = stdout);
 
 }  // namespace hik_metadata_probe

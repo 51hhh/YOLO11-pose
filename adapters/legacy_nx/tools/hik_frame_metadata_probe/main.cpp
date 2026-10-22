@@ -305,6 +305,8 @@ int main(int argc, char** argv) {
 
     Args args;
     if (!hik_metadata_probe::parseArgs(argc, argv, args)) return 2;
+    if (args.help_requested) return 0;
+    if (!hik_metadata_probe::validateArgs(args)) return 2;
 
     MV_CC_DEVICE_INFO_LIST list{};
     int ret = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &list);
