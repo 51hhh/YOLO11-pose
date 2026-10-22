@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from .calibration import ensure_dataset_calibration
 from .capture_stage_io import (
@@ -25,7 +25,11 @@ from .config import ConfigError, ResolvedConfig, find_project_root
 from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
 from .legacy_config import write_legacy_pipeline_config
 from .model_manifest import resolve_model, sha256_file
-from .timebase import integer_midpoint_ns
+from .timebase import (
+    fit_affine_clock_mapping as _fit_clock_mapping,
+    integer_midpoint_ns,
+    map_timestamp_ns as _map_timestamp,
+)
 
 
 STAGE_SCHEMA_VERSION = 4
@@ -237,61 +241,6 @@ def _shared_capture_timestamps(row: Mapping[str, str]) -> tuple[int, int]:
     residual = _int(row, "stereo_timestamp_residual_ns")
     # residual=(left_raw-right_raw)-fixed_offset，故 right 映射到左时钟后为 left-residual。
     return left, left - residual
-
-
-def _fit_clock_mapping(
-    source_times_ns: list[int],
-    reference_times_ns: list[int],
-    *,
-    source_clock: str,
-    reference_clock: str,
-    mapping_id: str,
-    source: str,
-    validity_source_times_ns: Iterable[int] = (),
-) -> dict[str, Any] | None:
-    points = [
-        (source_time, reference_time)
-        for source_time, reference_time in zip(source_times_ns, reference_times_ns)
-        if source_time > 0
-    ]
-    if not points:
-        return None
-    source_anchor, reference_anchor = points[0]
-    if len(points) >= 2:
-        xs = [source - source_anchor for source, _ in points]
-        ys = [reference - reference_anchor for _, reference in points]
-        denominator = sum(value * value for value in xs)
-        scale = sum(x * y for x, y in zip(xs, ys)) / denominator if denominator else 1.0
-    else:
-        scale = 1.0
-    if not math.isfinite(scale) or scale <= 0.0:
-        scale = 1.0
-    drift_ppm = (scale - 1.0) * 1.0e6
-    residuals = [
-        abs(reference_anchor + round((source - source_anchor) * scale) - reference)
-        for source, reference in points
-    ]
-    all_source = [source_time for source_time, _ in points]
-    all_source.extend(value for value in validity_source_times_ns if value > 0)
-    return {
-        "mapping_id": mapping_id,
-        "source_clock_domain": source_clock,
-        "reference_clock_domain": reference_clock,
-        "source_anchor_ns": source_anchor,
-        "reference_anchor_ns": reference_anchor,
-        "drift_ppm": drift_ppm,
-        "uncertainty_ns": max(100_000.0, float(max(residuals, default=0))),
-        "valid_from_source_ns": min(all_source),
-        "valid_to_source_ns": max(all_source),
-        "source": source,
-    }
-
-
-def _map_timestamp(timestamp_ns: int, mapping: Mapping[str, Any]) -> int:
-    scale = 1.0 + float(mapping["drift_ppm"]) * 1.0e-6
-    return int(mapping["reference_anchor_ns"]) + round(
-        (timestamp_ns - int(mapping["source_anchor_ns"])) * scale
-    )
 
 
 def finalize_capture_stage(
