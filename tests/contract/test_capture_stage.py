@@ -365,6 +365,22 @@ class CaptureStageTests(unittest.TestCase):
                     project_root=ROOT,
                 )
 
+    def test_planning_stage_can_never_be_published(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            context_path = stage / "context.json"
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context["planning_only"] = True
+            context_path.write_text(json.dumps(context), encoding="utf-8")
+            with self.assertRaisesRegex(Exception, "预演 staging"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

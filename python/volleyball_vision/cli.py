@@ -132,11 +132,16 @@ def _load_conditions(path: str | None) -> dict[str, object]:
 
 def _capture(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, overrides=args.set)
-    checks = run_doctor(config)
-    errors = [check for check in checks if not check.ok]
-    if errors:
-        details = "\n".join(f"  - {check.name}: {check.message}" for check in errors)
-        raise DatasetError(f"采集前 doctor 未通过:\n{details}")
+    # 预演只生成不可发布的 staging 与旧管线配置，不接触相机、GPIO 或模型文件。
+    # 真采集仍必须通过完整 doctor 门禁。
+    if not args.dry_run:
+        checks = run_doctor(config)
+        errors = [check for check in checks if not check.ok]
+        if errors:
+            details = "\n".join(
+                f"  - {check.name}: {check.message}" for check in errors
+            )
+            raise DatasetError(f"采集前 doctor 未通过:\n{details}")
     output = run_capture(
         config,
         trial_id=args.trial,

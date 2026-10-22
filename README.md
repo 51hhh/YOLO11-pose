@@ -89,6 +89,17 @@ volleyball run --profile nx-rdk
 
 先为每次实验准备条件 JSON；未知值使用 `null` 或省略，禁止伪造精度。球 ID、压力、温湿度、风、相机姿态等条件属于 trial 元数据，不应塞进轨迹 CSV。
 
+可先在无 NX 硬件的开发机预演最终采集 YAML；该 staging 会被永久标为不可发布：
+
+```bash
+volleyball capture \
+  --profile free-flight \
+  --trial dry-run-001 --session planning --ball v200w-01 \
+  --duration 3.0 --dataset-root /tmp/volleyball-capture-plan --dry-run
+```
+
+正式采集必须去掉 `--dry-run`，并通过模型、NX、MVS、GPIO、CUDA/VPI/TensorRT 等 doctor 门禁：
+
 ```bash
 volleyball capture \
   --profile free-flight \

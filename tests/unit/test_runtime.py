@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import tempfile
 import unittest
@@ -79,6 +79,70 @@ class RuntimeTests(unittest.TestCase):
         profile = load_profile("replay", project_root=ROOT)
         with self.assertRaisesRegex(DatasetError, "runtime profile"):
             run_runtime(profile, dry_run=True, project_root=ROOT)
+
+    def test_capture_dry_run_does_not_require_hardware_or_model(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                returncode = main(
+                    (
+                        "capture",
+                        "--profile",
+                        "free-flight",
+                        "--trial",
+                        "dry-run-001",
+                        "--session",
+                        "dry-run-session",
+                        "--ball",
+                        "dry-run-ball",
+                        "--duration",
+                        "3.0",
+                        "--dataset-root",
+                        directory,
+                        "--dry-run",
+                    )
+                )
+            self.assertEqual(returncode, 0)
+            self.assertIn("DRY_RUN stage=", output.getvalue())
+            stages = list((Path(directory) / ".capture-staging").iterdir())
+            self.assertEqual(len(stages), 1)
+            context = yaml.safe_load(
+                (stages[0] / "context.json").read_text(encoding="utf-8")
+            )
+            rendered = yaml.safe_load(
+                (stages[0] / "pipeline.yaml").read_text(encoding="utf-8")
+            )
+            self.assertTrue(context["planning_only"])
+            self.assertIsNone(
+                context["perception_pipeline"]["weights_sha256"]
+            )
+            self.assertTrue(rendered["capture_v21"]["enabled"])
+            self.assertFalse(rendered["performance"]["async_roi_stage2"])
+            self.assertFalse(rendered["performance"]["drop_stale_roi_frames"])
+
+    def test_capture_rejects_non_capture_profile_before_writing_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            error = io.StringIO()
+            with redirect_stderr(error):
+                returncode = main(
+                    (
+                        "capture",
+                        "--profile",
+                        "replay",
+                        "--trial",
+                        "wrong-profile",
+                        "--session",
+                        "dry-run-session",
+                        "--ball",
+                        "dry-run-ball",
+                        "--dataset-root",
+                        directory,
+                        "--dry-run",
+                    )
+                )
+            self.assertEqual(returncode, 2)
+            self.assertIn("只接受 capture profile", error.getvalue())
+            self.assertFalse((Path(directory) / ".capture-staging").exists())
 
 
 if __name__ == "__main__":

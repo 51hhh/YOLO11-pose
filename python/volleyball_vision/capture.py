@@ -165,18 +165,26 @@ def build_capture_context(
     trajectory_kind: str = "free_flight",
     conditions: Mapping[str, Any] | None = None,
     notes: str = "",
+    verify_model: bool = True,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
     root = find_project_root(project_root)
     entry, artifact = resolve_model(config, project_root=root)
-    if not artifact.is_file():
-        raise DatasetError(f"模型文件不存在: {artifact}")
-    weights_sha256 = sha256_file(artifact)
     expected = entry.get("sha256")
-    if not expected:
-        raise DatasetError("模型清单必须先固定 weights SHA-256 才能发布真实数据")
-    if expected != weights_sha256:
-        raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
+    weights_sha256: str | None
+    if artifact.is_file():
+        weights_sha256 = sha256_file(artifact)
+        if expected and expected != weights_sha256:
+            raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
+    else:
+        weights_sha256 = expected
+    if verify_model:
+        if not artifact.is_file():
+            raise DatasetError(f"模型文件不存在: {artifact}")
+        if not expected:
+            raise DatasetError("模型清单必须先固定 weights SHA-256 才能发布真实数据")
+        if expected != weights_sha256:
+            raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
     detector = config.data["detector"]
     pipeline = with_pipeline_fingerprint(
         {
@@ -193,7 +201,7 @@ def build_capture_context(
             "center_method": detector["center_method"],
         }
     )
-    return {
+    context = {
         "stage_schema_version": STAGE_SCHEMA_VERSION,
         "trial_id": trial_id,
         "session_id": session_id,
@@ -214,6 +222,10 @@ def build_capture_context(
         },
         "perception_pipeline": pipeline,
     }
+    if not verify_model:
+        # 预演允许目标机 artifact 尚未安装，但该 staging 永远不能发布为真实数据。
+        context["planning_only"] = True
+    return context
 
 
 def prepare_capture_stage(stage: str | Path, context: Mapping[str, Any]) -> Path:
@@ -319,6 +331,8 @@ def finalize_capture_stage(
     directory = Path(stage).resolve()
     context = _load_json_object(directory / "context.json")
     status = _load_json_object(directory / "status.json")
+    if context.get("planning_only") is True:
+        raise DatasetError("预演 staging 不得发布为真实 trial")
     if context.get("stage_schema_version") != STAGE_SCHEMA_VERSION:
         raise DatasetError("capture staging schema 版本不兼容")
     if status.get("stage_schema_version") != STAGE_SCHEMA_VERSION:
@@ -902,6 +916,10 @@ def run_capture(
     project_root: str | Path | None = None,
 ) -> Path:
     root = find_project_root(project_root)
+    if config.data["runtime"]["mode"] != "capture":
+        raise DatasetError("volleyball capture 只接受 capture profile")
+    if not config.data["recording"]["enabled"]:
+        raise DatasetError("capture profile 必须启用 recording")
     if not math.isfinite(duration_s) or duration_s <= 0.0:
         raise DatasetError("duration_s 必须是正的有限秒数")
     capture_root = (
@@ -921,6 +939,7 @@ def run_capture(
         ball_id=ball_id,
         conditions=conditions,
         notes=notes,
+        verify_model=not dry_run,
         project_root=root,
     )
     prepare_capture_stage(stage, context)

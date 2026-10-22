@@ -92,6 +92,18 @@ dataset-root/
 
 ## 实验操作
 
+开发机可先预演最终无丢帧配置；预演不检查相机、GPIO、NX 可执行文件或模型 artifact，
+生成的 staging 带 `planning_only=true`，后续即使补齐文件也不能发布为真实 trial：
+
+```bash
+volleyball capture --profile free-flight \
+  --trial dry-run-001 --session planning --ball v200w-01 \
+  --duration 3 --dataset-root /tmp/volleyball-capture-plan --dry-run
+```
+
+在输出的 `.capture-staging/<trial>/pipeline.yaml` 中确认 `capture_v21.enabled=true`、
+`async_roi_stage2=false`、`drop_stale_roi_frames=false` 和阻塞队列。正式采集仍必须先通过 doctor：
+
 ```bash
 volleyball doctor --profile free-flight
 volleyball capture --profile free-flight \
