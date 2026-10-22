@@ -51,6 +51,7 @@ class PipelineReportTests(unittest.TestCase):
             item["id"]: item for item in report["concurrency"]["streams"]
         }
         self.assertTrue(streams["vpi_rectification"]["per_frame_work"])
+        self.assertFalse(streams["vpi_full_frame_disparity"]["allocated"])
         self.assertFalse(streams["vpi_full_frame_disparity"]["per_frame_work"])
         self.assertTrue(streams["cuda_p2_ncc"]["per_frame_work"])
         self.assertTrue(streams["cuda_pipeline_gpu"]["per_frame_work"])

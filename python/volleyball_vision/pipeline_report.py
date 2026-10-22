@@ -237,7 +237,7 @@ def build_pipeline_report(
         ),
         _stream(
             "vpi_full_frame_disparity",
-            allocated=live_pipeline,
+            allocated=live_pipeline and not roi_only,
             per_frame_work=live_pipeline and not roi_only,
             backend="cuda",
             work="full/half-resolution disparity (disabled by ROI_ONLY)",

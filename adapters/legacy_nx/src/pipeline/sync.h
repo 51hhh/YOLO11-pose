@@ -20,6 +20,7 @@
 namespace stereo3d {
 
 struct PipelineStreamRequirements {
+    bool full_frame_stereo = false;
     bool p2_ncc = false;
     bool p2_xfeat = false;
     bool p2_superpoint = false;
@@ -64,11 +65,13 @@ struct PipelineStreams {
             return false;
         }
 
-        vpiErr = vpiStreamCreate(VPI_BACKEND_CUDA, &vpiStreamGPU);
-        if (vpiErr != VPI_SUCCESS) {
-            fprintf(stderr, "[Sync] Failed to create VPI GPU stream\n");
-            destroy();
-            return false;
+        if (requirements.full_frame_stereo) {
+            vpiErr = vpiStreamCreate(VPI_BACKEND_CUDA, &vpiStreamGPU);
+            if (vpiErr != VPI_SUCCESS) {
+                fprintf(stderr, "[Sync] Failed to create VPI GPU stream\n");
+                destroy();
+                return false;
+            }
         }
 
         // CUDA Streams (non-blocking)

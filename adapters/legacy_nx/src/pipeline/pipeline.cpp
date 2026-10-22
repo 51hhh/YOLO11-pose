@@ -41,6 +41,8 @@ bool Pipeline::init(const PipelineConfig& config) {
     const bool inline_p2 = config_.p2_feature_job_scaffold_enabled &&
                            config_.p2_realtime_lane_decision_enabled;
     PipelineStreamRequirements stream_requirements;
+    stream_requirements.full_frame_stereo =
+        config_.disparity_strategy != DisparityStrategy::ROI_ONLY;
     stream_requirements.p2_ncc =
         inline_p2 && config_.dual_yolo.depth_roi_cuda_template_match;
     stream_requirements.p2_xfeat = inline_p2 && config_.neural_xfeat.enabled;

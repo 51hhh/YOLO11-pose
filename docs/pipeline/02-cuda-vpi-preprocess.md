@@ -86,7 +86,7 @@ Stage 0 涉及：
 | stream | 生产的工作 | `nx-rdk` 每帧状态 | 主要完成证明 |
 |---|---|---|---|
 | `vpiStreamPVA` | remap、BGR→Gray；名称为历史遗留 | 开，算子 backend 为 CUDA | Stage 1 前 `vpiStreamSync` |
-| `vpiStreamGPU` | full/half-frame VPI disparity | 关，无 disparity submit | 仅关闭支路/最终清理 |
+| `vpiStreamGPU` | full/half-frame VPI disparity | 关，不创建 stream、不提交 disparity | 若启用则 Stage 3/最终清理同步 |
 | `cudaStreamBGR` | 左右 Bayer→BGR kernel | 开 | 每帧显式 synchronize |
 | `cudaStreamDLA` | 左 YOLO preprocess/infer/decode/D2H | 开；名称不表示实际用了 DLA | 左 detect event/源 stream fallback |
 | `cudaStreamDLA_R` | 右 YOLO preprocess/infer/decode/D2H | 开；当前 engine 为 CUDA GPU | 右 detect event/源 stream fallback |
@@ -141,7 +141,7 @@ Stage 0 涉及：
 以下是待实测候选，不是当前已实现结论：
 
 - 用可证明正确的 VPI/CUDA 互操作消除 Bayer 后和 remap 后的 CPU 硬同步；
-- 按 profile 条件分配 full-frame disparity 和 TNR 资源；P2 候选的 stream/worker 已按最终配置创建；
+- 按 profile 条件分配 TNR 资源；full-frame disparity 与 P2 候选的 stream/worker 已按最终配置创建；
 - 用 Nsight Systems 检查左右 YOLO 是否与下一帧 USB 等待/Stage 0 重叠；
 - 比较 CUDA、VIC 和 PVA remap 的延迟、功耗及像素一致性；
 - 若修改色彩路径，必须重新验证 YOLO 精度、标定 remap 顺序和 Bayer pattern，不能只以帧率决定。
