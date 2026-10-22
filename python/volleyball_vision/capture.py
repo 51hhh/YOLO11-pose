@@ -25,6 +25,7 @@ from .config import ConfigError, ResolvedConfig, find_project_root
 from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
 from .legacy_config import write_legacy_pipeline_config
 from .model_manifest import resolve_model, sha256_file
+from .timebase import integer_midpoint_ns
 
 
 STAGE_SCHEMA_VERSION = 4
@@ -496,7 +497,7 @@ def finalize_capture_stage(
     hardware_times = [_shared_capture_timestamps(row) for row in frames]
     camera_clock = config.data["cameras"]["sync"]["clock_domain"]
     hardware_midpoints = [
-        round((left + right) / 2) for left, right in hardware_times
+        integer_midpoint_ns(left, right) for left, right in hardware_times
     ]
     trigger_mapping = _fit_clock_mapping(
         edge_monotonic,
@@ -585,7 +586,7 @@ def finalize_capture_stage(
         )
         for exposure_start in exposure_start_times
     ]
-    origin_ns = round(sum(capture_times[0]) / 2)
+    origin_ns = integer_midpoint_ns(*capture_times[0])
     metadata = {
         "trial_id": context["trial_id"],
         "session_id": context["session_id"],
@@ -805,7 +806,9 @@ def finalize_capture_stage(
         for frame_id in sorted(accepted_by_frame):
             chosen = accepted_by_frame[frame_id]
             left_capture, right_capture = frame_lookup[frame_id]
-            timestamp_ns = round((left_capture + right_capture) / 2) - origin_ns
+            timestamp_ns = (
+                integer_midpoint_ns(left_capture, right_capture) - origin_ns
+            )
             if timestamp_ns <= previous_timestamp_ns:
                 raise DatasetError("接受的直接观测时间不严格递增")
             previous_timestamp_ns = timestamp_ns

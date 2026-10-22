@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping, TextIO
 import jsonschema
 
 from .config import find_project_root
+from .timebase import integer_midpoint_ns
 
 
 class DatasetError(ValueError):
@@ -757,7 +758,7 @@ def _validate_trial_tables(
                 mappings_by_source,
             )
             if semantics == "stereo_midpoint_capture":
-                expected = round((left_ns + right_ns) / 2) - origin_ns
+                expected = integer_midpoint_ns(left_ns, right_ns) - origin_ns
             elif semantics == "hardware_trigger":
                 if left_ns != right_ns:
                     raise DatasetError(
