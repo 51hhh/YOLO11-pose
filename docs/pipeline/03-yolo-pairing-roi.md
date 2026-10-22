@@ -27,6 +27,8 @@
 
 `evtDetectDone` 在预处理、推理和所需 D2H 操作都排入同一 stream 后记录。Stage 2 等待 event 和 stream 完成后才读取 host 输出。
 
+DFL 输出路径把 count 清零、每个尺度的 decode kernel、count D2H 和检测数组 D2H 都纳入 `enqueue()` 的布尔成功契约；任一 CUDA 调用失败都返回 false，由帧级错误路径排空 stream 并拒绝 collect。ring slot id 必须严格位于 `[0, 2]`，不再用取模把越界调用静默映射到另一帧缓冲。
+
 ## 从检测框到左右候选
 
 先保存左右全部 YOLO 候选，再枚举所有 `L × R` 组合。每个组合按固定顺序审计：

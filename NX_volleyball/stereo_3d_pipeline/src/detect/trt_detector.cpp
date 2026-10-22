@@ -367,7 +367,12 @@ bool TRTDetector::enqueue(int slotId,
                           int width, int height,
                           cudaStream_t stream)
 {
-    int sid = slotId % RING_BUFFER_SIZE;
+    if (slotId < 0 || slotId >= RING_BUFFER_SIZE) {
+        LOG_ERROR("[TRT] Invalid ring slot id: %d (expected 0..%d)",
+                  slotId, RING_BUFFER_SIZE - 1);
+        return false;
+    }
+    int sid = slotId;
     auto& b = buffers_[sid];
     auto* context = contexts_[sid];
     if (!gpuImageU8 || pitch <= 0 || width <= 0 || height <= 0) {
@@ -420,7 +425,11 @@ bool TRTDetector::enqueue(int slotId,
             // GPU DFL decode: launch kernel per scale on device buffers,
             // then copy only the small result to host (saves ~100KB D2H)
             constexpr int MAX_DFL_DET = 512;
-            cudaMemsetAsync(b.dflCountDevice, 0, sizeof(int), stream);
+            if (!checkCudaSubmit(
+                    cudaMemsetAsync(b.dflCountDevice, 0, sizeof(int), stream),
+                    "reset DFL detection count")) {
+                return false;
+            }
             for (size_t i = 0; i < b.scaleOutputs.size(); ++i) {
                 const auto& so = b.scaleOutputs[i];
                 if (!so.isCls) continue;
@@ -441,9 +450,10 @@ bool TRTDetector::enqueue(int slotId,
                     b.dflOutDevice, b.dflCountDevice,
                     so.h, so.w, so.channels, regMax_,
                     so.stride, confThreshold_, MAX_DFL_DET, stream);
-            }
-            if (!checkCudaSubmit(cudaGetLastError(), "DFL decode launch")) {
-                return false;
+                if (!checkCudaSubmit(cudaGetLastError(),
+                                     "DFL decode launch")) {
+                    return false;
+                }
             }
             // Copy small result: count + detections
             if (!checkCudaSubmit(
@@ -484,7 +494,12 @@ bool TRTDetector::enqueue(int slotId,
 }
 
 std::vector<Detection> TRTDetector::collect(int slotId, int width, int height) {
-    int sid = slotId % RING_BUFFER_SIZE;
+    if (slotId < 0 || slotId >= RING_BUFFER_SIZE) {
+        LOG_ERROR("[TRT] Invalid collect ring slot id: %d (expected 0..%d)",
+                  slotId, RING_BUFFER_SIZE - 1);
+        return {};
+    }
+    int sid = slotId;
     auto& b = buffers_[sid];
 
     if (useLetterbox_) {
