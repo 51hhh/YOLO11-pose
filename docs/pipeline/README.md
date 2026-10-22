@@ -84,8 +84,8 @@ PYTHONPATH=python python3 -m volleyball_vision config diff nx-rdk free-flight
 | 双路 YOLO 深度候选 | `src/pipeline/pipeline_dual_yolo_match.cpp` |
 | 最终候选选择 | `src/stereo/depth_candidate_*.cpp` |
 | 3D 融合与回调 | `src/pipeline/pipeline_roi_stage2.cpp` |
-| v2.1 采集队列、图像复制与收尾 | `src/utils/capture_v21_stage_recorder.*` |
-| v2.1 staging CSV 序列化合同 | `src/utils/capture_v21_stage_schema.*` |
+| v2.1 采集队列、图像复制与收尾 | `src/capture/capture_v21_stage_recorder.*` |
+| v2.1 staging CSV 序列化合同 | `src/capture/capture_v21_stage_schema.*` |
 | 可选实时调试落盘 | `src/diagnostics/realtime_debug_dump*` |
 | 本地可视化叠加 | `src/ui/display_*` |
 

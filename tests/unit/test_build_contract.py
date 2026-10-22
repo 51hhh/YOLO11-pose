@@ -47,7 +47,7 @@ class BuildContractTests(unittest.TestCase):
             / "adapters"
             / "legacy_nx"
             / "src"
-            / "utils"
+            / "capture"
             / "capture_v21_stage_schema.h"
         ).read_text(encoding="utf-8")
 

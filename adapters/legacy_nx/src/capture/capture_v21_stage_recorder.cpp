@@ -2,9 +2,9 @@
 
 #include "capture_v21_stage_schema.h"
 
-#include "logger.h"
-#include "vpi_image_copy.h"
 #include "../stereo/depth_match_contract.h"
+#include "../utils/logger.h"
+#include "../utils/vpi_image_copy.h"
 
 #include <algorithm>
 #include <chrono>

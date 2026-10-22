@@ -33,7 +33,7 @@ cmake --build --preset nx-legacy-release --parallel
 ```text
 config/       旧 C++ 字段的唯一兼容模板
 src/calibration/ 运行时双目标定加载
-src/capture/  海康取流、帧身份与 GPIO 触发
+src/capture/  海康取流、帧身份、GPIO 触发与 v2.1 staging 录制
 src/detect/   TensorRT 检测
 src/rectify/  VPI 校正
 src/stereo/   ROI、特征与深度候选
@@ -42,7 +42,7 @@ src/pipeline/ 实时流水线编排
 src/ros/      ROS2 发布适配
 src/diagnostics/ 可选实时调试 artifact 写出
 src/ui/       本地显示与点击测距叠加
-src/utils/    v2.1 staging 记录与底层工具
+src/utils/    VPI 图像访问、日志和性能计数等底层工具
 tools/        按可执行程序分目录的标定与硬件诊断入口
 ```
 

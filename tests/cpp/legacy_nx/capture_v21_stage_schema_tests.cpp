@@ -1,4 +1,4 @@
-#include "utils/capture_v21_stage_schema.h"
+#include "capture/capture_v21_stage_schema.h"
 
 #include <cstdlib>
 #include <iostream>
