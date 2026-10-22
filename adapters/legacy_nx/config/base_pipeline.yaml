@@ -21,9 +21,7 @@ camera:
   height: 1080
 
 calibration:
-  # Calibration is deployed beside the project directory:
-  # <workspace>/calibration/stereo_calib.yaml.
-  # 统一 CLI 会投影为仓库内标定文件的绝对路径。
+  # 统一 CLI 会把主线 configs/calibration/ 资产投影为绝对路径。
   file: "configs/calibration/stereo_calib.yaml"
 
 disparity_offset:
