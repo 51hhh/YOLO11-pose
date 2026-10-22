@@ -17,14 +17,16 @@
     "coordinate_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "origin", "x_axis", "y_axis", "z_axis", "handedness"],
+      "required": ["name", "origin", "x_axis", "y_axis", "z_axis", "handedness", "position_unit", "time_unit"],
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "origin": {"type": "string", "minLength": 1},
         "x_axis": {"type": "string", "minLength": 1},
         "y_axis": {"type": "string", "minLength": 1},
         "z_axis": {"type": "string", "minLength": 1},
-        "handedness": {"const": "right"}
+        "handedness": {"const": "right"},
+        "position_unit": {"const": "m"},
+        "time_unit": {"const": "s"}
       }
     },
     "capture": {
@@ -35,6 +37,19 @@
         "nominal_fps": {"type": "number", "exclusiveMinimum": 0},
         "sync_method": {"enum": ["hardware_trigger", "shared_clock", "flash", "audio", "software", "unknown"]},
         "estimated_sync_error_s": {"type": ["number", "null"], "minimum": 0},
+        "exposure_timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shutter_type", "timestamp_source", "delay_status", "delay_ns", "delay_uncertainty_ns", "observation_timestamp"],
+          "properties": {
+            "shutter_type": {"enum": ["global", "rolling", "unknown"]},
+            "timestamp_source": {"type": "string", "minLength": 1},
+            "delay_status": {"enum": ["assumed_zero_unmeasured", "measured", "unavailable"]},
+            "delay_ns": {"type": "integer", "minimum": 0},
+            "delay_uncertainty_ns": {"type": ["integer", "null"], "minimum": 0},
+            "observation_timestamp": {"enum": ["exposure_midpoint"]}
+          }
+        },
         "trajectory_timebase": {
           "type": "object",
           "additionalProperties": false,

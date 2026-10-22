@@ -23,10 +23,14 @@ cameras:
     pwm_duty_cycle: 50.0
     frame_identity_source: hik_frame_spec_info
     estimated_error_ns: 100000.0
-    # GPIO 写高是软件曝光参考；实际传感器曝光需把实测固定延迟写入下面两项。
+    # 已确认两台相机使用全局快门；球心观测时间取曝光开始加半个曝光时长。
+    shutter_type: global
+    # GPIO 上升沿估计是曝光开始参考。触发到实际曝光开始的固定延迟尚未测量，
+    # 当前明确按 0 假设；null 表示不能把该假设误解为“零不确定度”。
     exposure_timestamp_source: nx_gpio_rising_edge
+    exposure_delay_status: assumed_zero_unmeasured
     exposure_delay_ns: 0
-    exposure_delay_uncertainty_ns: 0
+    exposure_delay_uncertainty_ns: null
   left:
     id: hik-00D39342665
     serial: "00D39342665"

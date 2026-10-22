@@ -91,6 +91,8 @@ def _metadata(trial_id: str = "flight-000001") -> dict[str, object]:
             "y_axis": "down",
             "z_axis": "forward",
             "handedness": "right",
+            "position_unit": "m",
+            "time_unit": "s",
         },
         "capture": {
             "nominal_fps": 90.0,

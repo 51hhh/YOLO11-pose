@@ -22,6 +22,27 @@ USB 到达顺序允许是 `L_n,R_n,R_(n+1),L_(n+1)`；只要每侧队列内部�
 
 启动时需要连续 3 对水印帧建立左右设备时间偏移基线。前两对只在相机适配器内部消费；第一个交给管线的帧必须已经完成同步初始化。若 16 对内仍不能稳定，启动后的第一次抓帧直接失败，采集 trial 不得发布。
 
+## 曝光时间语义
+
+当前两台相机均按全局快门建模。一次直接球心观测使用以下整数纳秒时间：
+
+```text
+exposure_start_ns = map(gpio_rising_edge_estimate_ns) + exposure_delay_ns
+capture_timestamp_ns = exposure_start_ns + round(exposure_us * 1000 / 2)
+```
+
+`trigger_edge_*` 是 GPIO 写高调用前后时钟读数中点给出的上升沿估计，并用
+`trigger_write_uncertainty_ns` 保存该调用区间宽度；它不是示波器测得的电气边沿。
+当前 `exposure_delay_ns=0` 是尚未完成硬件测量时的显式假设，
+`exposure_delay_status=assumed_zero_unmeasured` 且
+`exposure_delay_uncertainty_ns=null`，不得解释为延迟已被证明为零。完成示波器或
+相机曝光输出测量后，必须改为 `measured` 并写入延迟及不确定度。
+
+`camera_frames.exposure_start_ns` 保留曝光开始；`capture_timestamp_ns` 保存全局曝光
+中心。`trajectory.csv` 使用左右 `capture_timestamp_ns` 的中点，metadata 中声明
+`timestamp_semantics=stereo_midpoint_capture`。旧 trial 若声明 `hardware_trigger`，仍按
+其原始语义读取，不得静默套用曝光中心校正。
+
 ## 数据包
 
 ```text
@@ -43,13 +64,13 @@ dataset-root/
     └── raw/audit/
 ```
 
-`trajectory.csv` 只保存直接三角化球心和测量协方差。速度、加速度、等效旋转、Magnus 参数、滤波状态及落点都属于 `derived/`。
+`trajectory.csv` 只保存直接三角化球心，并预留测量协方差列；当前协方差生产者尚未接入时允许整组留空。速度、加速度、等效旋转、Magnus 参数、滤波状态及落点都属于 `derived/`。
 
 ## 必须保留的证据
 
 - 左右相机实际序列号、角色、内外参、基线和标定误差；
 - 配置指纹、Git revision、模型权重 SHA-256；
-- 每帧 `FrameCounter`、设备时间、GPIO 曝光边沿和两侧 USB 到达时间；
+- 每帧 `FrameCounter`、设备时间、GPIO 上升沿估计、曝光开始、曝光中心和两侧 USB 到达时间；
 - 每个 2D 候选，包括低分和未选中候选；
 - 每个双目配对尝试，包括拒绝原因；
 - 原始图像、staging 原表和生成的旧管线配置；
@@ -63,7 +84,7 @@ dataset-root/
 - 实际帧数与触发次数不符；
 - 左右 FrameCounter 不相等、不连续或与触发序号不对齐；
 - GPIO 周期偏离配置，或设备时间序列与触发序列不一致；
-- USB 到达时间早于对应触发沿；
+- USB 到达时间早于对应触发沿或曝光中心；
 - 回调早于任一侧图像到达；
 - 原始图像缺失、路径逃逸、表头变化、跨表引用断裂；
 - 时间不单调、时钟映射不唯一、坐标系或协方差无效；

@@ -19,7 +19,7 @@ from .legacy_config import write_legacy_pipeline_config
 from .model_manifest import resolve_model, sha256_file
 
 
-STAGE_SCHEMA_VERSION = 3
+STAGE_SCHEMA_VERSION = 4
 STAGE_FRAME_COLUMNS = [
     "frame_id",
     "host_capture_timestamp_ns",
@@ -214,11 +214,16 @@ def build_capture_context(
         "profile": config.profile,
         "config_sha256": config.fingerprint_sha256,
         "exposure_timestamp": {
+            "shutter_type": config.data["cameras"]["sync"]["shutter_type"],
             "source": config.data["cameras"]["sync"]["exposure_timestamp_source"],
+            "delay_status": config.data["cameras"]["sync"][
+                "exposure_delay_status"
+            ],
             "delay_ns": config.data["cameras"]["sync"]["exposure_delay_ns"],
             "delay_uncertainty_ns": config.data["cameras"]["sync"][
                 "exposure_delay_uncertainty_ns"
             ],
+            "observation_timestamp": "exposure_midpoint",
         },
         "perception_pipeline": pipeline,
     }
@@ -342,11 +347,16 @@ def finalize_capture_stage(
     if context.get("config_sha256") != config.fingerprint_sha256:
         raise DatasetError("staging 使用的配置指纹与 finalize 配置不一致")
     expected_exposure = {
+        "shutter_type": config.data["cameras"]["sync"]["shutter_type"],
         "source": config.data["cameras"]["sync"]["exposure_timestamp_source"],
+        "delay_status": config.data["cameras"]["sync"][
+            "exposure_delay_status"
+        ],
         "delay_ns": config.data["cameras"]["sync"]["exposure_delay_ns"],
         "delay_uncertainty_ns": config.data["cameras"]["sync"][
             "exposure_delay_uncertainty_ns"
         ],
+        "observation_timestamp": "exposure_midpoint",
     }
     if context.get("exposure_timestamp") != expected_exposure:
         raise DatasetError("staging 曝光时间语义与 finalize 配置不一致")
@@ -558,8 +568,11 @@ def finalize_capture_stage(
     )
     if trigger_mapping is None or realtime_mapping is None:
         raise DatasetError("无法建立 NX GPIO 到相机设备时钟的映射")
-    edge_uncertainty_ns = max(write_uncertainty, default=0) + int(
-        expected_exposure["delay_uncertainty_ns"]
+    configured_delay_uncertainty = expected_exposure["delay_uncertainty_ns"]
+    edge_uncertainty_ns = max(write_uncertainty, default=0) + (
+        0
+        if configured_delay_uncertainty is None
+        else int(configured_delay_uncertainty)
     )
     trigger_mapping["uncertainty_ns"] = (
         float(trigger_mapping["uncertainty_ns"]) + edge_uncertainty_ns
@@ -568,7 +581,7 @@ def finalize_capture_stage(
         float(realtime_mapping["uncertainty_ns"]) + edge_uncertainty_ns
     )
     exposure_delay_ns = int(expected_exposure["delay_ns"])
-    exposure_times = [
+    exposure_start_times = [
         _map_timestamp(timestamp, trigger_mapping) + exposure_delay_ns
         for timestamp in edge_monotonic
     ]
@@ -584,10 +597,28 @@ def finalize_capture_stage(
         _map_timestamp(timestamp, realtime_mapping)
         for timestamp in callback_times
     ]
-    if any(right <= left for left, right in zip(exposure_times, exposure_times[1:])):
+    if any(
+        right <= left
+        for left, right in zip(exposure_start_times, exposure_start_times[1:])
+    ):
         raise DatasetError("映射后的曝光开始时间必须严格递增")
-    capture_times = [(timestamp, timestamp) for timestamp in exposure_times]
-    origin_ns = exposure_times[0]
+    # 全局快门在整幅图像上同时积分。对于运动球心，直接观测的有效时间取
+    # 曝光区间中点，而不是触发沿或曝光开始。曝光配置单位为微秒，这里四舍
+    # 五入到整数纳秒；左右曝光时长分别计算，避免未来配置不同时静默混用。
+    left_midpoint_offset_ns = round(
+        float(config.data["cameras"]["left"]["exposure_us"]) * 500.0
+    )
+    right_midpoint_offset_ns = round(
+        float(config.data["cameras"]["right"]["exposure_us"]) * 500.0
+    )
+    capture_times = [
+        (
+            exposure_start + left_midpoint_offset_ns,
+            exposure_start + right_midpoint_offset_ns,
+        )
+        for exposure_start in exposure_start_times
+    ]
+    origin_ns = round(sum(capture_times[0]) / 2)
     metadata = {
         "trial_id": context["trial_id"],
         "session_id": context["session_id"],
@@ -602,6 +633,8 @@ def finalize_capture_stage(
             "y_axis": "image down",
             "z_axis": "optical forward",
             "handedness": "right",
+            "position_unit": "m",
+            "time_unit": "s",
         },
         "capture": {
             "nominal_fps": config.data["runtime"]["nominal_fps"],
@@ -612,10 +645,22 @@ def finalize_capture_stage(
                 float(realtime_mapping["uncertainty_ns"]),
             )
             * 1.0e-9,
+            "exposure_timing": {
+                "shutter_type": expected_exposure["shutter_type"],
+                "timestamp_source": expected_exposure["source"],
+                "delay_status": expected_exposure["delay_status"],
+                "delay_ns": expected_exposure["delay_ns"],
+                "delay_uncertainty_ns": expected_exposure[
+                    "delay_uncertainty_ns"
+                ],
+                "observation_timestamp": expected_exposure[
+                    "observation_timestamp"
+                ],
+            },
             "trajectory_timebase": {
                 "clock_domain": camera_clock,
                 "origin_ns": origin_ns,
-                "timestamp_semantics": "hardware_trigger",
+                "timestamp_semantics": "stereo_midpoint_capture",
             },
         },
         "conditions": context.get("conditions", {}),
@@ -629,13 +674,15 @@ def finalize_capture_stage(
             row,
             (left_hardware, right_hardware),
             exposure_start,
+            (left_capture, right_capture),
             left_receive,
             right_receive,
             inference_done,
         ) in zip(
             frames,
             hardware_times,
-            exposure_times,
+            exposure_start_times,
+            capture_times,
             left_receive_times,
             right_receive_times,
             inference_done_times,
@@ -653,16 +700,24 @@ def finalize_capture_stage(
                 "dropped": False,
                 "drop_reason": None,
             }
-            for camera_id, hardware_timestamp, receive_timestamp, camera_config in (
+            for (
+                camera_id,
+                hardware_timestamp,
+                capture_timestamp,
+                receive_timestamp,
+                camera_config,
+            ) in (
                 (
                     left_id,
                     left_hardware,
+                    left_capture,
                     left_receive,
                     config.data["cameras"]["left"],
                 ),
                 (
                     right_id,
                     right_hardware,
+                    right_capture,
                     right_receive,
                     config.data["cameras"]["right"],
                 ),
@@ -673,7 +728,7 @@ def finalize_capture_stage(
                         **common,
                         "camera_id": camera_id,
                         "hardware_timestamp_ns": hardware_timestamp,
-                        "capture_timestamp_ns": exposure_start,
+                        "capture_timestamp_ns": capture_timestamp,
                         "receive_timestamp_ns": receive_timestamp,
                         "inference_done_timestamp_ns": inference_done,
                         "exposure_us": camera_config["exposure_us"],

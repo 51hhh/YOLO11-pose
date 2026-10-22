@@ -16,7 +16,7 @@
 namespace stereo3d {
 namespace {
 
-constexpr int kStageSchemaVersion = 3;
+constexpr int kStageSchemaVersion = 4;
 
 std::uint64_t realtimeNowNs() {
     return static_cast<std::uint64_t>(

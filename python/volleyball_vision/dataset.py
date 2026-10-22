@@ -266,6 +266,18 @@ def _validate_trial_tables(
 
     roles = calibration["camera_roles"]
     camera_ids = {roles["left"], roles["right"]}
+    exposure_timing = metadata["capture"].get("exposure_timing")
+    if exposure_timing is not None:
+        if (
+            exposure_timing["delay_status"] == "assumed_zero_unmeasured"
+            and (
+                exposure_timing["delay_ns"] != 0
+                or exposure_timing["delay_uncertainty_ns"] is not None
+            )
+        ):
+            raise DatasetError(
+                "未测量曝光延迟必须记录 delay_ns=0 且 delay_uncertainty_ns=null"
+            )
     frames: dict[tuple[str, int], dict[str, str]] = {}
     last_frame_index: dict[str, int] = {}
     last_capture_ns: dict[str, int] = {}
@@ -293,6 +305,31 @@ def _validate_trial_tables(
         known = [item for item in timestamps if item is not None]
         if any(right < left for left, right in zip(known, known[1:])):
             raise DatasetError(f"{prefix}: 曝光/采集/接收/推理时间顺序无效")
+        if exposure_timing is not None:
+            exposure_start_ns = timestamps[0]
+            capture_timestamp_ns = timestamps[1]
+            exposure_us = _finite(
+                row["exposure_us"], field_name=f"{prefix}.exposure_us"
+            )
+            if exposure_start_ns is None or capture_timestamp_ns is None:
+                raise DatasetError(
+                    f"{prefix}: 声明曝光时间模型后必须提供曝光开始和采集时间"
+                )
+            if exposure_us is None or exposure_us <= 0.0:
+                raise DatasetError(f"{prefix}: exposure_us 必须为正数")
+            if (
+                exposure_timing["shutter_type"] == "global"
+                and exposure_timing["observation_timestamp"]
+                == "exposure_midpoint"
+            ):
+                expected_capture_ns = exposure_start_ns + round(
+                    float(exposure_us) * 500.0
+                )
+                if capture_timestamp_ns != expected_capture_ns:
+                    raise DatasetError(
+                        f"{prefix}: 全局快门 capture_timestamp_ns "
+                        "必须等于曝光开始加半个曝光时长"
+                    )
         dropped = _boolean(row["dropped"], field_name=f"{prefix}.dropped")
         if dropped and not row["drop_reason"]:
             raise DatasetError(f"{prefix}: 丢帧必须记录 drop_reason")

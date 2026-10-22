@@ -33,7 +33,9 @@ cameras:
     pwm_duty_cycle: 50.0
     frame_identity_source: recorded
     estimated_error_ns: null
+    shutter_type: recorded
     exposure_timestamp_source: recorded
+    exposure_delay_status: recorded
     exposure_delay_ns: 0
     exposure_delay_uncertainty_ns: 0
   left:

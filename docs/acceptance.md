@@ -67,7 +67,7 @@ NX_volleyball/stereo_3d_pipeline/build/hik_frame_metadata_probe \
 - 触发周期抖动；
 - 不同曝光、帧率和 USB 负载下的变化。
 
-测量结果写入 `exposure_delay_ns`、`exposure_delay_uncertainty_ns` 和 `estimated_error_ns`。在完成此测量前，只能声称“共用触发沿”，不能声称绝对曝光同步误差已经被证明。
+测量结果写入 `exposure_delay_ns`、`exposure_delay_uncertainty_ns` 和 `estimated_error_ns`，并把 `exposure_delay_status` 从 `assumed_zero_unmeasured` 改为 `measured`。在完成此测量前，采集器按延迟 0 计算曝光中心，但不确定度保持未知；只能声称“共用触发沿”，不能声称绝对曝光同步误差已经被证明。
 
 ## D. 数据包质量
 

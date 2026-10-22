@@ -58,7 +58,7 @@
         },
         "sync": {
           "type": "object", "additionalProperties": false,
-          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "gpio_chip", "gpio_line", "pwm_duty_cycle", "frame_identity_source", "estimated_error_ns", "exposure_timestamp_source", "exposure_delay_ns", "exposure_delay_uncertainty_ns"],
+          "required": ["method", "clock_domain", "trigger_source", "trigger_activation", "gpio_chip", "gpio_line", "pwm_duty_cycle", "frame_identity_source", "estimated_error_ns", "shutter_type", "exposure_timestamp_source", "exposure_delay_status", "exposure_delay_ns", "exposure_delay_uncertainty_ns"],
           "properties": {
             "method": {"enum": ["hardware_trigger", "shared_clock", "recorded"]},
             "clock_domain": {"type": "string", "minLength": 1},
@@ -69,9 +69,11 @@
             "pwm_duty_cycle": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
             "frame_identity_source": {"enum": ["hik_frame_spec_info", "recorded"]},
             "estimated_error_ns": {"type": ["number", "null"], "minimum": 0},
+            "shutter_type": {"enum": ["global", "rolling", "recorded", "unknown"]},
             "exposure_timestamp_source": {"enum": ["nx_gpio_rising_edge", "recorded", "unavailable"]},
+            "exposure_delay_status": {"enum": ["assumed_zero_unmeasured", "measured", "recorded", "unavailable"]},
             "exposure_delay_ns": {"type": "integer", "minimum": 0},
-            "exposure_delay_uncertainty_ns": {"type": "integer", "minimum": 0}
+            "exposure_delay_uncertainty_ns": {"type": ["integer", "null"], "minimum": 0}
           }
         },
         "left": {"$ref": "#/$defs/camera"},

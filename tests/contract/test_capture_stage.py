@@ -15,7 +15,11 @@ from volleyball_vision.capture import (
     prepare_capture_stage,
 )
 from volleyball_vision.config import load_profile
-from volleyball_vision.dataset import validate_dataset, with_pipeline_fingerprint
+from volleyball_vision.dataset import (
+    DatasetError,
+    validate_dataset,
+    with_pipeline_fingerprint,
+)
 from volleyball_vision.replay import run_replay
 
 
@@ -66,9 +70,12 @@ class CaptureStageTests(unittest.TestCase):
             "profile": "free-flight",
             "config_sha256": profile.fingerprint_sha256,
             "exposure_timestamp": {
+                "shutter_type": "global",
                 "source": "nx_gpio_rising_edge",
+                "delay_status": "assumed_zero_unmeasured",
                 "delay_ns": 0,
-                "delay_uncertainty_ns": 0,
+                "delay_uncertainty_ns": None,
+                "observation_timestamp": "exposure_midpoint",
             },
             "perception_pipeline": pipeline,
         }
@@ -84,15 +91,17 @@ class CaptureStageTests(unittest.TestCase):
             left_device = 1_000_000_000 + frame_id * 11_111_111
             host = 2_000_000_000 + frame_id * 11_111_111
             trigger_monotonic = 3_000_010_000 + frame_id * 11_111_111
-            trigger_realtime = host - 2_000_000
+            # 9867 us 全局曝光完成后 USB payload 才能到达；让夹具保持真实的
+            # 曝光中心 < 接收 < callback 顺序。
+            trigger_realtime = host - 12_000_000
             # 刻意让左右 USB 到达先后在相邻帧间反转；配对仍必须由
             # FrameCounter/触发序号决定，不得由主机到达顺序决定。
             if frame_id == 0:
-                left_receive_delay = 1_500_000
-                right_receive_delay = 1_000_000
+                left_receive_delay = 10_500_000
+                right_receive_delay = 10_000_000
             else:
-                left_receive_delay = 900_000
-                right_receive_delay = 1_600_000
+                left_receive_delay = 9_900_000
+                right_receive_delay = 10_600_000
             left_rel = f"raw/left-{frame_id}.pgm"
             right_rel = f"raw/right-{frame_id}.pgm"
             (stage / left_rel).write_bytes(b"P5\n1 1\n255\n\x00")
@@ -204,10 +213,23 @@ class CaptureStageTests(unittest.TestCase):
             self.assertEqual(summary.trials[0].table_rows["stereo_pairs"], 2)
             self.assertEqual(summary.trials[0].table_rows["trajectory"], 2)
             metadata = json.loads((trial / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["coordinate_frame"]["position_unit"], "m")
+            self.assertEqual(metadata["coordinate_frame"]["time_unit"], "s")
             self.assertEqual(metadata["capture"]["trajectory_timebase"]["clock_domain"], "hik-shared-device-clock")
             self.assertEqual(
                 metadata["capture"]["trajectory_timebase"]["timestamp_semantics"],
-                "hardware_trigger",
+                "stereo_midpoint_capture",
+            )
+            self.assertEqual(
+                metadata["capture"]["exposure_timing"],
+                {
+                    "shutter_type": "global",
+                    "timestamp_source": "nx_gpio_rising_edge",
+                    "delay_status": "assumed_zero_unmeasured",
+                    "delay_ns": 0,
+                    "delay_uncertainty_ns": None,
+                    "observation_timestamp": "exposure_midpoint",
+                },
             )
             with (trial / "camera_frames.csv").open(encoding="utf-8") as handle:
                 camera_frames = list(csv.DictReader(handle))
@@ -216,9 +238,39 @@ class CaptureStageTests(unittest.TestCase):
                 camera_frames[1]["capture_timestamp_ns"],
             )
             self.assertEqual(
-                camera_frames[0]["exposure_start_ns"],
-                camera_frames[0]["capture_timestamp_ns"],
+                int(camera_frames[0]["capture_timestamp_ns"])
+                - int(camera_frames[0]["exposure_start_ns"]),
+                4_933_500,
             )
+            tampered = list(camera_frames)
+            tampered[0] = dict(tampered[0])
+            tampered[0]["capture_timestamp_ns"] = str(
+                int(tampered[0]["capture_timestamp_ns"]) - 1
+            )
+            with (trial / "camera_frames.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=list(tampered[0]),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerows(tampered)
+            with self.assertRaisesRegex(
+                DatasetError, "必须等于曝光开始加半个曝光时长"
+            ):
+                validate_dataset(dataset, project_root=ROOT)
+            with (trial / "camera_frames.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=list(camera_frames[0]),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerows(camera_frames)
             left_frames = [
                 row
                 for row in camera_frames

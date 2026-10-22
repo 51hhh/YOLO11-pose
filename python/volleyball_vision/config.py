@@ -272,6 +272,16 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("nx_gpio_rising_edge 只允许用于 hardware_trigger")
         if sync["trigger_activation"] != "RisingEdge":
             errors.append("nx_gpio_rising_edge 要求 trigger_activation=RisingEdge")
+        if sync["shutter_type"] != "global":
+            errors.append("当前曝光中心时间模型要求 shutter_type=global")
+    if sync["exposure_delay_status"] == "assumed_zero_unmeasured":
+        if sync["exposure_delay_ns"] != 0:
+            errors.append("未测量曝光延迟时 exposure_delay_ns 必须明确按 0 假设")
+        if sync["exposure_delay_uncertainty_ns"] is not None:
+            errors.append("未测量曝光延迟时 exposure_delay_uncertainty_ns 必须为 null")
+    elif sync["exposure_delay_status"] == "measured":
+        if sync["exposure_delay_uncertainty_ns"] is None:
+            errors.append("实测曝光延迟必须提供 exposure_delay_uncertainty_ns")
     if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
         errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
     if cameras["backend"] == "hik_mvs":

@@ -29,8 +29,11 @@ dataset-root/
 ## 不可破坏的语义
 
 - `trajectory.csv` 只保存直接三角化球心观测，不保存滤波位置、速度、加速度、动力学参数、预测轨迹或 RL 特征。
+- `coordinate_frame.position_unit` 固定为 `m`，`time_unit` 固定为 `s`，使视觉 trial 可由动力学仓库直接回读。
 - `detections_2d.csv` 保留左右相机的全部候选，不只保留最终框。
 - `stereo_pairs.csv` 保留接受和拒绝的每个关联尝试以及拒绝原因。
+- 全局快门采集同时保存 `exposure_start_ns` 与 `capture_timestamp_ns`；后者为曝光开始加半个曝光时长。轨迹时基声明为 `stereo_midpoint_capture`，使用左右曝光中心的中点。
+- `capture.exposure_timing` 记录快门类型、GPIO 时间来源、触发到曝光延迟的状态/数值/不确定度以及观测采用曝光中心。未实测延迟时必须显式标记 `assumed_zero_unmeasured`，不能用数值 0 冒充测量结论。
 - 相机设备时钟、主机时钟和轨迹参考时钟不得混写。跨时钟转换必须使用 `clock_mappings.csv` 中的有效区间映射。
 - 参考时钟转换用整数纳秒：`t_ref = a_ref + round((t_src - a_src) * (1 + drift_ppm * 1e-6))`。
 - 左右相机角色必须绑定实际 `camera_id`；两台相机序列号、固定外参和时钟域必须可审计。

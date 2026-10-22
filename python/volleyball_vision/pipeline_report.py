@@ -373,7 +373,18 @@ def build_pipeline_report(
             "trigger_source": sync["trigger_source"],
             "trigger_activation": sync["trigger_activation"],
             "frame_identity_source": sync["frame_identity_source"],
+            "shutter_type": sync["shutter_type"],
             "exposure_timestamp_source": sync["exposure_timestamp_source"],
+            "exposure_delay_status": sync["exposure_delay_status"],
+            "exposure_delay_ns": sync["exposure_delay_ns"],
+            "exposure_delay_uncertainty_ns": sync[
+                "exposure_delay_uncertainty_ns"
+            ],
+            "observation_timestamp_semantics": (
+                "exposure_midpoint"
+                if sync["shutter_type"] == "global"
+                else "recorded"
+            ),
             "transport": transport["interface"],
             "grab_strategy": transport["grab_strategy"],
             "embedded_info_clear_rows": transport["embedded_info_clear_rows"],

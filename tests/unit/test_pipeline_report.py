@@ -22,6 +22,18 @@ class PipelineReportTests(unittest.TestCase):
         self.assertTrue(report["runtime"]["live_pipeline"])
         self.assertFalse(report["image_products"]["black_white_iou_image"])
         self.assertFalse(report["association"]["shifted_iou_is_image"])
+        self.assertEqual(report["frame_identity"]["shutter_type"], "global")
+        self.assertEqual(
+            report["frame_identity"]["exposure_delay_status"],
+            "assumed_zero_unmeasured",
+        )
+        self.assertIsNone(
+            report["frame_identity"]["exposure_delay_uncertainty_ns"]
+        )
+        self.assertEqual(
+            report["frame_identity"]["observation_timestamp_semantics"],
+            "exposure_midpoint",
+        )
 
         candidates = {
             item["method"]: item for item in report["triangulation"]["candidates"]

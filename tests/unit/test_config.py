@@ -88,6 +88,20 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "FrameSpecInfo"):
             _validate_semantics(ROOT, payload)
 
+    def test_gpio_exposure_midpoint_requires_global_shutter(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["cameras"]["sync"]["shutter_type"] = "rolling"
+        with self.assertRaisesRegex(ConfigError, "shutter_type=global"):
+            _validate_semantics(ROOT, payload)
+
+    def test_unmeasured_exposure_delay_is_not_zero_uncertainty(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["cameras"]["sync"]["exposure_delay_uncertainty_ns"] = 0
+        with self.assertRaisesRegex(ConfigError, "必须为 null"):
+            _validate_semantics(ROOT, payload)
+
     def test_hik_transport_rejects_latest_frame_strategy(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

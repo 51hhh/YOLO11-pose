@@ -47,7 +47,8 @@ volleyball config pipeline-report --profile nx-rdk
 - 传输策略为 `one_by_one`；
 - 帧身份为 `hik_frame_spec_info`；
 - 触发源、沿、GPIO chip 和 line 非空；
-- 曝光时间来源为 `nx_gpio_rising_edge`；
+- 快门形式为 `global`，曝光时间来源为 `nx_gpio_rising_edge`；
+- 未测量触发到曝光延迟时，必须使用 `assumed_zero_unmeasured`、`delay=0` 和未知不确定度；实测后改为 `measured`；
 - 在线检测使用 TensorRT、正方形输入、`letterbox` 和 `bbox_center`；
 - 在线校正与三角化后端均为 CUDA；
 - 采集模式必须 `queue.overflow_policy=block`、`recording.loss_policy=fail_trial`、`raw_frames=all`。
