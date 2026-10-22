@@ -92,12 +92,6 @@ add_legacy_nx_test(fusion_timing_tests fusion_timing_tests.cpp)
 add_legacy_nx_test(exposure_timestamp_tests exposure_timestamp_tests.cpp)
 
 add_legacy_nx_test(
-  capture_v21_stage_schema_tests
-  capture_v21_stage_schema_tests.cpp
-  "${LEGACY_NX_SOURCE_DIR}/capture/capture_v21_stage_schema.cpp"
-)
-
-add_legacy_nx_test(
   main_cli_options_tests
   main_cli_options_tests.cpp
   ${LEGACY_NX_SOURCE_DIR}/main_cli_options.cpp

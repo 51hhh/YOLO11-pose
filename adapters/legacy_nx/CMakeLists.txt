@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.18)
 project(stereo_3d_pipeline LANGUAGES CXX CUDA)
 
+set(VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../capture_v21")
+if(NOT EXISTS
+   "${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/include/volleyball/adapters/capture_v21/stage_schema.hpp")
+  message(FATAL_ERROR
+    "Mainline capture_v21 adapter not found next to legacy_nx: "
+    "${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}")
+endif()
+
 # ==================== ROS2 ament_cmake ====================
 option(REQUIRE_ROS2 "Fail configuration when ROS2 dependencies are unavailable" OFF)
 find_package(ament_cmake QUIET)
@@ -175,6 +184,7 @@ endif()
 # ==================== 包含目录 ====================
 include_directories(
   ${CMAKE_SOURCE_DIR}/src
+  ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/include
   ${STEREO_OPENCV_INCLUDE_DIRS}
   ${TENSORRT_INCLUDE_DIR}
   ${CUDAToolkit_INCLUDE_DIRS}
@@ -241,7 +251,7 @@ set(PIPELINE_SOURCES
   src/fusion/hybrid_depth_track.cpp
   src/fusion/trajectory_predictor.cpp
   src/fusion/trajectory_predictor_fit.cpp
-  src/capture/capture_v21_stage_schema.cpp
+  ${VOLLEYBALL_CAPTURE_V21_ADAPTER_DIR}/src/stage_schema.cpp
   src/capture/capture_v21_stage_recorder.cpp
   src/utils/vpi_image_copy.cpp
   src/track/nanotrack_trt.cpp

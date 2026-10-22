@@ -1,6 +1,6 @@
 #include "capture_v21_stage_recorder.h"
 
-#include "capture_v21_stage_schema.h"
+#include "volleyball/adapters/capture_v21/stage_schema.hpp"
 
 #include "../stereo/depth_match_contract.h"
 #include "../utils/logger.h"
@@ -17,6 +17,7 @@
 #include <utility>
 
 namespace stereo3d {
+namespace capture_v21 = volleyball::adapters::capture_v21;
 namespace {
 
 std::uint64_t realtimeNowNs() {
@@ -123,9 +124,9 @@ bool CaptureV21StageRecorder::init(
     frames_file_.imbue(std::locale::classic());
     detections_file_.imbue(std::locale::classic());
     pairs_file_.imbue(std::locale::classic());
-    writeCaptureV21FrameHeader(frames_file_);
-    writeCaptureV21DetectionHeader(detections_file_);
-    writeCaptureV21PairHeader(pairs_file_);
+    capture_v21::writeCaptureV21FrameHeader(frames_file_);
+    capture_v21::writeCaptureV21DetectionHeader(detections_file_);
+    capture_v21::writeCaptureV21PairHeader(pairs_file_);
     if (!frames_file_ || !detections_file_ || !pairs_file_) {
         LOG_ERROR("CaptureV21: failed to write staging CSV headers");
         cfg_.enabled = false;
@@ -392,7 +393,7 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
             return false;
         }
     }
-    CaptureV21FrameRow frame_row;
+    capture_v21::CaptureV21FrameRow frame_row;
     frame_row.frame_id = frame.frame_id;
     frame_row.host_capture_timestamp_ns =
         frame.metadata.host_capture_timestamp_ns;
@@ -431,7 +432,9 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
     frame_row.right_trigger_index = frame.metadata.right_trigger_index;
     frame_row.raw_left = std::move(left_raw);
     frame_row.raw_right = std::move(right_raw);
-    if (!writeCaptureV21FrameRow(frames_file_, frame_row)) return false;
+    if (!capture_v21::writeCaptureV21FrameRow(frames_file_, frame_row)) {
+        return false;
+    }
 
     const auto accepted_index =
         selectSingleBallObservationPair(frame.pair_attempts);
@@ -447,7 +450,7 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
                                 const std::vector<bool>& selected) {
         for (std::size_t index = 0; index < candidates.size(); ++index) {
             const auto& detection = candidates[index];
-            CaptureV21DetectionRow row;
+            capture_v21::CaptureV21DetectionRow row;
             row.frame_id = frame.frame_id;
             row.camera_role = role;
             row.candidate_id = index;
@@ -458,7 +461,8 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
             row.confidence = detection.confidence;
             row.class_id = detection.class_id;
             row.selected = selected[index];
-            if (!writeCaptureV21DetectionRow(detections_file_, row)) {
+            if (!capture_v21::writeCaptureV21DetectionRow(
+                    detections_file_, row)) {
                 return false;
             }
         }
@@ -479,7 +483,7 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
         if (!accepted && reason == StereoRoiPairRejectReason::NONE) {
             reason = StereoRoiPairRejectReason::DEPTH_REJECTED;
         }
-        CaptureV21PairRow row;
+        capture_v21::CaptureV21PairRow row;
         row.pair_id = next_pair_id_++;
         row.frame_id = frame.frame_id;
         row.left_candidate_id = attempt.pair.left_index;
@@ -495,7 +499,9 @@ bool CaptureV21StageRecorder::writeFrame(const QueuedFrame& frame) {
         } else {
             row.reject_reason = stereoRoiPairRejectReasonName(reason);
         }
-        if (!writeCaptureV21PairRow(pairs_file_, row)) return false;
+        if (!capture_v21::writeCaptureV21PairRow(pairs_file_, row)) {
+            return false;
+        }
     }
     frames_file_.flush();
     detections_file_.flush();
@@ -519,7 +525,7 @@ void CaptureV21StageRecorder::writeStatus() {
     if (!status) return;
     status << "{\n"
            << "  \"stage_schema_version\": "
-           << kCaptureV21StageSchemaVersion << ",\n"
+           << capture_v21::kCaptureV21StageSchemaVersion << ",\n"
            << "  \"complete\": " << (complete ? "true" : "false") << ",\n"
            << "  \"fatal_error\": \"" << jsonEscape(fatal) << "\",\n"
            << "  \"frames_captured\": " << captured_frames_.load() << ",\n"

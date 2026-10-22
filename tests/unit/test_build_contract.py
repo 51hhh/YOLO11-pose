@@ -45,10 +45,12 @@ class BuildContractTests(unittest.TestCase):
         header = (
             ROOT
             / "adapters"
-            / "legacy_nx"
-            / "src"
-            / "capture"
-            / "capture_v21_stage_schema.h"
+            / "capture_v21"
+            / "include"
+            / "volleyball"
+            / "adapters"
+            / "capture_v21"
+            / "stage_schema.hpp"
         ).read_text(encoding="utf-8")
 
         version = re.search(

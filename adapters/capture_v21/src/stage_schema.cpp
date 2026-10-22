@@ -1,9 +1,9 @@
-#include "capture_v21_stage_schema.h"
+#include "volleyball/adapters/capture_v21/stage_schema.hpp"
 
 #include <iomanip>
 #include <ostream>
 
-namespace stereo3d {
+namespace volleyball::adapters::capture_v21 {
 namespace {
 
 template <std::size_t Size>
@@ -120,4 +120,4 @@ bool writeCaptureV21PairRow(
     return static_cast<bool>(output);
 }
 
-}  // namespace stereo3d
+}  // namespace volleyball::adapters::capture_v21

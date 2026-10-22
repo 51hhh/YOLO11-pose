@@ -81,6 +81,7 @@ PURE_CPP_LAYERS = (
     "ports",
     "algorithms",
     "services",
+    "adapters/capture_v21",
 )
 FORBIDDEN_HARDWARE_INCLUDES = re.compile(
     r"^\s*#\s*include\s*[<\"](?:cuda|vpi|NvInfer|opencv|rclcpp|"
@@ -103,6 +104,7 @@ CMAKE_SOURCE_GROUPS = (
     ("libs/core/src", "libs/core/CMakeLists.txt"),
     ("algorithms/stereo/src", "algorithms/stereo/CMakeLists.txt"),
     ("services/src", "services/CMakeLists.txt"),
+    ("adapters/capture_v21/src", "adapters/capture_v21/CMakeLists.txt"),
     ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
     ("adapters/legacy_nx/src", "adapters/legacy_nx/CMakeLists.txt"),
     ("adapters/legacy_nx/tools", "adapters/legacy_nx/CMakeLists.txt"),

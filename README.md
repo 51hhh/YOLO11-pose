@@ -51,6 +51,7 @@ python3 tools/check_repository.py
 | `algorithms/stereo/` | 纯双目关联、三角化和协方差传播 |
 | `services/` | 将端口与算法编排为观测用例 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
+| `adapters/capture_v21/` | 与硬件无关的 v2.1 staging 序列化适配器 |
 | `adapters/legacy_nx/` | 海康 MVS、GPIO、CUDA/VPI、TensorRT 与 ROS2 的 NX 实机适配器 |
 | `python/volleyball_vision/` | 配置、数据契约、采集编排、回放和离线评估 |
 | `configs/` | 默认值、硬件、标定、算法、模式和 profile 分层配置 |

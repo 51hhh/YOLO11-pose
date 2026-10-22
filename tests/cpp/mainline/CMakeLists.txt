@@ -20,6 +20,14 @@ target_link_libraries(stereo_algorithms_tests PRIVATE
 )
 
 add_mainline_test(
+  capture_v21_stage_schema_tests
+  capture_v21_stage_schema_tests.cpp
+)
+target_link_libraries(capture_v21_stage_schema_tests PRIVATE
+  volleyball::capture_v21
+)
+
+add_mainline_test(
   stereo_observation_service_tests
   stereo_observation_service_tests.cpp
 )

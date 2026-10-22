@@ -1,4 +1,4 @@
-#include "capture/capture_v21_stage_schema.h"
+#include "volleyball/adapters/capture_v21/stage_schema.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -7,6 +7,8 @@
 #include <vector>
 
 namespace {
+
+namespace capture_v21 = volleyball::adapters::capture_v21;
 
 int failures = 0;
 
@@ -40,12 +42,12 @@ std::vector<std::string> splitCsv(const std::string& line) {
 }  // namespace
 
 int main() {
-    check(stereo3d::kCaptureV21StageSchemaVersion == 4,
+    check(capture_v21::kCaptureV21StageSchemaVersion == 4,
           "stage schema version must remain explicit");
 
     {
         std::ostringstream header;
-        stereo3d::writeCaptureV21FrameHeader(header);
+        capture_v21::writeCaptureV21FrameHeader(header);
         check(
             lineFrom(header) ==
                 "frame_id,host_capture_timestamp_ns,callback_timestamp_ns,"
@@ -61,7 +63,7 @@ int main() {
                 "raw_left,raw_right",
             "frame header must match the Python staging contract");
 
-        stereo3d::CaptureV21FrameRow row;
+        capture_v21::CaptureV21FrameRow row;
         row.frame_id = 1;
         row.host_capture_timestamp_ns = 2;
         row.callback_timestamp_ns = 3;
@@ -88,7 +90,7 @@ int main() {
         row.raw_left = "raw/left/00000001.pgm";
         row.raw_right = "raw/right/00000001.pgm";
         std::ostringstream output;
-        check(stereo3d::writeCaptureV21FrameRow(output, row),
+        check(capture_v21::writeCaptureV21FrameRow(output, row),
               "valid frame row must serialize");
         const auto fields = splitCsv(lineFrom(output));
         const std::vector<std::string> expected = {
@@ -101,19 +103,19 @@ int main() {
 
         row.raw_left = "raw,left.pgm";
         std::ostringstream invalid;
-        check(!stereo3d::writeCaptureV21FrameRow(invalid, row),
+        check(!capture_v21::writeCaptureV21FrameRow(invalid, row),
               "unescaped CSV delimiter in a path must be rejected");
     }
 
     {
         std::ostringstream header;
-        stereo3d::writeCaptureV21DetectionHeader(header);
+        capture_v21::writeCaptureV21DetectionHeader(header);
         check(lineFrom(header) ==
                   "frame_id,camera_role,candidate_id,cx_px,cy_px,width_px,"
                   "height_px,confidence,class_id,selected",
               "detection header must match the Python staging contract");
 
-        stereo3d::CaptureV21DetectionRow row;
+        capture_v21::CaptureV21DetectionRow row;
         row.frame_id = 5;
         row.camera_role = "right";
         row.candidate_id = 7;
@@ -125,10 +127,10 @@ int main() {
         row.class_id = 2;
         row.selected = true;
         std::ostringstream output;
-        check(stereo3d::writeCaptureV21DetectionRow(output, row),
+        check(capture_v21::writeCaptureV21DetectionRow(output, row),
               "valid detection row must serialize");
         const auto fields = splitCsv(lineFrom(output));
-        check(fields.size() == stereo3d::kCaptureV21DetectionColumns.size(),
+        check(fields.size() == capture_v21::kCaptureV21DetectionColumns.size(),
               "detection row width must match its header");
         check(fields[1] == "right" && fields[9] == "true",
               "detection role and selection must keep their columns");
@@ -136,7 +138,7 @@ int main() {
 
     {
         std::ostringstream header;
-        stereo3d::writeCaptureV21PairHeader(header);
+        capture_v21::writeCaptureV21PairHeader(header);
         check(lineFrom(header) ==
                   "pair_id,frame_id,left_candidate_id,right_candidate_id,"
                   "disparity_px,epipolar_error_px,pair_score,"
@@ -144,7 +146,7 @@ int main() {
                   "reject_reason",
               "pair header must match the Python staging contract");
 
-        stereo3d::CaptureV21PairRow accepted;
+        capture_v21::CaptureV21PairRow accepted;
         accepted.pair_id = 1;
         accepted.frame_id = 2;
         accepted.left_candidate_id = 3;
@@ -156,24 +158,24 @@ int main() {
         accepted.position_rig_m = std::array<float, 3>{1.0F, 2.0F, 3.0F};
         accepted.accepted = true;
         std::ostringstream accepted_output;
-        check(stereo3d::writeCaptureV21PairRow(accepted_output, accepted),
+        check(capture_v21::writeCaptureV21PairRow(accepted_output, accepted),
               "accepted pair with position must serialize");
         const auto accepted_fields = splitCsv(lineFrom(accepted_output));
-        check(accepted_fields.size() == stereo3d::kCaptureV21PairColumns.size(),
+        check(accepted_fields.size() == capture_v21::kCaptureV21PairColumns.size(),
               "accepted pair row width must match its header");
         check(accepted_fields[8] == "1" && accepted_fields[10] == "3" &&
                   accepted_fields[11] == "true" && accepted_fields[12].empty(),
               "accepted pair must carry position and no reject reason");
 
-        stereo3d::CaptureV21PairRow rejected = accepted;
+        capture_v21::CaptureV21PairRow rejected = accepted;
         rejected.position_rig_m.reset();
         rejected.accepted = false;
         rejected.reject_reason = "epipolar_reject";
         std::ostringstream rejected_output;
-        check(stereo3d::writeCaptureV21PairRow(rejected_output, rejected),
+        check(capture_v21::writeCaptureV21PairRow(rejected_output, rejected),
               "rejected pair with reason must serialize");
         const auto rejected_fields = splitCsv(lineFrom(rejected_output));
-        check(rejected_fields.size() == stereo3d::kCaptureV21PairColumns.size(),
+        check(rejected_fields.size() == capture_v21::kCaptureV21PairColumns.size(),
               "rejected pair row width must match its header");
         check(rejected_fields[8].empty() && rejected_fields[9].empty() &&
                   rejected_fields[10].empty() && rejected_fields[11] == "false" &&
@@ -182,7 +184,7 @@ int main() {
 
         rejected.reject_reason.clear();
         std::ostringstream invalid;
-        check(!stereo3d::writeCaptureV21PairRow(invalid, rejected),
+        check(!capture_v21::writeCaptureV21PairRow(invalid, rejected),
               "rejected pair without a reason must be rejected");
     }
 

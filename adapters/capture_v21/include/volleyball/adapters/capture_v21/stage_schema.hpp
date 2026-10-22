@@ -1,10 +1,4 @@
-/**
- * @file capture_v21_stage_schema.h
- * @brief 与硬件无关的 capture v2.1 staging CSV 序列化合同。
- */
-
-#ifndef STEREO_3D_PIPELINE_CAPTURE_V21_STAGE_SCHEMA_H_
-#define STEREO_3D_PIPELINE_CAPTURE_V21_STAGE_SCHEMA_H_
+#pragma once
 
 #include <array>
 #include <cstdint>
@@ -13,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace stereo3d {
+namespace volleyball::adapters::capture_v21 {
 
 inline constexpr int kCaptureV21StageSchemaVersion = 4;
 
@@ -134,13 +128,11 @@ void writeCaptureV21FrameHeader(std::ostream& output);
 void writeCaptureV21DetectionHeader(std::ostream& output);
 void writeCaptureV21PairHeader(std::ostream& output);
 
-bool writeCaptureV21FrameRow(
+[[nodiscard]] bool writeCaptureV21FrameRow(
     std::ostream& output, const CaptureV21FrameRow& row);
-bool writeCaptureV21DetectionRow(
+[[nodiscard]] bool writeCaptureV21DetectionRow(
     std::ostream& output, const CaptureV21DetectionRow& row);
-bool writeCaptureV21PairRow(
+[[nodiscard]] bool writeCaptureV21PairRow(
     std::ostream& output, const CaptureV21PairRow& row);
 
-}  // namespace stereo3d
-
-#endif  // STEREO_3D_PIPELINE_CAPTURE_V21_STAGE_SCHEMA_H_
+}  // namespace volleyball::adapters::capture_v21
