@@ -1,0 +1,46 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "host-core-debug",
+      "displayName": "Host CPU core (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-core-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VOLLEYBALL_BUILD_TESTS": "ON",
+        "VOLLEYBALL_BUILD_LEGACY": "OFF"
+      }
+    },
+    {
+      "name": "host-core-release",
+      "displayName": "Host CPU core (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-core-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VOLLEYBALL_BUILD_TESTS": "ON",
+        "VOLLEYBALL_BUILD_LEGACY": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "host-core-debug", "configurePreset": "host-core-debug"},
+    {"name": "host-core-release", "configurePreset": "host-core-release"}
+  ],
+  "testPresets": [
+    {
+      "name": "host-core-debug",
+      "configurePreset": "host-core-debug",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "host-core-release",
+      "configurePreset": "host-core-release",
+      "output": {"outputOnFailure": true}
+    }
+  ]
+}
+
