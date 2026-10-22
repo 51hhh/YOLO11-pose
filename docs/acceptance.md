@@ -44,7 +44,7 @@ volleyball run --profile nx-rdk --dry-run
 先运行海康元数据探针，再录制至少 10 分钟静态场景和一批自由飞行：
 
 ```bash
-adapters/legacy_nx/build/hik_frame_metadata_probe \
+build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
   --left-sn 00D39342665 --right-sn 00219471413 \
   --pwm-hz 90 --frames 300
 ```

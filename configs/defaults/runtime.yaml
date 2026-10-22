@@ -67,7 +67,7 @@ calibration:
 
 adapters:
   legacy_pipeline:
-    executable: adapters/legacy_nx/build/stereo_pipeline
+    executable: build/nx-legacy-superbuild/legacy_nx/stereo_pipeline
     base_config: adapters/legacy_nx/config/base_pipeline.yaml
 
 rectification:

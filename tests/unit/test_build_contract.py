@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import unittest
 
+import yaml
+
 from volleyball_vision.capture import (
     STAGE_DETECTION_COLUMNS,
     STAGE_FRAME_COLUMNS,
@@ -40,6 +42,27 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('option(REQUIRE_HIK ', adapter_cmake)
         self.assertIn("if(REQUIRE_HIK)", adapter_cmake)
         self.assertIn("message(FATAL_ERROR", adapter_cmake)
+
+    def test_legacy_build_and_runtime_share_the_preset_build_tree(self) -> None:
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        runtime = yaml.safe_load(
+            (ROOT / "configs" / "defaults" / "runtime.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertIn(
+            'set(VOLLEYBALL_LEGACY_NX_BINARY_DIR "${CMAKE_BINARY_DIR}/legacy_nx")',
+            root_cmake,
+        )
+        self.assertIn(
+            'BINARY_DIR "${VOLLEYBALL_LEGACY_NX_BINARY_DIR}"', root_cmake
+        )
+        self.assertEqual(
+            runtime["adapters"]["legacy_pipeline"]["executable"],
+            "build/nx-legacy-superbuild/legacy_nx/stereo_pipeline",
+        )
+        self.assertNotIn("adapters/legacy_nx/build", root_cmake)
 
     def test_legacy_pipeline_consumes_the_standalone_hik_adapter(self) -> None:
         legacy_cmake = (

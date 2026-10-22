@@ -18,7 +18,6 @@
 /build/
 /build-*/
 /out/
-/adapters/legacy_nx/build/
 
 # 本地配置、模型与 TensorRT 引擎
 /configs/local.yaml

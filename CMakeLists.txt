@@ -32,11 +32,12 @@ endif()
 
 if(VOLLEYBALL_BUILD_LEGACY)
   include(ExternalProject)
+  set(VOLLEYBALL_LEGACY_NX_BINARY_DIR "${CMAKE_BINARY_DIR}/legacy_nx")
   # NX 适配器自己声明 CUDA 语言和硬件 SDK。作为独立外部工程构建，
   # 避免它的全局 include/flags 泄漏进新的纯 CPU 核心层。
   ExternalProject_Add(volleyball_legacy_nx
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/adapters/legacy_nx"
-    BINARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/adapters/legacy_nx/build"
+    BINARY_DIR "${VOLLEYBALL_LEGACY_NX_BINARY_DIR}"
     CMAKE_GENERATOR "${CMAKE_GENERATOR}"
     CMAKE_ARGS
       "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
@@ -49,7 +50,7 @@ if(VOLLEYBALL_BUILD_LEGACY)
       "${CMAKE_COMMAND}" --build <BINARY_DIR> --parallel
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS
-      "${CMAKE_CURRENT_SOURCE_DIR}/adapters/legacy_nx/build/stereo_pipeline"
+      "${VOLLEYBALL_LEGACY_NX_BINARY_DIR}/stereo_pipeline"
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
   )

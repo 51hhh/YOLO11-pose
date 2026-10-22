@@ -1,6 +1,6 @@
 # 实机与标定辅助工具
 
-主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。`adapters/legacy_nx/build/` 只保留与实机验收链直接相关的三个辅助程序：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
+主程序、正式采集和回放统一经根目录的 `volleyball` CLI 进入。`build/nx-legacy-superbuild/legacy_nx/` 只生成与实机验收链直接相关的三个辅助程序：`hik_frame_metadata_probe` 与 `capture_chessboard` 访问海康/GPIO，`stereo_calibrate` 仅离线读取标定图。一次性脚本不进入生产入口。
 
 ## 推荐顺序
 
@@ -13,8 +13,8 @@
 ## 帧元数据探针
 
 ```bash
-adapters/legacy_nx/build/hik_frame_metadata_probe --help
-adapters/legacy_nx/build/hik_frame_metadata_probe \
+build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe --help
+build/nx-legacy-superbuild/legacy_nx/hik_frame_metadata_probe \
   --left-sn <左相机序列号> --right-sn <右相机序列号> \
   --frames 1000 --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
 ```
@@ -24,8 +24,8 @@ adapters/legacy_nx/build/hik_frame_metadata_probe \
 ## 标定图采集
 
 ```bash
-adapters/legacy_nx/build/capture_chessboard --help
-adapters/legacy_nx/build/capture_chessboard \
+build/nx-legacy-superbuild/legacy_nx/capture_chessboard --help
+build/nx-legacy-superbuild/legacy_nx/capture_chessboard \
   --serial-left <左相机序列号> --serial-right <右相机序列号> \
   -o /path/to/new_calibration_images -e 9867 -g 11.9906 \
   --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
@@ -38,8 +38,8 @@ adapters/legacy_nx/build/capture_chessboard \
 ## 双目标定
 
 ```bash
-adapters/legacy_nx/build/stereo_calibrate --help
-adapters/legacy_nx/build/stereo_calibrate \
+build/nx-legacy-superbuild/legacy_nx/stereo_calibrate --help
+build/nx-legacy-superbuild/legacy_nx/stereo_calibrate \
   --images-dir /path/to/calibration_images \
   --square-size <方格边长毫米> \
   --output /tmp/new_stereo_calib.yaml
