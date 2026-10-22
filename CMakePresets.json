@@ -24,11 +24,26 @@
         "VOLLEYBALL_BUILD_TESTS": "ON",
         "VOLLEYBALL_BUILD_LEGACY": "OFF"
       }
+    },
+    {
+      "name": "nx-legacy-release",
+      "displayName": "Jetson Orin NX legacy adapter (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/nx-legacy-superbuild",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VOLLEYBALL_BUILD_TESTS": "OFF",
+        "VOLLEYBALL_BUILD_LEGACY": "ON",
+        "VOLLEYBALL_CUDA_ARCH": "87",
+        "VOLLEYBALL_REQUIRE_ROS2": "ON",
+        "VOLLEYBALL_MVS_SDK_ROOT": "/opt/MVS"
+      }
     }
   ],
   "buildPresets": [
     {"name": "host-core-debug", "configurePreset": "host-core-debug"},
-    {"name": "host-core-release", "configurePreset": "host-core-release"}
+    {"name": "host-core-release", "configurePreset": "host-core-release"},
+    {"name": "nx-legacy-release", "configurePreset": "nx-legacy-release"}
   ],
   "testPresets": [
     {
