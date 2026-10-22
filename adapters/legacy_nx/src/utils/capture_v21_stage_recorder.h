@@ -108,7 +108,7 @@ private:
 
     bool copyGrayImage(VPIImage image, cv::Mat& out) const;
     bool writePgm(const std::string& path, const cv::Mat& image) const;
-    void writerLoop();
+    void writerLoop() noexcept;
     bool writeFrame(const QueuedFrame& frame);
     void setFatal(std::string message);
     void writeStatus();

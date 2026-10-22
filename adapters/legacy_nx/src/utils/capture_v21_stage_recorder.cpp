@@ -148,7 +148,24 @@ bool CaptureV21StageRecorder::init(
     capture_complete_ = false;
     status_publishable_ = false;
     running_ = true;
-    writer_thread_ = std::thread(&CaptureV21StageRecorder::writerLoop, this);
+    try {
+        writer_thread_ =
+            std::thread(&CaptureV21StageRecorder::writerLoop, this);
+    } catch (const std::exception& error) {
+        running_ = false;
+        ++write_failures_;
+        LOG_ERROR("CaptureV21: failed to start writer thread: %s", error.what());
+        setFatal("failed to start capture staging writer thread");
+        writeStatus();
+        return false;
+    } catch (...) {
+        running_ = false;
+        ++write_failures_;
+        LOG_ERROR("CaptureV21: unknown failure starting writer thread");
+        setFatal("unknown failure starting capture staging writer thread");
+        writeStatus();
+        return false;
+    }
     LOG_INFO("CaptureV21 armed: dir=%s frames=%d queue=%zu raw=%s",
              cfg_.output_dir.c_str(), cfg_.frame_limit, cfg_.queue_capacity,
              cfg_.raw_frames.c_str());
@@ -323,28 +340,40 @@ void CaptureV21StageRecorder::record(const FrameCallbackData& frame) {
     }
 }
 
-void CaptureV21StageRecorder::writerLoop() {
-    while (true) {
-        QueuedFrame frame;
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_not_empty_.wait(lock, [this] {
-                return !running_.load() || !queue_.empty();
-            });
-            if (queue_.empty()) {
-                if (!running_.load()) break;
-                continue;
+void CaptureV21StageRecorder::writerLoop() noexcept {
+    try {
+        while (true) {
+            QueuedFrame frame;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex_);
+                queue_not_empty_.wait(lock, [this] {
+                    return !running_.load() || !queue_.empty();
+                });
+                if (queue_.empty()) {
+                    if (!running_.load()) break;
+                    continue;
+                }
+                frame = std::move(queue_.front());
+                queue_.pop_front();
             }
-            frame = std::move(queue_.front());
-            queue_.pop_front();
+            queue_not_full_.notify_one();
+            if (!writeFrame(frame)) {
+                ++write_failures_;
+                setFatal("failed to write capture staging frame");
+            } else {
+                ++written_frames_;
+            }
         }
-        queue_not_full_.notify_one();
-        if (!writeFrame(frame)) {
-            ++write_failures_;
-            setFatal("failed to write capture staging frame");
-        } else {
-            ++written_frames_;
-        }
+    } catch (const std::exception& error) {
+        running_ = false;
+        ++write_failures_;
+        LOG_ERROR("CaptureV21: writer thread failed: %s", error.what());
+        setFatal("capture staging writer raised an exception");
+    } catch (...) {
+        running_ = false;
+        ++write_failures_;
+        LOG_ERROR("CaptureV21: writer thread failed with unknown exception");
+        setFatal("capture staging writer raised an unknown exception");
     }
 }
 
