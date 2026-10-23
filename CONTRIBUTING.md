@@ -26,10 +26,10 @@ chore(ci): 增加 CPU 契约门禁
 - `adapters` 实现硬件、推理、存储和中间件边界。
 - 用户命令统一由 `volleyball_vision.cli` 编排，唯一部署进程位于 `apps/nx_mainline/`；`apps/` 只负责装配、进程生命周期和退出状态，不得实现立体匹配算法。
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
-- `tests/cpp/mainline` 不得包含硬件 SDK 头文件；独立硬件 adapter 的 SDK 桩测试放入 `tests/cpp/adapters`。
+- `tests/cpp/mainline` 不得包含硬件 SDK 头文件；独立硬件 adapter 的行为测试放入 `tests/cpp/adapters`，可复用 SDK/运行时替身只放入 `tests/cpp/fakes`。
 - `tools` 只保留仓库级维护门禁和 `tools/hardware` 下的受测硬件验收程序；可复用用户流程必须成为 `volleyball` 子命令。
 - 说明文档集中在 `docs` 的已声明分组中；根目录只保留 `README.md` 与本文件，冻结数据契约可在契约目录就近保留一个 `README.md`。
-- Python 测试只进入 `tests/unit`、`tests/contract` 或共享夹具 `tests/support`；C++ 测试按 `mainline`、`adapters`、`hardware_tools` 分组，共用 SDK 桩和端口替身只进入 `tests/cpp/fakes`。
+- Python 测试只进入 `tests/unit`、`tests/contract` 或共享夹具 `tests/support`；C++ 测试按 `mainline`、`adapters`、`hardware_tools` 分组，共用 SDK 桩、运行时替身和端口替身只进入 `tests/cpp/fakes`。
 
 ## 必跑检查
 
