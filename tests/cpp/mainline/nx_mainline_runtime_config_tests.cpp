@@ -22,7 +22,7 @@ void check(bool condition, const char* message) {
 }
 
 std::string validCaptureYaml() {
-    return R"YAML(schema_version: 3
+    return R"YAML(schema_version: 4
 profile: free-flight
 config_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 runtime:
@@ -67,6 +67,7 @@ trigger:
   duty_cycle: 50
 calibration:
   file: /tmp/stereo.yaml
+  sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   rig_frame: left-optical
   output_width: 1440
   output_height: 1080
@@ -153,6 +154,8 @@ void testValidCaptureConfig() {
     check(error.empty() && config.runtime.frame_limit == 90 &&
               config.runtime.capture_stage &&
               config.detector.output_contract == "yolo_pre_nms" &&
+              config.calibration.sha256 ==
+                  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&
               config.detector.class_count == 1 &&
               config.association.max_capture_delta_ns == 100000 &&
               config.depth.anchor_stddev_px == 0.5 &&
@@ -202,6 +205,15 @@ void testRejectsUnknownAndIllTypedFields() {
     error.clear();
     check(!load(unhashed, 5, error),
           "an unpinned TensorRT engine must fail before hardware startup");
+
+    std::string unhashed_calibration = validCaptureYaml();
+    replaceOnce(
+        unhashed_calibration,
+        "sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sha256: null");
+    error.clear();
+    check(!load(unhashed_calibration, 10, error),
+          "an unpinned stereo calibration must fail before hardware startup");
 
     std::string out_of_range_class = validCaptureYaml();
     replaceOnce(out_of_range_class, "class_id: 0", "class_id: 1");

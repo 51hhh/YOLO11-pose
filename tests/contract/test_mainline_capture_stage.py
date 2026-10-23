@@ -76,6 +76,10 @@ class MainlineCaptureStageTests(unittest.TestCase):
         )
         self.assertTrue(context["planning_only"])
         self.assertEqual(context["config_sha256"], profile.fingerprint_sha256)
+        self.assertEqual(
+            context["calibration_source_sha256"],
+            profile.data["calibration"]["sha256"],
+        )
 
     def _stage(
         self,
@@ -107,6 +111,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
             "session_id": "session-a",
             "ball_id": "ball-01",
             "calibration_id": "vehicle-stereo-main",
+            "calibration_source_sha256": profile.data["calibration"]["sha256"],
             "captured_at_utc": "2026-10-22T00:00:00Z",
             "trajectory_kind": "free_flight",
             "conditions": {

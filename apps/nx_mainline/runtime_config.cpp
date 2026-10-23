@@ -212,9 +212,10 @@ void parseTrigger(const YAML::Node& node, TriggerSettings& output) {
 void parseCalibration(const YAML::Node& node, CalibrationSettings& output) {
     exactKeys(
         node,
-        {"file", "rig_frame", "output_width", "output_height"},
+        {"file", "sha256", "rig_frame", "output_width", "output_height"},
         "calibration");
     output.file = absolutePath(node, "file", "calibration");
+    output.sha256 = scalar<std::string>(node, "sha256", "calibration");
     output.rig_frame =
         scalar<std::string>(node, "rig_frame", "calibration");
     output.output_width = scalar<int>(node, "output_width", "calibration");
@@ -388,7 +389,8 @@ void validate(const MainlineRuntimeConfig& value) {
         std::abs(value.trigger.frequency_hz - value.runtime.nominal_fps) > 1e-9) {
         throw std::runtime_error("trigger configuration is invalid");
     }
-    if (value.calibration.rig_frame.empty() ||
+    if (!sha256(value.calibration.sha256) ||
+        value.calibration.rig_frame.empty() ||
         value.calibration.output_width != value.camera.width ||
         value.calibration.output_height != value.camera.height) {
         throw std::runtime_error("calibration output geometry is invalid");
@@ -478,7 +480,7 @@ bool loadRuntimeConfig(
              "camera", "clocks", "trigger", "calibration", "detector",
              "association", "depth", "publisher", "diagnostics"},
             "root");
-        if (scalar<int>(root, "schema_version", "root") != 3) {
+        if (scalar<int>(root, "schema_version", "root") != 4) {
             throw std::runtime_error("unsupported mainline config schema_version");
         }
         output.profile = scalar<std::string>(root, "profile", "root");

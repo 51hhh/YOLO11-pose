@@ -29,6 +29,10 @@ class MainlineConfigTests(unittest.TestCase):
         self.assertIsNone(payload["runtime"]["capture_stage"])
         self.assertTrue(payload["publisher"]["enabled"])
         self.assertTrue(Path(payload["calibration"]["file"]).is_absolute())
+        self.assertEqual(
+            payload["calibration"]["sha256"],
+            profile.data["calibration"]["sha256"],
+        )
         self.assertTrue(Path(payload["detector"]["engine_file"]).is_absolute())
         self.assertEqual(payload["detector"]["output_contract"], "yolo_pre_nms")
         self.assertEqual(payload["detector"]["class_count"], 1)

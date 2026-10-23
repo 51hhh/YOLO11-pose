@@ -12,7 +12,8 @@ from typing import Callable, Iterable, Mapping
 
 from .calibration import load_opencv_stereo_calibration
 from .config import ResolvedConfig, find_project_root
-from .model_manifest import resolve_model, sha256_file
+from .hashing import sha256_file
+from .model_manifest import resolve_model
 from .runtime import mainline_executable
 from .runtime_dependencies import (
     DependencyProbe,
@@ -255,6 +256,22 @@ def run_doctor(
     calibration_check = _check_path("calibration", calibration)
     checks.append(calibration_check)
     if calibration_check.status == "ok":
+        actual_calibration_sha = sha256_file(calibration)
+        expected_calibration_sha = config.data["calibration"]["sha256"]
+        checks.append(
+            DoctorCheck(
+                "calibration_sha256",
+                "ok"
+                if actual_calibration_sha == expected_calibration_sha
+                else "error",
+                actual_calibration_sha
+                if actual_calibration_sha == expected_calibration_sha
+                else (
+                    f"期望 {expected_calibration_sha}，"
+                    f"实际 {actual_calibration_sha}"
+                ),
+            )
+        )
         try:
             loaded = load_opencv_stereo_calibration(calibration)
             checks.append(

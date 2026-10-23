@@ -7,7 +7,11 @@ from pathlib import Path
 import subprocess
 from typing import Any, Iterable, Mapping
 
-from .calibration import build_capture_calibration, ensure_dataset_calibration
+from .calibration import (
+    build_capture_calibration,
+    ensure_dataset_calibration,
+    resolve_calibration_source,
+)
 from .capture_stage_io import (
     environment_record,
     parse_bool,
@@ -104,6 +108,9 @@ def build_mainline_capture_context(
     """生成不可变的主线 v6 staging 身份与感知流水线指纹。"""
 
     root = find_project_root(project_root)
+    _, calibration_source_sha256 = resolve_calibration_source(
+        config, project_root=root
+    )
     entry, artifact = resolve_model(config, project_root=root)
     expected = entry.get("sha256")
     if artifact.is_file():
@@ -147,6 +154,7 @@ def build_mainline_capture_context(
         "session_id": session_id,
         "ball_id": ball_id,
         "calibration_id": config.data["calibration"]["id"],
+        "calibration_source_sha256": calibration_source_sha256,
         "captured_at_utc": _utc_now(),
         "trajectory_kind": trajectory_kind,
         "conditions": dict(conditions or {}),

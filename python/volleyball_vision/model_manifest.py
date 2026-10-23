@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .config import ConfigError, ResolvedConfig, find_project_root
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
+from .hashing import sha256_file
 
 
 def resolve_model(

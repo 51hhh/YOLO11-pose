@@ -8,12 +8,13 @@ from typing import Any
 
 import yaml
 
+from .calibration import resolve_calibration_source
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .model_manifest import resolve_model
 from .triangulation_config import SUPPORTED_LIVE_METHODS
 
 
-MAINLINE_CONFIG_SCHEMA_VERSION = 3
+MAINLINE_CONFIG_SCHEMA_VERSION = 4
 
 
 def _selection_order(triangulation: dict[str, Any]) -> list[str]:
@@ -97,7 +98,9 @@ def build_mainline_pipeline_config(
         )
 
     model, artifact = resolve_model(config, project_root=root)
-    calibration_file = (root / config.data["calibration"]["file"]).resolve()
+    calibration_file, calibration_sha256 = resolve_calibration_source(
+        config, project_root=root
+    )
     source_epoch_file = Path(
         config.data["adapters"]["mainline_pipeline"]["source_epoch_file"]
     )
@@ -163,6 +166,7 @@ def build_mainline_pipeline_config(
         },
         "calibration": {
             "file": str(calibration_file),
+            "sha256": calibration_sha256,
             "rig_frame": config.data["calibration"]["rig_frame"],
             "output_width": config.data["rectification"]["output_resolution"][0],
             "output_height": config.data["rectification"]["output_resolution"][1],

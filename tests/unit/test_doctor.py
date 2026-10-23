@@ -24,6 +24,7 @@ class DoctorTests(unittest.TestCase):
                 command_lookup=lambda command: f"/usr/bin/{command}",
             )
         by_name = {check.name: check for check in checks}
+        self.assertEqual(by_name["calibration_sha256"].status, "ok")
         self.assertEqual(by_name["model"].status, "skipped")
         self.assertEqual(by_name["pipeline_executable"].status, "skipped")
         self.assertNotIn("gpio_device", by_name)

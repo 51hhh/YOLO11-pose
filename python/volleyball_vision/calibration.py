@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any, Mapping
 
 from .config import ConfigError, ResolvedConfig, find_project_root
 from .dataset import DatasetError, validate_calibration
+from .hashing import sha256_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,12 +28,28 @@ class OpenCvStereoCalibration:
     projection_right: tuple[float, ...]
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
+def resolve_calibration_source(
+    config: ResolvedConfig,
+    *,
+    project_root: str | Path | None = None,
+) -> tuple[Path, str]:
+    """解析并复核配置声明的不可变 OpenCV 标定资产。"""
+
+    root = find_project_root(project_root)
+    calibration = config.data["calibration"]
+    source = (root / calibration["file"]).resolve()
+    if source != root and root not in source.parents:
+        raise ConfigError("calibration.file 不得逃逸项目目录")
+    if not source.is_file():
+        raise ConfigError(f"calibration.file 不存在: {source}")
+    actual = sha256_file(source)
+    expected = calibration["sha256"]
+    if actual != expected:
+        raise ConfigError(
+            "calibration.sha256 与标定文件内容不一致: "
+            f"期望 {expected}，实际 {actual}"
+        )
+    return source, actual
 
 
 def _scalar(text: str, key: str) -> float:
@@ -114,7 +130,9 @@ def build_capture_calibration(
     calibration_config = config.data["calibration"]
     if calibration_config["format"] != "opencv_yaml":
         raise ConfigError("当前转换器只接受 calibration.format=opencv_yaml")
-    source = root / calibration_config["file"]
+    source, source_sha256 = resolve_calibration_source(
+        config, project_root=root
+    )
     stereo = load_opencv_stereo_calibration(source)
     expected_size = list(config.data["rectification"]["output_resolution"])
     if expected_size != [stereo.image_width, stereo.image_height]:
@@ -166,7 +184,7 @@ def build_capture_calibration(
         "baseline_m": stereo.baseline_m,
         "notes": (
             "校正后 rectified_gray8 相机模型；源 OpenCV 标定 "
-            f"{source.relative_to(root)} sha256={_sha256(source)}。"
+            f"{source.relative_to(root)} sha256={source_sha256}。"
             "右目设备时间戳在采集时映射到左目设备时钟。"
         ),
     }

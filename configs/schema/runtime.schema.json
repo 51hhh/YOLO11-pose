@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://volleyball.local/config/runtime-v2.schema.json",
+  "$id": "https://volleyball.local/config/runtime-v3.schema.json",
   "title": "Volleyball vision resolved runtime configuration",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "recording", "publisher", "diagnostics"],
   "properties": {
-    "schema_version": {"const": 2},
+    "schema_version": {"const": 3},
     "runtime": {
       "type": "object", "additionalProperties": false,
       "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue"],
@@ -74,11 +74,12 @@
     },
     "calibration": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "created_at_utc", "file", "format", "rig_frame"],
+      "required": ["id", "created_at_utc", "file", "sha256", "format", "rig_frame"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "created_at_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"},
         "file": {"$ref": "#/$defs/path"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "format": {"const": "opencv_yaml"},
         "rig_frame": {"type": "string", "minLength": 1}
       }

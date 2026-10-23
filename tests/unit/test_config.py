@@ -236,6 +236,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "serial"):
             _validate_semantics(ROOT, payload)
 
+    def test_semantics_rejects_calibration_content_hash_mismatch(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["calibration"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ConfigError, "标定文件内容不一致"):
+            _validate_semantics(ROOT, payload)
+
     def test_semantics_reject_enabled_publisher_without_backend(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

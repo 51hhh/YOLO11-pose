@@ -55,7 +55,8 @@ tensorrt::DetectorOutputContract outputContract(const std::string& value) {
 std::string sha256File(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("cannot open model engine: " + path.string());
+        throw std::runtime_error(
+            "cannot open asset for SHA-256: " + path.string());
     }
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(
         EVP_MD_CTX_new(), &EVP_MD_CTX_free);
@@ -74,7 +75,8 @@ std::string sha256File(const std::filesystem::path& path) {
         }
     }
     if (!input.eof()) {
-        throw std::runtime_error("cannot read model engine: " + path.string());
+        throw std::runtime_error(
+            "cannot read asset for SHA-256: " + path.string());
     }
     std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
     unsigned int digest_size = 0;
@@ -252,6 +254,14 @@ services::RunSummary runMainlineApplication(
         throw std::runtime_error(
             "TensorRT engine SHA-256 mismatch: expected " +
             config.detector.engine_sha256 + ", actual " + actual_engine_sha);
+    }
+    const std::string actual_calibration_sha =
+        sha256File(config.calibration.file);
+    if (actual_calibration_sha != config.calibration.sha256) {
+        throw std::runtime_error(
+            "stereo calibration SHA-256 mismatch: expected " +
+            config.calibration.sha256 + ", actual " +
+            actual_calibration_sha);
     }
 
     cuda_preprocess::StereoRemapMaps maps;

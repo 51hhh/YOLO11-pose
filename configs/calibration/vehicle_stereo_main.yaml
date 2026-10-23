@@ -3,6 +3,8 @@ calibration:
   # 标定资产的固定创建时间；不得使用 checkout 后的文件 mtime。
   created_at_utc: "2026-07-14T19:08:55Z"
   file: configs/calibration/stereo_calib.yaml
+  # 内容哈希是资产身份的一部分；替换标定必须同时更换 ID 并更新此值。
+  sha256: 218843ed05ed7725ab7f37484cc548e827e3fbc87ed548f0db35cf5eaf7a2334
   format: opencv_yaml
   # 校正后的三角化坐标原点和轴向均属于左目校正光学坐标系。
   rig_frame: nx_left_rectified_optical_frame

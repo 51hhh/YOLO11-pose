@@ -6,6 +6,7 @@ import unittest
 from volleyball_vision.calibration import (
     build_capture_calibration,
     load_opencv_stereo_calibration,
+    resolve_calibration_source,
 )
 from volleyball_vision.config import load_profile
 
@@ -21,6 +22,11 @@ class CalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(loaded.baseline_m, 0.8531543824782482)
 
         profile = load_profile("free-flight", project_root=ROOT)
+        resolved_source, source_sha256 = resolve_calibration_source(
+            profile, project_root=ROOT
+        )
+        self.assertEqual(resolved_source, source)
+        self.assertEqual(source_sha256, profile.data["calibration"]["sha256"])
         converted = build_capture_calibration(profile, project_root=ROOT)
         self.assertEqual(
             converted["created_at_utc"],

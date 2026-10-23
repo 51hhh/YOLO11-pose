@@ -59,6 +59,7 @@ struct TriggerSettings {
 
 struct CalibrationSettings {
     std::filesystem::path file;
+    std::string sha256;
     std::string rig_frame;
     int output_width{0};
     int output_height{0};

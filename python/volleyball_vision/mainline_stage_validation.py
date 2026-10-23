@@ -150,6 +150,10 @@ def _validate_context_and_tables(
         raise DatasetError("mainline staging 配置指纹与 finalize 配置不一致")
     if context.get("calibration_id") != config.data["calibration"]["id"]:
         raise DatasetError("mainline staging 标定 ID 与 finalize 配置不一致")
+    if context.get("calibration_source_sha256") != config.data["calibration"][
+        "sha256"
+    ]:
+        raise DatasetError("mainline staging 标定哈希与 finalize 配置不一致")
     exposure = expected_exposure(config)
     if context.get("exposure_timestamp") != exposure:
         raise DatasetError("mainline staging 曝光时间语义与 finalize 配置不一致")

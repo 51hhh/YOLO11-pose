@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping
 import jsonschema
 import yaml
 
+from .hashing import sha256_file
 from .triangulation_config import triangulation_semantic_errors
 
 
@@ -235,6 +236,23 @@ def _validate_schema(root: Path, payload: Mapping[str, Any]) -> None:
 
 def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     errors: list[str] = []
+    calibration = payload["calibration"]
+    calibration_path = (root / calibration["file"]).resolve()
+    if calibration_path != root and root not in calibration_path.parents:
+        errors.append("calibration.file 不得逃逸项目目录")
+    elif not calibration_path.is_file():
+        errors.append(f"calibration.file 不存在: {calibration_path}")
+    else:
+        try:
+            actual_calibration_sha = sha256_file(calibration_path)
+        except OSError as error:
+            errors.append(f"calibration.file 无法读取: {error}")
+        else:
+            if actual_calibration_sha != calibration["sha256"]:
+                errors.append(
+                    "calibration.sha256 与标定文件内容不一致: "
+                    f"期望 {calibration['sha256']}，实际 {actual_calibration_sha}"
+                )
     cameras = payload["cameras"]
     left = cameras["left"]
     right = cameras["right"]
