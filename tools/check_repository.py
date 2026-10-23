@@ -451,6 +451,23 @@ def main() -> int:
             + "\n    ".join(unexpected_cpp_test_groups)
         )
 
+    misplaced_cpp_test_doubles = sorted(
+        path
+        for path in tracked
+        if path.startswith("tests/cpp/")
+        and not path.startswith("tests/cpp/fakes/")
+        and Path(path).suffix in {".h", ".hpp", ".cc", ".cpp", ".cxx"}
+        and any(
+            marker in Path(path).stem.lower()
+            for marker in ("fake", "mock", "stub")
+        )
+    )
+    if misplaced_cpp_test_doubles:
+        errors.append(
+            "C++ 测试替身实现必须集中在 tests/cpp/fakes:\n    "
+            + "\n    ".join(misplaced_cpp_test_doubles)
+        )
+
     misplaced_adapter_tests: list[str] = []
     for path in tracked:
         if not path.startswith("tests/cpp/mainline/") or Path(path).suffix not in {
