@@ -29,6 +29,20 @@ cmake --build --preset cuda-adapters-release --parallel
 ctest --preset cuda-adapters-release
 ```
 
+当验证机恰好是 CUDA 12.8 与 glibc 2.43 的组合时，glibc 新增的 C23
+数学声明会与该版本 CUDA 头文件冲突。只对这类验证机在配置阶段使用：
+
+```bash
+cmake --preset cuda-adapters-release \
+  -DCMAKE_CUDA_FLAGS="-Xcompiler=-U_GNU_SOURCE -D_DEFAULT_SOURCE"
+cmake --build --preset cuda-adapters-release --parallel
+ctest --preset cuda-adapters-release
+```
+
+这里保留 `_DEFAULT_SOURCE` 所需的标准库接口，只避免 NVCC 看见冲突的 GNU
+数学扩展；不要把该参数写入 NX 默认预设。目标机应使用 JetPack 自带、彼此匹配的
+CUDA 与 glibc 工具链。
+
 该预设只验证可移植 CUDA 适配器，不包含 MVS、TensorRT、ROS2 或 NX 时序，
 因此不能替代下面的目标机验收。
 
@@ -121,5 +135,12 @@ volleyball replay --profile replay --trial /path/to/trial --json
 
 ## 当前结论
 
-仓库可以通过 CPU 软件门禁，并已具备严格记录与拒绝错误数据的结构。实际 NX 构建、模型权重固定、示波器同步误差和长时间相机录制属于目标硬件验收项；在这些证据产生前，项目不能宣称“实机全部验收通过”。
+仓库可以通过 CPU 软件门禁，并已具备严格记录与拒绝错误数据的结构。2026-10-23
+在 NVIDIA A800（compute capability 8.0、驱动 550.144.03、CUDA 12.8、
+glibc 2.43）上，当前提交的 `cuda-adapters-release` 完成构建并通过 28/28
+CTest，包括 CUDA Bayer/校正、预处理和直接深度路径的运行测试。该证据只关闭
+通用 CUDA 适配层的软件风险。
+
+实际 NX 构建、模型权重固定、示波器同步误差和长时间相机录制仍属于目标硬件
+验收项；在这些证据产生前，项目不能宣称“实机全部验收通过”。
 
