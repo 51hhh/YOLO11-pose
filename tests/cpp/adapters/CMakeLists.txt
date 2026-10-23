@@ -55,7 +55,6 @@ target_link_libraries(
 add_adapter_test(
   tensorrt_detector_adapter_tests
   tensorrt_detector_adapter_tests.cpp
-  tensorrt_runtime_fake.cpp
   ${PROJECT_SOURCE_DIR}/adapters/tensorrt/src/detector_adapter.cpp
 )
 target_include_directories(tensorrt_detector_adapter_tests BEFORE PRIVATE
@@ -66,6 +65,7 @@ target_link_libraries(
   tensorrt_detector_adapter_tests PRIVATE
   volleyball::tensorrt_contract
   volleyball::tensorrt_mapping
+  volleyball::tensorrt_runtime_fake
 )
 
 add_adapter_test(

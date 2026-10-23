@@ -133,6 +133,10 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/ros2/src", "adapters/ros2/CMakeLists.txt"),
     ("tests/cpp/fakes/mainline/src", "tests/cpp/fakes/CMakeLists.txt"),
+    (
+        "tests/cpp/fakes/tensorrt_runtime/src",
+        "tests/cpp/fakes/CMakeLists.txt",
+    ),
     ("tools/hardware", "tools/hardware/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),

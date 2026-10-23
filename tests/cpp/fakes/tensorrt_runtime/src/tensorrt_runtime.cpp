@@ -1,4 +1,4 @@
-#include "tensorrt_runtime_fake.hpp"
+#include "volleyball/tests/fakes/tensorrt_runtime.hpp"
 
 #include "volleyball/adapters/tensorrt/runtime.hpp"
 
