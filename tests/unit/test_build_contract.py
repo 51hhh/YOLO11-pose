@@ -40,6 +40,26 @@ class BuildContractTests(unittest.TestCase):
             "ON",
         )
 
+        calibration_preset = next(
+            preset
+            for preset in presets["configurePresets"]
+            if preset["name"] == "host-calibration-release"
+        )
+        self.assertEqual(
+            calibration_preset["cacheVariables"][
+                "VOLLEYBALL_BUILD_STEREO_CALIBRATE"
+            ],
+            "ON",
+        )
+        self.assertEqual(
+            calibration_preset["cacheVariables"]["VOLLEYBALL_BUILD_TESTS"],
+            "OFF",
+        )
+        self.assertNotIn(
+            "VOLLEYBALL_BUILD_HARDWARE_TOOLS",
+            calibration_preset["cacheVariables"],
+        )
+
         runtime = yaml.safe_load(
             (ROOT / "configs" / "defaults" / "runtime.yaml").read_text(
                 encoding="utf-8"

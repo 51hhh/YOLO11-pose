@@ -44,5 +44,9 @@ ctest --preset host-core-debug
 python3 tools/check_repository.py
 ```
 
+修改离线标定工具时还要构建 `host-calibration-release` 并运行
+`build/host-calibration-release/tools/hardware/stereo_calibrate --help`。该预设不得
+依赖 MVS 或 Jetson SDK。
+
 涉及实时管线时，还必须在 NX 上完成 GPU 构建、录制回放和延迟分位数对比。不允许用“本机没有 CUDA”推导实机通过。
 

@@ -24,6 +24,17 @@
       }
     },
     {
+      "name": "host-calibration-release",
+      "displayName": "Host offline stereo calibration (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-calibration-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VOLLEYBALL_BUILD_TESTS": "OFF",
+        "VOLLEYBALL_BUILD_STEREO_CALIBRATE": "ON"
+      }
+    },
+    {
       "name": "cuda-adapters-release",
       "displayName": "Generic CUDA adapters (Release)",
       "generator": "Ninja",
@@ -53,6 +64,11 @@
   "buildPresets": [
     {"name": "host-core-debug", "configurePreset": "host-core-debug"},
     {"name": "host-core-release", "configurePreset": "host-core-release"},
+    {
+      "name": "host-calibration-release",
+      "configurePreset": "host-calibration-release",
+      "targets": ["stereo_calibrate"]
+    },
     {"name": "cuda-adapters-release", "configurePreset": "cuda-adapters-release"},
     {"name": "nx-mainline-release", "configurePreset": "nx-mainline-release"}
   ],

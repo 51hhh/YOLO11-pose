@@ -5,6 +5,17 @@
 `stereo_calibrate`。它们由根工程构建并复用正式 MVS/GPIO 适配器；一次性脚本
 不进入仓库。
 
+普通主机只做离线双目标定时，不需要安装 MVS、CUDA、TensorRT、ROS2 或
+libgpiod：
+
+```bash
+cmake --preset host-calibration-release
+cmake --build --preset host-calibration-release --parallel
+build/host-calibration-release/tools/hardware/stereo_calibrate --help
+```
+
+NX 预设仍会一次构建主程序和全部三个现场工具：
+
 ```bash
 cmake --preset nx-mainline-release
 cmake --build --preset nx-mainline-release --parallel
@@ -46,12 +57,15 @@ build/nx-mainline-release/tools/hardware/capture_chessboard \
 ## 双目标定
 
 ```bash
-build/nx-mainline-release/tools/hardware/stereo_calibrate --help
-build/nx-mainline-release/tools/hardware/stereo_calibrate \
+build/host-calibration-release/tools/hardware/stereo_calibrate --help
+build/host-calibration-release/tools/hardware/stereo_calibrate \
   --images-dir /path/to/calibration_images \
   --square-size <方格边长毫米> \
   --output /tmp/new_stereo_calib.yaml
 ```
+
+在 NX 上也可使用 `build/nx-mainline-release/tools/hardware/stereo_calibrate`，两者
+执行同一份纯 OpenCV 实现；主机预设只是去掉无关的相机 SDK 依赖。
 
 输出文件必须不存在，工具不会覆盖已有候选或权威标定。先保留候选输出和原始图像，完成静态已知位置、不同深度和视场边缘验证，再通过普通代码评审替换 `configs/calibration/stereo_calib.yaml`。
 角点检测和标定在 CPU 上执行，可用 `--jobs` 控制检测线程；它不启动相机，也不
