@@ -30,6 +30,9 @@ class MainlineConfigTests(unittest.TestCase):
         self.assertTrue(payload["publisher"]["enabled"])
         self.assertTrue(Path(payload["calibration"]["file"]).is_absolute())
         self.assertTrue(Path(payload["detector"]["engine_file"]).is_absolute())
+        self.assertEqual(payload["detector"]["output_contract"], "yolo_pre_nms")
+        self.assertEqual(payload["detector"]["class_count"], 1)
+        self.assertEqual(payload["detector"]["class_id"], 0)
         self.assertIsInstance(payload["association"]["max_capture_delta_ns"], int)
         self.assertEqual(payload["association"]["max_capture_delta_ns"], 100_000)
         self.assertEqual(

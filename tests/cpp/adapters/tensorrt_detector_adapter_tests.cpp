@@ -67,6 +67,8 @@ trt::TensorRtDetectorConfig config() {
         "models/test.engine",
         core::PipelineId{"volleyball-detector"},
         640,
+        trt::DetectorOutputContract::yolo_pre_nms,
+        1,
         0.25F,
         0.4F,
         10,
@@ -133,6 +135,25 @@ void testRejectsWrongMemoryAndEngineShape() {
     trt::TensorRtDetector wrong_shape(config());
     check(!wrong_shape.initialize(error) && !wrong_shape.isInitialized(),
           "engine input size must match the frozen detector profile");
+
+    runtime_fake::reset();
+    runtime_fake::class_count = 2;
+    trt::TensorRtDetector wrong_classes(config());
+    check(!wrong_classes.initialize(error) && !wrong_classes.isInitialized(),
+          "engine class count must match the frozen model manifest");
+
+    runtime_fake::reset();
+    runtime_fake::output_contract = trt::DetectorOutputContract::yolo_dfl;
+    trt::TensorRtDetector wrong_contract(config());
+    check(!wrong_contract.initialize(error) && !wrong_contract.isInitialized(),
+          "engine output contract must match the frozen model manifest");
+
+    auto invalid_class = config();
+    invalid_class.expected_class_id = invalid_class.expected_class_count;
+    trt::TensorRtDetector out_of_range_class(invalid_class);
+    check(!out_of_range_class.initialize(error) &&
+              !out_of_range_class.isInitialized(),
+          "target class id must be inside the declared class table");
 }
 
 }  // namespace

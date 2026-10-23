@@ -13,7 +13,7 @@ from .model_manifest import resolve_model
 from .triangulation_config import SUPPORTED_LIVE_METHODS
 
 
-MAINLINE_CONFIG_SCHEMA_VERSION = 1
+MAINLINE_CONFIG_SCHEMA_VERSION = 2
 
 
 def _selection_order(triangulation: dict[str, Any]) -> list[str]:
@@ -172,6 +172,8 @@ def build_mainline_pipeline_config(
             "engine_sha256": model.get("sha256"),
             "pipeline_id": detector["model_id"],
             "input_size": detector["input_resolution"][0],
+            "output_contract": model["output_contract"],
+            "class_count": len(model["class_names"]),
             "confidence_threshold": detector["confidence_threshold"],
             "nms_iou_threshold": detector["nms_iou_threshold"],
             "max_detections": detector["max_detections"],

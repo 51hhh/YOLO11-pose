@@ -20,6 +20,17 @@ enum class SingleOutputLayout {
     post_nms_xyxy_rows,
 };
 
+/** 模型输出的高层语义；用于把 manifest 期望与 engine 实际布局对齐。 */
+enum class DetectorOutputContract {
+    none,
+    yolo_pre_nms,
+    yolo_post_nms,
+    yolo_dfl,
+};
+
+[[nodiscard]] const char* detectorOutputContractName(
+    DetectorOutputContract contract) noexcept;
+
 struct DetectorTensorSpec {
     std::string name;
     bool is_input = false;
@@ -35,6 +46,8 @@ struct DetectorEngineContract {
     int single_output_elements = 0;
     int single_output_class_count = 0;
     SingleOutputLayout single_output_layout = SingleOutputLayout::none;
+    DetectorOutputContract output_contract = DetectorOutputContract::none;
+    int class_count = 0;
     bool multi_scale_output = false;
 };
 

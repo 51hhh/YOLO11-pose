@@ -53,6 +53,17 @@ class MainlineCaptureStageTests(unittest.TestCase):
         self.assertEqual(
             context["stage_schema_version"], MAINLINE_STAGE_SCHEMA_VERSION
         )
+        self.assertEqual(
+            context["perception_pipeline"]["output_contract"],
+            "yolo_pre_nms",
+        )
+        self.assertEqual(
+            context["perception_pipeline"]["class_names"], ["volleyball"]
+        )
+        self.assertEqual(
+            context["perception_pipeline"]["target_class_name"],
+            "volleyball",
+        )
         self.assertTrue(context["planning_only"])
         self.assertEqual(context["config_sha256"], profile.fingerprint_sha256)
 

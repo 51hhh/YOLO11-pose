@@ -70,7 +70,7 @@ OpenCV、ROS2、GPIO 和原生二进制动态链接检查全部通过；模型�
 工具。缺少 MVS 头/库、GPIO 开发库、TensorRT、CUDA 或 ROS2 工作区时，配置阶段
 必须失败；不允许通过静默禁用相机或发布器得到“成功构建”。
 
-真实启动日志还必须证明左右 TensorRT engine 均成功反序列化、I/O 契约通过，且实际网络输入尺寸与 profile 一致。仅有 engine 文件和正确哈希不能证明其 tensor 布局受当前后处理支持。
+真实启动日志还必须证明左右 TensorRT engine 均成功反序列化、I/O 契约通过，且实际网络输入尺寸、输出契约和类别数与 manifest/profile 一致。仅有 engine 文件和正确哈希不能证明其 tensor 布局和类别映射受当前后处理支持。
 
 ## C. 触发与水印
 

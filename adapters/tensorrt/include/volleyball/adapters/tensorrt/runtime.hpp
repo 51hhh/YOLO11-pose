@@ -97,6 +97,10 @@ public:
         int height);
 
     int getInputSize() const { return inputSize_; }
+    int getClassCount() const { return classCount_; }
+    DetectorOutputContract getOutputContract() const {
+        return outputContract_;
+    }
     bool isDLA() const { return useDLA_; }
 
 private:
@@ -144,6 +148,8 @@ private:
     InputFormat inputFormat_ = InputFormat::GRAY;  ///< 输入像素格式
     int singleOutputClassCount_ = 0;
     SingleOutputLayout singleOutputLayout_ = SingleOutputLayout::none;
+    DetectorOutputContract outputContract_ = DetectorOutputContract::none;
+    int classCount_ = 0;
     bool multiScaleOutput_ = false;  ///< 6-tensor DFL output mode
     int  regMax_ = 16;          ///< DFL regression max bins
 

@@ -225,6 +225,7 @@ void parseDetector(const YAML::Node& node, DetectorSettings& output) {
     exactKeys(
         node,
         {"engine_file", "engine_sha256", "pipeline_id", "input_size",
+         "output_contract", "class_count",
          "confidence_threshold", "nms_iou_threshold", "max_detections",
          "class_id", "use_dla", "dla_core"},
         "detector");
@@ -233,6 +234,9 @@ void parseDetector(const YAML::Node& node, DetectorSettings& output) {
         scalar<std::string>(node, "engine_sha256", "detector");
     output.pipeline_id = scalar<std::string>(node, "pipeline_id", "detector");
     output.input_size = scalar<int>(node, "input_size", "detector");
+    output.output_contract =
+        scalar<std::string>(node, "output_contract", "detector");
+    output.class_count = scalar<int>(node, "class_count", "detector");
     output.confidence_threshold =
         scalar<double>(node, "confidence_threshold", "detector");
     output.nms_iou_threshold =
@@ -404,6 +408,9 @@ void validate(const MainlineRuntimeConfig& value) {
     }
     if (!sha256(value.detector.engine_sha256) ||
         value.detector.pipeline_id.empty() || value.detector.input_size <= 0 ||
+        (value.detector.output_contract != "yolo_pre_nms" &&
+         value.detector.output_contract != "yolo_dfl") ||
+        value.detector.class_count <= 0 ||
         !finite(value.detector.confidence_threshold) ||
         value.detector.confidence_threshold < 0.0 ||
         value.detector.confidence_threshold > 1.0 ||
@@ -411,6 +418,7 @@ void validate(const MainlineRuntimeConfig& value) {
         value.detector.nms_iou_threshold < 0.0 ||
         value.detector.nms_iou_threshold > 1.0 ||
         value.detector.max_detections == 0 || value.detector.class_id < 0 ||
+        value.detector.class_id >= value.detector.class_count ||
         value.detector.dla_core < 0) {
         throw std::runtime_error("detector configuration is invalid");
     }
@@ -492,7 +500,7 @@ bool loadRuntimeConfig(
              "camera", "clocks", "trigger", "calibration", "detector",
              "association", "depth", "publisher", "diagnostics"},
             "root");
-        if (scalar<int>(root, "schema_version", "root") != 1) {
+        if (scalar<int>(root, "schema_version", "root") != 2) {
             throw std::runtime_error("unsupported mainline config schema_version");
         }
         output.profile = scalar<std::string>(root, "profile", "root");

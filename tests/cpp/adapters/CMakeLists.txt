@@ -63,7 +63,9 @@ target_include_directories(tensorrt_detector_adapter_tests BEFORE PRIVATE
   ${PROJECT_SOURCE_DIR}/adapters/tensorrt/include
 )
 target_link_libraries(
-  tensorrt_detector_adapter_tests PRIVATE volleyball::tensorrt_mapping
+  tensorrt_detector_adapter_tests PRIVATE
+  volleyball::tensorrt_contract
+  volleyball::tensorrt_mapping
 )
 
 add_adapter_test(

@@ -9,6 +9,9 @@ models:
     sha256: null
     input_resolution: [640, 640]
     input_format: bgr8
+    output_contract: yolo_pre_nms
+    class_names: [volleyball]
+    target_class_id: 0
     precision: fp16
     target: jetson-orin-nx
     accelerator: cuda

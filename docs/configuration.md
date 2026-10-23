@@ -42,7 +42,8 @@ volleyball config render-mainline --profile nx-rdk
 - `--set` 只能覆盖已存在的键，防止拼写错误静默生成无效配置；
 - 模型必须登记在 `models/manifest.yaml`，实机采集前固定 SHA-256；
 - 模型清单的 artifact 格式、输入尺寸/格式、目标平台和 accelerator 必须与 live profile 完全一致；
-- TensorRT engine 反序列化后的实际输入尺寸和 I/O 布局必须通过检测器契约，且与 profile 一致；
+- 模型清单还必须冻结 `output_contract`、有序 `class_names` 和 `target_class_id`，且 live profile 的 `detector.class_id` 必须指向同一目标；
+- TensorRT engine 反序列化后的实际输入尺寸、输出契约和类别数必须通过检测器契约，且与 manifest/profile 一致；
 - 标定必须有稳定 `calibration_id` 和 `created_at_utc`，不得用文件 mtime 充当版本；
 - 单位写入键名或契约，时间统一为整数纳秒，物理量使用 SI。
 
@@ -62,8 +63,14 @@ cp configs/profiles/nx-rdk.yaml configs/profiles/local-nx.yaml
 ## 模型资产
 
 代码和 profile 只引用稳定的 `model_id`。`models/manifest.yaml` 把该 ID 映射到
-仓库相对 artifact，并冻结输入尺寸、像素格式、精度、目标平台、accelerator 和
-SHA-256；禁止在配置中保存 `/home/nvidia/...` 一类机器绝对路径。
+仓库相对 artifact，并冻结输入尺寸、像素格式、输出布局、类别顺序、目标类别、
+精度、目标平台、accelerator 和 SHA-256；禁止在配置中保存 `/home/nvidia/...`
+一类机器绝对路径。
+
+当前登记的 engine 契约是单类别 `volleyball=0`、单输出 YOLO pre-NMS。若换用
+`player=0, volleyball=1` 等多类别权重，必须同时更新 `class_names`、
+`target_class_id`、profile 的 `class_id`，并重新导出 engine 和固定哈希；不能只把
+文件改名覆盖。原生进程会在启动时核对 engine 实际类别数和输出布局，错配立即失败。
 
 ONNX、权重和 TensorRT engine 都不进入 Git。真实采集前必须在目标机上对最终
 engine 重新计算 SHA-256，更新 manifest，并随 trial 记录 TensorRT、CUDA 和

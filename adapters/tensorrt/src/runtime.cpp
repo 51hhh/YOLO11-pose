@@ -188,6 +188,8 @@ bool TensorRtRuntime::loadEngine(const std::string& path) {
     outputSize_ = contract.single_output_elements;
     singleOutputClassCount_ = contract.single_output_class_count;
     singleOutputLayout_ = contract.single_output_layout;
+    outputContract_ = contract.output_contract;
+    classCount_ = contract.class_count;
     multiScaleOutput_ = contract.multi_scale_output;
 
     for (const auto& spec : tensorSpecs) {
@@ -205,6 +207,8 @@ bool TensorRtRuntime::loadEngine(const std::string& path) {
     if (multiScaleOutput_) {
         LOG_INFO("  Detected validated 6-tensor multi-scale DFL output format");
     }
+    LOG_INFO("  Output contract: %s, classes=%d",
+             detectorOutputContractName(outputContract_), classCount_);
 
     for (auto& context : contexts_) {
         context = engine_->createExecutionContext();

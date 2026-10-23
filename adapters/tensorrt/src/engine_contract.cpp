@@ -42,6 +42,21 @@ bool checkedElementCount(const DetectorTensorSpec& tensor,
 
 }  // namespace
 
+const char* detectorOutputContractName(
+    DetectorOutputContract contract) noexcept {
+    switch (contract) {
+        case DetectorOutputContract::yolo_pre_nms:
+            return "yolo_pre_nms";
+        case DetectorOutputContract::yolo_post_nms:
+            return "yolo_post_nms";
+        case DetectorOutputContract::yolo_dfl:
+            return "yolo_dfl";
+        case DetectorOutputContract::none:
+        default:
+            return "none";
+    }
+}
+
 bool validateDetectorEngineContract(
     const std::vector<DetectorTensorSpec>& tensors,
     DetectorEngineContract& contract,
@@ -119,16 +134,22 @@ bool validateDetectorEngineContract(
         if (post_nms) {
             contract.single_output_layout =
                 SingleOutputLayout::post_nms_xyxy_rows;
+            contract.output_contract =
+                DetectorOutputContract::yolo_post_nms;
         } else if (dims[1] < dims[2]) {
             contract.single_output_layout =
                 SingleOutputLayout::pre_nms_channels_first;
             contract.single_output_class_count =
                 static_cast<int>(dims[1] - 4);
+            contract.output_contract = DetectorOutputContract::yolo_pre_nms;
+            contract.class_count = contract.single_output_class_count;
         } else {
             contract.single_output_layout =
                 SingleOutputLayout::pre_nms_rows;
             contract.single_output_class_count =
                 static_cast<int>(dims[2] - 4);
+            contract.output_contract = DetectorOutputContract::yolo_pre_nms;
+            contract.class_count = contract.single_output_class_count;
         }
         if (!checkedElementCount(output,
                                  contract.single_output_elements, error)) {
@@ -181,6 +202,8 @@ bool validateDetectorEngineContract(
     }
 
     contract.multi_scale_output = true;
+    contract.output_contract = DetectorOutputContract::yolo_dfl;
+    contract.class_count = 1;
     return true;
 }
 

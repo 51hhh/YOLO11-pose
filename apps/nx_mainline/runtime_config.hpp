@@ -69,6 +69,8 @@ struct DetectorSettings {
     std::string engine_sha256;
     std::string pipeline_id;
     int input_size{0};
+    std::string output_contract;
+    int class_count{0};
     double confidence_threshold{0.0};
     double nms_iou_threshold{0.0};
     std::size_t max_detections{0};

@@ -437,6 +437,42 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
                         f"模型清单 {model_id}.{field}={entry.get(field)!r} "
                         f"与运行配置 {expected!r} 不一致"
                     )
+            output_contract = entry.get("output_contract")
+            if output_contract not in {"yolo_pre_nms", "yolo_dfl"}:
+                errors.append(
+                    f"模型清单 {model_id}.output_contract 必须是 "
+                    "yolo_pre_nms 或 yolo_dfl"
+                )
+            class_names = entry.get("class_names")
+            valid_class_names = (
+                isinstance(class_names, list)
+                and bool(class_names)
+                and all(isinstance(name, str) and name for name in class_names)
+                and len(set(class_names)) == len(class_names)
+            )
+            if not valid_class_names:
+                errors.append(
+                    f"模型清单 {model_id}.class_names "
+                    "必须是非空、非重复的类别名列表"
+                )
+            target_class_id = entry.get("target_class_id")
+            valid_target_class_id = (
+                isinstance(target_class_id, int)
+                and not isinstance(target_class_id, bool)
+                and target_class_id >= 0
+                and valid_class_names
+                and target_class_id < len(class_names)
+            )
+            if not valid_target_class_id:
+                errors.append(
+                    f"模型清单 {model_id}.target_class_id "
+                    "必须指向 class_names 中的有效类别"
+                )
+            elif detector["class_id"] != target_class_id:
+                errors.append(
+                    f"detector.class_id={detector['class_id']} 与模型清单 "
+                    f"{model_id}.target_class_id={target_class_id} 不一致"
+                )
     if errors:
         raise ConfigError("配置语义校验失败:\n" + "\n".join(f"  - {e}" for e in errors))
 

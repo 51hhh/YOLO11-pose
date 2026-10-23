@@ -14,8 +14,13 @@ namespace volleyball::adapters::tensorrt {
 namespace {
 
 bool validConfig(const TensorRtDetectorConfig& config) noexcept {
+    const bool supported_contract =
+        config.expected_output_contract ==
+            DetectorOutputContract::yolo_pre_nms ||
+        config.expected_output_contract == DetectorOutputContract::yolo_dfl;
     return !config.engine_file.empty() && !config.pipeline_id.empty() &&
-           config.expected_input_size > 0 &&
+           config.expected_input_size > 0 && supported_contract &&
+           config.expected_class_count > 0 &&
            std::isfinite(config.confidence_threshold) &&
            config.confidence_threshold >= 0.0F &&
            config.confidence_threshold <= 1.0F &&
@@ -23,6 +28,7 @@ bool validConfig(const TensorRtDetectorConfig& config) noexcept {
            config.nms_iou_threshold >= 0.0F &&
            config.nms_iou_threshold <= 1.0F &&
            config.maximum_detections > 0 && config.expected_class_id >= 0 &&
+           config.expected_class_id < config.expected_class_count &&
            config.dla_core >= 0;
 }
 
@@ -100,6 +106,27 @@ bool TensorRtDetector::initialize(std::string& error) {
     }
     if (impl_->runtime->getInputSize() != impl_->config.expected_input_size) {
         error = "TensorRT engine input size does not match detector profile";
+        impl_->runtime.reset();
+        static_cast<void>(cudaStreamDestroy(impl_->stream));
+        impl_->stream = nullptr;
+        return false;
+    }
+    if (impl_->runtime->getOutputContract() !=
+        impl_->config.expected_output_contract) {
+        error = std::string{"TensorRT engine output contract mismatch: expected "} +
+                detectorOutputContractName(
+                    impl_->config.expected_output_contract) +
+                ", actual " +
+                detectorOutputContractName(
+                    impl_->runtime->getOutputContract());
+        impl_->runtime.reset();
+        static_cast<void>(cudaStreamDestroy(impl_->stream));
+        impl_->stream = nullptr;
+        return false;
+    }
+    if (impl_->runtime->getClassCount() !=
+        impl_->config.expected_class_count) {
+        error = "TensorRT engine class count does not match model manifest";
         impl_->runtime.reset();
         static_cast<void>(cudaStreamDestroy(impl_->stream));
         impl_->stream = nullptr;

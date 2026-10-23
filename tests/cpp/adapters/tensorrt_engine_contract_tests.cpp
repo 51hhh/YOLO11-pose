@@ -57,6 +57,10 @@ void testAcceptsSupportedContracts() {
     check(contract.single_output_name == "output0" &&
               contract.single_output_elements == 42000 &&
               contract.single_output_class_count == 1 &&
+              contract.class_count == 1 &&
+              contract.output_contract ==
+                  volleyball::adapters::tensorrt::DetectorOutputContract::
+                      yolo_pre_nms &&
               contract.single_output_layout ==
                   volleyball::adapters::tensorrt::SingleOutputLayout::
                       pre_nms_channels_first &&
@@ -70,7 +74,11 @@ void testAcceptsSupportedContracts() {
               contract.single_output_layout ==
                   volleyball::adapters::tensorrt::SingleOutputLayout::
                       pre_nms_rows &&
-              contract.single_output_class_count == 1,
+              contract.single_output_class_count == 1 &&
+              contract.class_count == 1 &&
+              contract.output_contract ==
+                  volleyball::adapters::tensorrt::DetectorOutputContract::
+                      yolo_pre_nms,
           "row-major pre-NMS layout must be explicit in the contract");
 
     auto post_nms = validSingleOutput();
@@ -80,13 +88,21 @@ void testAcceptsSupportedContracts() {
               contract.single_output_layout ==
                   volleyball::adapters::tensorrt::SingleOutputLayout::
                       post_nms_xyxy_rows &&
-              contract.single_output_class_count == 0,
+              contract.single_output_class_count == 0 &&
+              contract.class_count == 0 &&
+              contract.output_contract ==
+                  volleyball::adapters::tensorrt::DetectorOutputContract::
+                      yolo_post_nms,
           "post-NMS row layout must be explicit in the contract");
 
     check(volleyball::adapters::tensorrt::validateDetectorEngineContract(
               validDflOutputs(), contract, error),
           "three-scale DFL engine should be accepted");
-    check(contract.output_count == 6 && contract.multi_scale_output,
+    check(contract.output_count == 6 && contract.multi_scale_output &&
+              contract.class_count == 1 &&
+              contract.output_contract ==
+                  volleyball::adapters::tensorrt::DetectorOutputContract::
+                      yolo_dfl,
           "DFL contract must select multi-scale mode");
     check(contract.single_output_layout ==
               volleyball::adapters::tensorrt::SingleOutputLayout::none &&

@@ -22,7 +22,7 @@ void check(bool condition, const char* message) {
 }
 
 std::string validCaptureYaml() {
-    return R"YAML(schema_version: 1
+    return R"YAML(schema_version: 2
 profile: free-flight
 config_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 runtime:
@@ -75,6 +75,8 @@ detector:
   engine_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   pipeline_id: detector
   input_size: 640
+  output_contract: yolo_pre_nms
+  class_count: 1
   confidence_threshold: 0.3
   nms_iou_threshold: 0.4
   max_detections: 10
@@ -157,6 +159,8 @@ void testValidCaptureConfig() {
           "strict parser must accept a complete capture configuration");
     check(error.empty() && config.runtime.frame_limit == 90 &&
               config.runtime.capture_stage &&
+              config.detector.output_contract == "yolo_pre_nms" &&
+              config.detector.class_count == 1 &&
               config.association.max_capture_delta_ns == 100000,
           "accepted config must preserve typed launch facts");
     std::error_code ignored;
@@ -203,6 +207,21 @@ void testRejectsUnknownAndIllTypedFields() {
     error.clear();
     check(!load(unhashed, 5, error),
           "an unpinned TensorRT engine must fail before hardware startup");
+
+    std::string out_of_range_class = validCaptureYaml();
+    replaceOnce(out_of_range_class, "class_id: 0", "class_id: 1");
+    error.clear();
+    check(!load(out_of_range_class, 6, error),
+          "target class id outside the manifest class table must fail closed");
+
+    std::string unsupported_output = validCaptureYaml();
+    replaceOnce(
+        unsupported_output,
+        "output_contract: yolo_pre_nms",
+        "output_contract: yolo_post_nms");
+    error.clear();
+    check(!load(unsupported_output, 7, error),
+          "output contracts without a statically auditable class table must fail");
 }
 
 }  // namespace

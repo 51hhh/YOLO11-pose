@@ -1,5 +1,6 @@
 #pragma once
 
+#include "volleyball/adapters/tensorrt/engine_contract.hpp"
 #include "volleyball/ports/detector.hpp"
 
 #include <cstddef>
@@ -12,6 +13,9 @@ struct TensorRtDetectorConfig {
     std::string engine_file;
     core::PipelineId pipeline_id;
     int expected_input_size{0};
+    DetectorOutputContract expected_output_contract{
+        DetectorOutputContract::none};
+    int expected_class_count{0};
     float confidence_threshold{0.5F};
     float nms_iou_threshold{0.4F};
     std::size_t maximum_detections{10};

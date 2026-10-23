@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import yaml
+
 from volleyball_vision.config import (
     ConfigError,
     _load_yaml,
@@ -407,6 +409,10 @@ class ConfigTests(unittest.TestCase):
                 "accelerator",
                 lambda value: value["platform"].update(accelerator="cuda_dla"),
             ),
+            (
+                "target_class_id",
+                lambda value: value["detector"].update(class_id=1),
+            ),
         )
         for expected, mutate in mutations:
             with self.subTest(expected=expected):
@@ -414,6 +420,35 @@ class ConfigTests(unittest.TestCase):
                 mutate(payload)
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
+
+    def test_live_model_manifest_rejects_ambiguous_class_contract(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        baseline = _load_yaml(ROOT / "models" / "manifest.yaml")
+        model_id = payload["detector"]["model_id"]
+        mutations = (
+            (
+                "output_contract",
+                lambda entry: entry.update(output_contract="yolo_post_nms"),
+            ),
+            ("class_names", lambda entry: entry.update(class_names=[])),
+            ("target_class_id", lambda entry: entry.update(target_class_id=2)),
+        )
+        for expected, mutate in mutations:
+            with (
+                self.subTest(expected=expected),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                (root / "models").mkdir()
+                manifest = copy.deepcopy(baseline)
+                mutate(manifest["models"][model_id])
+                (root / "models" / "manifest.yaml").write_text(
+                    yaml.safe_dump(manifest, sort_keys=False),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(root, payload)
 
     def test_project_root_can_be_found_from_nested_path(self) -> None:
         self.assertEqual(

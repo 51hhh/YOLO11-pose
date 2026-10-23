@@ -42,6 +42,16 @@ namespace hik = adapters::hik_mvs;
 namespace ros2 = adapters::ros2;
 namespace tensorrt = adapters::tensorrt;
 
+tensorrt::DetectorOutputContract outputContract(const std::string& value) {
+    if (value == "yolo_pre_nms") {
+        return tensorrt::DetectorOutputContract::yolo_pre_nms;
+    }
+    if (value == "yolo_dfl") {
+        return tensorrt::DetectorOutputContract::yolo_dfl;
+    }
+    throw std::runtime_error("unsupported detector output contract: " + value);
+}
+
 std::string sha256File(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -275,6 +285,8 @@ services::RunSummary runMainlineApplication(
         config.detector.engine_file.string(),
         core::PipelineId{config.detector.pipeline_id},
         config.detector.input_size,
+        outputContract(config.detector.output_contract),
+        config.detector.class_count,
         static_cast<float>(config.detector.confidence_threshold),
         static_cast<float>(config.detector.nms_iou_threshold),
         config.detector.max_detections,

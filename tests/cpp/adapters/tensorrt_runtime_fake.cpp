@@ -15,6 +15,8 @@ bool TensorRtRuntime::init(
     float,
     const std::string&) {
     inputSize_ = tests::tensorrt_runtime_fake::input_size;
+    outputContract_ = tests::tensorrt_runtime_fake::output_contract;
+    classCount_ = tests::tensorrt_runtime_fake::class_count;
     return tests::tensorrt_runtime_fake::initialize_success;
 }
 
