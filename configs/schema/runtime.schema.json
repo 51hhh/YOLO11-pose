@@ -104,7 +104,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["backend", "output_resolution"],
       "properties": {
-        "backend": {"enum": ["cuda", "opencv", "recorded"]},
+        "backend": {"enum": ["cuda", "recorded"]},
         "output_resolution": {"$ref": "#/$defs/resolution"}
       }
     },
@@ -112,7 +112,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["backend", "model_id", "per_camera", "input_resolution", "input_format", "resize_mode", "confidence_threshold", "nms_iou_threshold", "max_detections", "class_id", "center_method"],
       "properties": {
-        "backend": {"enum": ["tensorrt", "onnxruntime", "recorded"]},
+        "backend": {"enum": ["tensorrt", "recorded"]},
         "model_id": {"type": "string", "minLength": 1},
         "per_camera": {"type": "boolean"},
         "input_resolution": {"$ref": "#/$defs/resolution"},
@@ -149,7 +149,7 @@
           "type": "object", "additionalProperties": false,
           "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "circle_fit"],
           "properties": {
-            "backend": {"enum": ["cuda", "opencv", "recorded"]},
+            "backend": {"enum": ["cuda", "recorded"]},
             "primary_method": {"enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "recorded"]},
             "candidate_methods": {
               "type": "array",
@@ -196,8 +196,8 @@
         "enabled": {"type": "boolean"},
         "dataset_root": {"$ref": "#/$defs/path"},
         "schema_version": {"const": "2.1.0"},
-        "raw_frames": {"enum": ["none", "selected", "all"]},
-        "loss_policy": {"enum": ["fail_trial", "mark_dropped", "allow"]},
+        "raw_frames": {"enum": ["none", "all"]},
+        "loss_policy": {"enum": ["fail_trial", "mark_dropped"]},
         "verify_hashes": {"type": "boolean"}
       }
     },

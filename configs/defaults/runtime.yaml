@@ -69,11 +69,11 @@ adapters:
     source_epoch_file: /run/volleyball/nx_source_epoch
 
 rectification:
-  backend: opencv
+  backend: recorded
   output_resolution: [1440, 1080]
 
 detector:
-  backend: onnxruntime
+  backend: recorded
   model_id: yolo26-volleyball-640-fp16
   per_camera: true
   input_resolution: [640, 640]
@@ -98,10 +98,10 @@ stereo:
     bbox_disparity_penalty_scale: 0.75
     record_rejected: true
   triangulation:
-    backend: opencv
-    primary_method: roi_multi_point
-    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
-    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    backend: recorded
+    primary_method: recorded
+    candidate_methods: []
+    fallback_methods: []
     propagate_covariance: true
     subpixel:
       patch_radius: 5

@@ -27,6 +27,16 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(len(resolved.fingerprint_sha256), 64)
                 self.assertGreaterEqual(len(resolved.layers), 4)
 
+    def test_defaults_use_only_neutral_recorded_backends(self) -> None:
+        defaults = _load_yaml(ROOT / "configs" / "defaults" / "runtime.yaml")
+        self.assertEqual(defaults["rectification"]["backend"], "recorded")
+        self.assertEqual(defaults["detector"]["backend"], "recorded")
+        triangulation = defaults["stereo"]["triangulation"]
+        self.assertEqual(triangulation["backend"], "recorded")
+        self.assertEqual(triangulation["primary_method"], "recorded")
+        self.assertEqual(triangulation["candidate_methods"], [])
+        self.assertEqual(triangulation["fallback_methods"], [])
+
     def test_override_changes_existing_key_and_provenance(self) -> None:
         baseline = load_profile("nx-rdk", project_root=ROOT)
         changed = load_profile(
@@ -101,6 +111,35 @@ class ConfigTests(unittest.TestCase):
         payload["calibration"]["format"] = "capture_v2_json"
         with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
             _validate_schema(ROOT, payload)
+
+    def test_schema_rejects_unimplemented_runtime_backends(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value["rectification"].update(backend="opencv"),
+            lambda value: value["detector"].update(backend="onnxruntime"),
+            lambda value: value["stereo"]["triangulation"].update(
+                backend="opencv"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
+    def test_schema_rejects_unimplemented_recording_modes(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value["recording"].update(raw_frames="selected"),
+            lambda value: value["recording"].update(loss_policy="allow"),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
 
     def test_semantics_reject_same_camera_serial(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)

@@ -338,7 +338,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         else:
             expected_format = {
                 "tensorrt": "tensorrt_engine",
-                "onnxruntime": "onnx",
             }.get(detector["backend"])
             checks = (
                 ("artifact_format", expected_format),
