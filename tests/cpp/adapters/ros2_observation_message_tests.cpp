@@ -86,7 +86,7 @@ ports::ObservationPublication publication() {
     output.association.decision = core::AssociationDecision::accepted;
     output.association.reject_reason = core::AssociationRejectReason::none;
 
-    auto& measurement = output.observation.measurement;
+    auto& measurement = output.observation;
     measurement.observation_id = 11;
     measurement.source_pair_id = 9;
     measurement.capture_reference = timestamp(2'000'000'001);
@@ -103,7 +103,6 @@ ports::ObservationPublication publication() {
     }};
     measurement.confidence = 0.75;
     measurement.reprojection_error_px = 0.0;
-    output.observation.status = core::ValidationStatus::accepted;
     output.estimation.method = core::StereoDepthMethodId{"roi_multi_point"};
     output.estimation.disparity_px = 49.75;
     output.estimation.disparity_stddev_px = 0.2;
@@ -186,7 +185,7 @@ void testCrossReferenceAndCoordinateMismatchesAreRejected() {
           "candidate from another frame must be rejected");
 
     input = publication();
-    input.observation.measurement.coordinate_frame =
+    input.observation.coordinate_frame =
         core::CoordinateFrameId{"renamed-without-transform"};
     mapped = adapter::makeObservationMessage(input, config());
     check(!mapped &&
@@ -196,7 +195,7 @@ void testCrossReferenceAndCoordinateMismatchesAreRejected() {
 
 void testMissingOrUnrepresentableEvidenceIsRejected() {
     auto input = publication();
-    input.observation.measurement.covariance_m2.reset();
+    input.observation.covariance_m2.reset();
     auto mapped = adapter::makeObservationMessage(input, config());
     check(!mapped && mapped.error ==
               adapter::ObservationMessageError::missing_required_evidence,

@@ -184,10 +184,10 @@ void testServicePreservesAllAttemptsAndPublishesDirectObservation() {
           "accepted direct observation must publish");
     const auto& publication = publisher.publications.front();
     check(
-        publication.observation.measurement.observation_id ==
+        publication.observation.observation_id ==
                 writer.observations().front().observation_id &&
             publication.association.pair_id ==
-                publication.observation.measurement.source_pair_id &&
+                publication.observation.source_pair_id &&
             std::any_of(
                 writer.associations().begin(),
                 writer.associations().end(),

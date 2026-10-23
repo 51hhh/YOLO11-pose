@@ -85,8 +85,7 @@ ObservationMessageResult makeObservationMessage(
             "ROS observation mapping config is incomplete");
     }
 
-    const auto& validated = publication.observation;
-    const auto& measurement = validated.measurement;
+    const auto& measurement = publication.observation;
     const auto& left = publication.left_frame;
     const auto& right = publication.right_frame;
     const auto& left_detection = publication.left_detection;
@@ -94,15 +93,14 @@ ObservationMessageResult makeObservationMessage(
     const auto& association = publication.association;
     const auto& estimation = publication.estimation;
 
-    if (validated.status != core::ValidationStatus::accepted ||
-        !validated.reasons.empty() || !core::validate(measurement) ||
-        !core::validate(left) || !core::validate(right) ||
+    if (!core::validate(measurement) || !core::validate(left) ||
+        !core::validate(right) ||
         !core::validate(left_detection) ||
         !core::validate(right_detection) ||
         !core::validate(association) || !ports::isValid(estimation)) {
         return failure(
             ObservationMessageError::invalid_domain_record,
-            "publication contains a rejected or invalid domain record");
+            "publication contains an invalid domain record");
     }
     if (left.dropped || right.dropped ||
         left.role != core::CameraRole::left ||

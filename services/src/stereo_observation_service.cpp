@@ -471,8 +471,7 @@ StereoProcessResult StereoObservationService::process(
     ++next_observation_id_;
     if (publisher_) {
         ports::ObservationPublication publication;
-        publication.observation.measurement = observation;
-        publication.observation.status = core::ValidationStatus::accepted;
+        publication.observation = observation;
         publication.left_frame = frame.left.metadata;
         publication.right_frame = frame.right.metadata;
         publication.left_detection = *left_candidate;

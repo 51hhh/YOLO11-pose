@@ -6,7 +6,6 @@
 
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace volleyball::core {
 
@@ -122,25 +121,6 @@ struct TriangulatedObservation {
     std::optional<Covariance3D> covariance_m2;
     std::optional<double> confidence;
     std::optional<double> reprojection_error_px;
-};
-
-enum class ValidationStatus { accepted, rejected };
-
-enum class ObservationRejectReason {
-    none,
-    nonfinite,
-    range,
-    covariance,
-    reprojection,
-    temporal_continuity,
-    innovation,
-};
-
-// 验证结果包含原直接观测，但不修改它。
-struct ValidatedObservation {
-    TriangulatedObservation measurement;
-    ValidationStatus status{ValidationStatus::rejected};
-    std::vector<ObservationRejectReason> reasons;
 };
 
 enum class DomainError {

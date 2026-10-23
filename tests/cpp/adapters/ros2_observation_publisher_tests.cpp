@@ -88,7 +88,7 @@ ports::ObservationPublication publication() {
     output.association.decision = core::AssociationDecision::accepted;
     output.association.reject_reason = core::AssociationRejectReason::none;
 
-    auto& measurement = output.observation.measurement;
+    auto& measurement = output.observation;
     measurement.observation_id = 5;
     measurement.source_pair_id = 4;
     measurement.capture_reference = timestamp(3'000'000'000);
@@ -100,7 +100,6 @@ ports::ObservationPublication publication() {
     }};
     measurement.confidence = 0.8;
     measurement.reprojection_error_px = 0.0;
-    output.observation.status = core::ValidationStatus::accepted;
     output.estimation.method = core::StereoDepthMethodId{"roi_multi_point"};
     output.estimation.disparity_px = 49.5;
     output.estimation.support_points = 7;
@@ -155,7 +154,7 @@ void testMappingAndTransportFailuresAreObservable() {
     auto node = std::make_shared<rclcpp::Node>();
     adapter::Ros2ObservationPublisher publisher(node, "/observation", config());
     auto invalid = publication();
-    invalid.observation.measurement.covariance_m2.reset();
+    invalid.observation.covariance_m2.reset();
     const auto rejected = publisher.publish(invalid);
     check(!rejected.success && !rejected.message.empty(),
           "unrepresentable direct observation must return a useful failure");

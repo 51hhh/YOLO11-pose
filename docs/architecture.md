@@ -28,8 +28,8 @@ NX GPIO 上升沿 ────────┐
 
 关键类型刻意分开：
 
-- `TriangulatedObservation` 是直接测量；
-- `ValidatedObservation` 是质量判定，不修改原测量；
+- `TriangulatedObservation` 是直接测量，也是发布端口唯一允许的 3D 载荷；
+- 质量门失败会把对应配对记为 `quality_gate`，不会构造可发布观测；
 
 滤波状态、未来轨迹和控制目标不属于本仓库的领域 API 或 NX 输出；它们由 RDK
 或离线分析从直接观测派生。主线不会为尚未实现的下游能力保留占位类型。
