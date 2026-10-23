@@ -173,7 +173,7 @@ bool appendPointPair(
         return true;
     }
     candidate.disparity_stddev_px =
-        config.geometric_disparity_stddev_px;
+        config.disparity_stddev_px;
     candidate.support_points = 1U;
     candidate.confidence = std::min(
         static_cast<double>(left.confidence),
@@ -200,7 +200,7 @@ bool appendCirclePair(
         return true;
     }
     candidate.disparity_stddev_px =
-        config.geometric_disparity_stddev_px;
+        config.disparity_stddev_px;
     candidate.support_points = 1U;
     candidate.confidence = std::min(
         static_cast<double>(left.confidence),
@@ -223,7 +223,7 @@ bool appendBoundingBoxCandidates(
         candidate.left_anchor_px = left.center_px;
         candidate.disparity_px = center_disparity;
         candidate.disparity_stddev_px =
-            config.geometric_disparity_stddev_px;
+            config.disparity_stddev_px;
         candidate.support_points = 1U;
         candidate.confidence = confidence;
         if (!appendCandidate(std::move(candidate), output, error)) {
@@ -258,7 +258,7 @@ bool appendBoundingBoxCandidates(
         candidate.left_anchor_px = left.center_px;
         candidate.disparity_px = *edge_disparity;
         candidate.disparity_stddev_px =
-            config.geometric_disparity_stddev_px;
+            config.disparity_stddev_px;
         candidate.support_points = 1U;
         candidate.confidence = confidence;
         if (!appendCandidate(std::move(candidate), output, error)) {
@@ -272,42 +272,8 @@ stereo3d::DualYoloDepthGpuConfig matcherConfig(
     const CudaDirectObservationEstimatorConfig& config) {
     stereo3d::DualYoloDepthGpuConfig output;
     output.max_disparity = static_cast<int>(config.max_disparity_px);
-    output.patch_radius = static_cast<int>(config.patch_radius);
-    output.search_radius_px = static_cast<int>(config.search_radius_px);
-    output.max_points = static_cast<int>(config.max_points);
-    output.min_points = static_cast<int>(config.min_points);
     output.circle_max_roi_pixels =
         static_cast<int>(config.circle_max_roi_pixels);
-    output.min_confidence = static_cast<float>(config.min_confidence);
-    output.max_disp_delta_px =
-        static_cast<float>(config.max_disparity_delta_px);
-    output.max_disp_delta_ratio =
-        static_cast<float>(config.max_disparity_delta_ratio);
-    output.max_depth_delta_m =
-        static_cast<float>(config.max_depth_delta_m);
-    output.max_stddev_px =
-        static_cast<float>(config.max_disparity_stddev_px);
-    output.epipolar_y_tolerance =
-        static_cast<float>(config.feature_y_tolerance_px);
-    output.feature_y_tolerance_px =
-        static_cast<float>(config.feature_y_tolerance_px);
-    output.feature_y_slope = static_cast<float>(config.feature_y_slope);
-    output.feature_y_offset_px =
-        static_cast<float>(config.feature_y_offset_px);
-    output.feature_reverse_check_px =
-        static_cast<float>(config.feature_reverse_check_px);
-    output.feature_overlap_scale =
-        static_cast<float>(config.feature_overlap_scale);
-    output.feature_mad_scale =
-        static_cast<float>(config.feature_mad_scale);
-    output.feature_ransac_gate_px =
-        static_cast<float>(config.feature_ransac_gate_px);
-    output.feature_sphere_radius_m =
-        static_cast<float>(config.feature_sphere_radius_m);
-    output.feature_sphere_radius_scale =
-        static_cast<float>(config.feature_sphere_radius_scale);
-    output.feature_sphere_margin_m =
-        static_cast<float>(config.feature_sphere_margin_m);
     output.disparity_zero_offset = 0.0F;
     output.min_depth = static_cast<float>(config.min_depth_m);
     output.max_depth = static_cast<float>(config.max_depth_m);
@@ -350,13 +316,6 @@ bool isValid(
         config.method_order.empty() || config.max_disparity_px == 0U ||
         config.max_disparity_px >
             static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
-        config.patch_radius < 2U || config.patch_radius > 8U ||
-        config.search_radius_px == 0U ||
-        config.search_radius_px >
-            static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
-        config.max_points == 0U || config.max_points > 32U ||
-        config.min_points == 0U ||
-        config.min_points > config.max_points ||
         config.circle_max_roi_pixels == 0U ||
         config.circle_max_roi_pixels >
             static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
@@ -374,31 +333,11 @@ bool isValid(
         }
     }
     const bool numeric_values_valid =
-        config.min_confidence >= 0.0 && config.min_confidence <= 1.0 &&
-        finitePositive(config.max_disparity_delta_px) &&
-        finiteNonnegative(config.max_disparity_delta_ratio) &&
-        finiteNonnegative(config.max_depth_delta_m) &&
-        finitePositive(config.max_disparity_stddev_px) &&
-        finiteNonnegative(config.min_disparity_stddev_px) &&
-        config.min_disparity_stddev_px <=
-            config.max_disparity_stddev_px &&
-        finiteNonnegative(config.geometric_disparity_stddev_px) &&
         finiteNonnegative(config.anchor_stddev_px) &&
+        finiteNonnegative(config.disparity_stddev_px) &&
         finitePositive(config.min_depth_m) &&
         finitePositive(config.max_depth_m) &&
-        config.max_depth_m > config.min_depth_m &&
-        finitePositive(config.feature_y_tolerance_px) &&
-        fitsFloat(config.feature_y_slope) &&
-        fitsFloat(config.feature_y_offset_px) &&
-        fitsFloat(config.feature_reverse_check_px) &&
-        config.feature_reverse_check_px >= -1.0 &&
-        finitePositive(config.feature_overlap_scale) &&
-        config.feature_overlap_scale <= 1.0 &&
-        finitePositive(config.feature_mad_scale) &&
-        finitePositive(config.feature_ransac_gate_px) &&
-        finitePositive(config.feature_sphere_radius_m) &&
-        finitePositive(config.feature_sphere_radius_scale) &&
-        finiteNonnegative(config.feature_sphere_margin_m);
+        config.max_depth_m > config.min_depth_m;
     return numeric_values_valid && fitsFloat(config.calibration.left.fx) &&
            fitsFloat(config.calibration.baseline_m) &&
            fitsFloat(config.calibration.left.cx) &&
@@ -622,7 +561,7 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
         measurement.disparity_px = candidate.disparity_px;
         measurement.disparity_stddev_px =
             candidate.disparity_stddev_px.value_or(
-                impl_->config.geometric_disparity_stddev_px);
+                impl_->config.disparity_stddev_px);
         measurement.anchor_stddev_px = impl_->config.anchor_stddev_px;
         measurement.confidence = candidate.confidence;
         auto triangulated = algorithms::stereo::triangulateAnchoredDisparity(

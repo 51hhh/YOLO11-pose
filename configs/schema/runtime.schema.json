@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://volleyball.local/config/runtime-v1.schema.json",
+  "$id": "https://volleyball.local/config/runtime-v2.schema.json",
   "title": "Volleyball vision resolved runtime configuration",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "runtime", "platform", "cameras", "calibration", "adapters", "rectification", "detector", "stereo", "recording", "publisher", "diagnostics"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "runtime": {
       "type": "object", "additionalProperties": false,
       "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue"],
@@ -144,7 +144,7 @@
         },
         "triangulation": {
           "type": "object", "additionalProperties": false,
-          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "circle_fit"],
+          "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "measurement_uncertainty", "circle_fit"],
           "properties": {
             "backend": {"enum": ["cuda", "recorded"]},
             "primary_method": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "recorded"]},
@@ -157,19 +157,12 @@
             },
             "fallback_methods": {"type": "array", "items": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
             "propagate_covariance": {"type": "boolean"},
-            "subpixel": {
+            "measurement_uncertainty": {
               "type": "object", "additionalProperties": false,
-              "required": ["patch_radius", "search_radius_px", "max_points", "min_points", "min_confidence", "max_disparity_delta_px", "max_disparity_delta_ratio", "max_depth_delta_m", "max_stddev_px"],
+              "required": ["anchor_stddev_px", "disparity_stddev_px"],
               "properties": {
-                "patch_radius": {"type": "integer", "minimum": 1},
-                "search_radius_px": {"type": "integer", "minimum": 1},
-                "max_points": {"type": "integer", "minimum": 1},
-                "min_points": {"type": "integer", "minimum": 1},
-                "min_confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                "max_disparity_delta_px": {"type": "number", "minimum": 0.25},
-                "max_disparity_delta_ratio": {"type": "number", "minimum": 0},
-                "max_depth_delta_m": {"type": "number", "exclusiveMinimum": 0.01},
-                "max_stddev_px": {"type": "number", "exclusiveMinimum": 0}
+                "anchor_stddev_px": {"type": "number", "minimum": 0},
+                "disparity_stddev_px": {"type": "number", "minimum": 0}
               }
             },
             "circle_fit": {
@@ -181,7 +174,7 @@
             }
           }
         },
-        "min_depth_m": {"type": "number", "minimum": 0},
+        "min_depth_m": {"type": "number", "exclusiveMinimum": 0},
         "max_depth_m": {"type": "number", "exclusiveMinimum": 0},
         "ball_diameter_m": {"type": "number", "exclusiveMinimum": 0}
       }

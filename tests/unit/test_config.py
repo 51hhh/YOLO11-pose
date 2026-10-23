@@ -151,6 +151,9 @@ class ConfigTests(unittest.TestCase):
             lambda value: value["calibration"].update(body_frame="base_link"),
             lambda value: value["calibration"].update(world_frame="world"),
             lambda value: value["recording"].update(verify_hashes=True),
+            lambda value: value["stereo"]["triangulation"].update(
+                subpixel={"patch_radius": 5}
+            ),
         )
         for mutate in mutations:
             with self.subTest(mutate=mutate):
@@ -514,15 +517,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(triangulation["candidate_methods"], [])
         self.assertEqual(triangulation["fallback_methods"], [])
 
-    def test_subpixel_min_points_cannot_exceed_max_points(self) -> None:
+    def test_measurement_uncertainty_cannot_be_negative(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
-        payload = copy.deepcopy(dict(resolved.data))
-        payload["stereo"]["triangulation"]["subpixel"].update(
-            min_points=13,
-            max_points=12,
-        )
-        with self.assertRaisesRegex(ConfigError, "min_points"):
-            _validate_semantics(ROOT, payload)
+        for field in ("anchor_stddev_px", "disparity_stddev_px"):
+            with self.subTest(field=field):
+                payload = copy.deepcopy(dict(resolved.data))
+                payload["stereo"]["triangulation"][
+                    "measurement_uncertainty"
+                ][field] = -0.1
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
 
 
 if __name__ == "__main__":

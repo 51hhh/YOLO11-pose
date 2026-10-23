@@ -31,16 +31,6 @@ stereo:
     candidate_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     fallback_methods: [radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     propagate_covariance: true
-    subpixel:
-      patch_radius: 5
-      search_radius_px: 8
-      max_points: 12
-      min_points: 4
-      min_confidence: 0.25
-      max_disparity_delta_px: 2.0
-      max_disparity_delta_ratio: 0.03
-      max_depth_delta_m: 0.5
-      max_stddev_px: 1.0
     circle_fit:
       max_roi_pixels: 18000
 

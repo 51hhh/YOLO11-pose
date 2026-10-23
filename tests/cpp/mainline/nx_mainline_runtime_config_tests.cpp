@@ -22,7 +22,7 @@ void check(bool condition, const char* message) {
 }
 
 std::string validCaptureYaml() {
-    return R"YAML(schema_version: 2
+    return R"YAML(schema_version: 3
 profile: free-flight
 config_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 runtime:
@@ -97,16 +97,9 @@ association:
   bbox_disparity_penalty_scale: 0.75
 depth:
   method_order: [circle_center, bbox_center]
-  patch_radius: 5
-  search_radius_px: 8
-  max_points: 12
-  min_points: 4
-  min_confidence: 0.25
-  max_disparity_delta_px: 2
-  max_disparity_delta_ratio: 0.03
-  max_depth_delta_m: 0.5
-  max_disparity_stddev_px: 1
   circle_max_roi_pixels: 18000
+  anchor_stddev_px: 0.5
+  disparity_stddev_px: 1
   min_depth_m: 0.8
   max_depth_m: 15
 publisher:
@@ -161,7 +154,9 @@ void testValidCaptureConfig() {
               config.runtime.capture_stage &&
               config.detector.output_contract == "yolo_pre_nms" &&
               config.detector.class_count == 1 &&
-              config.association.max_capture_delta_ns == 100000,
+              config.association.max_capture_delta_ns == 100000 &&
+              config.depth.anchor_stddev_px == 0.5 &&
+              config.depth.disparity_stddev_px == 1.0,
           "accepted config must preserve typed launch facts");
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
@@ -222,6 +217,25 @@ void testRejectsUnknownAndIllTypedFields() {
     error.clear();
     check(!load(unsupported_output, 7, error),
           "output contracts without a statically auditable class table must fail");
+
+    std::string retired_texture_setting = validCaptureYaml();
+    replaceOnce(
+        retired_texture_setting,
+        "  circle_max_roi_pixels: 18000",
+        "  patch_radius: 5\n  circle_max_roi_pixels: 18000");
+    error.clear();
+    check(!load(retired_texture_setting, 8, error) &&
+              error.find("unknown key patch_radius") != std::string::npos,
+          "retired texture settings must not survive in the production config");
+
+    std::string invalid_uncertainty = validCaptureYaml();
+    replaceOnce(
+        invalid_uncertainty,
+        "anchor_stddev_px: 0.5",
+        "anchor_stddev_px: -0.5");
+    error.clear();
+    check(!load(invalid_uncertainty, 9, error),
+          "negative direct-measurement uncertainty must fail closed");
 }
 
 }  // namespace

@@ -95,16 +95,9 @@ struct AssociationSettings {
 
 struct DepthSettings {
     std::vector<std::string> method_order;
-    std::uint32_t patch_radius{0};
-    std::uint32_t search_radius_px{0};
-    std::uint32_t max_points{0};
-    std::uint32_t min_points{0};
-    double min_confidence{0.0};
-    double max_disparity_delta_px{0.0};
-    double max_disparity_delta_ratio{0.0};
-    double max_depth_delta_m{0.0};
-    double max_disparity_stddev_px{0.0};
     std::uint32_t circle_max_roi_pixels{0};
+    double anchor_stddev_px{0.0};
+    double disparity_stddev_px{0.0};
     double min_depth_m{0.0};
     double max_depth_m{0.0};
 };

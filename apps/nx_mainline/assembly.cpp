@@ -212,23 +212,11 @@ cuda_depth::CudaDirectObservationEstimatorConfig estimatorConfig(
         output.method_order.emplace_back(method);
     }
     output.max_disparity_px = config.association.max_disparity_px;
-    output.patch_radius = config.depth.patch_radius;
-    output.search_radius_px = config.depth.search_radius_px;
-    output.max_points = config.depth.max_points;
-    output.min_points = config.depth.min_points;
     output.circle_max_roi_pixels = config.depth.circle_max_roi_pixels;
-    output.min_confidence = config.depth.min_confidence;
-    output.max_disparity_delta_px = config.depth.max_disparity_delta_px;
-    output.max_disparity_delta_ratio = config.depth.max_disparity_delta_ratio;
-    output.max_depth_delta_m = config.depth.max_depth_delta_m;
-    output.max_disparity_stddev_px =
-        config.depth.max_disparity_stddev_px;
+    output.anchor_stddev_px = config.depth.anchor_stddev_px;
+    output.disparity_stddev_px = config.depth.disparity_stddev_px;
     output.min_depth_m = config.depth.min_depth_m;
     output.max_depth_m = config.depth.max_depth_m;
-    output.feature_y_tolerance_px = std::max(
-        0.5, config.association.epipolar_tolerance_px);
-    output.feature_sphere_radius_m =
-        config.association.ball_diameter_m * 0.5;
     return output;
 }
 

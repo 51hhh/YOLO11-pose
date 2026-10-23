@@ -140,6 +140,8 @@ adapter::CudaDirectObservationEstimatorConfig config() {
     output.calibration.rig_frame = core::CoordinateFrameId{"stereo-rig"};
     output.min_depth_m = 0.2;
     output.max_depth_m = 20.0;
+    output.anchor_stddev_px = 0.2;
+    output.disparity_stddev_px = 0.25;
     output.method_order = {
         core::StereoDepthMethodId{"circle_center"},
         core::StereoDepthMethodId{"bbox_center"},
@@ -215,7 +217,8 @@ void testPublishesConfiguredBallCenterMeasurement() {
                   Fixture::disparity) < 0.2 &&
               result.observation->evidence.support_points &&
               *result.observation->evidence.support_points >= 1U &&
-              result.observation->evidence.left_anchor_px.has_value(),
+              result.observation->evidence.left_anchor_px.has_value() &&
+              result.observation->evidence.disparity_stddev_px == 0.25,
           "center evidence must include its actual input anchor");
     check(result.observation &&
               std::abs(result.observation->measurement.position_m.z - 8.0) <

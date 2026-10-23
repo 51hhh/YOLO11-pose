@@ -22,32 +22,11 @@ struct CudaDirectObservationEstimatorConfig {
     };
 
     std::uint32_t max_disparity_px{2048};
-    std::uint32_t patch_radius{5};
-    std::uint32_t search_radius_px{8};
-    std::uint32_t max_points{12};
-    std::uint32_t min_points{4};
     std::uint32_t circle_max_roi_pixels{18000};
-    double min_confidence{0.25};
-    double max_disparity_delta_px{2.0};
-    double max_disparity_delta_ratio{0.03};
-    double max_depth_delta_m{0.5};
-    double max_disparity_stddev_px{1.0};
-    double min_disparity_stddev_px{0.05};
-    double geometric_disparity_stddev_px{1.0};
     double anchor_stddev_px{0.5};
+    double disparity_stddev_px{1.0};
     double min_depth_m{0.3};
     double max_depth_m{15.0};
-
-    double feature_y_tolerance_px{2.0};
-    double feature_y_slope{0.0};
-    double feature_y_offset_px{0.0};
-    double feature_reverse_check_px{1.0};
-    double feature_overlap_scale{0.55};
-    double feature_mad_scale{2.5};
-    double feature_ransac_gate_px{0.75};
-    double feature_sphere_radius_m{0.10};
-    double feature_sphere_radius_scale{1.8};
-    double feature_sphere_margin_m{0.02};
 };
 
 [[nodiscard]] bool isValid(

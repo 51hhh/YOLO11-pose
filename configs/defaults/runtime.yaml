@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 
 runtime:
   mode: runtime
@@ -100,16 +100,10 @@ stereo:
     candidate_methods: []
     fallback_methods: []
     propagate_covariance: true
-    subpixel:
-      patch_radius: 5
-      search_radius_px: 8
-      max_points: 12
-      min_points: 4
-      min_confidence: 0.25
-      max_disparity_delta_px: 2.0
-      max_disparity_delta_ratio: 0.03
-      max_depth_delta_m: 0.5
-      max_stddev_px: 1.0
+    # 未完成实测前的 UVD 协方差先验；正式标定验收后应用覆盖率修订。
+    measurement_uncertainty:
+      anchor_stddev_px: 0.5
+      disparity_stddev_px: 1.0
     circle_fit:
       max_roi_pixels: 18000
   min_depth_m: 0.8

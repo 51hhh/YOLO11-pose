@@ -285,29 +285,16 @@ void parseAssociation(
 void parseDepth(const YAML::Node& node, DepthSettings& output) {
     exactKeys(
         node,
-        {"method_order", "patch_radius", "search_radius_px", "max_points",
-         "min_points", "min_confidence", "max_disparity_delta_px",
-         "max_disparity_delta_ratio", "max_depth_delta_m",
-         "max_disparity_stddev_px", "circle_max_roi_pixels", "min_depth_m",
-         "max_depth_m"},
+        {"method_order", "circle_max_roi_pixels", "anchor_stddev_px",
+         "disparity_stddev_px", "min_depth_m", "max_depth_m"},
         "depth");
     output.method_order = stringSequence(node, "method_order", "depth");
-    output.patch_radius = scalar<std::uint32_t>(node, "patch_radius", "depth");
-    output.search_radius_px =
-        scalar<std::uint32_t>(node, "search_radius_px", "depth");
-    output.max_points = scalar<std::uint32_t>(node, "max_points", "depth");
-    output.min_points = scalar<std::uint32_t>(node, "min_points", "depth");
-    output.min_confidence = scalar<double>(node, "min_confidence", "depth");
-    output.max_disparity_delta_px =
-        scalar<double>(node, "max_disparity_delta_px", "depth");
-    output.max_disparity_delta_ratio =
-        scalar<double>(node, "max_disparity_delta_ratio", "depth");
-    output.max_depth_delta_m =
-        scalar<double>(node, "max_depth_delta_m", "depth");
-    output.max_disparity_stddev_px =
-        scalar<double>(node, "max_disparity_stddev_px", "depth");
     output.circle_max_roi_pixels =
         scalar<std::uint32_t>(node, "circle_max_roi_pixels", "depth");
+    output.anchor_stddev_px =
+        scalar<double>(node, "anchor_stddev_px", "depth");
+    output.disparity_stddev_px =
+        scalar<double>(node, "disparity_stddev_px", "depth");
     output.min_depth_m = scalar<double>(node, "min_depth_m", "depth");
     output.max_depth_m = scalar<double>(node, "max_depth_m", "depth");
 }
@@ -454,20 +441,11 @@ void validate(const MainlineRuntimeConfig& value) {
         }
     }
     const auto& depth = value.depth;
-    if (depth.method_order.empty() || depth.patch_radius == 0 ||
-        depth.search_radius_px == 0 || depth.max_points == 0 ||
-        depth.min_points == 0 || depth.min_points > depth.max_points ||
-        !finite(depth.min_confidence) || depth.min_confidence < 0.0 ||
-        depth.min_confidence > 1.0 ||
-        !finite(depth.max_disparity_delta_px) ||
-        depth.max_disparity_delta_px <= 0.0 ||
-        !finite(depth.max_disparity_delta_ratio) ||
-        depth.max_disparity_delta_ratio < 0.0 ||
-        !finite(depth.max_depth_delta_m) || depth.max_depth_delta_m <= 0.0 ||
-        !finite(depth.max_disparity_stddev_px) ||
-        depth.max_disparity_stddev_px <= 0.0 ||
-        depth.circle_max_roi_pixels == 0 || !finite(depth.min_depth_m) ||
-        !finite(depth.max_depth_m) || depth.min_depth_m < 0.0 ||
+    if (depth.method_order.empty() || depth.circle_max_roi_pixels == 0 ||
+        !finite(depth.anchor_stddev_px) || depth.anchor_stddev_px < 0.0 ||
+        !finite(depth.disparity_stddev_px) ||
+        depth.disparity_stddev_px < 0.0 || !finite(depth.min_depth_m) ||
+        !finite(depth.max_depth_m) || depth.min_depth_m <= 0.0 ||
         depth.max_depth_m <= depth.min_depth_m) {
         throw std::runtime_error("depth configuration is invalid");
     }
@@ -500,7 +478,7 @@ bool loadRuntimeConfig(
              "camera", "clocks", "trigger", "calibration", "detector",
              "association", "depth", "publisher", "diagnostics"},
             "root");
-        if (scalar<int>(root, "schema_version", "root") != 2) {
+        if (scalar<int>(root, "schema_version", "root") != 3) {
             throw std::runtime_error("unsupported mainline config schema_version");
         }
         output.profile = scalar<std::string>(root, "profile", "root");

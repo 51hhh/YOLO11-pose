@@ -13,7 +13,7 @@ from .model_manifest import resolve_model
 from .triangulation_config import SUPPORTED_LIVE_METHODS
 
 
-MAINLINE_CONFIG_SCHEMA_VERSION = 2
+MAINLINE_CONFIG_SCHEMA_VERSION = 3
 
 
 def _selection_order(triangulation: dict[str, Any]) -> list[str]:
@@ -204,25 +204,14 @@ def build_mainline_pipeline_config(
         },
         "depth": {
             "method_order": _selection_order(dict(triangulation)),
-            "patch_radius": triangulation["subpixel"]["patch_radius"],
-            "search_radius_px": triangulation["subpixel"]["search_radius_px"],
-            "max_points": triangulation["subpixel"]["max_points"],
-            "min_points": triangulation["subpixel"]["min_points"],
-            "min_confidence": triangulation["subpixel"]["min_confidence"],
-            "max_disparity_delta_px": triangulation["subpixel"][
-                "max_disparity_delta_px"
-            ],
-            "max_disparity_delta_ratio": triangulation["subpixel"][
-                "max_disparity_delta_ratio"
-            ],
-            "max_depth_delta_m": triangulation["subpixel"][
-                "max_depth_delta_m"
-            ],
-            "max_disparity_stddev_px": triangulation["subpixel"][
-                "max_stddev_px"
-            ],
             "circle_max_roi_pixels": triangulation["circle_fit"][
                 "max_roi_pixels"
+            ],
+            "anchor_stddev_px": triangulation["measurement_uncertainty"][
+                "anchor_stddev_px"
+            ],
+            "disparity_stddev_px": triangulation["measurement_uncertainty"][
+                "disparity_stddev_px"
             ],
             "min_depth_m": stereo["min_depth_m"],
             "max_depth_m": stereo["max_depth_m"],

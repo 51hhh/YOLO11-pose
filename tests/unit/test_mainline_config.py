@@ -46,6 +46,19 @@ class MainlineConfigTests(unittest.TestCase):
                 "bbox_edges",
             ],
         )
+        self.assertEqual(
+            set(payload["depth"]),
+            {
+                "method_order",
+                "circle_max_roi_pixels",
+                "anchor_stddev_px",
+                "disparity_stddev_px",
+                "min_depth_m",
+                "max_depth_m",
+            },
+        )
+        self.assertEqual(payload["depth"]["anchor_stddev_px"], 0.5)
+        self.assertEqual(payload["depth"]["disparity_stddev_px"], 1.0)
 
     def test_capture_projection_requires_finite_stage_and_disables_publish(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)

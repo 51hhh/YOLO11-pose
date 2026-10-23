@@ -511,7 +511,7 @@ def finalize_mainline_capture_stage(
             "left_capture_ns": left_capture,
             "right_capture_ns": right_capture,
             "delta_t_lr_ns": right_capture - left_capture,
-            # 正式 accepted pair 使用真正产生 3D 的精化视差；检测中心的
+            # 正式 accepted pair 使用真正产生 3D 的最终测量视差；检测中心的
             # 初始门控视差仍完整保存在 raw/audit/associations_v6.csv。
             "disparity_px": (
                 parse_float(row, "disparity_px", optional=True)
