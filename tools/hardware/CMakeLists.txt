@@ -2,8 +2,8 @@ if(NOT VOLLEYBALL_BUILD_HARDWARE_TOOLS)
   return()
 endif()
 
-# 三个保留工具只负责实机验收和标定，不参与实时主程序。它们从根工程消费
-# 只消费根工程的正式适配器目标，不依赖目录级变量或全局 include。
+# 三个保留工具只负责实机验收和标定，不参与实时主程序。它们只消费根工程
+# 的正式适配器目标，不依赖目录级变量或全局 include。
 find_package(Threads REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS
   core
