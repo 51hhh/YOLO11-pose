@@ -168,7 +168,8 @@ bool verifyCriticalReadback(
     if (!getFloatValue(handle, "ExposureTime", exposure) ||
         !getFloatValue(handle, "Gain", gain) ||
         !getEnumValue(handle, "TriggerMode", trigger_mode) ||
-        !getEnumValue(handle, "TriggerSource", trigger_source)) {
+        !getEnumValue(handle, "TriggerSource", trigger_source) ||
+        !have_activation) {
         std::printf("[%s] critical camera readback failed REQUIRED\n", tag);
         return false;
     }
@@ -176,7 +177,7 @@ bool verifyCriticalReadback(
         std::fabs(exposure - args.exposure_us) <= 10.0F &&
         std::fabs(gain - args.gain_db) <= 0.2F &&
         trigger_mode == 1U && trigger_source == 0U &&
-        (!have_activation || trigger_activation == 0U);
+        trigger_activation == 0U;
     if (!matches) {
         std::printf(
             "[%s] readback mismatch exp=%.3f/%.3f gain=%.3f/%.3f "

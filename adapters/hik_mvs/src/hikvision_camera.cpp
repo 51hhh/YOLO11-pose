@@ -177,16 +177,18 @@ bool HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg, con
     const bool have_trigger_activation =
         !cfg.use_trigger || getEnumValue(handle, "TriggerActivation", trigger_activation);
 
-    if (!have_exposure || !have_gain || !have_trigger_mode || !have_trigger_source) {
+    if (!have_exposure || !have_gain || !have_trigger_mode ||
+        !have_trigger_source || !have_trigger_activation) {
         LOG_ERROR("[HikCam][%s] Critical readback failed: ExposureTime=%d, Gain=%d, "
-                  "TriggerMode=%d, TriggerSource=%d",
-                  tag, have_exposure, have_gain, have_trigger_mode, have_trigger_source);
+                  "TriggerMode=%d, TriggerSource=%d, TriggerActivation=%d",
+                  tag, have_exposure, have_gain, have_trigger_mode,
+                  have_trigger_source, have_trigger_activation);
         return false;
     }
-    if (!have_exposure_auto || !have_gain_auto || !have_gamma || !have_trigger_activation) {
+    if (!have_exposure_auto || !have_gain_auto || !have_gamma) {
         LOG_WARN("[HikCam][%s] Optional readback missing: ExposureAuto=%d, GainAuto=%d, "
-                 "GammaEnable=%d, TriggerActivation=%d",
-                 tag, have_exposure_auto, have_gain_auto, have_gamma, have_trigger_activation);
+                 "GammaEnable=%d",
+                 tag, have_exposure_auto, have_gain_auto, have_gamma);
     }
 
     const bool exposure_ok = cfg.auto_exposure || closeEnough(exposure, cfg.exposure_us, 10.0f);
@@ -201,8 +203,7 @@ bool HikvisionCamera::configureCamera(void* handle, const CameraConfig& cfg, con
         const unsigned int expected_activation =
             (cfg.trigger_activation == "RisingEdge") ? 0 : 1;
         trigger_source_ok = (trigger_source == expected_source);
-        trigger_activation_ok = !have_trigger_activation ||
-                                (trigger_activation == expected_activation);
+        trigger_activation_ok = trigger_activation == expected_activation;
     }
     if (!exposure_ok || !gain_ok || !trigger_mode_ok ||
         !trigger_source_ok || !trigger_activation_ok) {

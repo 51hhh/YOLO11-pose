@@ -19,6 +19,7 @@ struct StubCamera {
     bool fail_pixel_format_enum = false;
     bool fail_free = false;
     bool fail_frame_rate_disable = false;
+    bool fail_trigger_activation_readback = false;
     float exposure_readback = 9867.0F;
     float gain_readback = 11.99F;
     std::string fail_selector;
@@ -156,6 +157,11 @@ void testConfigurationRequiresCoreMetadata() {
     left_camera.exposure_readback = 9000.0F;
     check(!hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
           "exposure readback outside tolerance must be fatal");
+
+    resetStub();
+    left_camera.fail_trigger_activation_readback = true;
+    check(!hik_metadata_probe::configureCamera(&left_camera, args, "TEST"),
+          "missing TriggerActivation readback must be fatal");
 }
 
 void testGrabCopiesMetadataAndChecksRelease() {
@@ -263,8 +269,12 @@ int MV_CC_SetBoolValue(void* handle, const char* node, bool value) {
     return MV_OK;
 }
 
-int MV_CC_GetEnumValue(void*, const char* node, MVCC_ENUMVALUE* value) {
+int MV_CC_GetEnumValue(void* handle, const char* node, MVCC_ENUMVALUE* value) {
     const std::string node_name(node);
+    if (node_name == "TriggerActivation" &&
+        static_cast<StubCamera*>(handle)->fail_trigger_activation_readback) {
+        return -12;
+    }
     value->nCurValue = node_name == "TriggerMode" ? 1U : 0U;
     return MV_OK;
 }

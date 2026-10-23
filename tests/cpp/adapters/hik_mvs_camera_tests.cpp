@@ -37,6 +37,7 @@ MV_CC_DEVICE_INFO right_info{};
 MV_CC_DEVICE_INFO* device_infos[] = {&left_info, &right_info};
 bool unstable_timestamp_offset = false;
 bool fail_next_left_grab = false;
+bool fail_trigger_activation_readback = false;
 float frame_exposure_us = 9867.0F;
 int failures = 0;
 
@@ -57,6 +58,7 @@ void resetStub(bool unstable) {
     right_camera.right = true;
     unstable_timestamp_offset = unstable;
     fail_next_left_grab = false;
+    fail_trigger_activation_readback = false;
     frame_exposure_us = 9867.0F;
     left_info = MV_CC_DEVICE_INFO{};
     right_info = MV_CC_DEVICE_INFO{};
@@ -182,6 +184,16 @@ void testOpenRejectsMismatchedCameraGeometry() {
     right_camera.offset_x = 1;
     check(!camera.open(config()),
           "camera open must reject an ROI offset not represented by calibration");
+}
+
+void testOpenRequiresTriggerActivationReadback() {
+    resetStub(false);
+    fail_trigger_activation_readback = true;
+    hik_mvs::HikvisionCamera camera;
+    check(!camera.open(config()),
+          "camera open must require TriggerActivation readback");
+    check(!left_camera.started && !right_camera.started,
+          "readback failure must happen before acquisition starts");
 }
 
 void testGrabRejectsGeometryDriftAndShortPitch() {
@@ -503,6 +515,10 @@ int MV_CC_SetBoolValue(void* handle, const char* node, bool value) {
 
 int MV_CC_GetEnumValue(void*, const char* node, MVCC_ENUMVALUE* value) {
     const std::string name(node);
+    if (name == "TriggerActivation" &&
+        fail_trigger_activation_readback) {
+        return -1;
+    }
     value->nCurValue = name == "TriggerMode" ? 1U : 0U;
     return MV_OK;
 }
@@ -587,6 +603,7 @@ int main() {
     testWarmupIsInternalToFirstGrab();
     testUnstableBaselineFailsWithBoundedReads();
     testOpenRejectsMismatchedCameraGeometry();
+    testOpenRequiresTriggerActivationReadback();
     testGrabRejectsGeometryDriftAndShortPitch();
     testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult();
     testCameraSourcePreservesAuditedFrameEvidence();
