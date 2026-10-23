@@ -175,6 +175,18 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
                     _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_retired_surface_disparity_methods(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        for method in ("roi_multi_point", "center_patch"):
+            with self.subTest(method=method):
+                payload = copy.deepcopy(dict(resolved.data))
+                triangulation = payload["stereo"]["triangulation"]
+                triangulation["primary_method"] = method
+                triangulation["candidate_methods"] = [method]
+                triangulation["fallback_methods"] = []
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
     def test_schema_rejects_unimplemented_recording_modes(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (

@@ -147,15 +147,15 @@
           "required": ["backend", "primary_method", "candidate_methods", "fallback_methods", "propagate_covariance", "subpixel", "circle_fit"],
           "properties": {
             "backend": {"enum": ["cuda", "recorded"]},
-            "primary_method": {"enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "recorded"]},
+            "primary_method": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges", "recorded"]},
             "candidate_methods": {
               "type": "array",
               "items": {
-                "enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]
+                "enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]
               },
               "uniqueItems": true
             },
-            "fallback_methods": {"type": "array", "items": {"enum": ["roi_multi_point", "center_patch", "circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
+            "fallback_methods": {"type": "array", "items": {"enum": ["circle_center", "radial_center", "edge_pair_center", "edge_centroid", "bbox_center", "bbox_edges"]}, "uniqueItems": true},
             "propagate_covariance": {"type": "boolean"},
             "subpixel": {
               "type": "object", "additionalProperties": false,
