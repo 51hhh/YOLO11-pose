@@ -5,7 +5,7 @@
 ## A. 软件契约
 
 ```bash
-python3 -m pip install -e '.[test]'
+python3 -m pip install -e .
 volleyball config validate --profile nx-rdk
 volleyball config validate --profile free-flight
 volleyball config validate --profile replay

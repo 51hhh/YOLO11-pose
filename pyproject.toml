@@ -12,11 +12,6 @@ dependencies = [
   "jsonschema>=4.18"
 ]
 
-[project.optional-dependencies]
-test = [
-  "numpy>=1.24"
-]
-
 [project.scripts]
 volleyball = "volleyball_vision.cli:main"
 
