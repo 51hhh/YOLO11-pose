@@ -470,11 +470,11 @@ class ConfigTests(unittest.TestCase):
         payload = copy.deepcopy(dict(resolved.data))
         triangulation = payload["stereo"]["triangulation"]
         triangulation["candidate_methods"] = [
-            "roi_multi_point",
-            "bbox_center",
             "circle_center",
+            "bbox_center",
+            "radial_center",
         ]
-        triangulation["fallback_methods"] = ["bbox_center", "circle_center"]
+        triangulation["fallback_methods"] = ["bbox_center", "radial_center"]
         _validate_semantics(ROOT, payload)
 
     def test_any_native_candidate_can_be_primary(self) -> None:

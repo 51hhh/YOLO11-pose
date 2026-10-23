@@ -30,25 +30,38 @@ adapter::DepthCandidate candidate(const char* method, double disparity) {
 
 void testSelectsByConfiguredOrderNotCandidateOrder() {
     const auto result = adapter::selectDepthCandidate(
-        {candidate("circle_center", 8.0),
-         candidate("roi_multi_point", 10.0)},
-        {core::StereoDepthMethodId{"roi_multi_point"},
-         core::StereoDepthMethodId{"circle_center"}});
+        {candidate("bbox_center", 8.0),
+         candidate("circle_center", 10.0)},
+        {core::StereoDepthMethodId{"circle_center"},
+         core::StereoDepthMethodId{"bbox_center"}});
     check(result.valid_input && result.candidate &&
               result.candidate->method ==
-                  core::StereoDepthMethodId{"roi_multi_point"} &&
+                  core::StereoDepthMethodId{"circle_center"} &&
               result.candidate->disparity_px == 10.0,
           "selection must follow the frozen method order");
 }
 
 void testNoCandidateIsAValidRejection() {
     const auto result = adapter::selectDepthCandidate(
-        {}, {core::StereoDepthMethodId{"roi_multi_point"}});
+        {}, {core::StereoDepthMethodId{"circle_center"}});
     check(result.valid_input && !result.candidate,
           "no algorithmic measurement must remain a valid rejection");
 }
 
 void testRejectsAmbiguousOrUnsupportedInput() {
+    for (const char* method : {"roi_multi_point", "center_patch"}) {
+        const auto surface = adapter::selectDepthCandidate(
+            {candidate(method, 10.0)},
+            {core::StereoDepthMethodId{"bbox_center"}});
+        check(
+            !surface.valid_input,
+            "surface matches must not be published as ball centers");
+    }
+    const auto unconfigured = adapter::selectDepthCandidate(
+        {candidate("circle_center", 10.0)},
+        {core::StereoDepthMethodId{"bbox_center"}});
+    check(!unconfigured.valid_input,
+          "computed candidates outside the frozen order must fail closed");
     const auto duplicate = adapter::selectDepthCandidate(
         {candidate("bbox_center", 9.0), candidate("bbox_center", 10.0)},
         {core::StereoDepthMethodId{"bbox_center"}});

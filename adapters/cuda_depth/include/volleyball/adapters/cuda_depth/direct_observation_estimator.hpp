@@ -13,7 +13,6 @@ struct CudaDirectObservationEstimatorConfig {
     core::RectifiedStereoCalibration calibration;
     algorithms::stereo::TriangulationConfig triangulation;
     std::vector<core::StereoDepthMethodId> method_order{
-        core::StereoDepthMethodId{"roi_multi_point"},
         core::StereoDepthMethodId{"circle_center"},
         core::StereoDepthMethodId{"radial_center"},
         core::StereoDepthMethodId{"edge_pair_center"},

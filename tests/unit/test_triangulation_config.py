@@ -6,6 +6,14 @@ from volleyball_vision.triangulation_config import triangulation_semantic_errors
 
 
 class TriangulationConfigTests(unittest.TestCase):
+    def test_surface_measurement_cannot_be_selected_as_ball_center(self) -> None:
+        for method in ("roi_multi_point", "center_patch"):
+            errors = triangulation_semantic_errors({
+                "backend": "cuda", "primary_method": method,
+                "candidate_methods": [method], "fallback_methods": [],
+            })
+            self.assertTrue(any("不支持" in error for error in errors))
+
     def test_every_computed_candidate_must_be_selectable(self) -> None:
         errors = triangulation_semantic_errors(
             {

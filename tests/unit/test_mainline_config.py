@@ -38,7 +38,6 @@ class MainlineConfigTests(unittest.TestCase):
         self.assertEqual(
             payload["depth"]["method_order"],
             [
-                "roi_multi_point",
                 "circle_center",
                 "radial_center",
                 "edge_pair_center",
@@ -76,7 +75,7 @@ class MainlineConfigTests(unittest.TestCase):
                 project_root=ROOT,
                 overrides=(
                     "stereo.triangulation.candidate_methods="
-                    "[roi_multi_point,bbox_center]",
+                    "[circle_center,bbox_center]",
                     "stereo.triangulation.fallback_methods=[]",
                 ),
             )

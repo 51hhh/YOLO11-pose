@@ -96,7 +96,7 @@ association:
   bbox_disparity_consistency_min_px: 45
   bbox_disparity_penalty_scale: 0.75
 depth:
-  method_order: [roi_multi_point, bbox_center]
+  method_order: [circle_center, bbox_center]
   patch_radius: 5
   search_radius_px: 8
   max_points: 12

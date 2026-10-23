@@ -236,7 +236,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 "cov_zz_m2": 0.01,
                 "confidence": 0.95,
                 "reprojection_error_px": 0.0,
-                "depth_method": "roi_multi_point",
+                "depth_method": "circle_center",
                 "measurement_disparity_px": 49.75,
                 "disparity_stddev_px": 0.2,
                 "support_points": 8,

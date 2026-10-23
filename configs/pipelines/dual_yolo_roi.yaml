@@ -25,10 +25,11 @@ stereo:
     record_rejected: true
   triangulation:
     backend: cuda
-    primary_method: roi_multi_point
+    # 几何球心候选，不宣称已经完成真实精度验收。纹理 ROI 在球心恢复前禁用于发布。
+    primary_method: circle_center
     # 会实际计算的候选集合；最终选择顺序为 primary 后接 fallback_methods。
-    candidate_methods: [roi_multi_point, circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
-    fallback_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    candidate_methods: [circle_center, radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
+    fallback_methods: [radial_center, edge_pair_center, edge_centroid, bbox_center, bbox_edges]
     propagate_covariance: true
     subpixel:
       patch_radius: 5

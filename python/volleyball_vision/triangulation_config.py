@@ -8,8 +8,6 @@ from typing import Any
 
 SUPPORTED_LIVE_METHODS: frozenset[str] = frozenset(
     {
-        "roi_multi_point",
-        "center_patch",
         "circle_center",
         "radial_center",
         "edge_pair_center",

@@ -29,8 +29,9 @@ bool isValid(const DepthCandidate& candidate) noexcept {
 bool isSupportedSelectionMethod(
     const core::StereoDepthMethodId& method) noexcept {
     const std::string_view value = method.value();
-    return value == "roi_multi_point" || value == "center_patch" ||
-           value == "circle_center" || value == "radial_center" ||
+    // 纹理视差对应球面，不是球心。保留底层 ROI 算子用于研究，但在加入
+    // 有验证的球心恢复前，禁止作为正式球心选择分支。
+    return value == "circle_center" || value == "radial_center" ||
            value == "edge_pair_center" || value == "edge_centroid" ||
            value == "bbox_center" || value == "bbox_edges";
 }
@@ -59,6 +60,20 @@ DepthCandidateSelection selectDepthCandidate(
             return {false, std::nullopt, "invalid depth candidate"};
         }
         const auto name = candidate.method.value();
+        if (!isSupportedSelectionMethod(candidate.method)) {
+            return {
+                false,
+                std::nullopt,
+                "unsupported depth candidate method: " + name,
+            };
+        }
+        if (ordered_methods.count(name) == 0U) {
+            return {
+                false,
+                std::nullopt,
+                "unconfigured depth candidate: " + name,
+            };
+        }
         if (!candidate_methods.emplace(name).second) {
             return {false, std::nullopt, "duplicate depth candidate: " + name};
         }

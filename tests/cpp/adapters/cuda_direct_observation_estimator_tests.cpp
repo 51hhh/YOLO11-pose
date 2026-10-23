@@ -141,7 +141,7 @@ adapter::CudaDirectObservationEstimatorConfig config() {
     output.min_depth_m = 0.2;
     output.max_depth_m = 20.0;
     output.method_order = {
-        core::StereoDepthMethodId{"roi_multi_point"},
+        core::StereoDepthMethodId{"circle_center"},
         core::StereoDepthMethodId{"bbox_center"},
     };
     return output;
@@ -184,7 +184,8 @@ ports::RectifiedStereoFrame frame(
     return output;
 }
 
-void testSelectsRealMultiPointMeasurement() {
+void testPublishesConfiguredBallCenterMeasurement() {
+    // 纹理输入用于验证候选语义；没有球体恢复的 ROI 不再作为正式球心发布。
     const Fixture fixture;
     auto pixels = shiftedImages(true);
     auto left = std::make_shared<DeviceGrayImage>(
@@ -192,7 +193,9 @@ void testSelectsRealMultiPointMeasurement() {
     auto right = std::make_shared<DeviceGrayImage>(
         Fixture::width, Fixture::height, pixels.second);
     auto stereo_frame = frame(fixture, left, right);
-    adapter::CudaDirectObservationEstimator estimator(config());
+    auto settings = config();
+    settings.method_order = {core::StereoDepthMethodId{"bbox_center"}};
+    adapter::CudaDirectObservationEstimator estimator(settings);
     const auto result = estimator.estimate({
         stereo_frame,
         fixture.left,
@@ -206,13 +209,13 @@ void testSelectsRealMultiPointMeasurement() {
           "textured shifted images must produce a direct observation");
     check(result.observation &&
               result.observation->evidence.method ==
-                  core::StereoDepthMethodId{"roi_multi_point"} &&
+                  core::StereoDepthMethodId{"bbox_center"} &&
               std::abs(
                   result.observation->evidence.disparity_px -
                   Fixture::disparity) < 0.2 &&
               result.observation->evidence.support_points &&
-              *result.observation->evidence.support_points >= 4U,
-          "real CUDA multi-point evidence must remain identifiable");
+              *result.observation->evidence.support_points >= 1U,
+          "configured center evidence must remain identifiable");
     check(result.observation &&
               std::abs(result.observation->measurement.position_m.z - 8.0) <
                   0.2 &&
@@ -248,6 +251,8 @@ void testFallsBackToBboxWithoutRenamingIt() {
 
 void testRejectsInvalidConfigurationAndIdentity() {
     auto invalid = config();
+    invalid.method_order = {core::StereoDepthMethodId{"roi_multi_point"}};
+    check(!adapter::isValid(invalid), "raw surface disparity must not be used as ball center");
     invalid.method_order = {
         core::StereoDepthMethodId{"cuda_template_match"}};
     check(!adapter::isValid(invalid),
@@ -278,7 +283,7 @@ void testRejectsInvalidConfigurationAndIdentity() {
 }  // namespace
 
 int main() {
-    testSelectsRealMultiPointMeasurement();
+    testPublishesConfiguredBallCenterMeasurement();
     testFallsBackToBboxWithoutRenamingIt();
     testRejectsInvalidConfigurationAndIdentity();
     if (failures != 0) {

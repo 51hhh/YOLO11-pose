@@ -68,7 +68,8 @@ v6 使用 `frames_v6.csv`、`detections_v6.csv`、`associations_v6.csv`、
 任何 staging 都不能绕过校验直接冒充正式 trial。
 
 `associations_v6.csv:disparity_px` 保留检测中心形成的初始 2D 配对门控视差；它不等于
-ROI 多点等算法最终用于 3D 的精化视差。发布 v2.1 时，accepted pair 的
+最终球心代理方法用于 3D 的测量视差。纹理 ROI/中心 patch 在完成球体恢复和实测验证前
+不得进入正式发布链。发布 v2.1 时，accepted pair 的
 `stereo_pairs.csv:disparity_px` 使用 `measurement_disparity_px`，初始值随完整 v6 表归档在
 `raw/audit/`；拒绝配对没有 3D 测量，继续保留其初始门控视差。这样离线标定既能复核
 配对，又不会误用与 XYZ 不一致的视差。
