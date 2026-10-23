@@ -141,6 +141,32 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
                     _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_unimplemented_camera_timing_modes(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value["cameras"]["sync"].update(
+                method="shared_clock"
+            ),
+            lambda value: value["cameras"]["sync"].update(
+                trigger_source="Line1"
+            ),
+            lambda value: value["cameras"]["sync"].update(
+                shutter_type="rolling"
+            ),
+            lambda value: value["cameras"]["sync"].update(
+                exposure_timestamp_source="unavailable"
+            ),
+            lambda value: value["cameras"]["sync"].update(
+                exposure_delay_status="unavailable"
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
     def test_semantics_reject_same_camera_serial(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))
