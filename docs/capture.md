@@ -157,6 +157,10 @@ dataset-root/
 
 ## 实验操作
 
+`trial_id`、`session_id` 和 `ball_id` 必须匹配
+`[A-Za-z0-9][A-Za-z0-9._-]{0,127}`。采集器会在创建 staging 或数据集目录前
+校验它们，路径分隔符、绝对路径和 `..` 均不能作为标识进入文件系统。
+
 开发机可先预演最终无丢帧配置；预演不检查相机、GPIO、NX 可执行文件或模型 artifact，
 生成的 staging 带 `planning_only=true`，后续即使补齐文件也不能发布为真实 trial：
 

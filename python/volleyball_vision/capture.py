@@ -11,7 +11,7 @@ import tempfile
 from typing import Any, Mapping
 
 from .config import ResolvedConfig, find_project_root
-from .dataset import DatasetError
+from .dataset import DatasetError, require_identifier
 from .mainline_capture import (
     build_mainline_capture_context,
     finalize_mainline_capture_stage,
@@ -71,6 +71,9 @@ def run_capture(
         raise DatasetError("capture profile 必须启用 recording")
     if not math.isfinite(duration_s) or duration_s <= 0.0:
         raise DatasetError("duration_s 必须是正的有限秒数")
+    require_identifier(trial_id, field_name="trial_id")
+    require_identifier(session_id, field_name="session_id")
+    require_identifier(ball_id, field_name="ball_id")
 
     capture_root = (
         Path(dataset_root).resolve()

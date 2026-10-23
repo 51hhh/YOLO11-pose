@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import tempfile
 from typing import Any, Iterable, Mapping, TextIO
@@ -60,6 +61,15 @@ _CAMERA_TIMESTAMP_SEMANTICS = {
     "right_capture",
     "hardware_trigger",
 }
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def require_identifier(value: Any, *, field_name: str) -> str:
+    """在值进入路径或数据包之前应用冻结 v2.1 identifier 规则。"""
+
+    if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
+        raise DatasetError(f"{field_name} 不是有效 identifier: {value!r}")
+    return value
 
 
 def _contract_root(project_root: str | Path | None = None) -> Path:
@@ -924,10 +934,10 @@ class TrialPackageWriter:
         self.dataset_root = Path(dataset_root).resolve()
         self.project_root = find_project_root(project_root)
         self.metadata = dict(metadata)
-        trial_id = self.metadata.get("trial_id")
-        if not isinstance(trial_id, str) or not trial_id or any(character in trial_id for character in "/\\"):
-            raise DatasetError("metadata.trial_id 无效")
-        self.trial_id = trial_id
+        self.trial_id = require_identifier(
+            self.metadata.get("trial_id"),
+            field_name="metadata.trial_id",
+        )
         self.trials_root = self.dataset_root / "trials"
         self.trials_root.mkdir(parents=True, exist_ok=True)
         (self.dataset_root / "calibrations").mkdir(parents=True, exist_ok=True)
@@ -975,8 +985,7 @@ class TrialPackageWriter:
     ) -> Path:
         if self._closed:
             raise DatasetError("写入器已关闭")
-        if not label or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for character in label):
-            raise DatasetError(f"原始文件 label 无效: {label!r}")
+        require_identifier(label, field_name="原始文件 label")
         if any(entry["label"] == label for entry in self._raw_manifest):
             raise DatasetError(f"重复原始文件 label: {label}")
         source_path = Path(source).resolve()

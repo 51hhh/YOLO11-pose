@@ -156,6 +156,45 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("只接受 capture profile", error.getvalue())
             self.assertFalse((Path(directory) / ".capture-staging").exists())
 
+    def test_capture_rejects_invalid_identity_before_writing_stage(self) -> None:
+        invalid_arguments = (
+            ("--trial", "../outside"),
+            ("--session", "/tmp/outside"),
+            ("--ball", "invalid/ball"),
+        )
+        for flag, invalid_value in invalid_arguments:
+            with self.subTest(flag=flag):
+                with tempfile.TemporaryDirectory() as directory:
+                    values = {
+                        "--trial": "trial-001",
+                        "--session": "session-001",
+                        "--ball": "ball-001",
+                    }
+                    values[flag] = invalid_value
+                    error = io.StringIO()
+                    with redirect_stderr(error):
+                        returncode = main(
+                            (
+                                "capture",
+                                "--profile",
+                                "free-flight",
+                                "--trial",
+                                values["--trial"],
+                                "--session",
+                                values["--session"],
+                                "--ball",
+                                values["--ball"],
+                                "--dataset-root",
+                                directory,
+                                "--dry-run",
+                            )
+                        )
+                    self.assertEqual(returncode, 2)
+                    self.assertIn("有效 identifier", error.getvalue())
+                    self.assertFalse(
+                        (Path(directory) / ".capture-staging").exists()
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,15 @@ def _set_declared_rows(trial: Path, table: str, count: int) -> None:
 
 
 class DatasetContractTests(unittest.TestCase):
+    def test_writer_rejects_invalid_trial_id_before_creating_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "dataset"
+            metadata = _metadata()
+            metadata["trial_id"] = "../outside"
+            with self.assertRaisesRegex(DatasetError, "有效 identifier"):
+                TrialPackageWriter(root, metadata, project_root=ROOT)
+            self.assertFalse(root.exists())
+
     def test_writer_atomically_publishes_valid_trial(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
