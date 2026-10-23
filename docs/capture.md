@@ -216,10 +216,14 @@ volleyball dataset validate data/captures/trials/trial-001
 - 两个相机参数导出文件的相对路径、格式和 SHA-256。
 
 `status=pending` 只允许 dry-run；正式采集要求 `status=verified`、核验时间和核验人。
-加载器先核对清单 schema、profile 序列号、附件路径与哈希；原生 MVS 适配器再在打开
-设备前核对实际枚举的型号和固件。任一项不一致都中止 trial。发布后清单和附件位于
+加载器先核对清单 schema、profile 序列号、附件路径与哈希；原生 MVS 适配器再核对
+枚举型号，并在打开设备后读取只读 `DeviceFirmwareVersion` 节点核对固件。任一项不一致都中止 trial。发布后清单和附件位于
 `raw/audit/hardware/`，并与 `capture_context.hardware_manifest_sha256` 形成闭包。
 软件版本的 `source` 是审计来源说明，不替代 `doctor` 的动态链接检查或 Nsight 证据。
+海康官方资料将 Device Version 与 Device Firmware Version 定义为不同的只读参数，
+字符串节点通过 `MV_CC_GetStringValue` 获取；因此代码不能用枚举结构里的设备版本冒充
+固件版本。参见[USB3.0 面阵相机用户手册](https://www.hikrobotics.com/en2/source/vision/document/2023/8/18/UD31198B_USB3.0%20Area%20Scan%20Camera%20User%20Manual_V2.4.0_20230307.pdf)和
+[工业相机参数设置获取](https://www.hikrobotics.com/cn2/source/vision/video/2021/6/25/20210625082558512.pdf)。
 
 每次运行使用独立的随机 staging 目录。staging 中只要已有 CSV、状态文件或
 `raw/` 图像目录，NX 录制器都会拒绝复用；失败数据用于审计，不能作为续写点，

@@ -13,13 +13,11 @@
 struct MV_USB3_DEVICE_INFO {
     unsigned char chSerialNumber[64];
     unsigned char chModelName[64];
-    unsigned char chDeviceVersion[64];
 };
 
 struct MV_GIGE_DEVICE_INFO {
     unsigned char chSerialNumber[64];
     unsigned char chModelName[64];
-    unsigned char chDeviceVersion[64];
 };
 
 union MV_SPECIAL_INFO {
@@ -47,6 +45,10 @@ struct MVCC_FLOATVALUE {
 
 struct MVCC_INTVALUE {
     std::uint64_t nCurValue;
+};
+
+struct MVCC_STRINGVALUE {
+    char chCurValue[256];
 };
 
 struct MV_CHUNK_DATA_CONTENT {
@@ -103,6 +105,7 @@ int MV_CC_GetEnumValue(void* handle, const char* node, MVCC_ENUMVALUE* value);
 int MV_CC_GetFloatValue(void* handle, const char* node, MVCC_FLOATVALUE* value);
 int MV_CC_GetBoolValue(void* handle, const char* node, bool* value);
 int MV_CC_GetIntValue(void* handle, const char* node, MVCC_INTVALUE* value);
+int MV_CC_GetStringValue(void* handle, const char* node, MVCC_STRINGVALUE* value);
 int MV_CC_SetGrabStrategy(void* handle, unsigned int strategy);
 int MV_CC_SetImageNodeNum(void* handle, unsigned int count);
 int MV_CC_StartGrabbing(void* handle);

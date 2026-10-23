@@ -28,6 +28,7 @@ struct StubCamera {
     unsigned int offset_x = 0;
     unsigned int offset_y = 0;
     bool fail_free = false;
+    std::string firmware_version{"1.2.3"};
     std::array<unsigned char, 16> image{};
 };
 
@@ -57,6 +58,7 @@ void resetStub(bool unstable) {
     left_camera = StubCamera{};
     right_camera = StubCamera{};
     right_camera.right = true;
+    right_camera.firmware_version = "1.2.4";
     unstable_timestamp_offset = unstable;
     fail_next_left_grab = false;
     fail_trigger_activation_readback = false;
@@ -77,12 +79,6 @@ void resetStub(bool unstable) {
     std::strcpy(
         reinterpret_cast<char*>(right_info.SpecialInfo.stUsb3VInfo.chModelName),
         "MV-RIGHT");
-    std::strcpy(
-        reinterpret_cast<char*>(left_info.SpecialInfo.stUsb3VInfo.chDeviceVersion),
-        "1.2.3");
-    std::strcpy(
-        reinterpret_cast<char*>(right_info.SpecialInfo.stUsb3VInfo.chDeviceVersion),
-        "1.2.4");
 }
 
 hik_mvs::CameraConfig config();
@@ -691,6 +687,17 @@ int MV_CC_GetIntValue(void* handle, const char* node, MVCC_INTVALUE* value) {
     else if (name == "OffsetX") value->nCurValue = camera->offset_x;
     else if (name == "OffsetY") value->nCurValue = camera->offset_y;
     else return -1;
+    return MV_OK;
+}
+
+int MV_CC_GetStringValue(
+    void* handle,
+    const char* node,
+    MVCC_STRINGVALUE* value) {
+    if (std::string(node) != "DeviceFirmwareVersion") return -1;
+    const auto& firmware = static_cast<StubCamera*>(handle)->firmware_version;
+    std::strncpy(value->chCurValue, firmware.c_str(), sizeof(value->chCurValue) - 1U);
+    value->chCurValue[sizeof(value->chCurValue) - 1U] = '\0';
     return MV_OK;
 }
 

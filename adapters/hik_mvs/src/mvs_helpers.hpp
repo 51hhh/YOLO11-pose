@@ -117,9 +117,9 @@ bool closeEnough(float actual, float expected, float tolerance) {
     return std::fabs(actual - expected) <= tolerance;
 }
 
-template <std::size_t Size>
-std::string fixedDeviceText(const unsigned char (&value)[Size]) {
-    const auto end = std::find(value, value + Size, static_cast<unsigned char>(0));
+template <typename Character, std::size_t Size>
+std::string fixedDeviceText(const Character (&value)[Size]) {
+    const auto end = std::find(value, value + Size, static_cast<Character>(0));
     return std::string(
         reinterpret_cast<const char*>(value),
         static_cast<std::size_t>(end - value));
@@ -143,17 +143,6 @@ std::string deviceModel(const MV_CC_DEVICE_INFO* info) {
     }
     if (info->nTLayerType == MV_GIGE_DEVICE) {
         return fixedDeviceText(info->SpecialInfo.stGigEInfo.chModelName);
-    }
-    return {};
-}
-
-std::string deviceFirmwareVersion(const MV_CC_DEVICE_INFO* info) {
-    if (!info) return {};
-    if (info->nTLayerType == MV_USB_DEVICE) {
-        return fixedDeviceText(info->SpecialInfo.stUsb3VInfo.chDeviceVersion);
-    }
-    if (info->nTLayerType == MV_GIGE_DEVICE) {
-        return fixedDeviceText(info->SpecialInfo.stGigEInfo.chDeviceVersion);
     }
     return {};
 }
@@ -199,6 +188,35 @@ bool createAndOpenHandle(void*& handle, MV_CC_DEVICE_INFO* devInfo, const char* 
         handle = nullptr;
         return false;
     }
+    return true;
+}
+
+bool verifyFirmwareVersion(
+    void* handle,
+    const std::string& expected,
+    const char* tag) {
+    if (expected.empty()) return true;
+    MVCC_STRINGVALUE value;
+    std::memset(&value, 0, sizeof(value));
+    const int ret = MV_CC_GetStringValue(
+        handle, "DeviceFirmwareVersion", &value);
+    if (ret != MV_OK) {
+        LOG_ERROR(
+            "[HikCam][%s] Get DeviceFirmwareVersion failed, ret=0x%X",
+            tag,
+            ret);
+        return false;
+    }
+    const std::string actual = fixedDeviceText(value.chCurValue);
+    if (actual != expected) {
+        LOG_ERROR(
+            "[HikCam][%s] Firmware mismatch: expected=%s actual=%s",
+            tag,
+            expected.c_str(),
+            actual.c_str());
+        return false;
+    }
+    LOG_INFO("[HikCam][%s] Firmware verified: %s", tag, actual.c_str());
     return true;
 }
 
