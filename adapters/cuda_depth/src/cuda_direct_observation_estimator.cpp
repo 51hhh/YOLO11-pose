@@ -249,7 +249,8 @@ bool appendBoundingBoxCandidates(
     std::string& error) {
     const auto confidence = pairConfidence(left, right);
     const double center_disparity = left.center_px.x - right.center_px.x;
-    if (depthInRange(center_disparity, config)) {
+    if (containsMethod(config.method_order, "bbox_center") &&
+        depthInRange(center_disparity, config)) {
         DepthCandidate candidate;
         candidate.method = Method{"bbox_center"};
         candidate.left_anchor_px = left.center_px;
@@ -261,6 +262,10 @@ bool appendBoundingBoxCandidates(
         if (!appendCandidate(std::move(candidate), output, error)) {
             return false;
         }
+    }
+
+    if (!containsMethod(config.method_order, "bbox_edges")) {
+        return true;
     }
 
     const auto& left_box = *left.bounding_box;
@@ -588,45 +593,56 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
                               "failed to collect an identified CUDA depth result");
             }
             const auto& gpu = gpu_results.front();
-            if (!appendGpuDisparity(
-                    gpu.multi_point,
-                    "roi_multi_point",
-                    impl_->config,
-                    candidates,
-                    error) ||
-                !appendGpuDisparity(
-                    gpu.center_patch,
-                    "center_patch",
-                    impl_->config,
-                    candidates,
-                    error) ||
-                !appendCirclePair(
-                    gpu.left_circle,
-                    gpu.right_circle,
-                    impl_->config,
-                    candidates,
-                    error) ||
-                !appendPointPair(
-                    gpu.left_radial_center,
-                    gpu.right_radial_center,
-                    "radial_center",
-                    impl_->config,
-                    candidates,
-                    error) ||
-                !appendPointPair(
-                    gpu.left_edge_pair_center,
-                    gpu.right_edge_pair_center,
-                    "edge_pair_center",
-                    impl_->config,
-                    candidates,
-                    error) ||
-                !appendPointPair(
-                    gpu.left_edge_centroid,
-                    gpu.right_edge_centroid,
-                    "edge_centroid",
-                    impl_->config,
-                    candidates,
-                    error)) {
+            // 几何 CUDA 核一次会计算一组相关候选；只把冻结配置声明的
+            // 方法提升到正式选择层，未配置输出不能污染证据集合。
+            const auto configured = [&](std::string_view method) {
+                return containsMethod(impl_->config.method_order, method);
+            };
+            if ((configured("roi_multi_point") &&
+                 !appendGpuDisparity(
+                     gpu.multi_point,
+                     "roi_multi_point",
+                     impl_->config,
+                     candidates,
+                     error)) ||
+                (configured("center_patch") &&
+                 !appendGpuDisparity(
+                     gpu.center_patch,
+                     "center_patch",
+                     impl_->config,
+                     candidates,
+                     error)) ||
+                (configured("circle_center") &&
+                 !appendCirclePair(
+                     gpu.left_circle,
+                     gpu.right_circle,
+                     impl_->config,
+                     candidates,
+                     error)) ||
+                (configured("radial_center") &&
+                 !appendPointPair(
+                     gpu.left_radial_center,
+                     gpu.right_radial_center,
+                     "radial_center",
+                     impl_->config,
+                     candidates,
+                     error)) ||
+                (configured("edge_pair_center") &&
+                 !appendPointPair(
+                     gpu.left_edge_pair_center,
+                     gpu.right_edge_pair_center,
+                     "edge_pair_center",
+                     impl_->config,
+                     candidates,
+                     error)) ||
+                (configured("edge_centroid") &&
+                 !appendPointPair(
+                     gpu.left_edge_centroid,
+                     gpu.right_edge_centroid,
+                     "edge_centroid",
+                     impl_->config,
+                     candidates,
+                     error))) {
                 return failed(attempted_method, std::move(error));
             }
         }
