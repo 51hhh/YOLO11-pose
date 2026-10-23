@@ -1,4 +1,4 @@
-#include "volleyball/adapters/fake/in_memory_trial_writer.hpp"
+#include "volleyball/tests/fakes/in_memory_trial_writer.hpp"
 #include "volleyball/services/managed_stereo_trial.hpp"
 
 #include "stereo_service_fixtures.hpp"
@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace core = volleyball::core;
-namespace fake = volleyball::adapters::fake;
+namespace fake = volleyball::tests::fakes;
 namespace ports = volleyball::ports;
 namespace services = volleyball::services;
 namespace support = volleyball::test_support;

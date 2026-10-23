@@ -1,5 +1,5 @@
-#include "volleyball/adapters/fake/in_memory_trial_writer.hpp"
-#include "volleyball/adapters/fake/scripted_camera_source.hpp"
+#include "volleyball/tests/fakes/in_memory_trial_writer.hpp"
+#include "volleyball/tests/fakes/scripted_camera_source.hpp"
 #include "volleyball/services/stereo_pipeline_runner.hpp"
 
 #include "stereo_service_fixtures.hpp"
@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace core = volleyball::core;
-namespace fake = volleyball::adapters::fake;
+namespace fake = volleyball::tests::fakes;
 namespace ports = volleyball::ports;
 namespace services = volleyball::services;
 namespace support = volleyball::test_support;

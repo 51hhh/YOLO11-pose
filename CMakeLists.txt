@@ -80,7 +80,6 @@ add_subdirectory(adapters/cuda_preprocess)
 add_subdirectory(adapters/cuda_depth)
 add_subdirectory(adapters/tensorrt)
 add_subdirectory(adapters/ros2)
-add_subdirectory(adapters/fake)
 add_subdirectory(tools/hardware)
 
 if(VOLLEYBALL_BUILD_NX_MAINLINE)

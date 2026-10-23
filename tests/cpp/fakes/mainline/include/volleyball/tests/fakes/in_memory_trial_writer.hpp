@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 
-namespace volleyball::adapters::fake {
+namespace volleyball::tests::fakes {
 
-// 用于单元测试和 CPU 回放的内存写入器，不是生产存储实现。
+// 仅用于主机单元测试的内存写入器，不是生产存储或回放实现。
 class InMemoryTrialWriter final : public ports::TrialWriter {
 public:
     [[nodiscard]] ports::WriteResult append(
@@ -46,5 +46,5 @@ private:
     std::string abort_reason_;
 };
 
-}  // namespace volleyball::adapters::fake
+}  // namespace volleyball::tests::fakes
 

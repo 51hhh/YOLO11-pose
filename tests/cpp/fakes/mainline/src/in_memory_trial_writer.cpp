@@ -1,8 +1,8 @@
-#include "volleyball/adapters/fake/in_memory_trial_writer.hpp"
+#include "volleyball/tests/fakes/in_memory_trial_writer.hpp"
 
 #include <utility>
 
-namespace volleyball::adapters::fake {
+namespace volleyball::tests::fakes {
 
 template <typename Record>
 ports::WriteResult InMemoryTrialWriter::appendValidated(
@@ -78,5 +78,5 @@ void InMemoryTrialWriter::abort(std::string reason) noexcept {
     }
 }
 
-}  // namespace volleyball::adapters::fake
+}  // namespace volleyball::tests::fakes
 

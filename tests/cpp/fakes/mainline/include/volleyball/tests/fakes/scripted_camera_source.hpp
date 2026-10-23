@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace volleyball::adapters::fake {
+namespace volleyball::tests::fakes {
 
 // 用于主机单元测试和确定性回放的脚本相机源，不模拟真实采集时序。
 class ScriptedCameraSource final : public ports::CameraSource {
@@ -20,4 +20,4 @@ private:
     std::size_t next_index_{0};
 };
 
-}  // namespace volleyball::adapters::fake
+}  // namespace volleyball::tests::fakes

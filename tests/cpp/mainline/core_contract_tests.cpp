@@ -1,4 +1,4 @@
-#include "volleyball/adapters/fake/in_memory_trial_writer.hpp"
+#include "volleyball/tests/fakes/in_memory_trial_writer.hpp"
 #include "volleyball/core/observation.hpp"
 #include "volleyball/core/time.hpp"
 
@@ -9,7 +9,7 @@
 #include <string>
 
 namespace core = volleyball::core;
-namespace fake = volleyball::adapters::fake;
+namespace fake = volleyball::tests::fakes;
 namespace ports = volleyball::ports;
 
 namespace {

@@ -11,7 +11,7 @@ add_mainline_test(core_contract_tests core_contract_tests.cpp)
 target_link_libraries(core_contract_tests PRIVATE
   volleyball::core
   volleyball::ports
-  volleyball::fake_adapters
+  volleyball::test_fakes
 )
 
 add_mainline_test(stereo_algorithms_tests stereo_algorithms_tests.cpp)
@@ -28,7 +28,7 @@ add_mainline_test(
 )
 target_link_libraries(stereo_observation_service_tests PRIVATE
   volleyball::services
-  volleyball::fake_adapters
+  volleyball::test_fakes
 )
 
 add_mainline_test(
@@ -37,7 +37,7 @@ add_mainline_test(
 )
 target_link_libraries(stereo_pipeline_runner_tests PRIVATE
   volleyball::services
-  volleyball::fake_adapters
+  volleyball::test_fakes
 )
 
 add_mainline_test(
@@ -46,7 +46,7 @@ add_mainline_test(
 )
 target_link_libraries(managed_stereo_trial_tests PRIVATE
   volleyball::services
-  volleyball::fake_adapters
+  volleyball::test_fakes
 )
 
 # 主机不链接硬件 SDK，但必须持续编译原生 NX 应用的装配边界，防止只有到

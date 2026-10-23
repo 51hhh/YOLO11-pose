@@ -1,9 +1,9 @@
-#include "volleyball/adapters/fake/scripted_camera_source.hpp"
+#include "volleyball/tests/fakes/scripted_camera_source.hpp"
 
 #include <optional>
 #include <utility>
 
-namespace volleyball::adapters::fake {
+namespace volleyball::tests::fakes {
 
 ScriptedCameraSource::ScriptedCameraSource(
     std::vector<ports::SourceResult> results)
@@ -20,4 +20,4 @@ ports::SourceResult ScriptedCameraSource::next() {
     return std::move(results_[next_index_++]);
 }
 
-}  // namespace volleyball::adapters::fake
+}  // namespace volleyball::tests::fakes

@@ -116,7 +116,7 @@ FORBIDDEN_TEST_MODULE_IMPORT = re.compile(
     re.MULTILINE,
 )
 FORBIDDEN_MAINLINE_ADAPTER_INCLUDE = re.compile(
-    r'^\s*#\s*include\s*[<"]volleyball/adapters/(?!fake/)',
+    r'^\s*#\s*include\s*[<"]volleyball/adapters/',
     re.MULTILINE,
 )
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
@@ -132,7 +132,7 @@ CMAKE_SOURCE_GROUPS = (
     ("adapters/cuda_depth/src", "adapters/cuda_depth/CMakeLists.txt"),
     ("adapters/tensorrt/src", "adapters/tensorrt/CMakeLists.txt"),
     ("adapters/ros2/src", "adapters/ros2/CMakeLists.txt"),
-    ("adapters/fake/src", "adapters/fake/CMakeLists.txt"),
+    ("tests/cpp/fakes/mainline/src", "tests/cpp/fakes/CMakeLists.txt"),
     ("tools/hardware", "tools/hardware/CMakeLists.txt"),
     ("tests/cpp/mainline", "tests/cpp/mainline/CMakeLists.txt"),
     ("tests/cpp/adapters", "tests/cpp/adapters/CMakeLists.txt"),
@@ -466,7 +466,7 @@ def main() -> int:
             )
     if misplaced_adapter_tests:
         errors.append(
-            "mainline 测试不得引用非 fake 适配器，请移入 tests/cpp/adapters:\n    "
+            "mainline 测试不得引用生产适配器，请移入 tests/cpp/adapters:\n    "
             + "\n    ".join(misplaced_adapter_tests)
         )
 

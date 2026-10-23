@@ -73,7 +73,7 @@ python3 tools/check_repository.py
 | `tests/cpp/mainline/` | 平台无关的领域、算法和服务测试 |
 | `tests/cpp/adapters/` | 独立硬件适配器的 SDK 桩测试 |
 | `tests/cpp/hardware_tools/` | 标定和硬件验收程序的无硬件单元测试；目录与 `tools/hardware/` 对应 |
-| `tests/cpp/fakes/` | 多测试套件共用的最小第三方 SDK 桩头文件 |
+| `tests/cpp/fakes/` | 测试专属的第三方 SDK 桩与主线端口替身；不进入生产构建图 |
 | `tools/hardware/` | 帧元数据探针、标定图采集和离线双目标定三个受测辅助程序 |
 | `tools/check_repository.py` | 仓库结构、依赖方向、文档导航和构建接线门禁 |
 
