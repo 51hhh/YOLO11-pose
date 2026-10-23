@@ -335,6 +335,42 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
+    def test_live_profile_matches_native_camera_runtime_constraints(self) -> None:
+        mutations = (
+            (
+                "exposure_us 必须为正数",
+                lambda value: (
+                    value["cameras"]["left"].update(exposure_us=0.0),
+                    value["cameras"]["right"].update(exposure_us=0.0),
+                ),
+            ),
+            (
+                "image_node_num 至少为 2",
+                lambda value: value["cameras"]["transport"].update(
+                    image_node_num=1
+                ),
+            ),
+            (
+                "exposure_delay_status",
+                lambda value: value["cameras"]["sync"].update(
+                    exposure_delay_status="recorded"
+                ),
+            ),
+            (
+                "五个时钟域名称必须唯一",
+                lambda value: value["cameras"]["sync"].update(
+                    clock_domain="nx-realtime"
+                ),
+            ),
+        )
+        for expected, mutate in mutations:
+            with self.subTest(expected=expected):
+                resolved = load_profile("nx-rdk", project_root=ROOT)
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
     def test_schema_rejects_unimplemented_detector_settings(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (

@@ -298,6 +298,14 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("runtime/capture 模式必须使用 hardware_trigger")
         if sync["estimated_error_ns"] is None:
             errors.append("runtime/capture 模式必须提供 estimated_error_ns")
+        if sync["exposure_delay_status"] not in {
+            "assumed_zero_unmeasured",
+            "measured",
+        }:
+            errors.append(
+                "runtime/capture 模式的 exposure_delay_status "
+                "必须是 assumed_zero_unmeasured 或 measured"
+            )
         expected_sync = {
             "trigger_source": "Line0",
             "trigger_activation": "RisingEdge",
@@ -313,6 +321,15 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
                     else expected
                 )
                 errors.append(f"runtime/capture 要求 cameras.sync.{key}={label}")
+        projected_clocks = {
+            sync["clock_domain"],
+            f"{left['id']}-device-clock",
+            f"{right['id']}-device-clock",
+            "nx-realtime",
+            "nx-monotonic",
+        }
+        if len(projected_clocks) != 5:
+            errors.append("runtime/capture 投影后的五个时钟域名称必须唯一")
     else:
         replay_backends = {
             "cameras.backend": cameras["backend"],
@@ -362,8 +379,14 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("当前海康适配器固定输出 BayerRG8，左右 pixel_format 必须为 bayer8")
         if left["exposure_us"] != right["exposure_us"]:
             errors.append("当前海康适配器只支持左右相同 exposure_us")
+        if left["exposure_us"] <= 0 or right["exposure_us"] <= 0:
+            errors.append("当前海康适配器要求 exposure_us 必须为正数")
         if left["gain_db"] != right["gain_db"]:
             errors.append("当前海康适配器只支持左右相同 gain_db")
+        if transport["image_node_num"] < 2:
+            errors.append("当前海康适配器要求 image_node_num 至少为 2")
+        if transport["embedded_info_clear_rows"] > left["resolution"][1]:
+            errors.append("水印清除行数不得超过相机图像高度")
         expected_roi = {
             "x": 0,
             "y": 0,
