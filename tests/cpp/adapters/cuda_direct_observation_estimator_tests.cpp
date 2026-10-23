@@ -214,8 +214,9 @@ void testPublishesConfiguredBallCenterMeasurement() {
                   result.observation->evidence.disparity_px -
                   Fixture::disparity) < 0.2 &&
               result.observation->evidence.support_points &&
-              *result.observation->evidence.support_points >= 1U,
-          "configured center evidence must remain identifiable");
+              *result.observation->evidence.support_points >= 1U &&
+              result.observation->evidence.left_anchor_px.has_value(),
+          "center evidence must include its actual input anchor");
     check(result.observation &&
               std::abs(result.observation->measurement.position_m.z - 8.0) <
                   0.2 &&

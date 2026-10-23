@@ -200,10 +200,11 @@ void testAssociationAndObservation() {
         core::Covariance3D{{1.0, 0.1, 0.2, 2.0, 0.3, 3.0}};
     observation.measurement.confidence = 0.9;
     observation.measurement.reprojection_error_px = 0.5;
-    observation.evidence.method = core::StereoDepthMethodId{"roi_multi_point"};
+    observation.evidence.method = core::StereoDepthMethodId{"circle_center"};
     observation.evidence.disparity_px = 30.25;
     observation.evidence.disparity_stddev_px = 0.2;
     observation.evidence.support_points = 8;
+    observation.evidence.left_anchor_px = core::Vec2{710.25, 490.5};
     std::ostringstream observation_output;
     check(capture_stage::writeMainlineStageObservationRow(
               observation_output, observation),
@@ -214,10 +215,42 @@ void testAssociationAndObservation() {
           "observation row width must match its header");
     check(observation_fields[1] == "9" && observation_fields[4] == "stereo-rig" &&
               observation_fields[14] == "0.90000000000000002" &&
-              observation_fields[16] == "roi_multi_point" &&
+              observation_fields[16] == "circle_center" &&
               observation_fields[17] == "30.25" &&
               observation_fields[19] == "8",
           "observation provenance, precision, and method evidence must remain");
+
+    std::ostringstream measurement_header;
+    capture_stage::writeStereoMeasurementHeader(measurement_header);
+    check(splitCsv(lineFrom(measurement_header)).size() ==
+              capture_stage::kStereoMeasurementColumns.size(),
+          "stereo measurement header width must match its declaration");
+    std::ostringstream measurement_output;
+    check(capture_stage::writeStereoMeasurementRow(
+              measurement_output,
+              observation.measurement.source_pair_id,
+              observation.evidence),
+          "stereo measurement inputs must serialize independently of XYZ");
+    const auto measurement_fields = splitCsv(lineFrom(measurement_output));
+    check(measurement_fields.size() ==
+              capture_stage::kStereoMeasurementColumns.size() &&
+              measurement_fields[0] ==
+                  capture_stage::kStereoMeasurementSchemaVersion &&
+              measurement_fields[1] == "9" &&
+              measurement_fields[2] == "circle_center" &&
+              measurement_fields[3] == "710.25" &&
+              measurement_fields[4] == "490.5" &&
+              measurement_fields[5] == "30.25",
+          "stereo measurement row must preserve versioned UVD inputs");
+
+    auto missing_anchor = observation.evidence;
+    missing_anchor.left_anchor_px.reset();
+    std::ostringstream invalid_measurement;
+    check(!capture_stage::writeStereoMeasurementRow(
+              invalid_measurement,
+              observation.measurement.source_pair_id,
+              missing_anchor),
+          "stereo measurement row must reject a missing input anchor");
 }
 
 }  // namespace

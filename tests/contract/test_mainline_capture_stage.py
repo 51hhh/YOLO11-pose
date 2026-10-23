@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import copy
 import csv
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
+from volleyball_vision.calibration import build_capture_calibration
 from volleyball_vision.capture import finalize_capture_stage, prepare_capture_stage
 from volleyball_vision.config import load_profile
 from volleyball_vision.dataset import (
@@ -20,6 +22,10 @@ from volleyball_vision.mainline_stage_contract import (
     MAINLINE_FRAME_COLUMNS,
     MAINLINE_OBSERVATION_COLUMNS,
     MAINLINE_STAGE_SCHEMA_VERSION,
+)
+from volleyball_vision.stereo_measurements import (
+    STEREO_MEASUREMENT_COLUMNS,
+    STEREO_MEASUREMENT_SCHEMA_VERSION,
 )
 
 
@@ -54,6 +60,10 @@ class MainlineCaptureStageTests(unittest.TestCase):
             context["stage_schema_version"], MAINLINE_STAGE_SCHEMA_VERSION
         )
         self.assertEqual(
+            context["stereo_measurement_schema_version"],
+            STEREO_MEASUREMENT_SCHEMA_VERSION,
+        )
+        self.assertEqual(
             context["perception_pipeline"]["output_contract"],
             "yolo_pre_nms",
         )
@@ -67,7 +77,14 @@ class MainlineCaptureStageTests(unittest.TestCase):
         self.assertTrue(context["planning_only"])
         self.assertEqual(context["config_sha256"], profile.fingerprint_sha256)
 
-    def _stage(self, root: Path) -> tuple[Path, object]:
+    def _stage(
+        self,
+        root: Path,
+        *,
+        frame_count: int = 1,
+        measurement_inputs: bool = False,
+        consistent_geometry: bool = False,
+    ) -> tuple[Path, object]:
         profile = load_profile("free-flight", project_root=ROOT)
         pipeline = with_pipeline_fingerprint(
             {
@@ -112,6 +129,10 @@ class MainlineCaptureStageTests(unittest.TestCase):
             },
             "perception_pipeline": pipeline,
         }
+        if measurement_inputs:
+            context["stereo_measurement_schema_version"] = (
+                STEREO_MEASUREMENT_SCHEMA_VERSION
+            )
         stage = root / "stage"
         prepare_capture_stage(stage, context)
         width, height = profile.data["cameras"]["left"]["resolution"]
@@ -242,6 +263,95 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 "support_points": 8,
             }
         ]
+        # 同一生成器用于单仓合同测试及跨仓三帧正式格式集成测试。
+        if frame_count > 1:
+            originals = copy.deepcopy(
+                (
+                    frame_rows,
+                    detection_rows,
+                    association_rows,
+                    observation_rows,
+                )
+            )
+            for index in range(1, frame_count):
+                dt = index * 10_000_000
+                for original in originals[0]:
+                    row = dict(original)
+                    for key in (
+                        "hardware_timestamp_ns",
+                        "exposure_start_ns",
+                        "capture_timestamp_ns",
+                        "receive_timestamp_ns",
+                        "inference_done_timestamp_ns",
+                        "receive_monotonic_ns",
+                        "trigger_scheduled_monotonic_ns",
+                        "trigger_edge_monotonic_ns",
+                        "trigger_edge_realtime_ns",
+                    ):
+                        row[key] += dt
+                    for key in (
+                        "frame_index",
+                        "sensor_frame_number",
+                        "sensor_frame_counter",
+                        "sensor_trigger_index",
+                        "trigger_sequence",
+                    ):
+                        row[key] += index
+                    row["raw_image"] = (
+                        f"raw/mainline/{row['camera_role']}/{42 + index}.pgm"
+                    )
+                    _write_pgm(stage / row["raw_image"], width, height)
+                    frame_rows.append(row)
+                for original in originals[1]:
+                    detection_rows.append(
+                        {**original, "frame_index": 42 + index}
+                    )
+                association_rows.append(
+                    {
+                        **originals[2][0],
+                        "pair_id": 7 + index,
+                        "left_frame_index": 42 + index,
+                        "right_frame_index": 42 + index,
+                        "left_capture_ns": 2_000_000_000 + dt,
+                        "right_capture_ns": 2_000_000_000 + dt,
+                    }
+                )
+                observation_rows.append(
+                    {
+                        **originals[3][0],
+                        "observation_id": 3 + index,
+                        "source_pair_id": 7 + index,
+                        "capture_reference_ns": 2_000_000_000 + dt,
+                    }
+                )
+        measurement_rows = []
+        calibration = build_capture_calibration(profile, project_root=ROOT)
+        matrix = calibration["cameras"][0]["camera_matrix"]
+        for index, row in enumerate(observation_rows):
+            u, v = 700.25, 500.0 + index * 0.2
+            disparity = row["measurement_disparity_px"]
+            if consistent_geometry:
+                disparity = matrix[0][0] * calibration["baseline_m"] / 10.0
+                row["measurement_disparity_px"] = disparity
+                row["z_m"] = 10.0
+                row["x_m"] = (u - matrix[0][2]) * 10.0 / matrix[0][0]
+                row["y_m"] = (v - matrix[1][2]) * 10.0 / matrix[1][1]
+            measurement_rows.append(
+                {
+                    "schema_version": STEREO_MEASUREMENT_SCHEMA_VERSION,
+                    "pair_id": row["source_pair_id"],
+                    "method": row["depth_method"],
+                    "anchor_u_px": u,
+                    "anchor_v_px": v,
+                    "disparity_px": disparity,
+                }
+            )
+        if measurement_inputs:
+            _write_csv(
+                stage / "stereo_measurements_v1.csv",
+                STEREO_MEASUREMENT_COLUMNS,
+                measurement_rows,
+            )
         _write_csv(stage / "frames_v6.csv", MAINLINE_FRAME_COLUMNS, frame_rows)
         _write_csv(
             stage / "detections_v6.csv", MAINLINE_DETECTION_COLUMNS, detection_rows
@@ -262,17 +372,66 @@ class MainlineCaptureStageTests(unittest.TestCase):
                     "stage_schema_version": MAINLINE_STAGE_SCHEMA_VERSION,
                     "complete": True,
                     "fatal_error": None,
-                    "stereo_frames_written": 1,
-                    "camera_frames_written": 2,
-                    "detections_written": 2,
-                    "associations_written": 1,
-                    "observations_written": 1,
-                    "raw_images_written": 2,
+                    "stereo_frames_written": frame_count,
+                    "camera_frames_written": 2 * frame_count,
+                    "detections_written": 2 * frame_count,
+                    "associations_written": frame_count,
+                    "observations_written": frame_count,
+                    "raw_images_written": 2 * frame_count,
                 }
             ),
             encoding="utf-8",
         )
         return stage, profile
+
+    def test_stereo_measurement_extension_is_hashed_and_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(
+                root,
+                frame_count=3,
+                measurement_inputs=True,
+                consistent_geometry=True,
+            )
+            trial = finalize_capture_stage(
+                stage,
+                root / "dataset",
+                profile,
+                project_root=ROOT,
+            )
+            metadata = json.loads(
+                (trial / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("direct_stereo_measurements", metadata["source_files"])
+            self.assertNotIn("stereo_replay", metadata["conditions"])
+            measurement_entries = [
+                entry
+                for entry in metadata["raw_manifest"]
+                if entry["label"] == "direct_stereo_measurements"
+            ]
+            self.assertEqual(len(measurement_entries), 1)
+            with (
+                trial / metadata["source_files"]["direct_stereo_measurements"]
+            ).open(encoding="utf-8") as stream:
+                self.assertEqual(len(list(csv.DictReader(stream))), 3)
+            validate_dataset(root / "dataset", project_root=ROOT)
+
+    def test_declared_measurement_extension_cannot_disappear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(
+                root,
+                measurement_inputs=True,
+                consistent_geometry=True,
+            )
+            (stage / "stereo_measurements_v1.csv").unlink()
+            with self.assertRaisesRegex(DatasetError, "文件缺失"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
 
     def test_mainline_stage_is_normalized_and_atomically_published(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -294,6 +453,10 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 "hik-shared-device-clock",
             )
             self.assertEqual(len(metadata["raw_manifest"]), 8)
+            self.assertNotIn(
+                "direct_stereo_measurements",
+                metadata["source_files"],
+            )
             with (trial / "camera_frames.csv").open(encoding="utf-8") as handle:
                 camera_frames = list(csv.DictReader(handle))
             self.assertEqual(

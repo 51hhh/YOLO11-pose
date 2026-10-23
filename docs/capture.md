@@ -67,6 +67,14 @@ v6 使用 `frames_v6.csv`、`detections_v6.csv`、`associations_v6.csv`、
 `.partial`、状态计数不一致、原图集合不一致或跨表引用不闭合时，finalizer 必须拒绝。
 任何 staging 都不能绕过校验直接冒充正式 trial。
 
+新写入器还原子生成独立版本的 `stereo_measurements_v1.csv`，每条直接 3D 保存
+`pair_id`、实际方法、左校正图测量锚点 `(u,v)` 和最终视差 `d`。finalizer 会用冻结
+标定重新计算 `XYZ`，只有 UVD、方法、视差和 `observations_v6.csv` 逐条一致时才把它
+以 `direct_stereo_measurements` 标签哈希归档到 `raw/audit/`。旧 v6 staging 可以没有
+该扩展，但离线工具必须通过标签判断输入是否真实存在；禁止从结果 XYZ 反算并伪造
+历史 UVD。这里的锚点是左校正坐标系中实际进入三角化公式的有效量；若方法融合了
+左右观测（例如中心法的平均 `v`），保存融合后的值，而不是假装它仍是原始左目中心。
+
 `associations_v6.csv:disparity_px` 保留检测中心形成的初始 2D 配对门控视差；它不等于
 最终球心代理方法用于 3D 的测量视差。纹理 ROI/中心 patch 在完成球体恢复和实测验证前
 不得进入正式发布链。发布 v2.1 时，accepted pair 的

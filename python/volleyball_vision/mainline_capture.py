@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Iterable, Mapping
 
-from .calibration import ensure_dataset_calibration
+from .calibration import build_capture_calibration, ensure_dataset_calibration
 from .capture_stage_io import (
     environment_record,
     parse_bool,
@@ -28,6 +28,10 @@ from .mainline_stage_validation import (
     validate_mainline_stage,
 )
 from .model_manifest import resolve_model, sha256_file
+from .stereo_measurements import (
+    STEREO_MEASUREMENT_SCHEMA_VERSION,
+    validate_stereo_measurements,
+)
 from .timebase import (
     fit_affine_clock_mapping,
     integer_midpoint_ns,
@@ -138,6 +142,7 @@ def build_mainline_capture_context(
     )
     context = {
         "stage_schema_version": MAINLINE_STAGE_SCHEMA_VERSION,
+        "stereo_measurement_schema_version": STEREO_MEASUREMENT_SCHEMA_VERSION,
         "trial_id": trial_id,
         "session_id": session_id,
         "ball_id": ball_id,
@@ -187,6 +192,26 @@ def finalize_mainline_capture_stage(
     detections = evidence.detections
     associations = evidence.associations
     observations = evidence.observations
+    measurement_file = directory / "stereo_measurements_v1.csv"
+    capture_calibration = build_capture_calibration(
+        config,
+        project_root=project_root,
+    )
+    has_measurement_inputs = validate_stereo_measurements(
+        measurement_file,
+        observations,
+        capture_calibration,
+    )
+    declared_measurement_version = context.get(
+        "stereo_measurement_schema_version"
+    )
+    if declared_measurement_version not in {
+        None,
+        STEREO_MEASUREMENT_SCHEMA_VERSION,
+    }:
+        raise DatasetError("mainline 双目测量扩展版本不兼容")
+    if declared_measurement_version is not None and not has_measurement_inputs:
+        raise DatasetError("mainline 声明了双目测量扩展但文件缺失")
     camera_ids = evidence.camera_ids
     frame_by_key = evidence.frame_by_key
     frame_pairs = evidence.frame_pairs
@@ -726,6 +751,12 @@ def finalize_mainline_capture_stage(
             ("capture_context", directory / "context.json", "audit/context.json"),
         ):
             writer.add_raw_source(label, source, filename=filename)
+        if has_measurement_inputs:
+            writer.add_raw_source(
+                "direct_stereo_measurements",
+                measurement_file,
+                filename="audit/stereo_measurements_v1.csv",
+            )
         if config.data["recording"]["raw_frames"] != "none":
             for index in indexes:
                 for role in ("left", "right"):

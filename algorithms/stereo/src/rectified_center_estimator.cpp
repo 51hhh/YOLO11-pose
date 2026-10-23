@@ -26,6 +26,13 @@ ports::DirectObservationResult RectifiedCenterEstimator::estimate(
     evidence.disparity_stddev_px =
         std::sqrt(2.0) * config_.center_sigma_px;
     evidence.support_points = 1;
+    // 参考三角化的 x 使用左目中心，y 使用左右中心均值；证据必须保存
+    // 真正进入 UVD->XYZ 的有效锚点，不能只复制左目检测中心。
+    evidence.left_anchor_px = core::Vec2{
+        request.left_detection.center_px.x,
+        0.5 * (request.left_detection.center_px.y +
+               request.right_detection.center_px.y),
+    };
 
     auto result = triangulateRectifiedCenters(
         request.left_detection,

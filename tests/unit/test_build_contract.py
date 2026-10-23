@@ -14,6 +14,10 @@ from volleyball_vision.mainline_stage_contract import (
     MAINLINE_OBSERVATION_COLUMNS,
     MAINLINE_STAGE_SCHEMA_VERSION,
 )
+from volleyball_vision.stereo_measurements import (
+    STEREO_MEASUREMENT_COLUMNS,
+    STEREO_MEASUREMENT_SCHEMA_VERSION,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -163,6 +167,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(
             columns("kMainlineStageObservationColumns"),
             MAINLINE_OBSERVATION_COLUMNS,
+        )
+        measurement_version = re.search(
+            r'kStereoMeasurementSchemaVersion\s*=\s*"([^"]+)"\s*;',
+            header,
+        )
+        self.assertIsNotNone(measurement_version)
+        assert measurement_version is not None
+        self.assertEqual(
+            measurement_version.group(1),
+            STEREO_MEASUREMENT_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            columns("kStereoMeasurementColumns"),
+            STEREO_MEASUREMENT_COLUMNS,
         )
 
 

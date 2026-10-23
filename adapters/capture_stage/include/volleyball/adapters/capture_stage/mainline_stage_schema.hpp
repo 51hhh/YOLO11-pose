@@ -13,6 +13,7 @@ namespace volleyball::adapters::capture_stage {
 // v6 为主线端口逐事实写入格式，并补齐每条直接观测实际使用的深度方法
 // 证据。它只属于未发布 staging，不改变对外冻结的 capture v2.1.0 版本。
 inline constexpr int kMainlineStageSchemaVersion = 6;
+inline constexpr std::string_view kStereoMeasurementSchemaVersion = "1.0.0";
 
 inline constexpr std::array<std::string_view, 46>
     kMainlineStageFrameColumns = {
@@ -65,10 +66,17 @@ inline constexpr std::array<std::string_view, 20>
         "disparity_stddev_px", "support_points",
     };
 
+inline constexpr std::array<std::string_view, 6>
+    kStereoMeasurementColumns = {
+        "schema_version", "pair_id", "method", "anchor_u_px", "anchor_v_px",
+        "disparity_px",
+    };
+
 void writeMainlineStageFrameHeader(std::ostream& output);
 void writeMainlineStageDetectionHeader(std::ostream& output);
 void writeMainlineStageAssociationHeader(std::ostream& output);
 void writeMainlineStageObservationHeader(std::ostream& output);
+void writeStereoMeasurementHeader(std::ostream& output);
 
 [[nodiscard]] bool writeMainlineStageFrameRow(
     std::ostream& output,
@@ -83,5 +91,9 @@ void writeMainlineStageObservationHeader(std::ostream& output);
 [[nodiscard]] bool writeMainlineStageObservationRow(
     std::ostream& output,
     const ports::EstimatedDirectObservation& observation);
+[[nodiscard]] bool writeStereoMeasurementRow(
+    std::ostream& output,
+    core::PairId pair_id,
+    const ports::DirectObservationEvidence& evidence);
 
 }  // namespace volleyball::adapters::capture_stage

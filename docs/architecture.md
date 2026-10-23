@@ -66,7 +66,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Adapters 与运行入口
 
-`adapters` 实现实际硬件、存储格式和外部系统。主线 `MainlineStageTrialWriter`、GPIO 触发和海康双目相机分别位于 `adapters/capture_stage`、`adapters/gpio` 与 `adapters/hik_mvs`。写入器按帧、候选、配对和直接观测四类事实分别落盘，只有四张表与全部原图都关闭后才发布完成状态；Python finalizer 再独立校验并原子发布冻结的 v2.1 trial。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
+`adapters` 实现实际硬件、存储格式和外部系统。主线 `MainlineStageTrialWriter`、GPIO 触发和海康双目相机分别位于 `adapters/capture_stage`、`adapters/gpio` 与 `adapters/hik_mvs`。写入器按帧、候选、配对和直接观测四类既有事实分别落盘，并在独立版本的扩展表保存产生 3D 的真实 UVD 输入；所有表与原图关闭后才发布完成状态。Python finalizer 用冻结标定验证 UVD 可重建同一 XYZ，再将扩展作为带哈希的原始审计资产发布，旧 staging 缺失扩展时不会反算伪造。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机和 GPIO 的顺序由 `runManagedStereoTrial` 统一编排。
 

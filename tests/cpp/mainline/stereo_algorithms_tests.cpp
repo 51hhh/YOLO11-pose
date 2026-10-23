@@ -4,8 +4,8 @@
 
 #include "stereo_domain_fixtures.hpp"
 
-#include <cstdlib>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -264,7 +264,10 @@ void testRefinedDisparityRejectsInvalidUncertainty() {
 }
 
 void testCenterEstimatorIsAnExplicitReferenceBackend() {
-    const ValidInputs inputs;
+    ValidInputs inputs;
+    inputs.right.center_px.y += 0.4;
+    inputs.association.epipolar_error_px = std::abs(
+        inputs.left.center_px.y - inputs.right.center_px.y);
     algorithms::RectifiedCenterEstimator estimator(
         inputs.calibration, inputs.config);
     const volleyball::ports::RectifiedStereoFrame rectified{};
@@ -285,8 +288,13 @@ void testCenterEstimatorIsAnExplicitReferenceBackend() {
             result.observation->evidence.method ==
                 core::StereoDepthMethodId{"detection_center"} &&
             result.observation->evidence.disparity_px == 50.0 &&
-            result.observation->evidence.support_points == 1,
-        "reference estimator must identify its center-only evidence");
+            result.observation->evidence.support_points == 1 &&
+            result.observation->evidence.left_anchor_px &&
+            result.observation->evidence.left_anchor_px->x ==
+                inputs.left.center_px.x &&
+            result.observation->evidence.left_anchor_px->y ==
+                0.5 * (inputs.left.center_px.y + inputs.right.center_px.y),
+        "reference estimator must preserve the effective UVD input anchor");
 
     auto invalid = inputs.config;
     invalid.center_sigma_px = -1.0;

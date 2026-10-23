@@ -141,6 +141,10 @@ void writeMainlineStageObservationHeader(std::ostream& output) {
     writeHeader(output, kMainlineStageObservationColumns);
 }
 
+void writeStereoMeasurementHeader(std::ostream& output) {
+    writeHeader(output, kStereoMeasurementColumns);
+}
+
 bool writeMainlineStageFrameRow(
     std::ostream& output,
     const ports::CapturedFrame& frame,
@@ -306,6 +310,21 @@ bool writeMainlineStageObservationRow(
     output << ',';
     if (evidence.support_points) output << *evidence.support_points;
     output << '\n';
+    return static_cast<bool>(output);
+}
+
+bool writeStereoMeasurementRow(
+    std::ostream& output,
+    core::PairId pair_id,
+    const ports::DirectObservationEvidence& evidence) {
+    if (!ports::isValid(evidence) || !evidence.left_anchor_px ||
+        !isCsvToken(evidence.method.value())) {
+        return false;
+    }
+    const auto& anchor = *evidence.left_anchor_px;
+    output << std::setprecision(17) << kStereoMeasurementSchemaVersion << ','
+           << pair_id << ',' << evidence.method.value() << ',' << anchor.x
+           << ',' << anchor.y << ',' << evidence.disparity_px << '\n';
     return static_cast<bool>(output);
 }
 

@@ -11,12 +11,15 @@
 namespace volleyball::ports {
 
 // 关联使用的检测框中心视差只是门控证据。这里单独保存真正用于直接 3D
-// 观测的深度方法及其测量证据，避免 ROI 精化结果反向改写原始关联事实。
+// 观测的球心代理方法及其测量输入，避免最终测量反向改写原始关联事实。
 struct DirectObservationEvidence {
     volleyball::core::StereoDepthMethodId method;
     double disparity_px{0.0};
     std::optional<double> disparity_stddev_px;
     std::optional<std::uint32_t> support_points;
+    // 保存左校正坐标系中实际进入 UVD->XYZ 的有效锚点；它可以是左右
+    // 观测融合后的代理量，不允许回放从输出 XYZ 反算来伪造输入证据。
+    std::optional<core::Vec2> left_anchor_px;
 };
 
 [[nodiscard]] inline bool isValid(
@@ -27,7 +30,8 @@ struct DirectObservationEvidence {
            (!evidence.disparity_stddev_px ||
             (std::isfinite(*evidence.disparity_stddev_px) &&
              *evidence.disparity_stddev_px >= 0.0)) &&
-           (!evidence.support_points || *evidence.support_points > 0);
+           (!evidence.support_points || *evidence.support_points > 0) &&
+           (!evidence.left_anchor_px || core::isFinite(*evidence.left_anchor_px));
 }
 
 struct EstimatedDirectObservation {

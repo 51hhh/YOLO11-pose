@@ -670,6 +670,7 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
 
         ports::DirectObservationEvidence evidence;
         evidence.method = candidate.method;
+        evidence.left_anchor_px = candidate.left_anchor_px;
         evidence.disparity_px = candidate.disparity_px;
         evidence.disparity_stddev_px = candidate.disparity_stddev_px;
         evidence.support_points = candidate.support_points;

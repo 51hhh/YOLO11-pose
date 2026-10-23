@@ -170,10 +170,11 @@ ports::EstimatedDirectObservation observation() {
     output.measurement.position_m = {1.0, 2.0, 3.0};
     output.measurement.confidence = 0.9;
     output.measurement.reprojection_error_px = 0.0;
-    output.evidence.method = core::StereoDepthMethodId{"roi_multi_point"};
+    output.evidence.method = core::StereoDepthMethodId{"circle_center"};
     output.evidence.disparity_px = 2.1;
     output.evidence.disparity_stddev_px = 0.1;
     output.evidence.support_points = 8;
+    output.evidence.left_anchor_px = core::Vec2{100.0, 50.0};
     return output;
 }
 
@@ -223,9 +224,14 @@ void testCompleteTransactionPublishesMainlineStage() {
           "association and observation facts must remain separate tables");
     check(
         readText(stage.path() / "observations_v6.csv").find(
-            "roi_multi_point,2.1000000000000001,0.10000000000000001,8") !=
+            "circle_center,2.1000000000000001,0.10000000000000001,8") !=
             std::string::npos,
         "observation table must preserve the selected depth evidence");
+    check(
+        readText(stage.path() / "stereo_measurements_v1.csv") ==
+            "schema_version,pair_id,method,anchor_u_px,anchor_v_px,disparity_px\n"
+            "1.0.0,7,circle_center,100,50,2.1000000000000001\n",
+        "measurement extension must preserve the actual versioned UVD inputs");
     const std::string status = readText(stage.path() / "status_v6.json");
     check(status.find("\"complete\": true") != std::string::npos &&
               status.find("\"raw_images_written\": 2") != std::string::npos,
@@ -288,12 +294,38 @@ void testAcceptedPairRequiresDirectObservation() {
           "failed relation must leave an explicitly incomplete stage");
 }
 
+void testObservationRequiresReplayableInputAnchor() {
+    TempStage stage;
+    capture_stage::MainlineStageTrialWriter writer({stage.path()});
+    std::string error;
+    check(writer.open(error), "writer must open for measurement evidence test");
+    check(writer.append(stereoFrame()).status == ports::WriteStatus::accepted,
+          "measurement evidence frame must be accepted");
+    check(writer.append(detection(core::CameraRole::left, "left-camera", 1)).status ==
+              ports::WriteStatus::accepted,
+          "measurement evidence left detection must be accepted");
+    check(writer.append(detection(core::CameraRole::right, "right-camera", 2)).status ==
+              ports::WriteStatus::accepted,
+          "measurement evidence right detection must be accepted");
+    check(writer.append(acceptedAssociation()).status ==
+              ports::WriteStatus::accepted,
+          "measurement evidence association must be accepted");
+    auto missing_anchor = observation();
+    missing_anchor.evidence.left_anchor_px.reset();
+    check(writer.append(missing_anchor).status == ports::WriteStatus::failed,
+          "writer must reject 3D output without its measured input anchor");
+    check(readText(stage.path() / "status_v6.json").find(
+              "\"complete\": false") != std::string::npos,
+          "missing measurement input must fail the complete trial");
+}
+
 }  // namespace
 
 int main() {
     testCompleteTransactionPublishesMainlineStage();
     testWriterRejectsNonHostImageWithoutHalfFrame();
     testAcceptedPairRequiresDirectObservation();
+    testObservationRequiresReplayableInputAnchor();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

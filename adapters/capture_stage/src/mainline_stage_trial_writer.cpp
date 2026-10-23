@@ -25,6 +25,8 @@ constexpr std::string_view kFrameFile = "frames_v6.csv";
 constexpr std::string_view kDetectionFile = "detections_v6.csv";
 constexpr std::string_view kAssociationFile = "associations_v6.csv";
 constexpr std::string_view kObservationFile = "observations_v6.csv";
+// 独立版本的输入证据扩展；不悄悄修改既有 v6/v2.1 表头。
+constexpr std::string_view kMeasurementFile = "stereo_measurements_v1.csv";
 constexpr std::string_view kStatusFile = "status_v6.json";
 
 struct FrameKey {
@@ -207,6 +209,7 @@ struct MainlineStageTrialWriter::Impl {
     std::ofstream detections;
     std::ofstream associations;
     std::ofstream observations;
+    std::ofstream measurements;
     std::set<FrameKey> frame_keys;
     std::set<CandidateKey> candidate_keys;
     std::set<CandidateKey> selected_candidates;
@@ -238,11 +241,13 @@ struct MainlineStageTrialWriter::Impl {
         detections.close();
         associations.close();
         observations.close();
+        measurements.close();
     }
 
     [[nodiscard]] bool streamsGood() const noexcept {
         return static_cast<bool>(frames) && static_cast<bool>(detections) &&
-               static_cast<bool>(associations) && static_cast<bool>(observations);
+               static_cast<bool>(associations) && static_cast<bool>(observations) &&
+               static_cast<bool>(measurements);
     }
 
     [[nodiscard]] bool writeStatus(bool complete) noexcept {
@@ -314,13 +319,15 @@ struct MainlineStageTrialWriter::Impl {
         detections.flush();
         associations.flush();
         observations.flush();
+        measurements.flush();
         if (!streamsGood()) {
             error = "cannot flush mainline staging tables";
             return false;
         }
         closeStreams();
         for (const auto filename : {
-                 kFrameFile, kDetectionFile, kAssociationFile, kObservationFile}) {
+                 kFrameFile, kDetectionFile, kAssociationFile, kObservationFile,
+                 kMeasurementFile}) {
             std::error_code rename_error;
             fs::rename(partial(filename), final(filename), rename_error);
             if (rename_error) {
@@ -360,7 +367,7 @@ bool MainlineStageTrialWriter::open(std::string& error) {
         }
         for (const auto filename : {
                  kFrameFile, kDetectionFile, kAssociationFile,
-                 kObservationFile, kStatusFile}) {
+                 kObservationFile, kMeasurementFile, kStatusFile}) {
             if (fs::exists(impl_->final(filename)) ||
                 fs::exists(impl_->partial(filename))) {
                 error = "staging output already exists: " +
@@ -386,6 +393,7 @@ bool MainlineStageTrialWriter::open(std::string& error) {
             impl_->partial(kAssociationFile), std::ios::out);
         impl_->observations.open(
             impl_->partial(kObservationFile), std::ios::out);
+        impl_->measurements.open(impl_->partial(kMeasurementFile), std::ios::out);
         if (!impl_->streamsGood()) {
             return (error = impl_->fail("cannot create mainline staging tables").message,
                     false);
@@ -394,6 +402,7 @@ bool MainlineStageTrialWriter::open(std::string& error) {
         writeMainlineStageDetectionHeader(impl_->detections);
         writeMainlineStageAssociationHeader(impl_->associations);
         writeMainlineStageObservationHeader(impl_->observations);
+        writeStereoMeasurementHeader(impl_->measurements);
         if (!impl_->streamsGood()) {
             return (error = impl_->fail("cannot write mainline staging headers").message,
                     false);
@@ -558,6 +567,7 @@ ports::WriteResult MainlineStageTrialWriter::append(
     const auto& measurement = record.measurement;
     const auto pair = impl_->accepted_pairs.find(measurement.source_pair_id);
     if (!core::validate(measurement) || !ports::isValid(record.evidence) ||
+        !record.evidence.left_anchor_px ||
         pair == impl_->accepted_pairs.end() ||
         impl_->observed_pairs.count(measurement.source_pair_id) != 0 ||
         impl_->observation_ids.count(measurement.observation_id) != 0 ||
@@ -565,12 +575,18 @@ ports::WriteResult MainlineStageTrialWriter::append(
             pair->second.left_capture.clock_domain) {
         return impl_->fail("invalid, duplicate, or orphaned direct observation");
     }
-    std::ostringstream row;
-    if (!writeMainlineStageObservationRow(row, record)) {
-        return impl_->fail("cannot serialize direct observation");
+    std::ostringstream observation_row;
+    std::ostringstream measurement_row;
+    if (!writeMainlineStageObservationRow(observation_row, record) ||
+        !writeStereoMeasurementRow(
+            measurement_row,
+            measurement.source_pair_id,
+            record.evidence)) {
+        return impl_->fail("cannot serialize direct observation evidence");
     }
-    impl_->observations << row.str();
-    if (!impl_->observations) {
+    impl_->observations << observation_row.str();
+    impl_->measurements << measurement_row.str();
+    if (!impl_->observations || !impl_->measurements) {
         return impl_->fail("cannot append direct observation");
     }
     impl_->observed_pairs.insert(measurement.source_pair_id);
