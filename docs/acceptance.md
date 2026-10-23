@@ -65,7 +65,8 @@ volleyball run --profile nx-rdk --dry-run
 
 通过条件：目标机为 Jetson Orin NX；`doctor` 的配置意图、MVS、CUDA、TensorRT、
 OpenCV、ROS2、GPIO 和原生二进制动态链接检查全部通过；模型存在且 SHA-256 与
-清单一致；标定源 SHA-256 与配置一致且标定语义有效；生成配置可复现。这里证明的是 SDK 和链接可用，不等于
+清单一致；标定源 SHA-256 与配置一致且标定语义有效；正式采集工作树干净，采集上下文
+记录的原生可执行文件 SHA-256 与实际启动文件一致；生成配置可复现。这里证明的是 SDK 和链接可用，不等于
 算子已按预期并发执行；L4 仍须按[原生 NX 感知流水线](pipeline.md)保存启动日志、
 逐阶段计数和 Nsight 证据。非 Jetson CUDA 服务器不能替代此项。
 
@@ -128,6 +129,7 @@ volleyball replay --profile replay --trial /path/to/trial --json
 - 原始层没有滤波位置、预测状态或手工修正；
 - trial ID、球 ID、标定、模型、代码和配置均可追溯。
 - `calibration_source`、`calibration_contract` 和 `capture_context` 完整，且与共享标定交叉校验一致。
+- `capture_context.code_worktree_clean=true`，并保存实际运行二进制的 SHA-256；脏工作树只允许 dry-run，回放则必须以 `-dirty` revision 进入派生指纹。
 
 ## E. 几何与运行性能
 

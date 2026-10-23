@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-import subprocess
 from typing import Any, Iterable, Mapping
 
 from .calibration import (
@@ -20,6 +19,8 @@ from .capture_stage_io import (
 )
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError, TrialPackageWriter, with_pipeline_fingerprint
+from .git_state import GitStateError, inspect_git_state
+from .hashing import sha256_file
 from .mainline_stage_contract import (
     COVARIANCE_3D_FIELDS,
     MAINLINE_DETECTION_COLUMNS,
@@ -31,7 +32,8 @@ from .mainline_stage_validation import (
     safe_stage_source as _safe_stage_source,
     validate_mainline_stage,
 )
-from .model_manifest import resolve_model, sha256_file
+from .model_manifest import resolve_model
+from .runtime import mainline_executable
 from .stereo_measurements import (
     STEREO_MEASUREMENT_SCHEMA_VERSION,
     validate_stereo_measurements,
@@ -45,18 +47,6 @@ from .timebase import (
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _git_revision(root: Path) -> str:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return completed.stdout.strip()
 
 
 def _mapping_or_identity(
@@ -102,12 +92,20 @@ def build_mainline_capture_context(
     trajectory_kind: str = "free_flight",
     conditions: Mapping[str, Any] | None = None,
     notes: str = "",
-    verify_model: bool = True,
+    verify_assets: bool = True,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """生成不可变的主线 v6 staging 身份与感知流水线指纹。"""
 
     root = find_project_root(project_root)
+    try:
+        git_state = inspect_git_state(root)
+    except GitStateError as error:
+        raise DatasetError(str(error)) from error
+    if verify_assets and not git_state.clean:
+        raise DatasetError(
+            "真实采集要求干净 Git 工作树；请先提交、暂存到其他位置或使用 dry-run"
+        )
     _, calibration_source_sha256 = resolve_calibration_source(
         config, project_root=root
     )
@@ -119,13 +117,19 @@ def build_mainline_capture_context(
             raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
     else:
         weights_sha256 = expected
-    if verify_model:
+    executable = mainline_executable(root, config)
+    executable_sha256 = (
+        sha256_file(executable) if executable.is_file() else None
+    )
+    if verify_assets:
         if not artifact.is_file():
             raise DatasetError(f"模型文件不存在: {artifact}")
         if not expected:
             raise DatasetError("模型清单必须先固定 weights SHA-256 才能发布真实数据")
         if expected != weights_sha256:
             raise DatasetError("模型文件 SHA-256 与 models/manifest.yaml 不一致")
+        if executable_sha256 is None:
+            raise DatasetError(f"原生主线可执行文件不存在: {executable}")
 
     detector = config.data["detector"]
     pipeline = with_pipeline_fingerprint(
@@ -133,7 +137,7 @@ def build_mainline_capture_context(
             "pipeline_id": detector["model_id"],
             "detector_family": entry["family"],
             "detector_version": str(entry.get("version", detector["model_id"])),
-            "code_revision": _git_revision(root),
+            "code_revision": git_state.revision_label,
             "config_sha256": config.fingerprint_sha256,
             "weights_sha256": weights_sha256,
             "input_size_px": list(detector["input_resolution"]),
@@ -161,6 +165,8 @@ def build_mainline_capture_context(
         "notes": notes,
         "profile": config.profile,
         "config_sha256": config.fingerprint_sha256,
+        "code_worktree_clean": git_state.clean,
+        "runtime_executable_sha256": executable_sha256,
         "exposure_timestamp": {
             "shutter_type": config.data["cameras"]["sync"]["shutter_type"],
             "source": config.data["cameras"]["sync"][
@@ -177,7 +183,7 @@ def build_mainline_capture_context(
         },
         "perception_pipeline": pipeline,
     }
-    if not verify_model:
+    if not verify_assets:
         # 预演允许目标机 artifact 尚未安装，但该 staging 永远不能发布。
         context["planning_only"] = True
     return context
@@ -192,7 +198,9 @@ def finalize_mainline_capture_stage(
 ) -> Path:
     """严格校验 v6 逐事实 staging，并原子发布为 capture v2.1 trial。"""
 
-    evidence = validate_mainline_stage(stage, config)
+    evidence = validate_mainline_stage(
+        stage, config, project_root=project_root
+    )
     directory = evidence.directory
     context = evidence.context
     expected_exposure = evidence.expected_exposure

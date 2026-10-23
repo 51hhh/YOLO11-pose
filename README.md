@@ -123,8 +123,8 @@ volleyball capture \
   --duration 3.0 --dataset-root /tmp/volleyball-capture-plan --dry-run
 ```
 
-正式采集必须去掉 `--dry-run`，并通过模型、NX、MVS、GPIO、CUDA、TensorRT 和
-ROS2 等 doctor 门禁：
+正式采集必须去掉 `--dry-run`，使用没有 tracked/untracked 改动的干净 Git 工作树，
+并通过模型、NX、MVS、GPIO、CUDA、TensorRT 和 ROS2 等 doctor 门禁：
 
 ```bash
 volleyball capture \
@@ -140,8 +140,9 @@ volleyball dataset validate data/captures
 
 采集先写入同文件系统的隐藏 staging 目录。原生 C++ 链产生逐事实 v6 staging，
 保存原始 Bayer、全部检测/配对尝试，以及每条 3D 的实际方法和最终 UVD 输入证据；
-Python 在帧数、触发、时钟、引用闭包和 SHA-256 全部通过后才原子发布冻结的
-v2.1 trial。崩溃后的完整 staging 可以显式恢复：
+Python 同时固定 Git 状态、原生可执行文件、模型和标定哈希，在帧数、触发、时钟、
+引用闭包和 SHA-256 全部通过后才原子发布冻结的 v2.1 trial。崩溃后的完整 staging
+可以显式恢复：
 
 ```bash
 volleyball capture-finalize \
@@ -164,7 +165,7 @@ volleyball replay \
   --json
 ```
 
-原始观测不可被滤波结果覆盖；标定、参数辨识、轨迹平滑和影子仿真都写入派生目录，并记录输入哈希与配置指纹。这样才能分别估计相机观测噪声与排球动力学残差，而不是把二者混成一个随机域。
+原始观测不可被滤波结果覆盖；标定、参数辨识、轨迹平滑和影子仿真都写入派生目录，并记录输入哈希、配置指纹和代码状态。工作树不干净时，回放 revision 会明确带 `-dirty`，不会冒充对应的干净 commit。这样才能分别估计相机观测噪声与排球动力学残差，而不是把二者混成一个随机域。
 
 ## 文档
 

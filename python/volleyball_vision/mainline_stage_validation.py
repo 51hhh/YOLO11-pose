@@ -15,8 +15,9 @@ from .capture_stage_io import (
     read_csv_exact,
     uint32_is_next,
 )
-from .config import ResolvedConfig
+from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError
+from .hashing import sha256_file
 from .mainline_stage_contract import (
     MAINLINE_ASSOCIATION_COLUMNS,
     MAINLINE_DETECTION_COLUMNS,
@@ -24,6 +25,7 @@ from .mainline_stage_contract import (
     MAINLINE_OBSERVATION_COLUMNS,
     MAINLINE_STAGE_SCHEMA_VERSION,
 )
+from .runtime import mainline_executable
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +127,7 @@ def _constant(rows: Iterable[Mapping[str, str]], key: str) -> str:
 
 
 def _validate_context_and_tables(
-    directory: Path, config: ResolvedConfig
+    directory: Path, config: ResolvedConfig, project_root: Path
 ) -> tuple[
     dict[str, Any],
     dict[str, Any],
@@ -154,6 +156,22 @@ def _validate_context_and_tables(
         "sha256"
     ]:
         raise DatasetError("mainline staging 标定哈希与 finalize 配置不一致")
+    if context.get("code_worktree_clean") is False:
+        raise DatasetError("脏工作树产生的 mainline staging 不得发布")
+    executable_sha256 = context.get("runtime_executable_sha256")
+    if executable_sha256 is not None:
+        if (
+            not isinstance(executable_sha256, str)
+            or len(executable_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in executable_sha256
+            )
+        ):
+            raise DatasetError("mainline staging 原生可执行文件哈希无效")
+        executable = mainline_executable(project_root, config)
+        if executable.is_file() and sha256_file(executable) != executable_sha256:
+            raise DatasetError("mainline staging 原生可执行文件哈希与当前文件不一致")
     exposure = expected_exposure(config)
     if context.get("exposure_timestamp") != exposure:
         raise DatasetError("mainline staging 曝光时间语义与 finalize 配置不一致")
@@ -312,11 +330,15 @@ def _validate_frame(
 
 
 def validate_mainline_stage(
-    stage: str | Path, config: ResolvedConfig
+    stage: str | Path,
+    config: ResolvedConfig,
+    *,
+    project_root: str | Path | None = None,
 ) -> ValidatedMainlineStage:
     directory = Path(stage).resolve()
+    root = find_project_root(project_root)
     context, exposure, frames, detections, associations, observations = (
-        _validate_context_and_tables(directory, config)
+        _validate_context_and_tables(directory, config, root)
     )
     cameras = config.data["cameras"]
     camera_ids = {"left": cameras["left"]["id"], "right": cameras["right"]["id"]}

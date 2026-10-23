@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from volleyball_vision.calibration import build_capture_calibration
 from volleyball_vision.capture import finalize_capture_stage, prepare_capture_stage
@@ -15,6 +16,7 @@ from volleyball_vision.dataset import (
     validate_dataset,
     with_pipeline_fingerprint,
 )
+from volleyball_vision.git_state import GitState
 from volleyball_vision.mainline_capture import build_mainline_capture_context
 from volleyball_vision.mainline_stage_contract import (
     MAINLINE_ASSOCIATION_COLUMNS,
@@ -52,7 +54,7 @@ class MainlineCaptureStageTests(unittest.TestCase):
             trial_id="mainline-plan-0001",
             session_id="session-a",
             ball_id="ball-01",
-            verify_model=False,
+            verify_assets=False,
             project_root=ROOT,
         )
 
@@ -76,10 +78,30 @@ class MainlineCaptureStageTests(unittest.TestCase):
         )
         self.assertTrue(context["planning_only"])
         self.assertEqual(context["config_sha256"], profile.fingerprint_sha256)
+        self.assertIsInstance(context["code_worktree_clean"], bool)
+        self.assertIn("runtime_executable_sha256", context)
         self.assertEqual(
             context["calibration_source_sha256"],
             profile.data["calibration"]["sha256"],
         )
+
+    def test_real_context_rejects_dirty_worktree_before_assets(self) -> None:
+        profile = load_profile("free-flight", project_root=ROOT)
+        with (
+            patch(
+                "volleyball_vision.mainline_capture.inspect_git_state",
+                return_value=GitState("a" * 40, False),
+            ),
+            self.assertRaisesRegex(DatasetError, "干净 Git 工作树"),
+        ):
+            build_mainline_capture_context(
+                profile,
+                trial_id="dirty-real-capture",
+                session_id="session-a",
+                ball_id="ball-01",
+                verify_assets=True,
+                project_root=ROOT,
+            )
 
     def _stage(
         self,
@@ -124,6 +146,8 @@ class MainlineCaptureStageTests(unittest.TestCase):
             "notes": "mainline fixture",
             "profile": "free-flight",
             "config_sha256": profile.fingerprint_sha256,
+            "code_worktree_clean": True,
+            "runtime_executable_sha256": None,
             "exposure_timestamp": {
                 "shutter_type": "global",
                 "source": "nx_gpio_rising_edge",

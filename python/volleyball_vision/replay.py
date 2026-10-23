@@ -11,12 +11,12 @@ import math
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import tempfile
 from typing import Any, Mapping
 
 from .config import ResolvedConfig, canonical_json, find_project_root
 from .dataset import DatasetError, validate_trial
+from .git_state import GitStateError, inspect_git_state
 
 
 DERIVED_SCHEMA_VERSION = 1
@@ -460,21 +460,6 @@ def _trial_quality(trial: Path, metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _git_revision(root: Path) -> str:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=root,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-    return completed.stdout.strip()
-
-
 def _write_csv(path: Path, columns: tuple[str, ...], rows: list[Mapping[str, Any]]) -> None:
     with path.open("x", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, lineterminator="\n")
@@ -518,10 +503,14 @@ def run_replay(
 
     shadow_path = Path(shadow_trajectory).resolve() if shadow_trajectory else None
     shadow = _load_samples(shadow_path, source_name="shadow trajectory") if shadow_path else []
+    try:
+        code_revision = inspect_git_state(root).revision_label
+    except GitStateError:
+        code_revision = "unknown-dirty"
     inputs = {
         "derived_schema_version": DERIVED_SCHEMA_VERSION,
         "tool": "volleyball_vision.replay",
-        "code_revision": _git_revision(root),
+        "code_revision": code_revision,
         "config_sha256": config.fingerprint_sha256,
         "source_trial_id": metadata["trial_id"],
         "source_metadata_sha256": _sha256(metadata_path),

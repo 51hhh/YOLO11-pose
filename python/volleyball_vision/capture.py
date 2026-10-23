@@ -12,6 +12,8 @@ from typing import Any, Mapping
 
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError, require_identifier
+from .git_state import GitStateError, inspect_git_state
+from .hashing import sha256_file
 from .mainline_capture import (
     build_mainline_capture_context,
     finalize_mainline_capture_stage,
@@ -92,7 +94,7 @@ def run_capture(
         ball_id=ball_id,
         conditions=conditions,
         notes=notes,
-        verify_model=not dry_run,
+        verify_assets=not dry_run,
         project_root=root,
     )
     prepare_capture_stage(stage, context)
@@ -109,6 +111,19 @@ def run_capture(
         return stage
 
     try:
+        try:
+            launch_git_state = inspect_git_state(root)
+        except GitStateError as error:
+            raise DatasetError(str(error)) from error
+        if (
+            not launch_git_state.clean
+            or launch_git_state.revision_label
+            != context["perception_pipeline"]["code_revision"]
+        ):
+            raise DatasetError("启动前 Git 状态已变化，拒绝执行真实采集")
+        executable = Path(command[0])
+        if sha256_file(executable) != context["runtime_executable_sha256"]:
+            raise DatasetError("启动前原生主线可执行文件哈希已变化")
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
             raise DatasetError(
