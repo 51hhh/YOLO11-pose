@@ -79,6 +79,14 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn("volleyball::hik_mvs", tools_cmake)
         self.assertIn("volleyball::gpio", tools_cmake)
 
+    def test_cuda_probe_failure_reports_toolchain_incompatibility(self) -> None:
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("could not compile a ", root_cmake)
+        self.assertIn("CUDA compiler probe", root_cmake)
+        self.assertIn("host compiler/C library", root_cmake)
+        self.assertIn("CMakeConfigureLog.yaml", root_cmake)
+
     def test_gpio_layout_switch_is_part_of_the_public_contract(self) -> None:
         gpio_cmake = (
             ROOT / "adapters" / "gpio" / "CMakeLists.txt"

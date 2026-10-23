@@ -55,7 +55,11 @@ if(VOLLEYBALL_BUILD_CUDA_ADAPTERS)
   check_language(CUDA)
   if(NOT CMAKE_CUDA_COMPILER)
     message(FATAL_ERROR
-      "VOLLEYBALL_BUILD_CUDA_ADAPTERS=ON but no CUDA compiler was found")
+      "VOLLEYBALL_BUILD_CUDA_ADAPTERS=ON, but CMake could not compile a "
+      "CUDA compiler probe. nvcc may be missing, or CUDA may be incompatible "
+      "with the host compiler/C library. Inspect "
+      "CMakeFiles/CMakeConfigureLog.yaml (CMake >= 3.26) or "
+      "CMakeFiles/CMakeError.log.")
   endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
