@@ -144,9 +144,9 @@ volleyball replay --profile replay --trial /path/to/trial --json
 
 仓库可以通过 CPU 软件门禁，并已具备严格记录与拒绝错误数据的结构。2026-10-23
 在 NVIDIA A800（compute capability 8.0、驱动 550.144.03、CUDA 12.8、
-glibc 2.43）上，当前提交的 `cuda-adapters-release` 完成构建并通过 28/28
-CTest，包括 CUDA Bayer/校正、预处理和直接深度路径的运行测试。该证据只关闭
-通用 CUDA 适配层的软件风险。
+glibc 2.43）上，修订 `6f0a397` 的 `cuda-adapters-release` 完成构建并通过
+28/28 CTest，包括 CUDA Bayer/校正、预处理和直接深度路径的运行测试。该证据
+只关闭该修订的通用 CUDA 适配层软件风险；后续修改 CUDA 路径时必须重新执行。
 
 实际 NX 构建、模型权重固定、示波器同步误差和长时间相机录制仍属于目标硬件
 验收项；在这些证据产生前，项目不能宣称“实机全部验收通过”。
