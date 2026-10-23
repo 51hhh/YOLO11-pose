@@ -457,7 +457,9 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 metadata["capture"]["trajectory_timebase"]["clock_domain"],
                 "hik-shared-device-clock",
             )
-            self.assertEqual(len(metadata["raw_manifest"]), 8)
+            self.assertEqual(len(metadata["raw_manifest"]), 10)
+            self.assertIn("calibration_source", metadata["source_files"])
+            self.assertIn("calibration_contract", metadata["source_files"])
             self.assertNotIn(
                 "direct_stereo_measurements",
                 metadata["source_files"],
@@ -497,6 +499,41 @@ class MainlineCaptureStageTests(unittest.TestCase):
             )
             self.assertEqual(monotonic_mapping["source_anchor_ns"], "3000000000")
             self.assertEqual(monotonic_mapping["reference_anchor_ns"], "995066500")
+
+    def test_validator_rejects_shared_calibration_changed_after_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            dataset = root / "dataset"
+            finalize_capture_stage(stage, dataset, profile, project_root=ROOT)
+
+            calibration_path = (
+                dataset / "calibrations" / "vehicle-stereo-main.json"
+            )
+            calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+            calibration["notes"] += " 被意外修改"
+            calibration_path.write_text(
+                json.dumps(calibration, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(DatasetError, "契约快照.*共享标定"):
+                validate_dataset(dataset, project_root=ROOT)
+
+    def test_stage_rejects_calibration_hash_changed_after_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            context_path = stage / "context.json"
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context["calibration_source_sha256"] = "0" * 64
+            context_path.write_text(json.dumps(context), encoding="utf-8")
+            with self.assertRaisesRegex(DatasetError, "标定哈希"):
+                finalize_capture_stage(
+                    stage,
+                    root / "dataset",
+                    profile,
+                    project_root=ROOT,
+                )
 
     def test_frame_identity_remains_monotonic_after_uint32_wrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

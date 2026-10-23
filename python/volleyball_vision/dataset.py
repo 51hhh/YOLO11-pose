@@ -62,6 +62,10 @@ _CAMERA_TIMESTAMP_SEMANTICS = {
     "hardware_trigger",
 }
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CALIBRATION_AUDIT_LABELS = frozenset(
+    {"calibration_source", "calibration_contract"}
+)
 
 
 def require_identifier(value: Any, *, field_name: str) -> str:
@@ -128,6 +132,66 @@ def _sha256(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _validate_calibration_audit(
+    directory: Path,
+    metadata: Mapping[str, Any],
+    calibration_path: Path,
+    calibration: Mapping[str, Any],
+    raw_by_label: Mapping[str, Mapping[str, Any]],
+    *,
+    project_root: str | Path | None,
+) -> None:
+    """校验新主线 trial 的标定源和冻结契约快照。
+
+    冻结的 v2.1 metadata 没有新增字段，因此用保留的 raw label 建立可选扩展。
+    旧 trial 不含这些 label 时保持兼容；一旦出现其中任意一个，就必须提供完整
+    的源文件、契约和采集上下文三方绑定。
+    """
+
+    present = _CALIBRATION_AUDIT_LABELS.intersection(raw_by_label)
+    if not present:
+        return
+    if present != _CALIBRATION_AUDIT_LABELS:
+        missing = sorted(_CALIBRATION_AUDIT_LABELS - present)
+        raise DatasetError(f"标定审计快照不完整，缺少: {missing}")
+    context_entry = raw_by_label.get("capture_context")
+    if context_entry is None:
+        raise DatasetError("标定审计快照必须同时保存 capture_context")
+
+    def audited_path(label: str) -> Path:
+        entry = raw_by_label[label]
+        path = directory / str(entry["relative_path"])
+        actual = _sha256(path)
+        if actual != entry["sha256"]:
+            raise DatasetError(f"标定审计文件 SHA-256 不匹配: {label}")
+        return path
+
+    source_entry = raw_by_label["calibration_source"]
+    audited_path("calibration_source")
+    contract_path = audited_path("calibration_contract")
+    context = _load_json(directory / str(context_entry["relative_path"]))
+    expected_source_sha = context.get("calibration_source_sha256")
+    if (
+        not isinstance(expected_source_sha, str)
+        or _SHA256.fullmatch(expected_source_sha) is None
+    ):
+        raise DatasetError("capture_context 缺少有效 calibration_source_sha256")
+    if context.get("calibration_id") != metadata["calibration_id"]:
+        raise DatasetError("capture_context 标定 ID 与 trial metadata 不一致")
+    if source_entry["sha256"] != expected_source_sha:
+        raise DatasetError("标定源快照与 capture_context 固定哈希不一致")
+
+    contract_snapshot = validate_calibration(
+        contract_path, project_root=project_root
+    )
+    if contract_snapshot != calibration:
+        raise DatasetError("trial 标定契约快照与数据集共享标定不一致")
+    if raw_by_label["calibration_contract"]["sha256"] != _sha256(
+        calibration_path
+    ):
+        raise DatasetError("trial 标定契约哈希与数据集共享标定不一致")
 
 
 def _finite(value: str, *, field_name: str, allow_blank: bool = False) -> float | None:
@@ -854,6 +918,7 @@ def validate_trial(
 
     seen_labels: set[str] = set()
     seen_paths: set[str] = set()
+    raw_by_label: dict[str, Mapping[str, Any]] = {}
     for entry in metadata["raw_manifest"]:
         label = entry["label"]
         relative = str(_safe_relative_path(entry["relative_path"], field_name="raw_manifest.relative_path"))
@@ -861,6 +926,7 @@ def validate_trial(
             raise DatasetError("原始文件 label 和 relative_path 必须唯一")
         seen_labels.add(label)
         seen_paths.add(relative)
+        raw_by_label[label] = entry
         path = directory / relative
         if not path.is_file():
             raise DatasetError(f"原始文件不存在: {relative}")
@@ -872,6 +938,14 @@ def validate_trial(
         entry["label"]: entry["relative_path"] for entry in metadata["raw_manifest"]
     }:
         raise DatasetError("source_files 必须与 raw_manifest 的 label/path 完全一致")
+    _validate_calibration_audit(
+        directory,
+        metadata,
+        calibration_path,
+        calibration,
+        raw_by_label,
+        project_root=project_root,
+    )
     return TrialValidationSummary(
         trial_id=metadata["trial_id"],
         table_rows={name: len(rows) for name, rows in tables.items()},

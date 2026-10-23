@@ -591,7 +591,12 @@ def finalize_mainline_capture_stage(
     origin_ns = integer_midpoint_ns(first_left, first_right)
 
     root = Path(dataset_root).resolve()
-    ensure_dataset_calibration(root, config, project_root=project_root)
+    calibration_contract = ensure_dataset_calibration(
+        root, config, project_root=project_root
+    )
+    calibration_source, calibration_source_sha256 = resolve_calibration_source(
+        config, project_root=project_root
+    )
     mapping_uncertainties = [
         float(mapping["uncertainty_ns"]) for mapping in clock_mappings
     ]
@@ -739,6 +744,16 @@ def finalize_mainline_capture_stage(
             writer.append("environment", environment)
 
         for label, source, filename in (
+            (
+                "calibration_source",
+                calibration_source,
+                "audit/calibration_source.yaml",
+            ),
+            (
+                "calibration_contract",
+                calibration_contract,
+                "audit/calibration_contract.json",
+            ),
             ("mainline_stage_frames", directory / "frames_v6.csv", "audit/frames_v6.csv"),
             (
                 "mainline_stage_detections",
@@ -758,7 +773,12 @@ def finalize_mainline_capture_stage(
             ("mainline_stage_status", directory / "status_v6.json", "audit/status_v6.json"),
             ("capture_context", directory / "context.json", "audit/context.json"),
         ):
-            writer.add_raw_source(label, source, filename=filename)
+            archived = writer.add_raw_source(label, source, filename=filename)
+            if (
+                label == "calibration_source"
+                and sha256_file(archived) != calibration_source_sha256
+            ):
+                raise DatasetError("归档标定源与本次采集固定哈希不一致")
         if has_measurement_inputs:
             writer.add_raw_source(
                 "direct_stereo_measurements",
