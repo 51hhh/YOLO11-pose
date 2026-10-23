@@ -617,7 +617,7 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
             return rejected(attempted_method, std::move(selection.message));
         }
         const auto& candidate = *selection.candidate;
-        algorithms::stereo::RefinedDisparityMeasurement measurement;
+        algorithms::stereo::AnchoredDisparityMeasurement measurement;
         measurement.left_anchor_px = candidate.left_anchor_px;
         measurement.disparity_px = candidate.disparity_px;
         measurement.disparity_stddev_px =
@@ -625,7 +625,7 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
                 impl_->config.geometric_disparity_stddev_px);
         measurement.anchor_stddev_px = impl_->config.anchor_stddev_px;
         measurement.confidence = candidate.confidence;
-        auto triangulated = algorithms::stereo::triangulateRefinedDisparity(
+        auto triangulated = algorithms::stereo::triangulateAnchoredDisparity(
             request.left_detection,
             request.right_detection,
             request.association,

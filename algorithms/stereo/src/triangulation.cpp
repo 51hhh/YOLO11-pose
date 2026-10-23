@@ -162,11 +162,11 @@ TriangulationResult triangulateRectifiedCenters(
     return {observation, {}};
 }
 
-TriangulationResult triangulateRefinedDisparity(
+TriangulationResult triangulateAnchoredDisparity(
     const core::Detection2D& left,
     const core::Detection2D& right,
     const core::StereoAssociationAttempt& association,
-    const RefinedDisparityMeasurement& measurement,
+    const AnchoredDisparityMeasurement& measurement,
     const core::RectifiedStereoCalibration& calibration,
     const TriangulationConfig& config,
     core::ObservationId observation_id) {
@@ -187,7 +187,7 @@ TriangulationResult triangulateRefinedDisparity(
          (!std::isfinite(*measurement.confidence) ||
           *measurement.confidence < 0.0 ||
           *measurement.confidence > 1.0))) {
-        return {std::nullopt, "invalid refined disparity measurement"};
+        return {std::nullopt, "invalid anchored disparity measurement"};
     }
 
     const double disparity = measurement.disparity_px;
@@ -200,9 +200,9 @@ TriangulationResult triangulateRefinedDisparity(
     const double y =
         (measurement.left_anchor_px.y - calibration.left.cy) * z / fy;
 
-    // 将独立的左图锚点 [u,v] 与精化视差 d 的不确定度，通过
-    // [x,y,z] 关于 [u,v,d] 的一阶 Jacobian 传播。视差来自 ROI 多点
-    // 聚合，不能再按两个检测框中心的独立噪声重复计算。
+    // 将左图锚点 [u,v] 与最终测量视差 d 的不确定度，通过
+    // [x,y,z] 关于 [u,v,d] 的一阶 Jacobian 传播。这里传播的是实际
+    // 球心代理输入，不能再按两个检测框中心的独立噪声重复计算。
     const double inv_disparity = 1.0 / disparity;
     const double anchor_variance =
         measurement.anchor_stddev_px * measurement.anchor_stddev_px;
@@ -245,7 +245,7 @@ TriangulationResult triangulateRefinedDisparity(
     observation.confidence = measurement.confidence;
     observation.reprojection_error_px = association.epipolar_error_px;
     if (!core::validate(observation)) {
-        return {std::nullopt, "triangulated refined observation is invalid"};
+        return {std::nullopt, "triangulated anchored observation is invalid"};
     }
     return {observation, {}};
 }

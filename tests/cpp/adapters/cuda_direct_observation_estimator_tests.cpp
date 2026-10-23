@@ -223,7 +223,7 @@ void testPublishesConfiguredBallCenterMeasurement() {
               result.observation->measurement.capture_reference.nanoseconds ==
                   1001 &&
               result.observation->measurement.observation_id == 19,
-          "refined disparity must drive 3D while preserving time and IDs");
+          "measured disparity must drive 3D while preserving time and IDs");
 }
 
 void testFallsBackToBboxWithoutRenamingIt() {

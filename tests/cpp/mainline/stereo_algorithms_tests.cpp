@@ -211,9 +211,9 @@ void testTriangulationConfigurationValidation() {
         "negative center uncertainty must fail config validation");
 }
 
-void testRefinedDisparityTriangulatesIndependentEvidence() {
+void testAnchoredDisparityTriangulatesIndependentEvidence() {
     const ValidInputs inputs;
-    algorithms::RefinedDisparityMeasurement measurement;
+    algorithms::AnchoredDisparityMeasurement measurement;
     measurement.left_anchor_px = {710.0, 490.0};
     measurement.disparity_px = 40.0;
     measurement.disparity_stddev_px = 0.25;
@@ -222,7 +222,7 @@ void testRefinedDisparityTriangulatesIndependentEvidence() {
 
     auto association = inputs.association;
     *association.disparity_px = 50.0;
-    const auto result = algorithms::triangulateRefinedDisparity(
+    const auto result = algorithms::triangulateAnchoredDisparity(
         inputs.left,
         inputs.right,
         association,
@@ -231,7 +231,7 @@ void testRefinedDisparityTriangulatesIndependentEvidence() {
         inputs.config,
         17);
     check(static_cast<bool>(result),
-          "refined disparity may differ from association gating disparity");
+          "measured disparity may differ from association gating disparity");
     check(result.observation &&
               std::abs(
                   result.observation->position_m.z -
@@ -239,20 +239,20 @@ void testRefinedDisparityTriangulatesIndependentEvidence() {
                       measurement.disparity_px) < 1e-12 &&
               result.observation->confidence == 0.8 &&
               result.observation->source_pair_id == association.pair_id,
-          "refined disparity must determine depth and preserve identities");
+          "measured disparity must determine depth and preserve identities");
     check(result.observation && result.observation->covariance_m2 &&
               result.observation->covariance_m2->upper[5] > 0.0,
-          "refined disparity uncertainty must propagate to depth covariance");
+          "measured disparity uncertainty must propagate to depth covariance");
 }
 
-void testRefinedDisparityRejectsInvalidUncertainty() {
+void testAnchoredDisparityRejectsInvalidUncertainty() {
     const ValidInputs inputs;
-    algorithms::RefinedDisparityMeasurement measurement;
+    algorithms::AnchoredDisparityMeasurement measurement;
     measurement.left_anchor_px = inputs.left.center_px;
     measurement.disparity_px = 40.0;
     measurement.disparity_stddev_px = -0.1;
     measurement.anchor_stddev_px = 0.5;
-    const auto result = algorithms::triangulateRefinedDisparity(
+    const auto result = algorithms::triangulateAnchoredDisparity(
         inputs.left,
         inputs.right,
         inputs.association,
@@ -260,7 +260,7 @@ void testRefinedDisparityRejectsInvalidUncertainty() {
         inputs.calibration,
         inputs.config,
         18);
-    check(!result, "negative refined disparity uncertainty must be rejected");
+    check(!result, "negative measured disparity uncertainty must be rejected");
 }
 
 void testCenterEstimatorIsAnExplicitReferenceBackend() {
@@ -321,8 +321,8 @@ int main() {
     testAssociationUsesAdaptiveEpipolarTolerance();
     testAssociationRanksBboxConsistentDisparity();
     testTriangulationConfigurationValidation();
-    testRefinedDisparityTriangulatesIndependentEvidence();
-    testRefinedDisparityRejectsInvalidUncertainty();
+    testAnchoredDisparityTriangulatesIndependentEvidence();
+    testAnchoredDisparityRejectsInvalidUncertainty();
     testCenterEstimatorIsAnExplicitReferenceBackend();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
