@@ -216,12 +216,12 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "one_by_one"):
             _validate_semantics(ROOT, payload)
 
-    def test_live_stereo_requires_per_camera_detector(self) -> None:
+    def test_schema_requires_per_camera_detector(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))
         payload["detector"]["per_camera"] = False
-        with self.assertRaisesRegex(ConfigError, "per_camera"):
-            _validate_semantics(ROOT, payload)
+        with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+            _validate_schema(ROOT, payload)
 
     def test_hik_adapter_rejects_unrepresentable_per_camera_settings(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
@@ -238,10 +238,9 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigError, expected):
                     _validate_semantics(ROOT, payload)
 
-    def test_live_detector_rejects_unsupported_native_settings(self) -> None:
+    def test_schema_rejects_unimplemented_detector_settings(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (
-            ("正方形", lambda value: value["detector"].update(input_resolution=[640, 384])),
             ("letterbox", lambda value: value["detector"].update(resize_mode="stretch")),
             ("rgb8", lambda value: value["detector"].update(input_format="rgb8")),
             ("bbox_center", lambda value: value["detector"].update(center_method="circle_fit")),
@@ -250,8 +249,15 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 payload = copy.deepcopy(dict(resolved.data))
                 mutate(payload)
-                with self.assertRaisesRegex(ConfigError, expected):
-                    _validate_semantics(ROOT, payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
+    def test_live_detector_requires_square_input(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["detector"]["input_resolution"] = [640, 384]
+        with self.assertRaisesRegex(ConfigError, "正方形"):
+            _validate_semantics(ROOT, payload)
 
     def test_live_model_manifest_must_match_runtime_contract(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
@@ -259,10 +265,6 @@ class ConfigTests(unittest.TestCase):
             (
                 "input_resolution",
                 lambda value: value["detector"].update(input_resolution=[320, 320]),
-            ),
-            (
-                "input_format",
-                lambda value: value["detector"].update(input_format="gray8"),
             ),
             (
                 "target",

@@ -114,15 +114,15 @@
       "properties": {
         "backend": {"enum": ["tensorrt", "recorded"]},
         "model_id": {"type": "string", "minLength": 1},
-        "per_camera": {"type": "boolean"},
+        "per_camera": {"const": true},
         "input_resolution": {"$ref": "#/$defs/resolution"},
-        "input_format": {"enum": ["bayer8", "gray8", "bgr8", "rgb8"]},
-        "resize_mode": {"enum": ["native", "stretch", "letterbox", "crop"]},
+        "input_format": {"const": "bgr8"},
+        "resize_mode": {"const": "letterbox"},
         "confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1},
         "nms_iou_threshold": {"type": "number", "minimum": 0, "maximum": 1},
         "max_detections": {"type": "integer", "minimum": 1, "maximum": 10000},
         "class_id": {"type": "integer", "minimum": 0},
-        "center_method": {"enum": ["bbox_center", "circle_fit", "keypoints", "segmentation_centroid"]}
+        "center_method": {"const": "bbox_center"}
       }
     },
     "stereo": {

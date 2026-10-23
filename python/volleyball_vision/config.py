@@ -260,9 +260,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
         errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
     detector = payload["detector"]
-    if mode in {"runtime", "capture"} and detector["backend"] != "recorded":
-        if not detector["per_camera"]:
-            errors.append("实时双目管线要求 detector.per_camera=true")
     sync = cameras["sync"]
     transport = cameras["transport"]
     if sync["exposure_timestamp_source"] == "nx_gpio_rising_edge":
@@ -309,12 +306,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("当前 NX 主线只支持 detector.backend=tensorrt")
         if detector["input_resolution"][0] != detector["input_resolution"][1]:
             errors.append("当前 TensorRT 检测器要求正方形 input_resolution")
-        if detector["resize_mode"] != "letterbox":
-            errors.append("当前 TensorRT 检测器固定使用 letterbox")
-        if detector["input_format"] == "rgb8":
-            errors.append("当前 TensorRT 检测器不支持直接 rgb8 输入")
-        if detector["center_method"] != "bbox_center":
-            errors.append("当前实时检测输出只支持 center_method=bbox_center")
         if sync["method"] == "hardware_trigger":
             if sync["gpio_chip"] is None or sync["gpio_line"] is None:
                 errors.append("hardware_trigger 必须配置 gpio_chip/gpio_line")
