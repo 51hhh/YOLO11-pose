@@ -61,3 +61,19 @@ jobs:
       - name: Run CPU C++ tests
         run: ctest --preset ${{ matrix.preset }}
 
+  host-calibration-tool:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install offline calibration dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopencv-dev ninja-build
+      - name: Configure offline stereo calibration
+        run: cmake --preset host-calibration-release
+      - name: Build offline stereo calibration
+        run: cmake --build --preset host-calibration-release --parallel 2
+      - name: Smoke-test calibration executable
+        run: build/host-calibration-release/tools/hardware/stereo_calibrate --help
+
