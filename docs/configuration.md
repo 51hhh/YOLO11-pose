@@ -14,6 +14,10 @@
 
 每个 profile 合并后必须通过 `configs/schema/runtime.schema.json` 和跨字段语义检查，并生成规范化 SHA-256。`config explain` 可以回答一个值来自哪一层。
 
+配置只保留会改变运行行为或采集证据的字段。CUDA 架构由 CMake 构建预设
+管理；尚无实测变换的 `base_link`/世界坐标系不进入标定配置；数据校验是否跳过
+哈希由对应 CLI 的显式参数决定，避免修改配置却不改变行为的空旋钮。
+
 ```bash
 volleyball config validate --profile free-flight
 volleyball config render --profile free-flight --format yaml

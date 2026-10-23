@@ -12,7 +12,6 @@ runtime:
 platform:
   id: generic-host
   accelerator: none
-  cuda_arch: null
 
 cameras:
   backend: recorded
@@ -59,9 +58,7 @@ calibration:
   id: vehicle-stereo-main
   file: configs/calibration/stereo_calib.yaml
   format: opencv_yaml
-  body_frame: base_link
   rig_frame: nx_left_rectified_optical_frame
-  world_frame: world
 
 adapters:
   mainline_pipeline:
@@ -125,7 +122,6 @@ recording:
   schema_version: 2.1.0
   raw_frames: none
   loss_policy: mark_dropped
-  verify_hashes: true
 
 publisher:
   enabled: false

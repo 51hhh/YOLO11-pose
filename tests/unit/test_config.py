@@ -112,6 +112,21 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
             _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_retired_no_effect_settings(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value["platform"].update(cuda_arch=87),
+            lambda value: value["calibration"].update(body_frame="base_link"),
+            lambda value: value["calibration"].update(world_frame="world"),
+            lambda value: value["recording"].update(verify_hashes=True),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
     def test_schema_rejects_unimplemented_runtime_backends(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (

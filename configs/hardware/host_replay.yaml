@@ -1,7 +1,6 @@
 platform:
   id: host-replay
   accelerator: none
-  cuda_arch: null
 
 cameras:
   backend: recorded

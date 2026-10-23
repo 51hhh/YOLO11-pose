@@ -1,7 +1,6 @@
 platform:
   id: jetson-orin-nx
   accelerator: cuda
-  cuda_arch: 87
 
 cameras:
   backend: hik_mvs
