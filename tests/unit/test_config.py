@@ -226,6 +226,58 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "backend"):
             _validate_semantics(ROOT, payload)
 
+    def test_mode_rejects_backends_that_no_command_can_execute(self) -> None:
+        mutations = (
+            (
+                "nx-rdk",
+                "runtime/capture 模式只支持",
+                lambda value: value["cameras"].update(backend="recorded"),
+            ),
+            (
+                "nx-rdk",
+                "必须使用 hardware_trigger",
+                lambda value: value["cameras"]["sync"].update(method="recorded"),
+            ),
+            (
+                "replay",
+                "detector.backend=recorded",
+                lambda value: value["detector"].update(backend="tensorrt"),
+            ),
+        )
+        for profile, expected, mutate in mutations:
+            with self.subTest(profile=profile, expected=expected):
+                resolved = load_profile(profile, project_root=ROOT)
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
+    def test_mode_rejects_inert_recording_and_publisher_settings(self) -> None:
+        mutations = (
+            (
+                "nx-rdk",
+                "非 capture 模式不得启用 recording",
+                lambda value: value["recording"].update(enabled=True),
+            ),
+            (
+                "free-flight",
+                "raw_frames=all",
+                lambda value: value["recording"].update(raw_frames="none"),
+            ),
+            (
+                "replay",
+                "publisher 禁用时",
+                lambda value: value["publisher"].update(backend="ros2"),
+            ),
+        )
+        for profile, expected, mutate in mutations:
+            with self.subTest(profile=profile, expected=expected):
+                resolved = load_profile(profile, project_root=ROOT)
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, expected):
+                    _validate_semantics(ROOT, payload)
+
     def test_publisher_frame_must_match_direct_observation_frame(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

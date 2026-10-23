@@ -18,6 +18,11 @@
 管理；尚无实测变换的 `base_link`/世界坐标系不进入标定配置；数据校验是否跳过
 哈希由对应 CLI 的显式参数决定，避免修改配置却不改变行为的空旋钮。
 
+当前只有三组可执行组合：`runtime` 和 `capture` 都使用海康硬触发、CUDA 校正、
+TensorRT 检测及 CUDA 深度；`replay` 只读取已录制事实，不启动这些后端。配置加载器
+会在命令启动前拒绝跨模式混搭，也会拒绝非采集模式启用录制、禁用发布器却保留
+ROS2 后端等不会生效的设置。
+
 ```bash
 volleyball config validate --profile free-flight
 volleyball config render --profile free-flight --format yaml

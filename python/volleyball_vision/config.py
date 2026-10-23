@@ -261,13 +261,18 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
         errors.append("新采集只允许 recording.schema_version=2.1.0")
     mode = payload["runtime"]["mode"]
     overflow = payload["runtime"]["queue"]["overflow_policy"]
+    recording = payload["recording"]
+    publisher = payload["publisher"]
+    detector = payload["detector"]
+    sync = cameras["sync"]
+    transport = cameras["transport"]
+    triangulation_backend = payload["stereo"]["triangulation"]["backend"]
     if mode in {"capture", "replay"} and overflow != "block":
         errors.append(f"{mode} 模式不得丢数据，overflow_policy 必须为 block")
     if mode == "runtime" and overflow not in {"drop_oldest", "block"}:
         errors.append("runtime 模式的 overflow_policy 必须为 drop_oldest 或 block")
-    if payload["recording"]["enabled"] and not payload["recording"]["dataset_root"]:
+    if recording["enabled"] and not recording["dataset_root"]:
         errors.append("录制启用时 recording.dataset_root 不得为空")
-    publisher = payload["publisher"]
     if publisher["enabled"]:
         if publisher["backend"] == "none":
             errors.append("publisher.enabled=true 时 backend 不得为 none")
@@ -280,13 +285,59 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
                 "publisher.frame_id 必须与 calibration.rig_frame 一致；"
                 "坐标系变换不能只靠改名"
             )
-    if mode == "capture" and not payload["recording"]["enabled"]:
-        errors.append("capture 模式必须启用 recording")
-    if mode == "capture" and payload["recording"]["loss_policy"] != "fail_trial":
-        errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
-    detector = payload["detector"]
-    sync = cameras["sync"]
-    transport = cameras["transport"]
+    elif publisher["backend"] != "none" or publisher["topic"]:
+        errors.append("publisher 禁用时 backend 必须为 none 且 topic 必须为空")
+
+    live_mode = mode in {"runtime", "capture"}
+    if live_mode:
+        if cameras["backend"] != "hik_mvs":
+            errors.append("runtime/capture 模式只支持 cameras.backend=hik_mvs")
+        if payload["platform"]["accelerator"] not in {"cuda", "cuda_dla"}:
+            errors.append("runtime/capture 模式必须使用 CUDA 加速器")
+        if sync["method"] != "hardware_trigger":
+            errors.append("runtime/capture 模式必须使用 hardware_trigger")
+        if sync["estimated_error_ns"] is None:
+            errors.append("runtime/capture 模式必须提供 estimated_error_ns")
+        expected_sync = {
+            "trigger_source": "Line0",
+            "trigger_activation": "RisingEdge",
+            "frame_identity_source": "hik_frame_spec_info",
+            "shutter_type": "global",
+            "exposure_timestamp_source": "nx_gpio_rising_edge",
+        }
+        for key, expected in expected_sync.items():
+            if sync[key] != expected:
+                label = (
+                    f"{expected} (FrameSpecInfo)"
+                    if key == "frame_identity_source"
+                    else expected
+                )
+                errors.append(f"runtime/capture 要求 cameras.sync.{key}={label}")
+    else:
+        replay_backends = {
+            "cameras.backend": cameras["backend"],
+            "rectification.backend": payload["rectification"]["backend"],
+            "detector.backend": detector["backend"],
+            "stereo.triangulation.backend": triangulation_backend,
+            "cameras.sync.method": sync["method"],
+        }
+        for key, actual in replay_backends.items():
+            if actual != "recorded":
+                errors.append(f"replay 模式要求 {key}=recorded")
+
+    if mode == "capture":
+        if not recording["enabled"]:
+            errors.append("capture 模式必须启用 recording")
+        if recording["loss_policy"] != "fail_trial":
+            errors.append("capture 模式必须使用 recording.loss_policy=fail_trial")
+        if recording["raw_frames"] != "all":
+            errors.append("capture 模式必须保存 recording.raw_frames=all")
+    else:
+        if recording["enabled"]:
+            errors.append("非 capture 模式不得启用 recording")
+        if recording["raw_frames"] != "none":
+            errors.append("非 capture 模式要求 recording.raw_frames=none")
+
     if sync["exposure_timestamp_source"] == "nx_gpio_rising_edge":
         if sync["method"] != "hardware_trigger":
             errors.append("nx_gpio_rising_edge 只允许用于 hardware_trigger")
@@ -302,8 +353,6 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
     elif sync["exposure_delay_status"] == "measured":
         if sync["exposure_delay_uncertainty_ns"] is None:
             errors.append("实测曝光延迟必须提供 exposure_delay_uncertainty_ns")
-    if mode == "capture" and sync["exposure_timestamp_source"] != "nx_gpio_rising_edge":
-        errors.append("当前实机 capture 必须记录 nx_gpio_rising_edge 曝光时间")
     if cameras["backend"] == "hik_mvs":
         if transport["interface"] not in {"usb3", "gige"}:
             errors.append("hik_mvs 必须声明 usb3 或 gige 传输")
@@ -331,13 +380,10 @@ def _validate_semantics(root: Path, payload: Mapping[str, Any]) -> None:
             errors.append("当前 NX 主线只支持 detector.backend=tensorrt")
         if detector["input_resolution"][0] != detector["input_resolution"][1]:
             errors.append("当前 TensorRT 检测器要求正方形 input_resolution")
-        if sync["method"] == "hardware_trigger":
-            if sync["gpio_chip"] is None or sync["gpio_line"] is None:
-                errors.append("hardware_trigger 必须配置 gpio_chip/gpio_line")
-            if sync["frame_identity_source"] != "hik_frame_spec_info":
-                errors.append("hardware_trigger 必须使用 FrameSpecInfo 帧内水印识别身份")
-            if transport["embedded_info_clear_rows"] <= 0:
-                errors.append("FrameSpecInfo 开启时必须配置水印像素清除行数")
+        if sync["gpio_chip"] is None or sync["gpio_line"] is None:
+            errors.append("hardware_trigger 必须配置 gpio_chip/gpio_line")
+        if transport["embedded_info_clear_rows"] <= 0:
+            errors.append("FrameSpecInfo 开启时必须配置水印像素清除行数")
     elif transport["interface"] != "recorded" or transport["grab_strategy"] != "recorded":
         errors.append("recorded 相机必须使用 recorded transport")
 
