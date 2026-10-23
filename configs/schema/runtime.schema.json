@@ -12,7 +12,7 @@
       "required": ["mode", "nominal_fps", "source_timeout_ms", "max_consecutive_timeouts", "queue"],
       "properties": {
         "mode": {"enum": ["runtime", "capture", "replay"]},
-        "nominal_fps": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "nominal_fps": {"type": "integer", "minimum": 1, "maximum": 1000},
         "source_timeout_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
         "max_consecutive_timeouts": {"type": "integer", "minimum": 0, "maximum": 1000},
         "queue": {
@@ -60,7 +60,7 @@
             "gpio_line": {"type": ["integer", "null"], "minimum": 0},
             "pwm_duty_cycle": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 100},
             "frame_identity_source": {"enum": ["hik_frame_spec_info", "recorded"]},
-            "estimated_error_ns": {"type": ["number", "null"], "minimum": 0},
+            "estimated_error_ns": {"type": ["integer", "null"], "minimum": 0},
             "shutter_type": {"enum": ["global", "recorded"]},
             "exposure_timestamp_source": {"enum": ["nx_gpio_rising_edge", "recorded"]},
             "exposure_delay_status": {"enum": ["assumed_zero_unmeasured", "measured", "recorded"]},
@@ -134,7 +134,7 @@
             "adaptive_epipolar_height_ratio": {"type": "number", "minimum": 0},
             "max_size_ratio": {"type": "number", "minimum": 1},
             "min_shifted_iou": {"type": "number", "minimum": 0, "maximum": 1},
-            "max_disparity_px": {"type": "number", "exclusiveMinimum": 0},
+            "max_disparity_px": {"type": "integer", "minimum": 1, "maximum": 4294967295},
             "bbox_scale": {"type": "number", "exclusiveMinimum": 0},
             "bbox_disparity_consistency_ratio": {"type": "number", "minimum": 0.05},
             "bbox_disparity_consistency_min_px": {"type": "number", "minimum": 5.0},

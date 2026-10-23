@@ -89,6 +89,24 @@ class ConfigTests(unittest.TestCase):
                 ):
                     _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_fractional_discrete_hardware_values(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        mutations = (
+            lambda value: value["runtime"].update(nominal_fps=89.5),
+            lambda value: value["cameras"]["sync"].update(
+                estimated_error_ns=100000.5
+            ),
+            lambda value: value["stereo"]["association"].update(
+                max_disparity_px=2048.5
+            ),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = copy.deepcopy(dict(resolved.data))
+                mutate(payload)
+                with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+                    _validate_schema(ROOT, payload)
+
     def test_schema_rejects_retired_nx_prediction_and_control(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (

@@ -16,7 +16,7 @@ stereo:
     adaptive_epipolar_height_ratio: 0.35
     max_size_ratio: 2.0
     min_shifted_iou: 0.05
-    max_disparity_px: 2048.0
+    max_disparity_px: 2048
     bbox_scale: 0.95
     # bbox 尺寸给出粗深度先验，只影响多候选排序，不替代双目几何。
     bbox_disparity_consistency_ratio: 0.30

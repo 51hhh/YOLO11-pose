@@ -2,7 +2,7 @@ schema_version: 1
 
 runtime:
   mode: runtime
-  nominal_fps: 90.0
+  nominal_fps: 90
   source_timeout_ms: 1000
   max_consecutive_timeouts: 3
   queue:
@@ -88,7 +88,7 @@ stereo:
     adaptive_epipolar_height_ratio: 0.35
     max_size_ratio: 2.0
     min_shifted_iou: 0.05
-    max_disparity_px: 2048.0
+    max_disparity_px: 2048
     bbox_scale: 0.95
     bbox_disparity_consistency_ratio: 0.30
     bbox_disparity_consistency_min_px: 45.0

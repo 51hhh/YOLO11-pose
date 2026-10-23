@@ -78,15 +78,6 @@ class MainlineConfigTests(unittest.TestCase):
                 ),
             )
 
-    def test_projection_rejects_fractional_sync_error_ns(self) -> None:
-        profile = load_profile(
-            "nx-rdk",
-            project_root=ROOT,
-            overrides=("cameras.sync.estimated_error_ns=100000.5",),
-        )
-        with self.assertRaisesRegex(ConfigError, "非负整数纳秒"):
-            build_mainline_pipeline_config(profile, project_root=ROOT)
-
     def test_writer_is_exclusive_and_round_trips_yaml(self) -> None:
         profile = load_profile("nx-rdk", project_root=ROOT)
         with tempfile.TemporaryDirectory() as directory:

@@ -21,7 +21,7 @@ cameras:
     gpio_line: 7
     pwm_duty_cycle: 50.0
     frame_identity_source: hik_frame_spec_info
-    estimated_error_ns: 100000.0
+    estimated_error_ns: 100000
     # 已确认两台相机使用全局快门；球心观测时间取曝光开始加半个曝光时长。
     shutter_type: global
     # GPIO 上升沿估计是曝光开始参考。触发到实际曝光开始的固定延迟尚未测量，
