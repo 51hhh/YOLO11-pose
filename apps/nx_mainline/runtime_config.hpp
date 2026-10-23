@@ -25,6 +25,10 @@ struct CameraSettings {
     std::string right_id;
     std::string left_serial;
     std::string right_serial;
+    std::optional<std::string> left_model;
+    std::optional<std::string> right_model;
+    std::optional<std::string> left_firmware_version;
+    std::optional<std::string> right_firmware_version;
     int left_index{0};
     int right_index{0};
     int width{0};

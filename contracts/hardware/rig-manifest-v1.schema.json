@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://volleyball.local/hardware/rig-manifest-v1.schema.json",
+  "title": "Volleyball stereo rig evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "rig_id",
+    "verified_at_utc",
+    "verified_by",
+    "cameras",
+    "software",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["pending", "verified"]},
+    "rig_id": {"$ref": "#/$defs/identifier"},
+    "verified_at_utc": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "verified_by": {"type": ["string", "null"], "minLength": 1},
+    "cameras": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": {"$ref": "#/$defs/camera"},
+        "right": {"$ref": "#/$defs/camera"}
+      }
+    },
+    "software": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jetpack", "cuda", "tensorrt", "mvs", "opencv"],
+      "properties": {
+        "jetpack": {"$ref": "#/$defs/software_component"},
+        "cuda": {"$ref": "#/$defs/software_component"},
+        "tensorrt": {"$ref": "#/$defs/software_component"},
+        "mvs": {"$ref": "#/$defs/software_component"},
+        "opencv": {"$ref": "#/$defs/software_component"}
+      }
+    },
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "camera_export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "format"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relative_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "format": {"type": "string", "minLength": 1}
+      }
+    },
+    "lens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "focal_length_mm",
+        "aperture_f_number",
+        "focus_mode",
+        "focus_setting",
+        "locked"
+      ],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "focal_length_mm": {"type": "number", "exclusiveMinimum": 0},
+        "aperture_f_number": {"type": "number", "exclusiveMinimum": 0},
+        "focus_mode": {"enum": ["fixed", "manual"]},
+        "focus_setting": {"type": "string", "minLength": 1},
+        "locked": {"const": true}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serial",
+        "model",
+        "model_source",
+        "firmware_version",
+        "firmware_source",
+        "shutter_type",
+        "parameter_export",
+        "lens"
+      ],
+      "properties": {
+        "serial": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "model_source": {"const": "mvs_device_enumeration"},
+        "firmware_version": {"type": "string", "minLength": 1},
+        "firmware_source": {"type": "string", "minLength": 1},
+        "shutter_type": {"const": "global"},
+        "parameter_export": {"$ref": "#/$defs/camera_export"},
+        "lens": {"$ref": "#/$defs/lens"}
+      }
+    },
+    "software_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "source"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

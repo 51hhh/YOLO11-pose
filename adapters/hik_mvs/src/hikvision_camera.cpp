@@ -279,6 +279,25 @@ bool HikvisionCamera::open(const CameraConfig& cfg) {
                   deviceSerial(leftInfo).c_str());
         return false;
     }
+    const std::string left_model = deviceModel(leftInfo);
+    const std::string right_model = deviceModel(rightInfo);
+    const std::string left_firmware = deviceFirmwareVersion(leftInfo);
+    const std::string right_firmware = deviceFirmwareVersion(rightInfo);
+    LOG_INFO(
+        "[HikCam] LEFT SN=%s model=%s firmware=%s; RIGHT SN=%s model=%s firmware=%s",
+        deviceSerial(leftInfo).c_str(), left_model.c_str(), left_firmware.c_str(),
+        deviceSerial(rightInfo).c_str(), right_model.c_str(), right_firmware.c_str());
+    if ((!cfg.expected_model_left.empty() &&
+         cfg.expected_model_left != left_model) ||
+        (!cfg.expected_model_right.empty() &&
+         cfg.expected_model_right != right_model) ||
+        (!cfg.expected_firmware_left.empty() &&
+         cfg.expected_firmware_left != left_firmware) ||
+        (!cfg.expected_firmware_right.empty() &&
+         cfg.expected_firmware_right != right_firmware)) {
+        LOG_ERROR("[HikCam] Enumerated model/firmware does not match capture manifest");
+        return false;
+    }
 
     if (!createAndOpenHandle(handle_left_, leftInfo, "LEFT")) {
         LOG_ERROR("[HikCam] Failed to open LEFT camera");

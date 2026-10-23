@@ -66,6 +66,9 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CALIBRATION_AUDIT_LABELS = frozenset(
     {"calibration_source", "calibration_contract"}
 )
+_HARDWARE_AUDIT_LABELS = frozenset(
+    {"hardware_manifest", "camera_parameters_left", "camera_parameters_right"}
+)
 
 
 def require_identifier(value: Any, *, field_name: str) -> str:
@@ -192,6 +195,57 @@ def _validate_calibration_audit(
         calibration_path
     ):
         raise DatasetError("trial 标定契约哈希与数据集共享标定不一致")
+
+
+def _validate_hardware_audit(
+    directory: Path,
+    raw_by_label: Mapping[str, Mapping[str, Any]],
+    *,
+    project_root: str | Path | None,
+) -> None:
+    """校验可选硬件清单、相机导出文件和 capture_context 的闭包。"""
+
+    context_entry = raw_by_label.get("capture_context")
+    context = None
+    if context_entry is not None:
+        context = _load_json(directory / str(context_entry["relative_path"]))
+    declared_sha = None if context is None else context.get("hardware_manifest_sha256")
+    present = _HARDWARE_AUDIT_LABELS.intersection(raw_by_label)
+    if not present and declared_sha is None:
+        return
+    if present != _HARDWARE_AUDIT_LABELS:
+        missing = sorted(_HARDWARE_AUDIT_LABELS - present)
+        raise DatasetError(f"硬件审计资产不完整，缺少: {missing}")
+    if context is None:
+        raise DatasetError("硬件审计资产必须同时保存 capture_context")
+    if not isinstance(declared_sha, str) or _SHA256.fullmatch(declared_sha) is None:
+        raise DatasetError("capture_context 缺少有效 hardware_manifest_sha256")
+
+    manifest_entry = raw_by_label["hardware_manifest"]
+    manifest_path = directory / str(manifest_entry["relative_path"])
+    if manifest_entry["sha256"] != declared_sha:
+        raise DatasetError("硬件清单快照与 capture_context 固定哈希不一致")
+
+    # 延迟导入避免 dataset 写入器与硬件清单模块的异常类型形成导入环。
+    from .hardware_manifest import load_hardware_manifest
+
+    snapshot = load_hardware_manifest(
+        manifest_path,
+        require_verified=True,
+        project_root=project_root,
+    )
+    if snapshot.sha256 != declared_sha:
+        raise DatasetError("硬件清单正文 SHA-256 不一致")
+    for attachment in snapshot.attachments:
+        entry = raw_by_label[attachment.raw_label]
+        actual_path = (directory / str(entry["relative_path"])).resolve()
+        expected_path = manifest_path.parent.joinpath(
+            *attachment.relative_path.parts
+        ).resolve()
+        if actual_path != expected_path or entry["sha256"] != attachment.sha256:
+            raise DatasetError(
+                f"{attachment.role} 相机参数导出文件与硬件清单不一致"
+            )
 
 
 def _finite(value: str, *, field_name: str, allow_blank: bool = False) -> float | None:
@@ -943,6 +997,11 @@ def validate_trial(
         metadata,
         calibration_path,
         calibration,
+        raw_by_label,
+        project_root=project_root,
+    )
+    _validate_hardware_audit(
+        directory,
         raw_by_label,
         project_root=project_root,
     )

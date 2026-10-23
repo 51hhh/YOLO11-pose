@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -14,7 +14,7 @@ from .model_manifest import resolve_model
 from .triangulation_config import SUPPORTED_LIVE_METHODS
 
 
-MAINLINE_CONFIG_SCHEMA_VERSION = 4
+MAINLINE_CONFIG_SCHEMA_VERSION = 5
 
 
 def _selection_order(triangulation: dict[str, Any]) -> list[str]:
@@ -42,6 +42,7 @@ def build_mainline_pipeline_config(
     *,
     capture_stage: str | Path | None = None,
     frame_limit: int | None = None,
+    expected_camera_identity: Mapping[str, Mapping[str, str]] | None = None,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """生成只含原生进程实际消费字段的配置。
@@ -109,6 +110,18 @@ def build_mainline_pipeline_config(
     publish_enabled = bool(publisher["enabled"])
     if is_capture and publish_enabled:
         raise ConfigError("capture 主线不得同时发布 ROS2 观测")
+    camera_identity: dict[str, dict[str, str]] = {}
+    if expected_camera_identity is not None:
+        if set(expected_camera_identity) != {"left", "right"}:
+            raise ConfigError("相机身份必须同时包含 left/right")
+        for role in ("left", "right"):
+            identity = expected_camera_identity[role]
+            if set(identity) != {"model", "firmware_version"} or any(
+                not isinstance(identity[key], str) or not identity[key]
+                for key in ("model", "firmware_version")
+            ):
+                raise ConfigError(f"{role} 相机身份缺少型号或固件版本")
+            camera_identity[role] = dict(identity)
 
     return {
         "schema_version": MAINLINE_CONFIG_SCHEMA_VERSION,
@@ -133,6 +146,22 @@ def build_mainline_pipeline_config(
             "right_id": right["id"],
             "left_serial": left["serial"],
             "right_serial": right["serial"],
+            "left_model": (
+                camera_identity["left"]["model"] if camera_identity else None
+            ),
+            "right_model": (
+                camera_identity["right"]["model"] if camera_identity else None
+            ),
+            "left_firmware_version": (
+                camera_identity["left"]["firmware_version"]
+                if camera_identity
+                else None
+            ),
+            "right_firmware_version": (
+                camera_identity["right"]["firmware_version"]
+                if camera_identity
+                else None
+            ),
             "left_index": left["index"],
             "right_index": right["index"],
             "width": left["resolution"][0],

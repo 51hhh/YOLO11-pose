@@ -124,7 +124,10 @@ volleyball capture \
 ```
 
 正式采集必须去掉 `--dry-run`，使用没有 tracked/untracked 改动的干净 Git 工作树，
-并通过模型、NX、MVS、GPIO、CUDA、TensorRT 和 ROS2 等 doctor 门禁：
+并通过模型、NX、MVS、GPIO、CUDA、TensorRT 和 ROS2 等 doctor 门禁。先复制
+[`rig-manifest.example.json`](configs/hardware/rig-manifest.example.json) 到实验目录，
+填入两台相机、镜头和软件版本，导出相机参数文件并固定 SHA-256，最后将状态改为
+`verified`：
 
 ```bash
 volleyball capture \
@@ -133,14 +136,17 @@ volleyball capture \
   --session free-flight-a \
   --ball v200w-01 \
   --duration 3.0 \
-  --conditions conditions.json
+  --conditions conditions.json \
+  --hardware-manifest /path/to/rig-manifest.json
 
 volleyball dataset validate data/captures
 ```
 
 采集先写入同文件系统的隐藏 staging 目录。原生 C++ 链产生逐事实 v6 staging，
 保存原始 Bayer、全部检测/配对尝试，以及每条 3D 的实际方法和最终 UVD 输入证据；
-Python 同时固定 Git 状态、原生可执行文件、模型和标定哈希，在帧数、触发、时钟、
+Python 同时固定 Git 状态、原生可执行文件、模型、标定和硬件清单哈希；原生进程会把
+清单中的相机型号与固件版本同 MVS 枚举结果逐侧核对。清单、两个相机参数导出文件
+与版本来源随后作为原始审计资产归档。在帧数、触发、时钟、
 引用闭包和 SHA-256 全部通过后才原子发布冻结的 v2.1 trial。崩溃后的完整 staging
 可以显式恢复：
 

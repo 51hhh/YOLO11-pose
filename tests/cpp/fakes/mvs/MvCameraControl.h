@@ -13,11 +13,13 @@
 struct MV_USB3_DEVICE_INFO {
     unsigned char chSerialNumber[64];
     unsigned char chModelName[64];
+    unsigned char chDeviceVersion[64];
 };
 
 struct MV_GIGE_DEVICE_INFO {
     unsigned char chSerialNumber[64];
     unsigned char chModelName[64];
+    unsigned char chDeviceVersion[64];
 };
 
 union MV_SPECIAL_INFO {

@@ -77,6 +77,11 @@ ONNX、权重和 TensorRT engine 都不进入 Git。真实采集前必须在目�
 engine 重新计算 SHA-256，更新 manifest，并随 trial 记录 TensorRT、CUDA 和
 JetPack 版本。源模型相同但重新构建的 engine 仍视为不同资产，不能复用旧哈希。
 
+这些运行环境版本以及 MVS、OpenCV 版本写入独立的硬件清单，而不是塞进可调算法
+profile。相机型号、固件、镜头状态和参数导出文件也由同一清单冻结；正式 capture
+会校验清单及附件哈希，并将型号/固件投影到原生配置供 MVS 枚举结果核对。模板见
+[`rig-manifest.example.json`](../configs/hardware/rig-manifest.example.json)。
+
 真实采集还要求 Git 工作树干净，并把 `apps/nx_mainline` 实际可执行文件 SHA-256
 写入 `capture_context`。因此“HEAD 相同但本地源码有改动”或“源码相同但启动了另一份
 旧二进制”都不能静默共享同一运行身份。dry-run 可以在开发状态执行，但 staging 永久

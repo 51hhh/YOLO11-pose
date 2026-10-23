@@ -22,7 +22,7 @@ void check(bool condition, const char* message) {
 }
 
 std::string validCaptureYaml() {
-    return R"YAML(schema_version: 4
+    return R"YAML(schema_version: 5
 profile: free-flight
 config_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 runtime:
@@ -39,6 +39,10 @@ camera:
   right_id: right
   left_serial: serial-left
   right_serial: serial-right
+  left_model: MV-LEFT
+  right_model: MV-RIGHT
+  left_firmware_version: 1.2.3
+  right_firmware_version: 1.2.4
   left_index: 0
   right_index: 1
   width: 1440
@@ -153,6 +157,8 @@ void testValidCaptureConfig() {
           "strict parser must accept a complete capture configuration");
     check(error.empty() && config.runtime.frame_limit == 90 &&
               config.runtime.capture_stage &&
+              config.camera.left_model == "MV-LEFT" &&
+              config.camera.right_firmware_version == "1.2.4" &&
               config.detector.output_contract == "yolo_pre_nms" &&
               config.calibration.sha256 ==
                   "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&

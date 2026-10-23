@@ -117,15 +117,43 @@ bool closeEnough(float actual, float expected, float tolerance) {
     return std::fabs(actual - expected) <= tolerance;
 }
 
+template <std::size_t Size>
+std::string fixedDeviceText(const unsigned char (&value)[Size]) {
+    const auto end = std::find(value, value + Size, static_cast<unsigned char>(0));
+    return std::string(
+        reinterpret_cast<const char*>(value),
+        static_cast<std::size_t>(end - value));
+}
+
 std::string deviceSerial(const MV_CC_DEVICE_INFO* info) {
     if (!info) return {};
     if (info->nTLayerType == MV_USB_DEVICE) {
-        return reinterpret_cast<const char*>(
-            info->SpecialInfo.stUsb3VInfo.chSerialNumber);
+        return fixedDeviceText(info->SpecialInfo.stUsb3VInfo.chSerialNumber);
     }
     if (info->nTLayerType == MV_GIGE_DEVICE) {
-        return reinterpret_cast<const char*>(
-            info->SpecialInfo.stGigEInfo.chSerialNumber);
+        return fixedDeviceText(info->SpecialInfo.stGigEInfo.chSerialNumber);
+    }
+    return {};
+}
+
+std::string deviceModel(const MV_CC_DEVICE_INFO* info) {
+    if (!info) return {};
+    if (info->nTLayerType == MV_USB_DEVICE) {
+        return fixedDeviceText(info->SpecialInfo.stUsb3VInfo.chModelName);
+    }
+    if (info->nTLayerType == MV_GIGE_DEVICE) {
+        return fixedDeviceText(info->SpecialInfo.stGigEInfo.chModelName);
+    }
+    return {};
+}
+
+std::string deviceFirmwareVersion(const MV_CC_DEVICE_INFO* info) {
+    if (!info) return {};
+    if (info->nTLayerType == MV_USB_DEVICE) {
+        return fixedDeviceText(info->SpecialInfo.stUsb3VInfo.chDeviceVersion);
+    }
+    if (info->nTLayerType == MV_GIGE_DEVICE) {
+        return fixedDeviceText(info->SpecialInfo.stGigEInfo.chDeviceVersion);
     }
     return {};
 }

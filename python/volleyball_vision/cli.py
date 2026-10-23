@@ -155,6 +155,7 @@ def _capture(args: argparse.Namespace) -> int:
         dataset_root=args.dataset_root,
         keep_stage=args.keep_stage,
         dry_run=args.dry_run,
+        hardware_manifest=args.hardware_manifest,
     )
     label = "DRY_RUN stage" if args.dry_run else "OK trial"
     print(f"{label}={output}")
@@ -301,6 +302,10 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--ball", required=True, help="实体排球 ID")
     capture.add_argument("--duration", type=float, default=3.0, help="采集秒数，默认 3")
     capture.add_argument("--conditions", help="球压、温湿度等 JSON 文件")
+    capture.add_argument(
+        "--hardware-manifest",
+        help="经核验的双目硬件、镜头、相机参数导出与 SDK 版本 JSON",
+    )
     capture.add_argument("--notes", default="")
     capture.add_argument("--dataset-root", help="覆盖 profile 中的数据集根目录")
     capture.add_argument("--keep-stage", action="store_true", help="成功后仍保留中间文件")

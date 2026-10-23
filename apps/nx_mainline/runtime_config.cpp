@@ -147,8 +147,9 @@ void parseRuntime(const YAML::Node& node, RuntimeSettings& output) {
 void parseCamera(const YAML::Node& node, CameraSettings& output) {
     exactKeys(
         node,
-        {"left_id", "right_id", "left_serial", "right_serial", "left_index",
-         "right_index", "width", "height", "exposure_us", "gain_db",
+        {"left_id", "right_id", "left_serial", "right_serial", "left_model",
+         "right_model", "left_firmware_version", "right_firmware_version",
+         "left_index", "right_index", "width", "height", "exposure_us", "gain_db",
          "image_node_num", "embedded_info_clear_rows", "trigger_source",
          "trigger_activation", "exposure_timestamp_source", "shutter_type",
          "exposure_delay_status", "exposure_delay_ns",
@@ -158,6 +159,12 @@ void parseCamera(const YAML::Node& node, CameraSettings& output) {
     output.right_id = scalar<std::string>(node, "right_id", "camera");
     output.left_serial = scalar<std::string>(node, "left_serial", "camera");
     output.right_serial = scalar<std::string>(node, "right_serial", "camera");
+    output.left_model = nullableScalar<std::string>(node, "left_model", "camera");
+    output.right_model = nullableScalar<std::string>(node, "right_model", "camera");
+    output.left_firmware_version = nullableScalar<std::string>(
+        node, "left_firmware_version", "camera");
+    output.right_firmware_version = nullableScalar<std::string>(
+        node, "right_firmware_version", "camera");
     output.left_index = scalar<int>(node, "left_index", "camera");
     output.right_index = scalar<int>(node, "right_index", "camera");
     output.width = scalar<int>(node, "width", "camera");
@@ -362,6 +369,25 @@ void validate(const MainlineRuntimeConfig& value) {
         value.camera.shutter_type != "global") {
         throw std::runtime_error("camera configuration is invalid");
     }
+    const bool any_identity =
+        value.camera.left_model.has_value() ||
+        value.camera.right_model.has_value() ||
+        value.camera.left_firmware_version.has_value() ||
+        value.camera.right_firmware_version.has_value();
+    const bool complete_identity =
+        value.camera.left_model.has_value() &&
+        value.camera.right_model.has_value() &&
+        value.camera.left_firmware_version.has_value() &&
+        value.camera.right_firmware_version.has_value();
+    if ((any_identity && !complete_identity) ||
+        (complete_identity &&
+         (value.camera.left_model->empty() || value.camera.right_model->empty() ||
+          value.camera.left_firmware_version->empty() ||
+          value.camera.right_firmware_version->empty())) ||
+        (capture && !complete_identity)) {
+        throw std::runtime_error(
+            "capture camera model/firmware identity is incomplete");
+    }
     const bool measured_delay =
         value.camera.exposure_delay_status == "measured" &&
         value.camera.exposure_delay_uncertainty_ns.has_value();
@@ -480,7 +506,7 @@ bool loadRuntimeConfig(
              "camera", "clocks", "trigger", "calibration", "detector",
              "association", "depth", "publisher", "diagnostics"},
             "root");
-        if (scalar<int>(root, "schema_version", "root") != 4) {
+        if (scalar<int>(root, "schema_version", "root") != 5) {
             throw std::runtime_error("unsupported mainline config schema_version");
         }
         output.profile = scalar<std::string>(root, "profile", "root");

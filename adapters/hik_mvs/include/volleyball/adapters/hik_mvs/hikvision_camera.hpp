@@ -22,6 +22,10 @@ struct CameraConfig {
     int camera_index_right = 1;
     std::string serial_left;               // 可选: 用序列号识别
     std::string serial_right;
+    std::string expected_model_left;
+    std::string expected_model_right;
+    std::string expected_firmware_left;
+    std::string expected_firmware_right;
 
     float exposure_us = 9867.0f;           // 曝光时间 (微秒)
     float gain_db = 11.9906f;              // 增益 (dB)

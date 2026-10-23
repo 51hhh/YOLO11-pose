@@ -92,6 +92,7 @@ def build_mainline_capture_context(
     trajectory_kind: str = "free_flight",
     conditions: Mapping[str, Any] | None = None,
     notes: str = "",
+    hardware_manifest_sha256: str | None = None,
     verify_assets: bool = True,
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -106,6 +107,8 @@ def build_mainline_capture_context(
         raise DatasetError(
             "真实采集要求干净 Git 工作树；请先提交、暂存到其他位置或使用 dry-run"
         )
+    if verify_assets and hardware_manifest_sha256 is None:
+        raise DatasetError("真实采集缺少经核验的硬件清单")
     _, calibration_source_sha256 = resolve_calibration_source(
         config, project_root=root
     )
@@ -167,6 +170,7 @@ def build_mainline_capture_context(
         "config_sha256": config.fingerprint_sha256,
         "code_worktree_clean": git_state.clean,
         "runtime_executable_sha256": executable_sha256,
+        "hardware_manifest_sha256": hardware_manifest_sha256,
         "exposure_timestamp": {
             "shutter_type": config.data["cameras"]["sync"]["shutter_type"],
             "source": config.data["cameras"]["sync"][
@@ -208,6 +212,7 @@ def finalize_mainline_capture_stage(
     detections = evidence.detections
     associations = evidence.associations
     observations = evidence.observations
+    hardware_manifest = evidence.hardware_manifest
     measurement_file = directory / "stereo_measurements_v1.csv"
     capture_calibration = build_capture_calibration(
         config,
@@ -787,6 +792,23 @@ def finalize_mainline_capture_stage(
                 and sha256_file(archived) != calibration_source_sha256
             ):
                 raise DatasetError("归档标定源与本次采集固定哈希不一致")
+        if hardware_manifest is not None:
+            archived_manifest = writer.add_raw_source(
+                "hardware_manifest",
+                hardware_manifest.source_path,
+                filename="audit/hardware/manifest.json",
+            )
+            if sha256_file(archived_manifest) != hardware_manifest.sha256:
+                raise DatasetError("归档硬件清单与本次采集固定哈希不一致")
+            for attachment in hardware_manifest.attachments:
+                writer.add_raw_source(
+                    attachment.raw_label,
+                    attachment.source_path,
+                    filename=(
+                        "audit/hardware/"
+                        + attachment.relative_path.as_posix()
+                    ),
+                )
         if has_measurement_inputs:
             writer.add_raw_source(
                 "direct_stereo_measurements",

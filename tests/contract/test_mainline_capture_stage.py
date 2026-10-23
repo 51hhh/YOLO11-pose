@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -18,6 +19,10 @@ from volleyball_vision.dataset import (
 )
 from volleyball_vision.git_state import GitState
 from volleyball_vision.mainline_capture import build_mainline_capture_context
+from volleyball_vision.hardware_manifest import (
+    load_hardware_manifest,
+    write_stage_hardware_snapshot,
+)
 from volleyball_vision.mainline_stage_contract import (
     MAINLINE_ASSOCIATION_COLUMNS,
     MAINLINE_DETECTION_COLUMNS,
@@ -523,6 +528,101 @@ class MainlineCaptureStageTests(unittest.TestCase):
             )
             self.assertEqual(monotonic_mapping["source_anchor_ns"], "3000000000")
             self.assertEqual(monotonic_mapping["reference_anchor_ns"], "995066500")
+
+    def test_verified_hardware_manifest_and_camera_exports_are_archived(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            evidence_root = root / "rig-evidence"
+            exports = {
+                "left": b"left-camera-export\n",
+                "right": b"right-camera-export\n",
+            }
+            for role, data in exports.items():
+                path = evidence_root / "camera-parameters" / f"{role}.mfs"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            serials = {"left": "00D39342665", "right": "00219471413"}
+            cameras = {}
+            for role in ("left", "right"):
+                cameras[role] = {
+                    "serial": serials[role],
+                    "model": f"fixture-{role}",
+                    "model_source": "mvs_device_enumeration",
+                    "firmware_version": "1.0.0",
+                    "firmware_source": "fixture",
+                    "shutter_type": "global",
+                    "parameter_export": {
+                        "path": f"camera-parameters/{role}.mfs",
+                        "sha256": hashlib.sha256(exports[role]).hexdigest(),
+                        "format": "hik_mvs_feature_export",
+                    },
+                    "lens": {
+                        "model": "fixture-lens",
+                        "focal_length_mm": 8.0,
+                        "aperture_f_number": 4.0,
+                        "focus_mode": "manual",
+                        "focus_setting": "mark-a",
+                        "locked": True,
+                    },
+                }
+            manifest_path = evidence_root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "verified",
+                        "rig_id": "hik-stereo-main",
+                        "verified_at_utc": "2026-10-23T08:00:00Z",
+                        "verified_by": "fixture",
+                        "cameras": cameras,
+                        "software": {
+                            name: {"version": "fixture", "source": "test"}
+                            for name in (
+                                "jetpack",
+                                "cuda",
+                                "tensorrt",
+                                "mvs",
+                                "opencv",
+                            )
+                        },
+                        "notes": "contract fixture",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            snapshot = load_hardware_manifest(
+                manifest_path,
+                config=profile,
+                project_root=ROOT,
+            )
+            write_stage_hardware_snapshot(stage, snapshot)
+            context_path = stage / "context.json"
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+            context["hardware_manifest_sha256"] = snapshot.sha256
+            context_path.write_text(json.dumps(context), encoding="utf-8")
+
+            trial = finalize_capture_stage(
+                stage,
+                root / "dataset",
+                profile,
+                project_root=ROOT,
+            )
+            metadata = json.loads(
+                (trial / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                {
+                    "hardware_manifest",
+                    "camera_parameters_left",
+                    "camera_parameters_right",
+                }
+                - set(metadata["source_files"]),
+                set(),
+            )
+            validate_dataset(root / "dataset", project_root=ROOT)
 
     def test_validator_rejects_shared_calibration_changed_after_capture(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

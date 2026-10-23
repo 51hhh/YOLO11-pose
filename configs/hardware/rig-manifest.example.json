@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "status": "pending",
+  "rig_id": "hik-stereo-main",
+  "verified_at_utc": null,
+  "verified_by": null,
+  "cameras": {
+    "left": {
+      "serial": "00D39342665",
+      "model": "REPLACE_WITH_MVS_MODEL",
+      "model_source": "mvs_device_enumeration",
+      "firmware_version": "REPLACE_WITH_DEVICE_FIRMWARE",
+      "firmware_source": "MVS DeviceFirmwareVersion readback",
+      "shutter_type": "global",
+      "parameter_export": {
+        "path": "camera-parameters/left.mfs",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "format": "hik_mvs_feature_export"
+      },
+      "lens": {
+        "model": "REPLACE_WITH_LENS_MODEL",
+        "focal_length_mm": 8.0,
+        "aperture_f_number": 4.0,
+        "focus_mode": "manual",
+        "focus_setting": "REPLACE_WITH_REPRODUCIBLE_MARK_OR_DISTANCE",
+        "locked": true
+      }
+    },
+    "right": {
+      "serial": "00219471413",
+      "model": "REPLACE_WITH_MVS_MODEL",
+      "model_source": "mvs_device_enumeration",
+      "firmware_version": "REPLACE_WITH_DEVICE_FIRMWARE",
+      "firmware_source": "MVS DeviceFirmwareVersion readback",
+      "shutter_type": "global",
+      "parameter_export": {
+        "path": "camera-parameters/right.mfs",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "format": "hik_mvs_feature_export"
+      },
+      "lens": {
+        "model": "REPLACE_WITH_LENS_MODEL",
+        "focal_length_mm": 8.0,
+        "aperture_f_number": 4.0,
+        "focus_mode": "manual",
+        "focus_setting": "REPLACE_WITH_REPRODUCIBLE_MARK_OR_DISTANCE",
+        "locked": true
+      }
+    }
+  },
+  "software": {
+    "jetpack": {"version": "REPLACE", "source": "dpkg-query nvidia-jetpack"},
+    "cuda": {"version": "REPLACE", "source": "nvcc --version"},
+    "tensorrt": {"version": "REPLACE", "source": "dpkg-query libnvinfer"},
+    "mvs": {"version": "REPLACE", "source": "MVS installation metadata"},
+    "opencv": {"version": "REPLACE", "source": "pkg-config --modversion opencv4"}
+  },
+  "notes": "复制本文件到实验目录，填入实测值和两个导出文件哈希后再改为 verified。"
+}

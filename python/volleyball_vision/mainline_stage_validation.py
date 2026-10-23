@@ -18,6 +18,7 @@ from .capture_stage_io import (
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError
 from .hashing import sha256_file
+from .hardware_manifest import HardwareManifestSnapshot, load_hardware_manifest
 from .mainline_stage_contract import (
     MAINLINE_ASSOCIATION_COLUMNS,
     MAINLINE_DETECTION_COLUMNS,
@@ -49,6 +50,7 @@ class ValidatedMainlineStage:
     right_device_clock: str
     capture_clock: str
     monotonic_clock: str
+    hardware_manifest: HardwareManifestSnapshot | None
 
 
 def optional_int(row: Mapping[str, str], key: str) -> int | None:
@@ -172,6 +174,22 @@ def _validate_context_and_tables(
         executable = mainline_executable(project_root, config)
         if executable.is_file() and sha256_file(executable) != executable_sha256:
             raise DatasetError("mainline staging 原生可执行文件哈希与当前文件不一致")
+    manifest_sha256 = context.get("hardware_manifest_sha256")
+    manifest_path = directory / "hardware" / "manifest.json"
+    if manifest_sha256 is not None:
+        if (
+            not isinstance(manifest_sha256, str)
+            or len(manifest_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in manifest_sha256
+            )
+        ):
+            raise DatasetError("mainline staging 硬件清单哈希无效")
+        if not manifest_path.is_file():
+            raise DatasetError("mainline staging 缺少硬件清单快照")
+    elif manifest_path.exists():
+        raise DatasetError("mainline staging 硬件清单未绑定到采集上下文")
     exposure = expected_exposure(config)
     if context.get("exposure_timestamp") != exposure:
         raise DatasetError("mainline staging 曝光时间语义与 finalize 配置不一致")
@@ -340,6 +358,17 @@ def validate_mainline_stage(
     context, exposure, frames, detections, associations, observations = (
         _validate_context_and_tables(directory, config, root)
     )
+    hardware_manifest = None
+    manifest_sha256 = context.get("hardware_manifest_sha256")
+    if manifest_sha256 is not None:
+        hardware_manifest = load_hardware_manifest(
+            directory / "hardware" / "manifest.json",
+            config=config,
+            require_verified=True,
+            project_root=root,
+        )
+        if hardware_manifest.sha256 != manifest_sha256:
+            raise DatasetError("mainline staging 硬件清单与采集上下文哈希不一致")
     cameras = config.data["cameras"]
     camera_ids = {"left": cameras["left"]["id"], "right": cameras["right"]["id"]}
     frame_by_key: dict[tuple[str, int], dict[str, str]] = {}
@@ -468,4 +497,5 @@ def validate_mainline_stage(
         right_device_clock=right_clock,
         capture_clock=capture_clock,
         monotonic_clock=monotonic_clock,
+        hardware_manifest=hardware_manifest,
     )

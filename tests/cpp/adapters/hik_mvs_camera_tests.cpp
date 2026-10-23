@@ -71,6 +71,18 @@ void resetStub(bool unstable) {
     std::strcpy(
         reinterpret_cast<char*>(right_info.SpecialInfo.stUsb3VInfo.chSerialNumber),
         "right-stub");
+    std::strcpy(
+        reinterpret_cast<char*>(left_info.SpecialInfo.stUsb3VInfo.chModelName),
+        "MV-LEFT");
+    std::strcpy(
+        reinterpret_cast<char*>(right_info.SpecialInfo.stUsb3VInfo.chModelName),
+        "MV-RIGHT");
+    std::strcpy(
+        reinterpret_cast<char*>(left_info.SpecialInfo.stUsb3VInfo.chDeviceVersion),
+        "1.2.3");
+    std::strcpy(
+        reinterpret_cast<char*>(right_info.SpecialInfo.stUsb3VInfo.chDeviceVersion),
+        "1.2.4");
 }
 
 hik_mvs::CameraConfig config();
@@ -231,6 +243,25 @@ void testOpenRequiresTriggerActivationReadback() {
           "camera open must require TriggerActivation readback");
     check(!left_camera.started && !right_camera.started,
           "readback failure must happen before acquisition starts");
+}
+
+void testOpenVerifiesManifestCameraIdentity() {
+    resetStub(false);
+    auto verified = config();
+    verified.expected_model_left = "MV-LEFT";
+    verified.expected_model_right = "MV-RIGHT";
+    verified.expected_firmware_left = "1.2.3";
+    verified.expected_firmware_right = "1.2.4";
+    hik_mvs::HikvisionCamera camera;
+    check(camera.open(verified),
+          "camera open must accept model and firmware read back from enumeration");
+    camera.close();
+
+    resetStub(false);
+    auto mismatched = verified;
+    mismatched.expected_firmware_right = "wrong-version";
+    check(!camera.open(mismatched),
+          "camera open must reject a manifest firmware mismatch");
 }
 
 void testGrabRejectsGeometryDriftAndShortPitch() {
@@ -722,6 +753,7 @@ int main() {
     testUnstableBaselineFailsWithBoundedReads();
     testOpenRejectsMismatchedCameraGeometry();
     testOpenRequiresTriggerActivationReadback();
+    testOpenVerifiesManifestCameraIdentity();
     testGrabRejectsGeometryDriftAndShortPitch();
     testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult();
     testCameraSourcePreservesAuditedFrameEvidence();

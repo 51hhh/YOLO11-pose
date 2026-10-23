@@ -13,6 +13,11 @@ from typing import Any, Mapping
 from .config import ResolvedConfig, find_project_root
 from .dataset import DatasetError, require_identifier
 from .git_state import GitStateError, inspect_git_state
+from .hardware_manifest import (
+    HardwareManifestSnapshot,
+    load_hardware_manifest,
+    write_stage_hardware_snapshot,
+)
 from .hashing import sha256_file
 from .mainline_capture import (
     build_mainline_capture_context,
@@ -22,7 +27,12 @@ from .mainline_config import write_mainline_pipeline_config
 from .runtime import mainline_command
 
 
-def prepare_capture_stage(stage: str | Path, context: Mapping[str, Any]) -> Path:
+def prepare_capture_stage(
+    stage: str | Path,
+    context: Mapping[str, Any],
+    *,
+    hardware_manifest: HardwareManifestSnapshot | None = None,
+) -> Path:
     """独占创建 staging，并先冻结本次采集身份。"""
 
     directory = Path(stage).resolve()
@@ -30,6 +40,8 @@ def prepare_capture_stage(stage: str | Path, context: Mapping[str, Any]) -> Path
     with (directory / "context.json").open("x", encoding="utf-8") as handle:
         json.dump(dict(context), handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
+    if hardware_manifest is not None:
+        write_stage_hardware_snapshot(directory, hardware_manifest)
     return directory
 
 
@@ -62,6 +74,7 @@ def run_capture(
     dataset_root: str | Path | None = None,
     keep_stage: bool = False,
     dry_run: bool = False,
+    hardware_manifest: str | Path | None = None,
     project_root: str | Path | None = None,
 ) -> Path:
     """运行一次有限时长采集；失败时保留 staging 供审计。"""
@@ -76,6 +89,16 @@ def run_capture(
     require_identifier(trial_id, field_name="trial_id")
     require_identifier(session_id, field_name="session_id")
     require_identifier(ball_id, field_name="ball_id")
+    manifest_snapshot = None
+    if hardware_manifest is not None:
+        manifest_snapshot = load_hardware_manifest(
+            hardware_manifest,
+            config=config,
+            require_verified=not dry_run,
+            project_root=root,
+        )
+    elif not dry_run:
+        raise DatasetError("真实采集必须通过 --hardware-manifest 固定硬件与软件证据")
 
     capture_root = (
         Path(dataset_root).resolve()
@@ -94,16 +117,24 @@ def run_capture(
         ball_id=ball_id,
         conditions=conditions,
         notes=notes,
+        hardware_manifest_sha256=(
+            manifest_snapshot.sha256 if manifest_snapshot is not None else None
+        ),
         verify_assets=not dry_run,
         project_root=root,
     )
-    prepare_capture_stage(stage, context)
+    prepare_capture_stage(stage, context, hardware_manifest=manifest_snapshot)
     frame_limit = max(1, round(duration_s * config.data["runtime"]["nominal_fps"]))
     generated_config = write_mainline_pipeline_config(
         stage / "pipeline.yaml",
         config,
         capture_stage=stage,
         frame_limit=frame_limit,
+        expected_camera_identity=(
+            manifest_snapshot.camera_identity
+            if manifest_snapshot is not None
+            else None
+        ),
         project_root=root,
     )
     command = mainline_command(root, config, generated_config)
@@ -124,6 +155,14 @@ def run_capture(
         executable = Path(command[0])
         if sha256_file(executable) != context["runtime_executable_sha256"]:
             raise DatasetError("启动前原生主线可执行文件哈希已变化")
+        staged_manifest = load_hardware_manifest(
+            stage / "hardware" / "manifest.json",
+            config=config,
+            require_verified=True,
+            project_root=root,
+        )
+        if staged_manifest.sha256 != context["hardware_manifest_sha256"]:
+            raise DatasetError("启动前硬件清单哈希已变化")
         completed = subprocess.run(command, cwd=root, check=False)
         if completed.returncode != 0:
             raise DatasetError(

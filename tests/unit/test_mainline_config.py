@@ -72,6 +72,16 @@ class MainlineConfigTests(unittest.TestCase):
                 profile,
                 capture_stage=stage,
                 frame_limit=270,
+                expected_camera_identity={
+                    "left": {
+                        "model": "MV-LEFT",
+                        "firmware_version": "1.2.3",
+                    },
+                    "right": {
+                        "model": "MV-RIGHT",
+                        "firmware_version": "1.2.4",
+                    },
+                },
                 project_root=ROOT,
             )
         self.assertEqual(payload["runtime"]["mode"], "capture")
@@ -79,6 +89,10 @@ class MainlineConfigTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["capture_stage"], str(stage))
         self.assertFalse(payload["publisher"]["enabled"])
         self.assertEqual(payload["runtime"]["max_consecutive_timeouts"], 0)
+        self.assertEqual(payload["camera"]["left_model"], "MV-LEFT")
+        self.assertEqual(
+            payload["camera"]["right_firmware_version"], "1.2.4"
+        )
 
     def test_capture_projection_rejects_missing_stage(self) -> None:
         profile = load_profile("free-flight", project_root=ROOT)

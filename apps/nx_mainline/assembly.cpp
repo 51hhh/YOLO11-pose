@@ -151,6 +151,12 @@ hik::CameraConfig cameraConfig(const MainlineRuntimeConfig& config) {
     output.camera_index_right = config.camera.right_index;
     output.serial_left = config.camera.left_serial;
     output.serial_right = config.camera.right_serial;
+    output.expected_model_left = config.camera.left_model.value_or("");
+    output.expected_model_right = config.camera.right_model.value_or("");
+    output.expected_firmware_left =
+        config.camera.left_firmware_version.value_or("");
+    output.expected_firmware_right =
+        config.camera.right_firmware_version.value_or("");
     output.exposure_us = static_cast<float>(config.camera.exposure_us);
     output.gain_db = static_cast<float>(config.camera.gain_db);
     output.use_trigger = true;

@@ -199,9 +199,27 @@ doctor：
 volleyball doctor --profile free-flight
 volleyball capture --profile free-flight \
   --trial trial-001 --session session-a --ball ball-01 \
-  --duration 3 --conditions conditions.json
+  --duration 3 --conditions conditions.json \
+  --hardware-manifest /path/to/rig-manifest.json
 volleyball dataset validate data/captures/trials/trial-001
 ```
+
+### 硬件清单
+
+正式采集必须显式传入硬件清单。以
+[`configs/hardware/rig-manifest.example.json`](../configs/hardware/rig-manifest.example.json)
+为模板，在实验目录保存清单与其引用的两个相机参数导出文件。清单固定：
+
+- 左右角色、序列号、MVS 枚举型号、设备固件版本和全局快门声明；
+- 镜头型号、焦距、光圈、对焦方式、可复现的对焦标记及机械锁定状态；
+- JetPack、CUDA、TensorRT、MVS、OpenCV 的版本和取值来源；
+- 两个相机参数导出文件的相对路径、格式和 SHA-256。
+
+`status=pending` 只允许 dry-run；正式采集要求 `status=verified`、核验时间和核验人。
+加载器先核对清单 schema、profile 序列号、附件路径与哈希；原生 MVS 适配器再在打开
+设备前核对实际枚举的型号和固件。任一项不一致都中止 trial。发布后清单和附件位于
+`raw/audit/hardware/`，并与 `capture_context.hardware_manifest_sha256` 形成闭包。
+软件版本的 `source` 是审计来源说明，不替代 `doctor` 的动态链接检查或 Nsight 证据。
 
 每次运行使用独立的随机 staging 目录。staging 中只要已有 CSV、状态文件或
 `raw/` 图像目录，NX 录制器都会拒绝复用；失败数据用于审计，不能作为续写点，
