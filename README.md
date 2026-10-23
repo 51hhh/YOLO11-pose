@@ -169,7 +169,7 @@ volleyball replay \
 ## 文档
 
 - [架构与数据流](docs/architecture.md)
-- [原生 NX 帧生命周期、CUDA、YOLO 与 ROI 深度](docs/pipeline.md)
+- [原生 NX 帧生命周期、CUDA、YOLO 与几何深度](docs/pipeline.md)
 - [实机与标定辅助工具](docs/hardware-tools.md)
 - [配置系统](docs/configuration.md)
 - [采集契约](docs/capture.md)

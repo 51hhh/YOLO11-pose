@@ -15,7 +15,7 @@ GPIO 上升沿
   -> 左右两个 TensorRT detector 并发执行
   -> 枚举并记录全部左右候选组合
   -> 时差、视差、极线、尺寸和 shifted-IoU 门控
-  -> CUDA ROI 深度候选与显式顺序选择
+  -> CUDA 球心几何候选与显式顺序选择
   -> 直接 3D、协方差和方法证据
   -> ROS2 直接观测（runtime）或 v6 staging（capture）
   -> Python 严格校验并原子发布 capture v2.1
@@ -23,7 +23,7 @@ GPIO 上升沿
 
 主线没有 VPI，也不产生所谓“IoU 黑白图”。`shifted-IoU` 只是把右框按候选视差
 水平平移后计算形状重叠的关联门控。深度估计读取校正后的 CUDA Gray8 图像，并在
-有限 ROI 内运行几何和多点方法。
+检测 ROI 内运行圆、径向和边缘等球心代理；bbox 方法提供显式回退。
 
 ## 三条不可混用的时间与身份链
 
@@ -76,6 +76,8 @@ Bayer→BGR 与融合 remap/Gray；当前端口没有向后续暴露 readiness e
 作为研究算子，但在加入球体恢复并完成实测前不能进入选择或发布链。每条成功观测同时
 保存实际方法、测量视差、视差标准差和支持点数，并由同一证据传播 3D 协方差。只有
 当前双侧已关联端口能够实际生成、且在冻结顺序中的方法可以作为候选。
+正式配置只暴露这些方法真正消费的圆拟合上限和 UVD 不确定度先验；研究算子
+的 patch 半径、搜索范围和多点门限不再冒充生产配置。
 
 采集模式还把最终方法、左校正图锚点 `(u,v)` 与视差 `d` 写入独立版本的
 `stereo_measurements_v1.csv`。该表记录三角化输入而不是从 XYZ 派生的副本，发布前
@@ -135,7 +137,7 @@ finalizer 才会校验时钟映射、引用闭包、哈希和配置指纹并发�
 | CUDA 校正与 BGR/Gray | `adapters/cuda_preprocess/` |
 | TensorRT 检测 | `adapters/tensorrt/` |
 | 关联与几何契约 | `algorithms/stereo/` |
-| CUDA ROI 深度 | `adapters/cuda_depth/` |
+| CUDA 球心几何深度 | `adapters/cuda_depth/` |
 | v6 staging 与 v2.1 finalizer | `adapters/capture_stage/`、`python/volleyball_vision/mainline_capture.py` |
 | ROS2 直接观测 | `adapters/ros2/` |
 

@@ -44,7 +44,7 @@ NX GPIO 上升沿 ────────┐
 
 ### Algorithms
 
-`algorithms/stereo` 完成左右候选关联、校正双目的中心三角化和协方差传播。它分别支持检测中心的相关像素噪声传播，以及“左图真实锚点 + 精化视差及其标准差”的独立传播；精化视差不会覆盖 2D 关联中心视差。`RectifiedCenterEstimator` 只用于回放、单元测试和几何基线；它的稳定方法标识为 `detection_center`，不冒充任何生产深度方法。这些实现均不依赖相机或 GPU，可以在普通主机上测试。
+`algorithms/stereo` 完成左右候选关联、校正双目的中心三角化和协方差传播。它分别支持检测中心的相关像素噪声传播，以及“左图实际锚点 + 最终测量视差及其标准差”的独立传播；最终测量不会覆盖 2D 关联中心视差。`RectifiedCenterEstimator` 只用于回放、单元测试和几何基线；它的稳定方法标识为 `detection_center`，不冒充任何生产深度方法。这些实现均不依赖相机或 GPU，可以在普通主机上测试。
 
 ### Services
 
@@ -58,7 +58,7 @@ NX GPIO 上升沿 ────────┐
 
 `accepted` 表示该配对最终成功生成一条直接 3D 观测，不只是通过了 2D 几何门控。同一曝光时刻只有最终选中的配对可以保持 `accepted`；其他通过 2D 门控但未选中的组合记录为 `not_selected`，三角化或 3D 质量门控失败分别记录为 `triangulation_failure` 或 `quality_gate`。数据校验还要求每个 accepted 配对与唯一轨迹样本的帧引用、3D、协方差和误差数值一致，因此不会出现“接受配对存在但对应 3D 缺失或被替换”的原始数据。
 
-`ObservationPublisher` 接收的不是孤立 3D 点，而是 `ObservationPublication`：直接观测及验证状态、左右原始帧元数据、最终选中的两个检测候选、接受配对和实际深度方法证据。ROS2 适配器因此可以从同一证据填写曝光时刻、设备时间、同步残差、二维框、关联视差、精化视差和协方差，而不回读旧管线全局状态，也不需要用滤波速度补齐直接测量。
+`ObservationPublisher` 接收的不是孤立 3D 点，而是 `ObservationPublication`：直接观测及验证状态、左右原始帧元数据、最终选中的两个检测候选、接受配对和实际深度方法证据。ROS2 适配器因此可以从同一证据填写曝光时刻、设备时间、同步残差、二维框、关联视差、最终测量视差和协方差，而不回读旧管线全局状态，也不需要用滤波速度补齐直接测量。
 
 检测器输出还必须声明与输入完全相同的相机、角色和帧号，候选 ID 在单帧内唯一，候选的 pipeline ID 与批次一致。候选传入的 `selected` 值不受信任；服务先全部清零，只在直接 3D 成功后标记最终左右候选，防止 detector 内部临时选择污染原始契约。
 
@@ -70,7 +70,7 @@ NX GPIO 上升沿 ────────┐
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机和 GPIO 的顺序由 `runManagedStereoTrial` 统一编排。
 
-`apps/nx_mainline` 已装配生产适配器。`adapters/cuda_preprocess` 从 OpenCV 标定生成紧密浮点映射并在启动时上传；每个槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 在校正 Gray8 上生成多点、圆/边缘几何与 bbox 候选，并按冻结顺序选择；实际方法、精化视差、标准差和支持点数原样返回，GPU/图像故障与合法无匹配严格分开。`adapters/tensorrt` 独立拥有左右 engine/context/buffer 和检测 CUDA kernel；两个常驻线程各自串行访问一个 detector。磁盘 `TrialWriter` 与 ROS2 publisher 分别位于 `adapters/capture_stage` 和 `adapters/ros2`。真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
+`apps/nx_mainline` 已装配生产适配器。`adapters/cuda_preprocess` 从 OpenCV 标定生成紧密浮点映射并在启动时上传；每个槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 在校正 Gray8 上生成圆/边缘几何与 bbox 球心代理候选，并按冻结顺序选择；实际方法、最终测量视差、标准差和支持点数原样返回，GPU/图像故障与合法无匹配严格分开。`adapters/tensorrt` 独立拥有左右 engine/context/buffer 和检测 CUDA kernel；两个常驻线程各自串行访问一个 detector。磁盘 `TrialWriter` 与 ROS2 publisher 分别位于 `adapters/capture_stage` 和 `adapters/ros2`。真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
 
 ## 三条独立时间链
 
@@ -121,5 +121,5 @@ NX 负责相机、校正、检测、双目关联和直接 3D 观测。RDK 负责
 
 NX 不执行落点预测、世界/车体坐标变换或控制目标发布。ROS2 边界只发布带来源证据的直接观测；影子仿真和轨迹预测继续使用冻结 trial 或由 RDK 消费该观测流。
 
-CUDA 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 深度候选和一帧资源所有权见[原生 NX 感知流水线](pipeline.md)。
+CUDA 图像流、双路 YOLO、shifted-IoU 配对、灰度 ROI 球心几何候选和一帧资源所有权见[原生 NX 感知流水线](pipeline.md)。
 
