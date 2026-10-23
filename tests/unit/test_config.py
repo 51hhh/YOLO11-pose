@@ -95,6 +95,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
             _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_unimplemented_calibration_format(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        payload = copy.deepcopy(dict(resolved.data))
+        payload["calibration"]["format"] = "capture_v2_json"
+        with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
+            _validate_schema(ROOT, payload)
+
     def test_semantics_reject_same_camera_serial(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         payload = copy.deepcopy(dict(resolved.data))

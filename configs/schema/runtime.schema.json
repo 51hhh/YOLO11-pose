@@ -80,7 +80,7 @@
         "id": {"type": "string", "minLength": 1},
         "created_at_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"},
         "file": {"$ref": "#/$defs/path"},
-        "format": {"enum": ["opencv_yaml", "capture_v2_json"]},
+        "format": {"const": "opencv_yaml"},
         "body_frame": {"type": "string", "minLength": 1},
         "rig_frame": {"type": "string", "minLength": 1},
         "world_frame": {"type": "string", "minLength": 1}
