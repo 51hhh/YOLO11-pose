@@ -26,7 +26,7 @@ git diff --check
 `python3 -m pip install --no-build-isolation -e .`。本地验收必须实际调用安装后
 生成的 `volleyball` 入口，不能只依赖 `PYTHONPATH` 掩盖打包错误。
 
-通过条件：全部命令返回 0；纯主机离线标定构建不查找 MVS；配置指纹稳定；解析配置 v2 与生成的原生配置 v3 只暴露实际生效的深度参数，已退役纹理调参被拒绝；C++ v6 表头、双目测量扩展与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；实际深度方法必须来自冻结配置，accepted pair 使用最终测量视差而不是初始门控视差；新录制的 UVD 输入必须能用冻结标定重建同一 XYZ 并以哈希原始资产发布；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序、伪造 UVD 和断裂的候选—配对—观测关系都被拒绝。
+通过条件：全部命令返回 0；纯主机离线标定构建不查找 MVS；配置指纹稳定；解析配置 v3 与生成的原生配置 v4 只暴露实际生效的深度参数，已退役纹理调参被拒绝；配置加载、`doctor` 和原生进程都核对标定源哈希；C++ v6 表头、双目测量扩展与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；新 trial 的标定源 YAML 和生成后的标定 JSON 均作为哈希 raw 资产归档，任一快照、上下文或共享标定不一致都会被拒绝；实际深度方法必须来自冻结配置，accepted pair 使用最终测量视差而不是初始门控视差；新录制的 UVD 输入必须能用冻结标定重建同一 XYZ 并以哈希原始资产发布；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序、伪造 UVD 和断裂的候选—配对—观测关系都被拒绝。
 
 修改通用 CUDA 算子时，还必须在具有兼容 CUDA 工具链的 GPU 主机执行：
 
@@ -65,7 +65,7 @@ volleyball run --profile nx-rdk --dry-run
 
 通过条件：目标机为 Jetson Orin NX；`doctor` 的配置意图、MVS、CUDA、TensorRT、
 OpenCV、ROS2、GPIO 和原生二进制动态链接检查全部通过；模型存在且 SHA-256 与
-清单一致；标定语义有效；生成配置可复现。这里证明的是 SDK 和链接可用，不等于
+清单一致；标定源 SHA-256 与配置一致且标定语义有效；生成配置可复现。这里证明的是 SDK 和链接可用，不等于
 算子已按预期并发执行；L4 仍须按[原生 NX 感知流水线](pipeline.md)保存启动日志、
 逐阶段计数和 Nsight 证据。非 Jetson CUDA 服务器不能替代此项。
 
@@ -125,6 +125,7 @@ volleyball replay --profile replay --trial /path/to/trial --json
 - 所有拒绝项保留明确原因；
 - 原始层没有滤波位置、预测状态或手工修正；
 - trial ID、球 ID、标定、模型、代码和配置均可追溯。
+- `calibration_source`、`calibration_contract` 和 `capture_context` 完整，且与共享标定交叉校验一致。
 
 ## E. 几何与运行性能
 

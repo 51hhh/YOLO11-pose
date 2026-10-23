@@ -99,7 +99,16 @@ dataset-root/
     ├── processing_timing.csv
     ├── raw/mainline/{left,right}/
     └── raw/audit/
+        ├── calibration_source.yaml
+        └── calibration_contract.json
 ```
+
+新主线 trial 在不改变冻结 v2.1 metadata schema 的前提下，用保留的
+`calibration_source` 和 `calibration_contract` raw label 分别归档实际加载的 OpenCV
+YAML 与生成后的 v2.1 JSON。两者均进入 `raw_manifest`；采集上下文另存源 YAML
+SHA-256。校验器会交叉检查源快照—上下文，以及契约快照—数据集共享标定。旧 v2.1
+trial 可以没有这组可选扩展，但一旦出现其中任一 label，就必须完整提供两份快照和
+`capture_context`，不能只留下半套证据。
 
 `trajectory.csv` 只保存直接三角化球心和传播后的测量协方差。速度、加速度、等效
 旋转、Magnus 参数、滤波状态及落点都属于 `derived/`。
@@ -113,7 +122,7 @@ dataset-root/
 ## 必须保留的证据
 
 - 左右相机实际序列号、角色、内外参、基线和标定误差；
-- 配置指纹、Git revision、模型权重 SHA-256；
+- 配置指纹、Git revision、模型权重 SHA-256、实际加载的标定源 SHA-256；
 - 每帧 `FrameCounter`、设备时间、GPIO 上升沿估计、曝光开始、曝光中心和两侧 USB 到达时间；
 - 每个 2D 候选，包括低分和未选中候选；
 - 每个双目配对尝试，包括拒绝原因；
@@ -121,7 +130,7 @@ dataset-root/
 - 单球数据每个曝光时刻最多保留一个 `accepted` 配对：先取语义置信度最高者，再取几何配对代价最低者，完全相同时按稳定的原始顺序选择；staging 原表仍原样保存在 `raw/audit/`，便于复核或重新选择；
 - `detections_2d.selected=true` 的集合必须与所有 accepted 配对引用的左右候选完全一致；
 - 相机时基下每个 accepted 配对必须恰好生成一条 `trajectory.csv` 直接观测；左右帧引用、3D 位置、协方差和误差必须数值一致，不能只让外键“看起来能对上”；
-- 原始图像、staging 原表、每条直接观测实际采用的深度方法与最终 UVD 输入证据、生成的主线配置；
+- 原始图像、staging 原表、标定源与标定契约双快照、每条直接观测实际采用的深度方法与最终 UVD 输入证据、生成的主线配置；
 - 球 ID、可获得的球压、温湿度、气流和实验备注；
 - 所有原始文件的路径、大小与 SHA-256。
 

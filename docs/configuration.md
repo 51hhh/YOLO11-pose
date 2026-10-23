@@ -44,7 +44,8 @@ volleyball config render-mainline --profile nx-rdk
 - 模型清单的 artifact 格式、输入尺寸/格式、目标平台和 accelerator 必须与 live profile 完全一致；
 - 模型清单还必须冻结 `output_contract`、有序 `class_names` 和 `target_class_id`，且 live profile 的 `detector.class_id` 必须指向同一目标；
 - TensorRT engine 反序列化后的实际输入尺寸、输出契约和类别数必须通过检测器契约，且与 manifest/profile 一致；
-- 标定必须有稳定 `calibration_id` 和 `created_at_utc`，不得用文件 mtime 充当版本；
+- 标定必须有稳定 `calibration_id`、`created_at_utc` 和源文件 `sha256`，不得用文件 mtime 充当版本；
+- 标定 YAML 的内容一旦变化就视为新资产：更换 `calibration_id`、更新时间和哈希，不能沿用旧 ID 覆盖；
 - 单位写入键名或契约，时间统一为整数纳秒，物理量使用 SI。
 
 本机覆盖的最小做法如下。`local-*.yaml` profile 和 `configs/local.yaml`
@@ -107,7 +108,8 @@ volleyball run --profile nx-rdk --generated-config /tmp/nx-runtime.yaml --dry-ru
 ```
 
 显式指定的生成路径必须不存在，避免无提示覆盖人工文件。实际启动前 `doctor` 会
-检查标定、模型及哈希、原生可执行文件、SDK 和动态链接。
+检查标定和模型的内容哈希、原生可执行文件、SDK 和动态链接。生成的原生配置也携带
+标定 SHA-256，C++ 进程在加载 OpenCV YAML 之前再次核对，防止配置生成后文件被替换。
 
 ## 常用可调项
 
