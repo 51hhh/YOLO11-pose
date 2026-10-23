@@ -34,7 +34,6 @@ set_target_properties(stereo_calibrate PROPERTIES CXX_STANDARD 17)
 target_link_libraries(stereo_calibrate
   ${OpenCV_LIBS}
   Threads::Threads
-  stdc++fs
 )
 
 # capture_chessboard：使用与生产链一致的海康相机与 GPIO 硬触发。
@@ -50,7 +49,6 @@ target_link_libraries(capture_chessboard
   volleyball::hik_mvs
   volleyball::gpio
   Threads::Threads
-  stdc++fs
 )
 
 # hik_frame_metadata_probe：独立验证帧水印、触发计数与到达顺序。
