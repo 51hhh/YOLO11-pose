@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import subprocess
@@ -249,6 +250,92 @@ def _check_cmake_sources(tracked: list[str]) -> list[str]:
     return errors
 
 
+def _python_module_name(path: Path) -> str:
+    relative = path.relative_to(ROOT / "python")
+    if relative.name == "__init__.py":
+        return ".".join(relative.parent.parts)
+    return ".".join(relative.with_suffix("").parts)
+
+
+def _check_python_module_reachability(tracked: list[str]) -> list[str]:
+    """拒绝无法从公开包或命令入口到达的生产 Python 模块。"""
+
+    package_prefix = "python/volleyball_vision/"
+    paths = {
+        _python_module_name(ROOT / path): ROOT / path
+        for path in tracked
+        if path.startswith(package_prefix) and path.endswith(".py")
+    }
+    imports: dict[str, set[str]] = {module: set() for module in paths}
+    errors: list[str] = []
+
+    for module, path in sorted(paths.items()):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as error:
+            errors.append(f"{path.relative_to(ROOT)}: 无法解析: {error.msg}")
+            continue
+
+        is_package = path.name == "__init__.py"
+        package_parts = module.split(".") if is_package else module.split(".")[:-1]
+        for node in ast.walk(tree):
+            candidates: list[str] = []
+            if isinstance(node, ast.Import):
+                candidates.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    ascend = node.level - 1
+                    if ascend > len(package_parts):
+                        continue
+                    base_parts = package_parts[: len(package_parts) - ascend]
+                    if node.module:
+                        base_parts.extend(node.module.split("."))
+                        base = ".".join(base_parts)
+                        candidates.append(base)
+                        candidates.extend(
+                            f"{base}.{alias.name}" for alias in node.names
+                        )
+                    else:
+                        candidates.extend(
+                            ".".join([*base_parts, alias.name])
+                            for alias in node.names
+                        )
+                elif node.module:
+                    candidates.append(node.module)
+                    candidates.extend(
+                        f"{node.module}.{alias.name}" for alias in node.names
+                    )
+
+            imports[module].update(
+                candidate for candidate in candidates if candidate in paths
+            )
+
+    roots = {
+        module
+        for module in ("volleyball_vision", "volleyball_vision.__main__")
+        if module in paths
+    }
+    reachable: set[str] = set()
+    pending = list(roots)
+    while pending:
+        module = pending.pop()
+        if module in reachable:
+            continue
+        reachable.add(module)
+        pending.extend(imports[module] - reachable)
+
+    orphaned = sorted(
+        paths[module].relative_to(ROOT).as_posix()
+        for module in paths.keys() - reachable
+    )
+    if orphaned:
+        errors.append(
+            "生产 Python 模块必须从包入口或 CLI 可达:\n    "
+            + "\n    ".join(orphaned)
+        )
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     staged_entries = _git("ls-files", "-s").splitlines()
@@ -317,6 +404,13 @@ def main() -> int:
         errors.append(
             "C++/CUDA 源码或测试未连接到构建目标:\n    "
             + "\n    ".join(cmake_source_errors)
+        )
+
+    python_module_errors = _check_python_module_reachability(tracked)
+    if python_module_errors:
+        errors.append(
+            "Python 生产模块存在孤立入口:\n    "
+            + "\n    ".join(python_module_errors)
         )
 
     unexpected_tools = sorted(
