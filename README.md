@@ -44,6 +44,10 @@ ctest --preset host-core-debug
 python3 tools/check_repository.py
 ```
 
+离线 NX 若已经预装 `setuptools>=68`、PyYAML 和 jsonschema，可用
+`python3 -m pip install --no-build-isolation -e .`，避免 PEP 517 隔离环境尝试
+联网下载构建依赖。该参数不会安装缺失的运行依赖，不能用来绕过环境准备。
+
 ## 目录边界
 
 | 路径 | 职责 |

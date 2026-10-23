@@ -19,6 +19,10 @@ python3 tools/check_repository.py
 git diff --check
 ```
 
+离线目标机在构建和运行依赖已经预装时，可将第一条安装命令改为
+`python3 -m pip install --no-build-isolation -e .`。本地验收必须实际调用安装后
+生成的 `volleyball` 入口，不能只依赖 `PYTHONPATH` 掩盖打包错误。
+
 通过条件：全部命令返回 0；配置指纹稳定；C++ v6 表头与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；实际深度方法必须来自冻结配置，accepted pair 使用精化测量视差而不是初始门控视差；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序和断裂的候选—配对—观测关系都被拒绝。
 
 修改通用 CUDA 算子时，还必须在具有兼容 CUDA 工具链的 GPU 主机执行：
