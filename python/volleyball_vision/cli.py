@@ -10,7 +10,6 @@ from typing import Sequence
 
 import yaml
 
-from .calibration import ensure_dataset_calibration
 from .capture import finalize_capture_stage, run_capture
 from .config import ConfigError, flatten, load_profile
 from .dataset import DatasetError, validate_dataset, validate_trial
@@ -166,13 +165,6 @@ def _capture_finalize(args: argparse.Namespace) -> int:
     config = load_profile(args.profile, overrides=args.set)
     output = finalize_capture_stage(args.stage, args.dataset_root, config)
     print(f"OK trial={output}")
-    return 0
-
-
-def _calibrate_export(args: argparse.Namespace) -> int:
-    config = load_profile(args.profile, overrides=args.set)
-    output = ensure_dataset_calibration(args.dataset_root, config)
-    print(f"OK calibration={output}")
     return 0
 
 
@@ -350,15 +342,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     replay.set_defaults(handler=_replay)
-
-    calibrate = subparsers.add_parser("calibrate", help="标定格式转换与检查")
-    calibrate_commands = calibrate.add_subparsers(dest="calibrate_command", required=True)
-    calibrate_export = calibrate_commands.add_parser(
-        "export-contract", help="导出与校验 v2.1 校正相机标定"
-    )
-    _add_profile_arguments(calibrate_export)
-    calibrate_export.add_argument("--dataset-root", required=True)
-    calibrate_export.set_defaults(handler=_calibrate_export)
 
     dataset_parser = subparsers.add_parser("dataset", help="校验真实采集数据包")
     dataset_commands = dataset_parser.add_subparsers(dest="dataset_command", required=True)
