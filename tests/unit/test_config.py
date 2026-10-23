@@ -77,6 +77,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "schema 校验失败"):
             _validate_schema(ROOT, payload)
 
+    def test_schema_rejects_yaml_non_finite_numbers(self) -> None:
+        resolved = load_profile("nx-rdk", project_root=ROOT)
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                payload = copy.deepcopy(dict(resolved.data))
+                payload["cameras"]["left"]["gain_db"] = value
+                with self.assertRaisesRegex(
+                    ConfigError,
+                    r"cameras\.left\.gain_db: 数值必须是有限数",
+                ):
+                    _validate_schema(ROOT, payload)
+
     def test_schema_rejects_retired_nx_prediction_and_control(self) -> None:
         resolved = load_profile("nx-rdk", project_root=ROOT)
         mutations = (

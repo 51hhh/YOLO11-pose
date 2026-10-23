@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -198,7 +199,31 @@ def _format_schema_error(error: jsonschema.ValidationError) -> str:
     return f"{path}: {error.message}"
 
 
+def _non_finite_number_paths(value: Any, prefix: str = "") -> list[str]:
+    """列出 YAML 可表达、但规范 JSON 配置不允许的 NaN/Infinity。"""
+
+    if isinstance(value, Mapping):
+        paths: list[str] = []
+        for key, nested in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            paths.extend(_non_finite_number_paths(nested, path))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, nested in enumerate(value):
+            path = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            paths.extend(_non_finite_number_paths(nested, path))
+        return paths
+    if isinstance(value, float) and not math.isfinite(value):
+        return [prefix or "<root>"]
+    return []
+
+
 def _validate_schema(root: Path, payload: Mapping[str, Any]) -> None:
+    non_finite = _non_finite_number_paths(payload)
+    if non_finite:
+        lines = "\n".join(f"  - {path}: 数值必须是有限数" for path in non_finite)
+        raise ConfigError(f"配置 schema 校验失败:\n{lines}")
     schema_path = root / "configs" / "schema" / "runtime.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
