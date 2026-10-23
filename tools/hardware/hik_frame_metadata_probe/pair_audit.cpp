@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace hik_metadata_probe {
 namespace {
@@ -127,6 +128,7 @@ bool PairAudit::recordPair(
     if (print_sample) printMetaLine(sample_index, left, right);
     if (!left.ok || !right.ok) {
         ++failed_pairs_;
+        current_frame_sequence_.reset();
         return false;
     }
     ++ok_pairs_;
@@ -155,6 +157,10 @@ bool PairAudit::recordPair(
             static_cast<std::int64_t>(left.trigger_index) -
             static_cast<std::int64_t>(right.trigger_index);
         have_first_ = true;
+        if (left.frame_counter == right.frame_counter &&
+            left.frame_counter != 0) {
+            current_frame_sequence_ = left.frame_counter;
+        }
         previous_left_ = left;
         previous_right_ = right;
         return true;
@@ -198,6 +204,19 @@ bool PairAudit::recordPair(
         previous_left_.trigger_index, left.trigger_index);
     const std::uint32_t right_trigger_index_step = counterStep(
         previous_right_.trigger_index, right.trigger_index);
+    const bool sequence_is_continuous =
+        current_frame_sequence_.has_value() &&
+        left.frame_counter == right.frame_counter &&
+        previous_left_.frame_counter == previous_right_.frame_counter &&
+        left_frame_counter_step == 1U && right_frame_counter_step == 1U &&
+        *current_frame_sequence_ < std::numeric_limits<std::uint64_t>::max() &&
+        static_cast<std::uint32_t>(*current_frame_sequence_ + 1U) ==
+            left.frame_counter;
+    if (sequence_is_continuous) {
+        ++*current_frame_sequence_;
+    } else {
+        current_frame_sequence_.reset();
+    }
     if (left.dev_ts >= previous_left_.dev_ts) {
         left_device_step_.add(static_cast<double>(
             left.dev_ts - previous_left_.dev_ts));
@@ -275,6 +294,7 @@ bool PairAudit::recordPair(
 
 void PairAudit::recordAcquisitionFailure() noexcept {
     ++failed_pairs_;
+    current_frame_sequence_.reset();
 }
 
 void PairAudit::recordPwmMapping(bool matched) noexcept {

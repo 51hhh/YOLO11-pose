@@ -3,6 +3,27 @@ set(MVS_FAKE_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/tests/cpp/fakes/mvs")
 
 find_package(Threads REQUIRED)
 
+# 生产探针入口在主机构建中没有真实 MVS 动态库可链接，但仍应使用 SDK 桩
+# 编译，以免只有到 NX 验收时才发现 main.cpp 的接口或告警错误。
+add_library(hik_frame_metadata_probe_main_compile_contract OBJECT
+  ${HARDWARE_TOOL_DIR}/hik_frame_metadata_probe/main.cpp
+)
+target_include_directories(
+  hik_frame_metadata_probe_main_compile_contract BEFORE PRIVATE
+  "${MVS_FAKE_INCLUDE_DIR}"
+  "${HARDWARE_TOOL_DIR}"
+)
+target_link_libraries(
+  hik_frame_metadata_probe_main_compile_contract PRIVATE volleyball::gpio
+)
+target_compile_features(
+  hik_frame_metadata_probe_main_compile_contract PRIVATE cxx_std_17
+)
+target_compile_options(
+  hik_frame_metadata_probe_main_compile_contract PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>
+)
+
 function(add_hardware_tool_test target)
   add_executable(${target} ${ARGN})
   target_include_directories(${target} PRIVATE

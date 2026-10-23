@@ -4,6 +4,7 @@
 #include "camera_session.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace hik_metadata_probe {
 
@@ -24,6 +25,10 @@ public:
 
     [[nodiscard]] int okPairs() const noexcept { return ok_pairs_; }
     [[nodiscard]] int failedPairs() const noexcept { return failed_pairs_; }
+    [[nodiscard]] std::optional<std::uint64_t> currentFrameSequence() const
+        noexcept {
+        return current_frame_sequence_;
+    }
     [[nodiscard]] bool passed(bool pwm_enabled) const noexcept;
     void printSummary(bool pwm_enabled) const;
 
@@ -69,6 +74,7 @@ private:
     std::int64_t first_counter_delta_ = 0;
     std::int64_t first_trigger_delta_ = 0;
     bool have_first_ = false;
+    std::optional<std::uint64_t> current_frame_sequence_;
     FrameMeta previous_left_;
     FrameMeta previous_right_;
 };

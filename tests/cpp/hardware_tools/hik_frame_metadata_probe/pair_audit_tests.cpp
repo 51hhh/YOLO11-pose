@@ -48,6 +48,8 @@ void testContinuousCountersPass() {
           "continuous pairs must be counted without failures");
     check(audit.passed(false),
           "equal, populated and continuous frame counters must pass");
+    check(audit.currentFrameSequence() == 101,
+          "ordinary counters must map to the same logical sequence");
 }
 
 void testPwmEvidenceIsRequiredWhenEnabled() {
@@ -98,6 +100,8 @@ void testIdentityFailuresAreRejected() {
           "second zero-valued payload remains readable evidence");
     check(!unpopulated.passed(false),
           "an unpopulated FrameCounter must never pass");
+    check(!unpopulated.currentFrameSequence(),
+          "an all-zero initial watermark cannot be bound to GPIO history");
 
     hik_metadata_probe::PairAudit failed_grab;
     hik_metadata_probe::FrameMeta failed;
@@ -115,6 +119,20 @@ void testUnsignedWrapIsContinuous() {
     recordContinuousPair(audit, 31, 0);
     check(audit.passed(false),
           "natural uint32 counter wrap must be treated as a +1 step");
+    check(
+        audit.currentFrameSequence() ==
+            static_cast<std::uint64_t>(maximum) + 1U,
+        "the probe must retain a uint64 GPIO identity across counter wrap");
+}
+
+void testCounterGapInvalidatesLogicalSequence() {
+    hik_metadata_probe::PairAudit audit;
+    recordContinuousPair(audit, 30, 10);
+    recordContinuousPair(audit, 31, 12);
+    check(!audit.currentFrameSequence(),
+          "a counter gap must invalidate the GPIO lookup identity");
+    check(!audit.passed(false),
+          "a counter gap must fail the metadata probe");
 }
 
 }  // namespace
@@ -124,6 +142,7 @@ int main() {
     testPwmEvidenceIsRequiredWhenEnabled();
     testIdentityFailuresAreRejected();
     testUnsignedWrapIsContinuous();
+    testCounterGapInvalidatesLogicalSequence();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;

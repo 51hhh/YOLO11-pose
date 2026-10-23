@@ -157,18 +157,23 @@ int main(int argc, char** argv) {
 
         if (pwm) {
             volleyball::adapters::gpio::PWMTriggerEdgeEvent edge;
+            const auto frame_sequence = audit.currentFrameSequence();
             const bool mapping_matches =
-                left_meta.frame_counter == right_meta.frame_counter &&
-                pwm->eventForSequence(left_meta.frame_counter, edge) &&
-                edge.sequence == left_meta.frame_counter;
+                frame_sequence.has_value() &&
+                pwm->eventForSequence(*frame_sequence, edge) &&
+                edge.sequence == *frame_sequence;
             audit.recordPwmMapping(mapping_matches);
             if (!mapping_matches) {
+                const std::string logical_sequence = frame_sequence
+                    ? std::to_string(*frame_sequence)
+                    : "unresolved";
                 std::printf(
                     "    GPIO mapping failure at %04d: Lfc=%u Rfc=%u "
-                    "latest_gpio=%llu\n",
+                    "logical=%s latest_gpio=%llu\n",
                     sample_index,
                     left_meta.frame_counter,
                     right_meta.frame_counter,
+                    logical_sequence.c_str(),
                     static_cast<unsigned long long>(
                         pwm->latestEventSequence()));
             }
