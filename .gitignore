@@ -1,11 +1,3 @@
-# 可选的本地参考仓库（不属于本项目）
-/YOLOv11-RGBT/
-/Samples_MSV_SDK/
-/rm_auto_aim/
-/toe_aimbot/
-/RC_Volleyball_vision/
-/TensorYOLO8Volleyball/
-
 # IDE 与 Python 本地产物
 /.vscode/
 **/__pycache__/
