@@ -284,32 +284,42 @@ def finalize_mainline_capture_stage(
             source="gpio-capture-to-device-affine-fit",
             validity_source_times_ns=realtime_values,
         ),
-        _mapping_or_identity(
-            edge_monotonic,
-            reference_midpoints,
-            source_clock=monotonic_clock,
-            reference_clock=reference_clock,
-            mapping_id="mainline-monotonic-to-reference-0001",
-            source="gpio-edge-to-device-affine-fit",
-            validity_source_times_ns=monotonic_values,
-        ),
     ]
-    left_mapping, right_mapping, realtime_mapping, monotonic_mapping = mappings
+    realtime_mapping = mappings[2]
+    # 同一物理 GPIO 上升沿才可用于跨时钟拟合；不能把上升沿与曝光中心配对，
+    # 否则所有软件时延会被平移半个曝光时长（以及触发到曝光延迟）。
+    reference_edges = [
+        _mapped(parse_int(left, "trigger_edge_realtime_ns"), realtime_mapping)
+        for left, _ in paired_rows
+    ]
+    monotonic_mapping = _mapping_or_identity(
+        edge_monotonic,
+        reference_edges,
+        source_clock=monotonic_clock,
+        reference_clock=reference_clock,
+        mapping_id="mainline-monotonic-to-reference-0001",
+        source="gpio-edge-to-device-affine-fit",
+        validity_source_times_ns=monotonic_values,
+    )
+    mappings.append(monotonic_mapping)
     clock_mappings = [mapping for mapping in mappings if mapping is not None]
 
     normalized_frames: dict[tuple[str, int], dict[str, Any]] = {}
-    for role, device_mapping in (("left", left_mapping), ("right", right_mapping)):
+    for role in ("left", "right"):
         for index in indexes:
             row = frame_pairs[index][role]
             exposure_us = float(row["exposure_us"])
-            exposure_start = _mapped(parse_int(row, "exposure_start_ns"), realtime_mapping)
+            gpio_edge = _mapped(
+                parse_int(row, "trigger_edge_realtime_ns"), realtime_mapping
+            )
+            exposure_start = gpio_edge + round(expected_exposure["delay_ns"])
             capture = exposure_start + round(exposure_us * 500.0)
             normalized_frames[(role, index)] = {
                 "camera_id": row["camera_id"],
                 "frame_index": index,
-                "hardware_timestamp_ns": _mapped(
-                    parse_int(row, "hardware_timestamp_ns"), device_mapping
-                ),
+                # capture v2.1 将此字段定义为 GPIO 上升沿。相机设备原始时间
+                # 不丢弃，完整保存在 raw/audit/frames_v6.csv 和时钟映射中。
+                "hardware_timestamp_ns": gpio_edge,
                 "clock_domain": reference_clock,
                 "exposure_start_ns": exposure_start,
                 "capture_timestamp_ns": capture,

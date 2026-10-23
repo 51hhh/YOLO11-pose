@@ -465,6 +465,16 @@ def _validate_trial_tables(
                 and exposure_timing["observation_timestamp"]
                 == "exposure_midpoint"
             ):
+                gpio_edge_ns = _integer(
+                    row["hardware_timestamp_ns"],
+                    field_name=f"{prefix}.hardware_timestamp_ns",
+                )
+                if exposure_start_ns != gpio_edge_ns + round(
+                    exposure_timing["delay_ns"]
+                ):
+                    raise DatasetError(
+                        f"{prefix}: exposure_start_ns 必须等于 GPIO 上升沿加触发到曝光延迟"
+                    )
                 expected_capture_ns = exposure_start_ns + round(
                     float(exposure_us) * 500.0
                 )

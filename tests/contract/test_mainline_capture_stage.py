@@ -297,6 +297,14 @@ class MainlineCaptureStageTests(unittest.TestCase):
             with (trial / "camera_frames.csv").open(encoding="utf-8") as handle:
                 camera_frames = list(csv.DictReader(handle))
             self.assertEqual(
+                {row["hardware_timestamp_ns"] for row in camera_frames},
+                {"995066500"},
+            )
+            self.assertEqual(
+                {row["exposure_start_ns"] for row in camera_frames},
+                {"995066500"},
+            )
+            self.assertEqual(
                 {row["capture_timestamp_ns"] for row in camera_frames},
                 {"1000000000"},
             )
@@ -314,6 +322,13 @@ class MainlineCaptureStageTests(unittest.TestCase):
                     "nx-monotonic",
                 },
             )
+            monotonic_mapping = next(
+                row
+                for row in mappings
+                if row["source_clock_domain"] == "nx-monotonic"
+            )
+            self.assertEqual(monotonic_mapping["source_anchor_ns"], "3000000000")
+            self.assertEqual(monotonic_mapping["reference_anchor_ns"], "995066500")
 
     def test_frame_identity_remains_monotonic_after_uint32_wrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
