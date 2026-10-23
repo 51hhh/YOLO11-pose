@@ -153,39 +153,6 @@ bool appendCandidate(
     return true;
 }
 
-bool appendGpuDisparity(
-    const stereo3d::DualYoloGpuDisparity& input,
-    const char* method,
-    const CudaDirectObservationEstimatorConfig& config,
-    std::vector<DepthCandidate>& output,
-    std::string& error) {
-    if (input.valid == 0) {
-        return true;
-    }
-    const double disparity = static_cast<double>(input.disparity);
-    if (!depthInRange(disparity, config)) {
-        error = "CUDA depth backend marked an out-of-range disparity valid";
-        return false;
-    }
-    const double raw_stddev = static_cast<double>(input.stddev);
-    if (!finiteNonnegative(raw_stddev) || input.support <= 0) {
-        error = "CUDA depth backend returned invalid uncertainty/support";
-        return false;
-    }
-    DepthCandidate candidate;
-    candidate.method = Method{method};
-    candidate.left_anchor_px = {
-        static_cast<double>(input.anchor_cx),
-        static_cast<double>(input.anchor_cy),
-    };
-    candidate.disparity_px = disparity;
-    candidate.disparity_stddev_px =
-        std::max(raw_stddev, config.min_disparity_stddev_px);
-    candidate.support_points = static_cast<std::uint32_t>(input.support);
-    candidate.confidence = static_cast<double>(input.confidence);
-    return appendCandidate(std::move(candidate), output, error);
-}
-
 bool appendPointPair(
     const stereo3d::DualYoloGpuPointMeasure& left,
     const stereo3d::DualYoloGpuPointMeasure& right,
@@ -345,10 +312,10 @@ stereo3d::DualYoloDepthGpuConfig matcherConfig(
     output.min_depth = static_cast<float>(config.min_depth_m);
     output.max_depth = static_cast<float>(config.max_depth_m);
     output.compute_geometry = requiresGeometry(config.method_order);
-    output.compute_center_patch =
-        containsMethod(config.method_order, "center_patch");
-    output.compute_multi_point =
-        containsMethod(config.method_order, "roi_multi_point");
+    // 纹理视差描述可见球面而非球心；底层 matcher 保留研究算子，正式
+    // DirectObservationEstimator 永远不调度这两条分支。
+    output.compute_center_patch = false;
+    output.compute_multi_point = false;
     return output;
 }
 
@@ -598,21 +565,7 @@ ports::DirectObservationResult CudaDirectObservationEstimator::estimate(
             const auto configured = [&](std::string_view method) {
                 return containsMethod(impl_->config.method_order, method);
             };
-            if ((configured("roi_multi_point") &&
-                 !appendGpuDisparity(
-                     gpu.multi_point,
-                     "roi_multi_point",
-                     impl_->config,
-                     candidates,
-                     error)) ||
-                (configured("center_patch") &&
-                 !appendGpuDisparity(
-                     gpu.center_patch,
-                     "center_patch",
-                     impl_->config,
-                     candidates,
-                     error)) ||
-                (configured("circle_center") &&
+            if ((configured("circle_center") &&
                  !appendCirclePair(
                      gpu.left_circle,
                      gpu.right_circle,

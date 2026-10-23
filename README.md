@@ -63,7 +63,7 @@ python3 tools/check_repository.py
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
 | `adapters/cuda_preprocess/` | 双目标定映射、Bayer 转换及 CUDA 校正 BGR/Gray |
-| `adapters/cuda_depth/` | CUDA ROI 多点/几何深度候选、显式回退选择及主线 `DirectObservationEstimator` |
+| `adapters/cuda_depth/` | CUDA 圆/边缘/bbox 球心代理、显式回退选择及主线 `DirectObservationEstimator`；纹理 ROI 算子仅供研究 |
 | `adapters/tensorrt/` | TensorRT 检测适配器边界；集中 engine/context/buffer 生命周期、检测契约、主线 `Detector` 端口、事实映射及按 CUDA 构建的输入与 DFL kernel |
 | `adapters/ros2/` | 直接 3D 观测到 ROS2 消息的严格映射、发布及源纪元持久化；不执行跟踪、预测或坐标系改名 |
 | `python/volleyball_vision/` | 配置、v6 staging 校验与 v2.1 发布、回放和离线评估 |
@@ -139,7 +139,7 @@ volleyball dataset validate data/captures
 ```
 
 采集先写入同文件系统的隐藏 staging 目录。原生 C++ 链产生逐事实 v6 staging，
-保存原始 Bayer、全部检测/配对尝试，以及每条 3D 的实际方法和精化视差证据；
+保存原始 Bayer、全部检测/配对尝试，以及每条 3D 的实际方法和最终 UVD 输入证据；
 Python 在帧数、触发、时钟、引用闭包和 SHA-256 全部通过后才原子发布冻结的
 v2.1 trial。崩溃后的完整 staging 可以显式恢复：
 
