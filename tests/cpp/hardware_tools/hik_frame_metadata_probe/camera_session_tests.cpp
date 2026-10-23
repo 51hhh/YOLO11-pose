@@ -20,8 +20,10 @@ struct StubCamera {
     bool fail_free = false;
     bool fail_frame_rate_disable = false;
     bool fail_trigger_activation_readback = false;
+    bool fail_firmware_readback = false;
     float exposure_readback = 9867.0F;
     float gain_readback = 11.99F;
+    std::string firmware_version{"1.2.3"};
     std::string fail_selector;
     std::string fail_enable;
     std::string false_readback_selector;
@@ -95,15 +97,36 @@ void testSessionOwnsSdkLifecycle() {
         hik_metadata_probe::openCamera(
             deviceList(), "left-001", 1, "TEST", camera),
         "session must open the selected camera");
-    check(camera.handle() == &left_camera && camera.serial() == "left-001",
-          "session must expose the resolved handle and serial");
+    check(camera.handle() == &left_camera && camera.serial() == "left-001" &&
+              camera.model() == "MV-LEFT" &&
+              camera.firmwareVersion() == "1.2.3",
+          "session must expose the audited camera identity");
     check(camera.startGrabbing("TEST"),
           "session must start acquisition through the SDK");
     camera.shutdown();
     check(left_camera.stopped && left_camera.closed && left_camera.destroyed,
           "shutdown must stop, close and destroy an active camera");
-    check(camera.handle() == nullptr && camera.serial().empty(),
+    check(camera.handle() == nullptr && camera.serial().empty() &&
+              camera.model().empty() && camera.firmwareVersion().empty(),
           "shutdown must clear stale session identity");
+
+    resetStub();
+    left_camera.fail_firmware_readback = true;
+    check(
+        !hik_metadata_probe::openCamera(
+            deviceList(), "left-001", 1, "TEST", camera),
+        "missing firmware readback must reject the camera session");
+    check(left_camera.closed && left_camera.destroyed &&
+              camera.handle() == nullptr && camera.serial().empty() &&
+              camera.model().empty() && camera.firmwareVersion().empty(),
+          "firmware failure must close the SDK handle and clear identity");
+
+    resetStub();
+    left_camera.firmware_version.clear();
+    check(
+        !hik_metadata_probe::openCamera(
+            deviceList(), "left-001", 1, "TEST", camera),
+        "empty firmware identity must reject the camera session");
 }
 
 void testConfigurationRequiresCoreMetadata() {
@@ -304,6 +327,23 @@ int MV_CC_GetBoolValue(void* handle, const char* node, bool* value) {
 
 int MV_CC_GetIntValue(void*, const char*, MVCC_INTVALUE* value) {
     value->nCurValue = 1;
+    return MV_OK;
+}
+
+int MV_CC_GetStringValue(
+    void* handle,
+    const char* node,
+    MVCC_STRINGVALUE* value) {
+    auto* camera = static_cast<StubCamera*>(handle);
+    if (std::string(node) != "DeviceFirmwareVersion" ||
+        camera->fail_firmware_readback) {
+        return -17;
+    }
+    std::strncpy(
+        value->chCurValue,
+        camera->firmware_version.c_str(),
+        sizeof(value->chCurValue) - 1U);
+    value->chCurValue[sizeof(value->chCurValue) - 1U] = '\0';
     return MV_OK;
 }
 

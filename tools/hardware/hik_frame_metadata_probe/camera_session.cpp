@@ -223,6 +223,8 @@ void CameraSession::shutdown() noexcept {
         handle_ = nullptr;
     }
     serial_.clear();
+    model_.clear();
+    firmware_version_.clear();
 }
 
 std::uint64_t deviceTimestamp(const MV_FRAME_OUT_INFO_EX& info) noexcept {
@@ -304,12 +306,25 @@ bool openCamera(
     }
 
     camera.serial_ = serialOf(selected);
+    camera.model_ = modelOf(selected);
+    if (camera.serial_.empty() || camera.model_.empty()) {
+        std::fprintf(
+            stderr,
+            "[%s] enumerated camera identity is incomplete: SN='%s' "
+            "model='%s'\n",
+            tag,
+            camera.serial_.c_str(),
+            camera.model_.c_str());
+        camera.shutdown();
+        return false;
+    }
     int status = MV_CC_CreateHandle(
         &camera.handle_, const_cast<MV_CC_DEVICE_INFO*>(selected));
     if (status != MV_OK) {
         std::fprintf(stderr, "[%s] CreateHandle failed ret=0x%X\n", tag, status);
         camera.handle_ = nullptr;
         camera.serial_.clear();
+        camera.model_.clear();
         return false;
     }
     status = MV_CC_OpenDevice(camera.handle_);
@@ -318,14 +333,32 @@ bool openCamera(
         (void)MV_CC_DestroyHandle(camera.handle_);
         camera.handle_ = nullptr;
         camera.serial_.clear();
+        camera.model_.clear();
         return false;
     }
 
+    MVCC_STRINGVALUE firmware {};
+    status = MV_CC_GetStringValue(
+        camera.handle_, "DeviceFirmwareVersion", &firmware);
+    firmware.chCurValue[sizeof(firmware.chCurValue) - 1U] = '\0';
+    if (status != MV_OK || firmware.chCurValue[0] == '\0') {
+        std::fprintf(
+            stderr,
+            "[%s] DeviceFirmwareVersion readback failed ret=0x%X "
+            "or returned an empty value\n",
+            tag,
+            status);
+        camera.shutdown();
+        return false;
+    }
+    camera.firmware_version_ = firmware.chCurValue;
+
     std::printf(
-        "[%s] opened SN=%s model=%s layer=%s\n",
+        "[%s] opened SN=%s model=%s firmware=%s layer=%s\n",
         tag,
         camera.serial_.c_str(),
-        modelOf(selected).c_str(),
+        camera.model_.c_str(),
+        camera.firmware_version_.c_str(),
         layerName(selected));
     return true;
 }

@@ -41,6 +41,10 @@ public:
 
     [[nodiscard]] void* handle() const noexcept { return handle_; }
     [[nodiscard]] const std::string& serial() const noexcept { return serial_; }
+    [[nodiscard]] const std::string& model() const noexcept { return model_; }
+    [[nodiscard]] const std::string& firmwareVersion() const noexcept {
+        return firmware_version_;
+    }
     [[nodiscard]] bool startGrabbing(const char* tag);
     void shutdown() noexcept;
 
@@ -54,6 +58,8 @@ private:
 
     void* handle_ = nullptr;
     std::string serial_;
+    std::string model_;
+    std::string firmware_version_;
     bool grabbing_ = false;
 };
 

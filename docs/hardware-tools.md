@@ -42,7 +42,7 @@ build/nx-mainline-release/tools/hardware/hik_frame_metadata_probe \
   --frames 1000 --trigger-chip gpiochip2 --trigger-line 7 --pwm-hz 90
 ```
 
-探针用于确认 payload 自带的 `FrameCounter` 是否连续、左右是否同号，以及 USB 到达顺序是否会交换。它会拒绝左右角色解析到同一物理相机，并与正式取流保持相同的最小水印策略：先关闭持久化的多余 FrameSpecInfo，再只启用并读回确认 `Timestamp`、`Framecounter`、`ExtTriggerCount`。固定曝光、增益、上升沿触发的关键读回不匹配，或 SDK 缓冲归还失败，都会以非零状态退出，不能把不完整元数据当作通过。GPIO 上升沿是曝光开始估计的权威时基；当前相机曝光延迟按 0 ns 假设并明确标记为未测量，后续示波器测量不得覆盖原始厂商时间戳或主机到达时间。
+探针用于确认 payload 自带的 `FrameCounter` 是否连续、左右是否同号，以及 USB 到达顺序是否会交换。它会拒绝左右角色解析到同一物理相机，并在打开设备后强制读取 `DeviceFirmwareVersion`；启动日志中的序列号、枚举型号和固件版本应原样填入实机清单，固件节点缺失或为空时探针直接失败。探针与正式取流保持相同的最小水印策略：先关闭持久化的多余 FrameSpecInfo，再只启用并读回确认 `Timestamp`、`Framecounter`、`ExtTriggerCount`。固定曝光、增益、上升沿触发的关键读回不匹配，或 SDK 缓冲归还失败，都会以非零状态退出，不能把不完整元数据当作通过。GPIO 上升沿是曝光开始估计的权威时基；当前相机曝光延迟按 0 ns 假设并明确标记为未测量，后续示波器测量不得覆盖原始厂商时间戳或主机到达时间。
 
 ## 标定图采集
 
