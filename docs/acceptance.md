@@ -26,7 +26,7 @@ git diff --check
 `python3 -m pip install --no-build-isolation -e .`。本地验收必须实际调用安装后
 生成的 `volleyball` 入口，不能只依赖 `PYTHONPATH` 掩盖打包错误。
 
-通过条件：全部命令返回 0；纯主机离线标定构建不查找 MVS；配置指纹稳定；C++ v6 表头、双目测量扩展与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；实际深度方法必须来自冻结配置，accepted pair 使用最终测量视差而不是初始门控视差；新录制的 UVD 输入必须能用冻结标定重建同一 XYZ 并以哈希原始资产发布；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序、伪造 UVD 和断裂的候选—配对—观测关系都被拒绝。
+通过条件：全部命令返回 0；纯主机离线标定构建不查找 MVS；配置指纹稳定；解析配置 v2 与生成的原生配置 v3 只暴露实际生效的深度参数，已退役纹理调参被拒绝；C++ v6 表头、双目测量扩展与 Python 镜像契约一致；v6 staging 能发布并通过独立 v2.1 校验；实际深度方法必须来自冻结配置，accepted pair 使用最终测量视差而不是初始门控视差；新录制的 UVD 输入必须能用冻结标定重建同一 XYZ 并以哈希原始资产发布；同一 trial 回放两次得到同一派生指纹；乱序 USB 到达测试仍按 FrameCounter 正确配对；损坏哈希、未完成 `.partial`、计数缺口、不一致时序、伪造 UVD 和断裂的候选—配对—观测关系都被拒绝。
 
 修改通用 CUDA 算子时，还必须在具有兼容 CUDA 工具链的 GPU 主机执行：
 
@@ -144,8 +144,8 @@ volleyball replay --profile replay --trial /path/to/trial --json
 
 仓库可以通过 CPU 软件门禁，并已具备严格记录与拒绝错误数据的结构。2026-10-23
 在 NVIDIA A800（compute capability 8.0、驱动 550.144.03、CUDA 12.8、
-glibc 2.43）上，修订 `92c5dfa` 的 `cuda-adapters-release` 完成构建并通过
-28/28 CTest，包括 CUDA Bayer/校正、预处理、已配置候选过滤和直接深度证据路径
+glibc 2.43）上，修订 `a6cbe71` 的 `cuda-adapters-release` 完成构建并通过
+28/28 CTest，包括 CUDA Bayer/校正、预处理、已配置几何候选过滤、UVD 不确定度传递和直接深度证据路径
 的运行测试。该证据只关闭该修订的通用 CUDA 适配层软件风险；后续修改 CUDA
 路径时必须重新执行。
 
