@@ -98,6 +98,7 @@ build/nx-mainline-release/tools/hardware/hik_frame_metadata_probe \
 - 水印像素在 SDK 解析后、视觉处理前被清除；
 - 原始缓冲复制或 CUDA 预处理任一步失败都会阻止该帧进入检测；
 - 任何一侧断流、计数缺口或对齐超限均使采集失败，而不是静默继续。
+- GPIO 任一上升沿或下降沿写入失败都会停止触发线程，运行期健康门禁立即 abort trial，不等待相机超时后再推断原因。
 
 必须用示波器同时观察 GPIO 和两台相机可用的曝光/闪光输出，测量：
 

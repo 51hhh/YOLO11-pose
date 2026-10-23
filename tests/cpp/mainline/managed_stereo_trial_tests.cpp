@@ -316,6 +316,35 @@ void testSourceFailureStillStopsHardwareInSafeOrder() {
           "runtime source failure must abort the trial");
 }
 
+void testTriggerRuntimeFailureAbortsManagedTrial() {
+    std::vector<std::string> events;
+    ManagedSource source(events, {frameResult(), endResult()});
+    ManagedTrigger trigger(events);
+    auto left = leftDetector();
+    auto right = rightDetector();
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        support::serviceConfig(), support::passingPreprocessor(), left, right,
+        support::passingObservationEstimator(), writer);
+    services::StereoPipelineRunnerConfig config;
+    config.health_error = [&trigger] {
+        trigger.stop();
+        return std::string{};
+    };
+
+    const auto result = services::runManagedStereoTrial(
+        std::move(config), source, trigger, service);
+    check(result.status == services::RunStatus::lifecycle_error,
+          "stopped trigger worker must fail the managed trial");
+    check(result.message == "external trigger stopped unexpectedly",
+          "managed trial must identify the failed trigger");
+    check(!writer.finalized() &&
+              writer.abortReason() == "external trigger stopped unexpectedly",
+          "trigger runtime failure must abort instead of publishing");
+    check(!source.isStarted() && !trigger.isRunning(),
+          "trigger runtime failure must still stop all managed hardware");
+}
+
 }  // namespace
 
 int main() {
@@ -325,6 +354,7 @@ int main() {
     testFalseLifecycleStateIsRejected();
     testPrestartedHardwareIsNotTakenOver();
     testSourceFailureStillStopsHardwareInSafeOrder();
+    testTriggerRuntimeFailureAbortsManagedTrial();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return EXIT_FAILURE;

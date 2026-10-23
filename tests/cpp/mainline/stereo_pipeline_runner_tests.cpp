@@ -329,6 +329,30 @@ void testRequestedCaptureStopAbortsPartialTrial() {
           "capture cancellation must never publish a partial trial");
 }
 
+void testRuntimeHealthFailureAbortsBeforeReadingFrame() {
+    auto left = leftDetector();
+    auto right = rightDetector();
+    fake::InMemoryTrialWriter writer;
+    services::StereoObservationService service(
+        support::serviceConfig(), support::passingPreprocessor(), left, right,
+        support::passingObservationEstimator(), writer);
+    fake::ScriptedCameraSource source({frameResult(), endResult()});
+    services::StereoPipelineRunnerConfig config;
+    config.health_error = [] { return "injected trigger worker failure"; };
+    services::StereoPipelineRunner runner(config, source, service);
+
+    const auto result = runner.run();
+    check(result.status == services::RunStatus::lifecycle_error,
+          "runtime health failure must be a lifecycle error");
+    check(result.message == "injected trigger worker failure",
+          "runtime health failure reason must remain visible");
+    check(source.calls() == 0,
+          "known unhealthy hardware must not consume another frame");
+    check(!writer.finalized() &&
+              writer.abortReason() == "injected trigger worker failure",
+          "runtime health failure must abort instead of publishing");
+}
+
 void testBlockingSourceQueuePreservesEveryFrame() {
     support::StaticDetector left({});
     support::StaticDetector right({});
@@ -400,6 +424,7 @@ int main() {
     testFinalizeFailureAbortsTrial();
     testRequestedRuntimeStopFinalizesWithoutReadingAnotherFrame();
     testRequestedCaptureStopAbortsPartialTrial();
+    testRuntimeHealthFailureAbortsBeforeReadingFrame();
     testBlockingSourceQueuePreservesEveryFrame();
     testRealtimeQueueDropsOnlyOldestUnprocessedFrames();
     if (failures != 0) {

@@ -329,7 +329,14 @@ void PWMTrigger::loopGpiod() noexcept {
             timespecAdd(next, high_ns_);
             sleepUntil(next);
 
-            gpiod_line_set_value(line_, 0);
+            if (gpiod_line_set_value(line_, 0) < 0) {
+                std::fprintf(
+                    stderr,
+                    "[PWM] GPIO falling-edge write failed: %s\n",
+                    std::strerror(errno));
+                running_.store(false);
+                break;
+            }
             timespecAdd(next, low_ns_);
             sleepUntil(next);
         }

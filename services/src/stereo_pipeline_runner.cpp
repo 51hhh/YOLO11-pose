@@ -243,6 +243,24 @@ RunSummary StereoPipelineRunner::run() {
         }
         return finalize(RunStatus::stopped, "stereo pipeline stop requested");
     };
+    auto healthFailure = [&]() -> std::optional<RunSummary> {
+        if (!config_.health_error) return std::nullopt;
+        std::string error;
+        try {
+            error = config_.health_error();
+        } catch (const std::exception& exception) {
+            return fail(
+                RunStatus::lifecycle_error,
+                std::string{"health callback threw an exception: "} +
+                    exception.what());
+        } catch (...) {
+            return fail(
+                RunStatus::lifecycle_error,
+                "health callback threw a non-standard exception");
+        }
+        if (error.empty()) return std::nullopt;
+        return fail(RunStatus::lifecycle_error, std::move(error));
+    };
     auto reportProgress = [&]() -> std::optional<RunSummary> {
         if (!config_.progress_callback ||
             config_.progress_interval_frames == 0 ||
@@ -286,6 +304,7 @@ RunSummary StereoPipelineRunner::run() {
     }
 
     while (true) {
+        if (auto unhealthy = healthFailure()) return *unhealthy;
         if (auto stopped = stopRequested()) return *stopped;
         ports::SourceResult source_result;
         if (source_queue) {
@@ -320,6 +339,7 @@ RunSummary StereoPipelineRunner::run() {
                 RunStatus::source_protocol_error,
                 "camera source frame status and payload disagree");
         }
+        if (auto unhealthy = healthFailure()) return *unhealthy;
         if (auto stopped = stopRequested()) return *stopped;
 
         switch (source_result.status) {

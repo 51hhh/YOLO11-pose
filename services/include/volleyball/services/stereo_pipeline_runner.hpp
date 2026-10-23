@@ -21,6 +21,8 @@ struct StereoPipelineRunnerConfig {
     std::size_t max_consecutive_timeouts{0};
     // 由应用层信号处理器设置的只读查询。回调必须无阻塞且不得抛异常。
     std::function<bool()> stop_requested;
+    // 返回空串表示健康；非空错误会立即 abort。托管硬件层用它监测触发线程。
+    std::function<std::string()> health_error;
     // 实时无录制模式可在停止时正常关闭；采集必须 abort，禁止发布部分 trial。
     bool finalize_on_stop{false};
     // 0 保留同步读取语义；正值启用独立采集线程和有界 FIFO。

@@ -134,6 +134,17 @@ RunSummary runManagedStereoTrial(
             true);
     }
 
+    const auto delegated_health_error = std::move(config.health_error);
+    config.health_error = [&trigger, delegated_health_error]() {
+        if (delegated_health_error) {
+            std::string error = delegated_health_error();
+            if (!error.empty()) return error;
+        }
+        return trigger.isRunning()
+            ? std::string{}
+            : std::string{"external trigger stopped unexpectedly"};
+    };
+
     StereoPipelineRunner runner(config, source, service);
     RunSummary result;
     try {
