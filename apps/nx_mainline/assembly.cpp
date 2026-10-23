@@ -1,6 +1,6 @@
 #include "assembly.hpp"
 
-#include "volleyball/adapters/capture_v21/mainline_stage_trial_writer.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_trial_writer.hpp"
 #include "volleyball/adapters/cuda_depth/direct_observation_estimator.hpp"
 #include "volleyball/adapters/cuda_preprocess/stereo_calibration.hpp"
 #include "volleyball/adapters/cuda_preprocess/stereo_preprocessor.hpp"
@@ -34,7 +34,7 @@
 namespace volleyball::apps::nx_mainline {
 namespace {
 
-namespace capture = adapters::capture_v21;
+namespace capture = adapters::capture_stage;
 namespace cuda_depth = adapters::cuda_depth;
 namespace cuda_preprocess = adapters::cuda_preprocess;
 namespace gpio = adapters::gpio;

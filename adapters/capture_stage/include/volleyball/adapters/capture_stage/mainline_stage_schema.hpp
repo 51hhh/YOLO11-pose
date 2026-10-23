@@ -8,14 +8,14 @@
 #include <iosfwd>
 #include <string_view>
 
-namespace volleyball::adapters::capture_v21 {
+namespace volleyball::adapters::capture_stage {
 
 // v6 为主线端口逐事实写入格式，并补齐每条直接观测实际使用的深度方法
 // 证据。它只属于未发布 staging，不改变对外冻结的 capture v2.1.0 版本。
-inline constexpr int kCaptureV21MainlineStageSchemaVersion = 6;
+inline constexpr int kMainlineStageSchemaVersion = 6;
 
 inline constexpr std::array<std::string_view, 46>
-    kCaptureV21MainlineFrameColumns = {
+    kMainlineStageFrameColumns = {
         "camera_id", "camera_role", "frame_index",
         "hardware_timestamp_ns", "hardware_clock_domain",
         "exposure_start_ns", "exposure_start_clock_domain",
@@ -39,7 +39,7 @@ inline constexpr std::array<std::string_view, 46>
     };
 
 inline constexpr std::array<std::string_view, 19>
-    kCaptureV21MainlineDetectionColumns = {
+    kMainlineStageDetectionColumns = {
         "camera_id", "camera_role", "frame_index", "candidate_id",
         "u_px", "v_px", "radius_px", "bbox_x", "bbox_y", "bbox_w",
         "bbox_h", "du_dt_pxps", "dv_dt_pxps", "score", "cov_uu_px2",
@@ -47,7 +47,7 @@ inline constexpr std::array<std::string_view, 19>
     };
 
 inline constexpr std::array<std::string_view, 14>
-    kCaptureV21MainlineAssociationColumns = {
+    kMainlineStageAssociationColumns = {
         "pair_id", "left_frame_index", "right_frame_index",
         "left_candidate_id", "right_candidate_id", "left_capture_ns",
         "left_capture_clock_domain", "right_capture_ns",
@@ -56,7 +56,7 @@ inline constexpr std::array<std::string_view, 14>
     };
 
 inline constexpr std::array<std::string_view, 20>
-    kCaptureV21MainlineObservationColumns = {
+    kMainlineStageObservationColumns = {
         "observation_id", "source_pair_id", "capture_reference_ns",
         "capture_reference_clock_domain", "coordinate_frame", "x_m", "y_m",
         "z_m", "cov_xx_m2", "cov_xy_m2", "cov_xz_m2", "cov_yy_m2",
@@ -65,23 +65,23 @@ inline constexpr std::array<std::string_view, 20>
         "disparity_stddev_px", "support_points",
     };
 
-void writeCaptureV21MainlineFrameHeader(std::ostream& output);
-void writeCaptureV21MainlineDetectionHeader(std::ostream& output);
-void writeCaptureV21MainlineAssociationHeader(std::ostream& output);
-void writeCaptureV21MainlineObservationHeader(std::ostream& output);
+void writeMainlineStageFrameHeader(std::ostream& output);
+void writeMainlineStageDetectionHeader(std::ostream& output);
+void writeMainlineStageAssociationHeader(std::ostream& output);
+void writeMainlineStageObservationHeader(std::ostream& output);
 
-[[nodiscard]] bool writeCaptureV21MainlineFrameRow(
+[[nodiscard]] bool writeMainlineStageFrameRow(
     std::ostream& output,
     const ports::CapturedFrame& frame,
     std::string_view raw_image);
-[[nodiscard]] bool writeCaptureV21MainlineDetectionRow(
+[[nodiscard]] bool writeMainlineStageDetectionRow(
     std::ostream& output,
     const core::Detection2D& detection);
-[[nodiscard]] bool writeCaptureV21MainlineAssociationRow(
+[[nodiscard]] bool writeMainlineStageAssociationRow(
     std::ostream& output,
     const core::StereoAssociationAttempt& association);
-[[nodiscard]] bool writeCaptureV21MainlineObservationRow(
+[[nodiscard]] bool writeMainlineStageObservationRow(
     std::ostream& output,
     const ports::EstimatedDirectObservation& observation);
 
-}  // namespace volleyball::adapters::capture_v21
+}  // namespace volleyball::adapters::capture_stage

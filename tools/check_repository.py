@@ -103,7 +103,7 @@ PURE_CPP_LAYERS = (
     "ports",
     "algorithms",
     "services",
-    "adapters/capture_v21",
+    "adapters/capture_stage",
 )
 FORBIDDEN_HARDWARE_INCLUDES = re.compile(
     r"^\s*#\s*include\s*[<\"](?:cuda|vpi|NvInfer|opencv|rclcpp|"
@@ -124,7 +124,7 @@ CMAKE_SOURCE_GROUPS = (
     ("libs/core/src", "libs/core/CMakeLists.txt"),
     ("algorithms/stereo/src", "algorithms/stereo/CMakeLists.txt"),
     ("services/src", "services/CMakeLists.txt"),
-    ("adapters/capture_v21/src", "adapters/capture_v21/CMakeLists.txt"),
+    ("adapters/capture_stage/src", "adapters/capture_stage/CMakeLists.txt"),
     ("adapters/gpio/src", "adapters/gpio/CMakeLists.txt"),
     ("adapters/hik_mvs/src", "adapters/hik_mvs/CMakeLists.txt"),
     ("adapters/cuda_preprocess/src", "adapters/cuda_preprocess/CMakeLists.txt"),
@@ -438,6 +438,7 @@ def main() -> int:
         "configs/calibration/stereo_calib.yaml",
         "algorithms/stereo/CMakeLists.txt",
         "services/CMakeLists.txt",
+        "adapters/capture_stage/CMakeLists.txt",
         "apps/nx_mainline/CMakeLists.txt",
         "apps/nx_mainline/main.cpp",
         "docs/hardware-tools.md",

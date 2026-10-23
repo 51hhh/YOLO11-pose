@@ -24,7 +24,7 @@ chore(ci): 增加 CPU 契约门禁
 - `libs/core` 只包含与平台无关的强类型事实、时钟和坐标语义。
 - `ports` 定义用例需要的接口，不包含 Hik/TensorRT/CUDA/ROS2 头文件。
 - `adapters` 实现硬件、推理、存储和中间件边界。
-- 用户流程统一由 `volleyball_vision.cli` 组装；若未来增加原生 C++ 应用，再建立 `apps/`，且其中不得实现立体匹配算法。
+- 用户命令统一由 `volleyball_vision.cli` 编排，唯一部署进程位于 `apps/nx_mainline/`；`apps/` 只负责装配、进程生命周期和退出状态，不得实现立体匹配算法。
 - `python/volleyball_vision` 承担配置、数据契约、回放和离线评估；训练依赖必须可选。
 - `tests/cpp/mainline` 不得包含硬件 SDK 头文件；独立硬件 adapter 的 SDK 桩测试放入 `tests/cpp/adapters`。
 - `tools` 只保留仓库级维护门禁和 `tools/hardware` 下的受测硬件验收程序；可复用用户流程必须成为 `volleyball` 子命令。

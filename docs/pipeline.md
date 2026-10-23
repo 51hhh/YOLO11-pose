@@ -130,7 +130,7 @@ finalizer 才会校验时钟映射、引用闭包、哈希和配置指纹并发�
 | TensorRT 检测 | `adapters/tensorrt/` |
 | 关联与几何契约 | `algorithms/stereo/` |
 | CUDA ROI 深度 | `adapters/cuda_depth/` |
-| v6 staging 与 v2.1 finalizer | `adapters/capture_v21/`、`python/volleyball_vision/mainline_capture.py` |
+| v6 staging 与 v2.1 finalizer | `adapters/capture_stage/`、`python/volleyball_vision/mainline_capture.py` |
 | ROS2 直接观测 | `adapters/ros2/` |
 
 ## 常用核对命令

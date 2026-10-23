@@ -57,7 +57,7 @@ class BuildContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         for target in (
-            "volleyball::capture_v21",
+            "volleyball::capture_stage",
             "volleyball::cuda_direct_observation_estimator",
             "volleyball::cuda_stereo_preprocessor",
             "volleyball::gpio",
@@ -104,15 +104,15 @@ class BuildContractTests(unittest.TestCase):
         header = (
             ROOT
             / "adapters"
-            / "capture_v21"
+            / "capture_stage"
             / "include"
             / "volleyball"
             / "adapters"
-            / "capture_v21"
+            / "capture_stage"
             / "mainline_stage_schema.hpp"
         ).read_text(encoding="utf-8")
         version = re.search(
-            r"kCaptureV21MainlineStageSchemaVersion\s*=\s*(\d+)\s*;",
+            r"kMainlineStageSchemaVersion\s*=\s*(\d+)\s*;",
             header,
         )
         self.assertIsNotNone(version)
@@ -130,18 +130,18 @@ class BuildContractTests(unittest.TestCase):
             return re.findall(r'"([^"\\]+)"', declaration.group("body"))
 
         self.assertEqual(
-            columns("kCaptureV21MainlineFrameColumns"), MAINLINE_FRAME_COLUMNS
+            columns("kMainlineStageFrameColumns"), MAINLINE_FRAME_COLUMNS
         )
         self.assertEqual(
-            columns("kCaptureV21MainlineDetectionColumns"),
+            columns("kMainlineStageDetectionColumns"),
             MAINLINE_DETECTION_COLUMNS,
         )
         self.assertEqual(
-            columns("kCaptureV21MainlineAssociationColumns"),
+            columns("kMainlineStageAssociationColumns"),
             MAINLINE_ASSOCIATION_COLUMNS,
         )
         self.assertEqual(
-            columns("kCaptureV21MainlineObservationColumns"),
+            columns("kMainlineStageObservationColumns"),
             MAINLINE_OBSERVATION_COLUMNS,
         )
 

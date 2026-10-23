@@ -1,4 +1,4 @@
-#include "volleyball/adapters/capture_v21/mainline_stage_schema.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_schema.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,7 +9,7 @@
 
 namespace {
 
-namespace capture_v21 = volleyball::adapters::capture_v21;
+namespace capture_stage = volleyball::adapters::capture_stage;
 namespace core = volleyball::core;
 namespace ports = volleyball::ports;
 
@@ -97,21 +97,21 @@ ports::CapturedFrame richFrame() {
 }
 
 void testHeadersAndFrame() {
-    check(capture_v21::kCaptureV21MainlineStageSchemaVersion == 6,
+    check(capture_stage::kMainlineStageSchemaVersion == 6,
           "mainline staging version must be explicit");
     std::ostringstream header;
-    capture_v21::writeCaptureV21MainlineFrameHeader(header);
+    capture_stage::writeMainlineStageFrameHeader(header);
     check(splitCsv(lineFrom(header)).size() ==
-              capture_v21::kCaptureV21MainlineFrameColumns.size(),
+              capture_stage::kMainlineStageFrameColumns.size(),
           "frame header width must match its declaration");
 
     std::ostringstream output;
     const auto frame = richFrame();
-    check(capture_v21::writeCaptureV21MainlineFrameRow(
+    check(capture_stage::writeMainlineStageFrameRow(
               output, frame, "raw/left/00000042.pgm"),
           "complete frame evidence must serialize");
     const auto fields = splitCsv(lineFrom(output));
-    check(fields.size() == capture_v21::kCaptureV21MainlineFrameColumns.size(),
+    check(fields.size() == capture_stage::kMainlineStageFrameColumns.size(),
           "frame row width must match its header");
     check(fields[0] == "left-camera" && fields[1] == "left" &&
               fields[2] == "42",
@@ -127,16 +127,16 @@ void testHeadersAndFrame() {
           "image layout and raw reference must be bound to the frame");
 
     std::ostringstream invalid;
-    check(!capture_v21::writeCaptureV21MainlineFrameRow(
+    check(!capture_stage::writeMainlineStageFrameRow(
               invalid, frame, "raw,left.pgm"),
           "unsafe raw path token must be rejected");
 }
 
 void testDetection() {
     std::ostringstream header;
-    capture_v21::writeCaptureV21MainlineDetectionHeader(header);
+    capture_stage::writeMainlineStageDetectionHeader(header);
     check(splitCsv(lineFrom(header)).size() ==
-              capture_v21::kCaptureV21MainlineDetectionColumns.size(),
+              capture_stage::kMainlineStageDetectionColumns.size(),
           "detection header width must match its declaration");
 
     core::Detection2D value;
@@ -152,11 +152,11 @@ void testDetection() {
     value.selected = true;
     value.source_pipeline = core::PipelineId{"detector-a"};
     std::ostringstream output;
-    check(capture_v21::writeCaptureV21MainlineDetectionRow(output, value),
+    check(capture_stage::writeMainlineStageDetectionRow(output, value),
           "detection with optional evidence must serialize");
     const auto fields = splitCsv(lineFrom(output));
     check(fields.size() ==
-              capture_v21::kCaptureV21MainlineDetectionColumns.size(),
+              capture_stage::kMainlineStageDetectionColumns.size(),
           "detection row width must match its header");
     check(fields[6] == "4.5" && fields[11] == "1" &&
               fields[17] == "true" && fields[18] == "detector-a",
@@ -178,12 +178,12 @@ void testAssociationAndObservation() {
     association.decision = core::AssociationDecision::accepted;
     association.reject_reason = core::AssociationRejectReason::none;
     std::ostringstream association_output;
-    check(capture_v21::writeCaptureV21MainlineAssociationRow(
+    check(capture_stage::writeMainlineStageAssociationRow(
               association_output, association),
           "accepted association must serialize independently of 3D");
     const auto association_fields = splitCsv(lineFrom(association_output));
     check(association_fields.size() ==
-              capture_v21::kCaptureV21MainlineAssociationColumns.size(),
+              capture_stage::kMainlineStageAssociationColumns.size(),
           "association row width must match its header");
     check(association_fields[12] == "accepted" &&
               association_fields[13].empty(),
@@ -205,12 +205,12 @@ void testAssociationAndObservation() {
     observation.evidence.disparity_stddev_px = 0.2;
     observation.evidence.support_points = 8;
     std::ostringstream observation_output;
-    check(capture_v21::writeCaptureV21MainlineObservationRow(
+    check(capture_stage::writeMainlineStageObservationRow(
               observation_output, observation),
           "direct observation must serialize without merging into association");
     const auto observation_fields = splitCsv(lineFrom(observation_output));
     check(observation_fields.size() ==
-              capture_v21::kCaptureV21MainlineObservationColumns.size(),
+              capture_stage::kMainlineStageObservationColumns.size(),
           "observation row width must match its header");
     check(observation_fields[1] == "9" && observation_fields[4] == "stereo-rig" &&
               observation_fields[14] == "0.90000000000000002" &&

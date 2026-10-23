@@ -1,6 +1,6 @@
-#include "volleyball/adapters/capture_v21/mainline_stage_trial_writer.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_trial_writer.hpp"
 
-#include "volleyball/adapters/capture_v21/mainline_stage_schema.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_schema.hpp"
 
 #include <array>
 #include <cstdint>
@@ -16,7 +16,7 @@
 #include <tuple>
 #include <utility>
 
-namespace volleyball::adapters::capture_v21 {
+namespace volleyball::adapters::capture_stage {
 namespace {
 
 namespace fs = std::filesystem;
@@ -254,7 +254,7 @@ struct MainlineStageTrialWriter::Impl {
             if (!output) return false;
             output << "{\n"
                    << "  \"stage_schema_version\": "
-                   << kCaptureV21MainlineStageSchemaVersion << ",\n"
+                   << kMainlineStageSchemaVersion << ",\n"
                    << "  \"complete\": " << (complete ? "true" : "false")
                    << ",\n"
                    << "  \"fatal_error\": ";
@@ -390,10 +390,10 @@ bool MainlineStageTrialWriter::open(std::string& error) {
             return (error = impl_->fail("cannot create mainline staging tables").message,
                     false);
         }
-        writeCaptureV21MainlineFrameHeader(impl_->frames);
-        writeCaptureV21MainlineDetectionHeader(impl_->detections);
-        writeCaptureV21MainlineAssociationHeader(impl_->associations);
-        writeCaptureV21MainlineObservationHeader(impl_->observations);
+        writeMainlineStageFrameHeader(impl_->frames);
+        writeMainlineStageDetectionHeader(impl_->detections);
+        writeMainlineStageAssociationHeader(impl_->associations);
+        writeMainlineStageObservationHeader(impl_->observations);
         if (!impl_->streamsGood()) {
             return (error = impl_->fail("cannot write mainline staging headers").message,
                     false);
@@ -461,9 +461,9 @@ ports::WriteResult MainlineStageTrialWriter::append(
     }
 
     std::ostringstream rows;
-    if (!writeCaptureV21MainlineFrameRow(
+    if (!writeMainlineStageFrameRow(
             rows, frame.left, left_relative.generic_string()) ||
-        !writeCaptureV21MainlineFrameRow(
+        !writeMainlineStageFrameRow(
             rows, frame.right, right_relative.generic_string())) {
         std::error_code ignored;
         fs::remove(impl_->config.stage_directory / left_relative, ignored);
@@ -496,7 +496,7 @@ ports::WriteResult MainlineStageTrialWriter::append(
         return impl_->fail("invalid, duplicate, or orphaned detection");
     }
     std::ostringstream row;
-    if (!writeCaptureV21MainlineDetectionRow(row, record)) {
+    if (!writeMainlineStageDetectionRow(row, record)) {
         return impl_->fail("cannot serialize detection");
     }
     impl_->detections << row.str();
@@ -530,7 +530,7 @@ ports::WriteResult MainlineStageTrialWriter::append(
         return impl_->fail("invalid, duplicate, or orphaned stereo association");
     }
     std::ostringstream row;
-    if (!writeCaptureV21MainlineAssociationRow(row, record)) {
+    if (!writeMainlineStageAssociationRow(row, record)) {
         return impl_->fail("cannot serialize stereo association");
     }
     impl_->associations << row.str();
@@ -566,7 +566,7 @@ ports::WriteResult MainlineStageTrialWriter::append(
         return impl_->fail("invalid, duplicate, or orphaned direct observation");
     }
     std::ostringstream row;
-    if (!writeCaptureV21MainlineObservationRow(row, record)) {
+    if (!writeMainlineStageObservationRow(row, record)) {
         return impl_->fail("cannot serialize direct observation");
     }
     impl_->observations << row.str();
@@ -622,4 +622,4 @@ void MainlineStageTrialWriter::abort(std::string reason) noexcept {
     static_cast<void>(impl_->writeStatus(false));
 }
 
-}  // namespace volleyball::adapters::capture_v21
+}  // namespace volleyball::adapters::capture_stage

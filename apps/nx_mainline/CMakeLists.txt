@@ -2,7 +2,7 @@ find_package(yaml-cpp REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 foreach(required_target IN ITEMS
-    volleyball::capture_v21
+    volleyball::capture_stage
     volleyball::cuda_direct_observation_estimator
     volleyball::cuda_stereo_preprocessor
     volleyball::stereo_calibration
@@ -34,7 +34,7 @@ target_include_directories(volleyball_nx_mainline PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(volleyball_nx_mainline PRIVATE
-  volleyball::capture_v21
+  volleyball::capture_stage
   volleyball::cuda_direct_observation_estimator
   volleyball::cuda_stereo_preprocessor
   volleyball::stereo_calibration

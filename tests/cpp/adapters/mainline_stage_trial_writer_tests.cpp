@@ -1,4 +1,4 @@
-#include "volleyball/adapters/capture_v21/mainline_stage_trial_writer.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_trial_writer.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -14,7 +14,7 @@
 
 namespace {
 
-namespace capture_v21 = volleyball::adapters::capture_v21;
+namespace capture_stage = volleyball::adapters::capture_stage;
 namespace core = volleyball::core;
 namespace ports = volleyball::ports;
 namespace fs = std::filesystem;
@@ -193,7 +193,7 @@ std::size_t lineCount(const fs::path& path) {
 
 void testCompleteTransactionPublishesMainlineStage() {
     TempStage stage;
-    capture_v21::MainlineStageTrialWriter writer({stage.path()});
+    capture_stage::MainlineStageTrialWriter writer({stage.path()});
     std::string error;
     check(writer.open(error), "writer must open an exclusive prepared stage");
     check(writer.append(stereoFrame()).status == ports::WriteStatus::accepted,
@@ -251,7 +251,7 @@ void testCompleteTransactionPublishesMainlineStage() {
 
 void testWriterRejectsNonHostImageWithoutHalfFrame() {
     TempStage stage;
-    capture_v21::MainlineStageTrialWriter writer({stage.path()});
+    capture_stage::MainlineStageTrialWriter writer({stage.path()});
     std::string error;
     check(writer.open(error), "writer must open for failure-path test");
     check(writer.append(stereoFrame(ports::MemoryKind::cuda_device)).status ==
@@ -268,7 +268,7 @@ void testWriterRejectsNonHostImageWithoutHalfFrame() {
 
 void testAcceptedPairRequiresDirectObservation() {
     TempStage stage;
-    capture_v21::MainlineStageTrialWriter writer({stage.path()});
+    capture_stage::MainlineStageTrialWriter writer({stage.path()});
     std::string error;
     check(writer.open(error), "writer must open for relation test");
     check(writer.append(stereoFrame()).status == ports::WriteStatus::accepted,

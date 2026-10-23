@@ -67,11 +67,11 @@ NX GPIO 上升沿 ────────┐
 
 ### Adapters 与运行入口
 
-`adapters` 实现实际硬件、存储格式和外部系统。主线 `MainlineStageTrialWriter`、GPIO 触发和海康双目相机分别位于 `adapters/capture_v21`、`adapters/gpio` 与 `adapters/hik_mvs`。写入器按帧、候选、配对和直接观测四类事实分别落盘，只有四张表与全部原图都关闭后才发布完成状态；Python finalizer 再独立校验并原子发布冻结的 v2.1 trial。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
+`adapters` 实现实际硬件、存储格式和外部系统。主线 `MainlineStageTrialWriter`、GPIO 触发和海康双目相机分别位于 `adapters/capture_stage`、`adapters/gpio` 与 `adapters/hik_mvs`。写入器按帧、候选、配对和直接观测四类事实分别落盘，只有四张表与全部原图都关闭后才发布完成状态；Python finalizer 再独立校验并原子发布冻结的 v2.1 trial。海康公开头不暴露 MVS SDK；真实实现仅在找到固定 SDK 头文件和动态库时构建，主机通过共用 SDK 桩验证生命周期、帧水印和同步拒绝路径。
 
 `HikStereoCameraSource` 是海康 SDK 到平台无关 `CameraSource` 的唯一桥。它不直接依赖某个 GPIO 类，而是通过只读查询回调取得与 `FrameCounter` 相同序号的上升沿事实；每帧同时保留左右设备时间、NX 单调/实时时钟到达时间、曝光开始、由实际曝光计算的曝光中心和映射不确定度。图像先复制进有界的 adapter 自有缓冲，若下游仍持有全部缓冲则显式失败，不能覆盖尚在处理的旧帧。相机和 GPIO 的顺序由 `runManagedStereoTrial` 统一编排。
 
-`apps/nx_mainline` 已装配生产适配器。`adapters/cuda_preprocess` 从 OpenCV 标定生成紧密浮点映射并在启动时上传；每个槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 在校正 Gray8 上生成多点、圆/边缘几何与 bbox 候选，并按冻结顺序选择；实际方法、精化视差、标准差和支持点数原样返回，GPU/图像故障与合法无匹配严格分开。`adapters/tensorrt` 独立拥有左右 engine/context/buffer 和检测 CUDA kernel；两个常驻线程各自串行访问一个 detector。磁盘 `TrialWriter` 与 ROS2 publisher 分别位于 `adapters/capture_v21` 和 `adapters/ros2`。真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
+`apps/nx_mainline` 已装配生产适配器。`adapters/cuda_preprocess` 从 OpenCV 标定生成紧密浮点映射并在启动时上传；每个槽位持有 pinned Bayer staging 和 CUDA raw/temp/rectified BGR/Gray 缓冲，左右相机在独立非阻塞 stream 上执行 Bayer→BGR 与融合 remap/gray。端口尚未携带 CUDA readiness event，因此适配器在返回前同步两侧，输出缓冲通过共享槽位所有权保持有效。`adapters/cuda_depth` 在校正 Gray8 上生成多点、圆/边缘几何与 bbox 候选，并按冻结顺序选择；实际方法、精化视差、标准差和支持点数原样返回，GPU/图像故障与合法无匹配严格分开。`adapters/tensorrt` 独立拥有左右 engine/context/buffer 和检测 CUDA kernel；两个常驻线程各自串行访问一个 detector。磁盘 `TrialWriter` 与 ROS2 publisher 分别位于 `adapters/capture_stage` 和 `adapters/ros2`。真正的 GPU kernel 重叠和 90 Hz 时序仍须在目标机用 Nsight 确认。
 
 ## 三条独立时间链
 

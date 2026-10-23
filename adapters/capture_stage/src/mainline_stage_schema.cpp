@@ -1,11 +1,11 @@
-#include "volleyball/adapters/capture_v21/mainline_stage_schema.hpp"
+#include "volleyball/adapters/capture_stage/mainline_stage_schema.hpp"
 
 #include <iomanip>
 #include <optional>
 #include <ostream>
 #include <string_view>
 
-namespace volleyball::adapters::capture_v21 {
+namespace volleyball::adapters::capture_stage {
 namespace {
 
 template <std::size_t Size>
@@ -125,23 +125,23 @@ bool validFrameTokens(
 
 }  // namespace
 
-void writeCaptureV21MainlineFrameHeader(std::ostream& output) {
-    writeHeader(output, kCaptureV21MainlineFrameColumns);
+void writeMainlineStageFrameHeader(std::ostream& output) {
+    writeHeader(output, kMainlineStageFrameColumns);
 }
 
-void writeCaptureV21MainlineDetectionHeader(std::ostream& output) {
-    writeHeader(output, kCaptureV21MainlineDetectionColumns);
+void writeMainlineStageDetectionHeader(std::ostream& output) {
+    writeHeader(output, kMainlineStageDetectionColumns);
 }
 
-void writeCaptureV21MainlineAssociationHeader(std::ostream& output) {
-    writeHeader(output, kCaptureV21MainlineAssociationColumns);
+void writeMainlineStageAssociationHeader(std::ostream& output) {
+    writeHeader(output, kMainlineStageAssociationColumns);
 }
 
-void writeCaptureV21MainlineObservationHeader(std::ostream& output) {
-    writeHeader(output, kCaptureV21MainlineObservationColumns);
+void writeMainlineStageObservationHeader(std::ostream& output) {
+    writeHeader(output, kMainlineStageObservationColumns);
 }
 
-bool writeCaptureV21MainlineFrameRow(
+bool writeMainlineStageFrameRow(
     std::ostream& output,
     const ports::CapturedFrame& frame,
     std::string_view raw_image) {
@@ -213,7 +213,7 @@ bool writeCaptureV21MainlineFrameRow(
     return static_cast<bool>(output);
 }
 
-bool writeCaptureV21MainlineDetectionRow(
+bool writeMainlineStageDetectionRow(
     std::ostream& output,
     const core::Detection2D& value) {
     if (!isCsvToken(value.frame.camera_id.value()) ||
@@ -250,7 +250,7 @@ bool writeCaptureV21MainlineDetectionRow(
     return static_cast<bool>(output);
 }
 
-bool writeCaptureV21MainlineAssociationRow(
+bool writeMainlineStageAssociationRow(
     std::ostream& output,
     const core::StereoAssociationAttempt& value) {
     const auto rejection_token = rejection(value.reject_reason);
@@ -278,7 +278,7 @@ bool writeCaptureV21MainlineAssociationRow(
     return static_cast<bool>(output);
 }
 
-bool writeCaptureV21MainlineObservationRow(
+bool writeMainlineStageObservationRow(
     std::ostream& output,
     const ports::EstimatedDirectObservation& record) {
     const auto& value = record.measurement;
@@ -309,4 +309,4 @@ bool writeCaptureV21MainlineObservationRow(
     return static_cast<bool>(output);
 }
 
-}  // namespace volleyball::adapters::capture_v21
+}  // namespace volleyball::adapters::capture_stage

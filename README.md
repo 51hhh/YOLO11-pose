@@ -55,7 +55,7 @@ python3 tools/check_repository.py
 | `services/` | 将端口与算法编排为观测用例 |
 | `apps/nx_mainline/` | 原生 NX 进程装配、配置解析、信号处理和退出状态 |
 | `adapters/` | 硬件、推理、存储和中间件适配器 |
-| `adapters/capture_v21/` | 与硬件无关的主线 v6 staging 原子写入适配器；最终格式仍是 v2.1 |
+| `adapters/capture_stage/` | 与硬件无关的主线 v6 staging 原子写入适配器；最终格式仍是 v2.1 |
 | `adapters/gpio/` | GPIO 周期触发及上升沿多时钟审计；主机默认使用无 libgpiod 构建 |
 | `adapters/hik_mvs/` | 海康双目相机生命周期、FrameSpecInfo、帧对齐及主线 `CameraSource` 桥 |
 | `adapters/cuda_preprocess/` | 双目标定映射、Bayer 转换及 CUDA 校正 BGR/Gray |

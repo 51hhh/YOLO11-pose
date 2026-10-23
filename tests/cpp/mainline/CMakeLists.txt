@@ -83,7 +83,7 @@ if(OpenCV_FOUND AND OpenSSL_FOUND AND yaml-cpp_FOUND)
   target_include_directories(nx_mainline_compile_contract PRIVATE
     ${PROJECT_SOURCE_DIR}/apps/nx_mainline
     ${PROJECT_SOURCE_DIR}/tests/cpp/fakes/ros2
-    ${PROJECT_SOURCE_DIR}/adapters/capture_v21/include
+    ${PROJECT_SOURCE_DIR}/adapters/capture_stage/include
     ${PROJECT_SOURCE_DIR}/adapters/cuda_depth/include
     ${PROJECT_SOURCE_DIR}/adapters/cuda_preprocess/include
     ${PROJECT_SOURCE_DIR}/adapters/gpio/include

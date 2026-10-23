@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-namespace volleyball::adapters::capture_v21 {
+namespace volleyball::adapters::capture_stage {
 
 struct MainlineStageTrialWriterConfig {
     // 目录由上层独占创建，并预先写入 context.json。写入器不得创建或覆盖
@@ -43,4 +43,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace volleyball::adapters::capture_v21
+}  // namespace volleyball::adapters::capture_stage
