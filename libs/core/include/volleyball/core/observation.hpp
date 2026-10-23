@@ -143,26 +143,6 @@ struct ValidatedObservation {
     std::vector<ObservationRejectReason> reasons;
 };
 
-// 派生状态与直接观测是不同类型，不能写入 trajectory.csv。
-struct TrackEstimate {
-    TrackId track_id{0};
-    Timestamp state_time;
-    CoordinateFrameId coordinate_frame;
-    Vec3 position_m;
-    Vec3 velocity_mps;
-    Vec3 acceleration_mps2;
-    std::optional<Covariance3D> position_covariance_m2;
-};
-
-struct LandingPrediction {
-    TrackId source_track_id{0};
-    Timestamp prediction_time;
-    CoordinateFrameId coordinate_frame;
-    Vec3 landing_position_m;
-    double time_to_land_s{0.0};
-    std::optional<Covariance3D> landing_covariance_m2;
-};
-
 enum class DomainError {
     none,
     missing_identifier,

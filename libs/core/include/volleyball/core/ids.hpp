@@ -49,7 +49,6 @@ using FrameIndex = std::uint64_t;
 using CandidateId = std::uint64_t;
 using PairId = std::uint64_t;
 using ObservationId = std::uint64_t;
-using TrackId = std::uint64_t;
 
 }  // namespace volleyball::core
 

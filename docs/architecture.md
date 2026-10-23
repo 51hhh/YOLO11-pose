@@ -30,10 +30,9 @@ NX GPIO 上升沿 ────────┐
 
 - `TriangulatedObservation` 是直接测量；
 - `ValidatedObservation` 是质量判定，不修改原测量；
-- `TrackEstimate` 是滤波状态；
-- `LandingPrediction` 是派生预测类型，不是 NX 发布载荷。
 
-滤波状态、未来轨迹和控制目标不属于本仓库的 NX 输出；它们由 RDK 或离线分析从直接观测派生。
+滤波状态、未来轨迹和控制目标不属于本仓库的领域 API 或 NX 输出；它们由 RDK
+或离线分析从直接观测派生。主线不会为尚未实现的下游能力保留占位类型。
 
 因此滤波位置不能冒充 `trajectory.csv` 中的测量。
 
