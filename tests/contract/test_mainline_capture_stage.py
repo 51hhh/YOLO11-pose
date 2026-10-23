@@ -304,6 +304,64 @@ class MainlineCaptureStageTests(unittest.TestCase):
                 },
             )
 
+    def test_frame_identity_remains_monotonic_after_uint32_wrap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage, profile = self._stage(root)
+            logical_index = 1 << 32
+
+            frames_path = stage / "frames_v6.csv"
+            with frames_path.open(encoding="utf-8", newline="") as handle:
+                frames = list(csv.DictReader(handle))
+            for row in frames:
+                row["frame_index"] = str(logical_index)
+                row["sensor_frame_counter"] = "0"
+                row["trigger_sequence"] = str(logical_index)
+            frames_path.unlink()
+            _write_csv(frames_path, MAINLINE_FRAME_COLUMNS, frames)
+
+            detections_path = stage / "detections_v6.csv"
+            with detections_path.open(encoding="utf-8", newline="") as handle:
+                detections = list(csv.DictReader(handle))
+            for row in detections:
+                row["frame_index"] = str(logical_index)
+            detections_path.unlink()
+            _write_csv(
+                detections_path, MAINLINE_DETECTION_COLUMNS, detections
+            )
+
+            associations_path = stage / "associations_v6.csv"
+            with associations_path.open(encoding="utf-8", newline="") as handle:
+                associations = list(csv.DictReader(handle))
+            associations[0]["left_frame_index"] = str(logical_index)
+            associations[0]["right_frame_index"] = str(logical_index)
+            associations_path.unlink()
+            _write_csv(
+                associations_path,
+                MAINLINE_ASSOCIATION_COLUMNS,
+                associations,
+            )
+
+            trial = finalize_capture_stage(
+                stage, root / "dataset", profile, project_root=ROOT
+            )
+            with (trial / "camera_frames.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                published = list(csv.DictReader(handle))
+            self.assertEqual(
+                {int(row["frame_index"]) for row in published},
+                {logical_index},
+            )
+            with (trial / "raw" / "audit" / "frames_v6.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                audit_frames = list(csv.DictReader(handle))
+            self.assertEqual(
+                {int(row["sensor_frame_counter"]) for row in audit_frames},
+                {0},
+            )
+
     def test_partial_mainline_stage_is_not_publishable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

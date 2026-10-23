@@ -293,8 +293,13 @@ def _validate_frame(
         for name in ("sensor_frame_number", "sensor_frame_counter", "sensor_trigger_index")
     )
     trigger_sequence = _nonnegative_int(row, "trigger_sequence")
-    if frame_index != counters[1] or (trigger_sequence & 0xFFFFFFFF) != counters[1]:
-        raise DatasetError("mainline 帧索引、FrameCounter 与 GPIO 触发序号不一致")
+    if (
+        frame_index != trigger_sequence
+        or (trigger_sequence & 0xFFFFFFFF) != counters[1]
+    ):
+        raise DatasetError(
+            "mainline 帧索引、展开后的 GPIO 序号与 FrameCounter 不一致"
+        )
     if any(value > 0xFFFFFFFF for value in counters):
         raise DatasetError("mainline 相机水印计数超出 uint32")
     _nonnegative_int(row, "hardware_timestamp_ns")

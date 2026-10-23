@@ -20,6 +20,11 @@
 
 USB 到达顺序允许是 `L_n,R_n,R_(n+1),L_(n+1)`；只要每侧队列内部保持 payload 顺序、FrameCounter 连续，仍应正确形成第 n 和第 n+1 对。
 
+`sensor_frame_counter` 原样保存相机的 uint32 水印；`trigger_sequence` 和
+`frame_index` 使用同一个连续 uint64 GPIO 序号。当 FrameCounter 从
+`UINT32_MAX` 自然回绕到 0 时，后两者继续递增，且其低 32 位必须仍等于
+FrameCounter。除这一自然回绕外，任意计数跳变都会立即终止本次采集。
+
 启动时需要连续 3 对水印帧建立左右设备时间偏移基线。前两对只在相机适配器内部消费；第一个交给管线的帧必须已经完成同步初始化。若 16 对内仍不能稳定，启动后的第一次抓帧直接失败，采集 trial 不得发布。
 
 ## 曝光时间语义

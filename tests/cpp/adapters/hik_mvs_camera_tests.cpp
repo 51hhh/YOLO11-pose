@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <type_traits>
 
@@ -152,6 +153,42 @@ void testWarmupIsInternalToFirstGrab() {
           "post-warm-up counters must remain continuous");
     check(left_camera.image_reads == 4 && right_camera.image_reads == 4,
           "post-warm-up grab must consume exactly one pair");
+}
+
+void testStereoPairRealignsAcrossFrameCounterWrap() {
+    resetStub(false);
+    left_camera.next_counter = std::numeric_limits<std::uint32_t>::max() - 2U;
+    right_camera.next_counter = std::numeric_limits<std::uint32_t>::max() - 2U;
+    hik_mvs::HikvisionCamera camera;
+    check(camera.open(config()), "wrap fixture cameras must open");
+    check(camera.startGrabbing(), "wrap fixture cameras must start");
+
+    std::array<std::uint8_t, 4> left{};
+    std::array<std::uint8_t, 4> right{};
+    hik_mvs::GrabResult left_result;
+    hik_mvs::GrabResult right_result;
+    check(
+        camera.grabFramePair(
+            left.data(), right.data(), 2, 2, 50,
+            left_result, right_result),
+        "warm-up must publish UINT32_MAX as the last pre-wrap pair");
+    check(
+        left_result.frame_counter == std::numeric_limits<std::uint32_t>::max() &&
+            right_result.frame_counter == std::numeric_limits<std::uint32_t>::max(),
+        "pre-wrap pair must retain the raw UINT32_MAX watermark");
+
+    // 模拟右相机 USB 队列仍停在回绕前一帧，而左相机已经拿到计数 0。
+    // 对齐逻辑必须按 uint32 环形距离推进右侧，不能用有符号大小关系。
+    right_camera.next_counter = std::numeric_limits<std::uint32_t>::max();
+    check(
+        camera.grabFramePair(
+            left.data(), right.data(), 2, 2, 50,
+            left_result, right_result),
+        "stereo queues must realign across the uint32 counter wrap");
+    check(left_result.frame_counter == 0 && right_result.frame_counter == 0,
+          "realigned post-wrap pair must retain counter zero");
+    check(left_camera.image_reads == 4 && right_camera.image_reads == 5,
+          "only the lagging right queue may be advanced during wrap realignment");
 }
 
 void testUnstableBaselineFailsWithBoundedReads() {
@@ -316,6 +353,86 @@ void testCameraSourcePreservesAuditedFrameEvidence() {
     check(!source.isStarted(), "source must close cameras at end of stream");
     check(source.next().status == volleyball::ports::SourceStatus::end_of_stream,
           "end-of-stream status must be stable");
+}
+
+void testCameraSourceExtendsFrameCounterAcrossWrap() {
+    resetStub(false);
+    left_camera.next_counter = std::numeric_limits<std::uint32_t>::max() - 2U;
+    right_camera.next_counter = std::numeric_limits<std::uint32_t>::max() - 2U;
+    auto source_config = sourceConfig();
+    source_config.frame_limit = 2;
+    hik_mvs::HikStereoCameraSource source(
+        source_config,
+        [](std::uint64_t sequence, hik_mvs::TriggerEdgeEvidence& output) {
+            output = {
+                sequence,
+                100,
+                200,
+                1'000'000'200,
+                10,
+            };
+            return true;
+        });
+    std::string error;
+    check(source.start(error), "counter-wrap source must start");
+
+    auto before_wrap = source.next();
+    check(before_wrap.status == volleyball::ports::SourceStatus::frame &&
+              before_wrap.stereo_frame.has_value(),
+          "counter-wrap source must publish its pre-wrap frame");
+    if (before_wrap.stereo_frame) {
+        const auto& metadata = before_wrap.stereo_frame->left.metadata;
+        check(metadata.frame_index ==
+                  std::numeric_limits<std::uint32_t>::max(),
+              "pre-wrap logical frame index must equal UINT32_MAX");
+        check(metadata.acquisition.sensor_frame_counter ==
+                  std::numeric_limits<std::uint32_t>::max() &&
+                  metadata.acquisition.trigger_sequence ==
+                      std::numeric_limits<std::uint32_t>::max(),
+              "pre-wrap metadata must preserve raw and logical identities");
+    }
+
+    auto after_wrap = source.next();
+    check(after_wrap.status == volleyball::ports::SourceStatus::frame &&
+              after_wrap.stereo_frame.has_value(),
+          "counter zero must be accepted after a valid natural wrap");
+    if (after_wrap.stereo_frame) {
+        const auto& metadata = after_wrap.stereo_frame->left.metadata;
+        const auto extended =
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::uint32_t>::max()) +
+            1U;
+        check(metadata.frame_index == extended &&
+                  metadata.acquisition.trigger_sequence == extended,
+              "logical frame identity must remain strictly increasing after wrap");
+        check(metadata.acquisition.sensor_frame_counter == 0,
+              "raw camera watermark must remain zero after wrap");
+    }
+}
+
+void testCameraSourceRejectsFrameCounterGap() {
+    resetStub(false);
+    auto source_config = sourceConfig();
+    source_config.frame_limit = 2;
+    hik_mvs::HikStereoCameraSource source(
+        source_config,
+        [](std::uint64_t sequence, hik_mvs::TriggerEdgeEvidence& output) {
+            output = triggerEvidence(sequence);
+            return true;
+        });
+    std::string error;
+    check(source.start(error), "counter-gap source must start");
+    auto first = source.next();
+    check(first.status == volleyball::ports::SourceStatus::frame,
+          "counter-gap source must publish its first frame");
+
+    left_camera.next_counter = 5;
+    right_camera.next_counter = 5;
+    auto gap = source.next();
+    check(gap.status == volleyball::ports::SourceStatus::error &&
+              gap.message.find("FrameCounter gap") != std::string::npos,
+          "a matching stereo pair with a skipped counter must fail the trial");
+    check(!source.isStarted(), "counter gap must close the camera source");
 }
 
 void testCameraSourceNeverOverwritesRetainedBuffers() {
@@ -601,12 +718,15 @@ int MV_CC_FreeImageBuffer(void* handle, MV_FRAME_OUT*) {
 
 int main() {
     testWarmupIsInternalToFirstGrab();
+    testStereoPairRealignsAcrossFrameCounterWrap();
     testUnstableBaselineFailsWithBoundedReads();
     testOpenRejectsMismatchedCameraGeometry();
     testOpenRequiresTriggerActivationReadback();
     testGrabRejectsGeometryDriftAndShortPitch();
     testGrabRejectsSdkBufferReleaseFailureAndClearsStaleResult();
     testCameraSourcePreservesAuditedFrameEvidence();
+    testCameraSourceExtendsFrameCounterAcrossWrap();
+    testCameraSourceRejectsFrameCounterGap();
     testCameraSourceNeverOverwritesRetainedBuffers();
     testCameraSourceMarksOnlyMeasuredExposureDelayAsMapped();
     testCameraSourceUsesPerFrameExposureForCaptureCenter();

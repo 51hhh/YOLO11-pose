@@ -586,22 +586,6 @@ bool HikvisionCamera::grabFramePairAttempt(
                    static_cast<int64_t>(result_right.trigger_index);
         };
 
-        if (result_left.frame_counter == 0 || result_right.frame_counter == 0) {
-            ++consecutive_sync_mismatches_;
-            LOG_ERROR("[HikCam] FrameSpecInfo Framecounter missing: Lfc=%u Rfc=%u "
-                      "(L#%llu/R#%llu Lt%u/Rt%u), dropping frame pair",
-                      result_left.frame_counter, result_right.frame_counter,
-                      static_cast<unsigned long long>(result_left.frame_number),
-                      static_cast<unsigned long long>(result_right.frame_number),
-                      result_left.trigger_index, result_right.trigger_index);
-            if (consecutive_sync_mismatches_ >= 3) {
-                LOG_WARN("[HikCam] Resetting sync baseline after %d consecutive metadata failures",
-                         consecutive_sync_mismatches_);
-                resetSyncState();
-            }
-            return false;
-        }
-
         int64_t dt = timestamp_offset();
         int64_t frame_counter_delta = frame_counter_delta_value();
         int64_t frame_number_delta = frame_number_delta_value();
@@ -648,19 +632,21 @@ bool HikvisionCamera::grabFramePairAttempt(
         int align_reads = 0;
         while (frame_counter_delta != kExpectedFrameCounterDelta &&
                align_reads < kMaxAlignReads) {
+            // 用 uint32 环形距离判断落后侧，避免 UINT32_MAX -> 0 回绕时
+            // 把刚到达的新帧误判成落后约 2^32 帧。
+            const auto left_minus_right = static_cast<std::uint32_t>(
+                result_left.frame_counter - result_right.frame_counter);
+            const auto right_minus_left = static_cast<std::uint32_t>(
+                result_right.frame_counter - result_left.frame_counter);
             const bool advance_right =
-                frame_counter_delta > kExpectedFrameCounterDelta;
+                left_minus_right < right_minus_left;
             if (!advance_one_side(advance_right, "frame_counter",
                                   0, align_reads)) {
                 break;
             }
-            if (result_left.frame_counter == 0 || result_right.frame_counter == 0) {
-                break;
-            }
         }
 
-        if (result_left.frame_counter == 0 || result_right.frame_counter == 0 ||
-            frame_counter_delta != kExpectedFrameCounterDelta) {
+        if (frame_counter_delta != kExpectedFrameCounterDelta) {
             ++consecutive_sync_mismatches_;
             LOG_WARN("[HikCam] FrameCounter mismatch after %d align read(s), "
                      "dropping pair: Lfc=%u Rfc=%u delta=%ld expected=%ld "
@@ -729,11 +715,16 @@ bool HikvisionCamera::grabFramePairAttempt(
                    align_reads < kMaxAlignReads) {
                 bool advance_right = false;
                 const char* reason = "timestamp";
-                if (frame_counter_delta > expected_frame_counter_delta_) {
-                    advance_right = true;
-                    reason = "frame_counter";
-                } else if (frame_counter_delta < expected_frame_counter_delta_) {
-                    advance_right = false;
+                if (frame_counter_delta != expected_frame_counter_delta_) {
+                    const auto left_minus_right =
+                        static_cast<std::uint32_t>(
+                            result_left.frame_counter -
+                            result_right.frame_counter);
+                    const auto right_minus_left =
+                        static_cast<std::uint32_t>(
+                            result_right.frame_counter -
+                            result_left.frame_counter);
+                    advance_right = left_minus_right < right_minus_left;
                     reason = "frame_counter";
                 } else {
                     // FrameCounter can stay aligned if one camera misses an exposure

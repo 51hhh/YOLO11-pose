@@ -184,6 +184,8 @@ struct HikStereoCameraSource::Impl {
     std::vector<std::shared_ptr<HostBayerBuffer>> buffers;
     SourceState state{SourceState::idle};
     std::uint64_t emitted_frames{0};
+    std::optional<std::uint32_t> last_frame_counter;
+    std::uint64_t last_trigger_sequence{0};
     std::string terminal_message;
 
     void closeCamera() noexcept {
@@ -206,6 +208,38 @@ struct HikStereoCameraSource::Impl {
             }
         }
         return {};
+    }
+
+    bool resolveTriggerSequence(
+        std::uint32_t frame_counter,
+        std::uint64_t& sequence,
+        std::string& error) const noexcept {
+        if (!last_frame_counter) {
+            if (frame_counter == 0) {
+                error =
+                    "first Hik FrameCounter is zero; watermark is missing or "
+                    "cannot be bound to the GPIO sequence";
+                return false;
+            }
+            sequence = frame_counter;
+            return true;
+        }
+        if (static_cast<std::uint32_t>(
+                frame_counter - *last_frame_counter) != 1U) {
+            error = "Hik FrameCounter gap detected";
+            return false;
+        }
+        if (last_trigger_sequence ==
+            std::numeric_limits<std::uint64_t>::max()) {
+            error = "GPIO trigger sequence overflow";
+            return false;
+        }
+        sequence = last_trigger_sequence + 1U;
+        if (static_cast<std::uint32_t>(sequence) != frame_counter) {
+            error = "Hik FrameCounter no longer matches the GPIO sequence";
+            return false;
+        }
+        return true;
     }
 
     bool makeFrame(
@@ -245,7 +279,9 @@ struct HikStereoCameraSource::Impl {
             ? config.left_camera_id
             : config.right_camera_id;
         output.role = role;
-        output.frame_index = result.frame_counter;
+        // frame_index 使用展开后的 GPIO 序号，原始 uint32 水印单独保留。
+        // 这样 FrameCounter 从 UINT32_MAX 回绕到 0 时，跨表主键仍严格递增。
+        output.frame_index = edge.sequence;
         output.hardware_timestamp = timestamp(
             result.device_timestamp_ns,
             role == core::CameraRole::left
@@ -428,23 +464,29 @@ ports::SourceResult HikStereoCameraSource::next() {
             "Hik stereo frame failed geometry, synchronization, or SDK release checks");
     }
     if (!left_result.success || !right_result.success ||
-        left_result.frame_counter == 0 ||
         left_result.frame_counter != right_result.frame_counter) {
         return impl_->fail("Hik adapter returned an invalid stereo identity");
+    }
+
+    std::uint64_t trigger_sequence = 0;
+    std::string error;
+    if (!impl_->resolveTriggerSequence(
+            left_result.frame_counter, trigger_sequence, error)) {
+        return impl_->fail(std::move(error));
     }
 
     TriggerEdgeEvidence edge;
     bool found_trigger = false;
     try {
         found_trigger = impl_->trigger_lookup(
-            left_result.frame_counter, edge);
+            trigger_sequence, edge);
     } catch (const std::exception& exception) {
         return impl_->fail(
             std::string{"trigger evidence lookup threw: "} + exception.what());
     } catch (...) {
         return impl_->fail("trigger evidence lookup threw a non-standard exception");
     }
-    if (!found_trigger || edge.sequence != left_result.frame_counter ||
+    if (!found_trigger || edge.sequence != trigger_sequence ||
         edge.scheduled_monotonic_ns == 0 || edge.edge_monotonic_ns == 0 ||
         edge.edge_realtime_ns == 0) {
         return impl_->fail(
@@ -452,7 +494,7 @@ ports::SourceResult HikStereoCameraSource::next() {
     }
 
     ports::StereoFrame stereo;
-    std::string error;
+    error.clear();
     if (!impl_->makeFrame(
             left_result, core::CameraRole::left, edge,
             stereo.left.metadata, error) ||
@@ -464,6 +506,8 @@ ports::SourceResult HikStereoCameraSource::next() {
     }
     stereo.left.image = std::move(left_buffer);
     stereo.right.image = std::move(right_buffer);
+    impl_->last_frame_counter = left_result.frame_counter;
+    impl_->last_trigger_sequence = trigger_sequence;
     ++impl_->emitted_frames;
     return {
         ports::SourceStatus::frame,
