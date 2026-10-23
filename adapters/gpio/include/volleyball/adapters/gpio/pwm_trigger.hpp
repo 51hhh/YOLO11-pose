@@ -23,7 +23,7 @@ struct gpiod_line;
 namespace volleyball::adapters::gpio {
 
 /**
- * 通过 libgpiod 或 sysfs 输出周期触发信号。
+ * 通过 libgpiod 输出周期触发信号。
  *
  * 工作线程使用 CLOCK_MONOTONIC 绝对时间休眠，并记录每个上升沿在
  * MONOTONIC/REALTIME 两个时钟域中的观测时间。默认对应 Orin NX 的
@@ -69,14 +69,9 @@ private:
         const struct timespec& monotonic_after,
         const struct timespec& realtime_before,
         const struct timespec& realtime_after);
-    static bool writeExact(int fd, const char* data, std::size_t len);
-    void unexportGpio();
     static void setupRealtimeThread();
     static void timespecAdd(struct timespec& ts, long ns);
     static void sleepUntil(const struct timespec& target);
-    int computeSysfsGpioNum() const;
-    bool startSysfs();
-    void loopSysfs() noexcept;
 #ifndef NO_GPIOD
     bool startGpiod();
     void loopGpiod() noexcept;
@@ -92,8 +87,6 @@ private:
     struct gpiod_chip* chip_;
     struct gpiod_line* line_;
 #endif
-    int sysfs_fd_;
-    int sysfs_gpio_num_ = -1;
     std::atomic<bool> running_;
     std::atomic<std::uint64_t> next_sequence_{0};
     PWMTriggerEventHistory event_history_;

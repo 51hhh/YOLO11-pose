@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <type_traits>
 
 namespace {
@@ -67,6 +68,18 @@ void testPwmTriggerExposesEmptySessionBeforeStart() {
         "unstarted PWM session must report sequence zero");
 }
 
+void testBuildWithoutGpiodFailsClosed() {
+#ifdef NO_GPIOD
+    volleyball::adapters::gpio::PWMTrigger trigger(
+        "gpiochip-test", 0, 90.0, 50.0);
+    std::string error;
+    check(!trigger.start(error),
+          "a build without libgpiod must not use an implicit GPIO backend");
+    check(!error.empty(),
+          "missing libgpiod support must return an explicit startup error");
+#endif
+}
+
 void testPwmTimingRejectsNonFiniteAndUnrepresentableValues() {
     using volleyball::adapters::gpio::PWMTrigger;
     check(PWMTrigger::isTimingValid(90.0, 50.0),
@@ -104,6 +117,7 @@ int main() {
     testLookupIsStableAndBounded();
     testNonMonotonicEventsAreRejected();
     testPwmTriggerExposesEmptySessionBeforeStart();
+    testBuildWithoutGpiodFailsClosed();
     testPwmTimingRejectsNonFiniteAndUnrepresentableValues();
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";

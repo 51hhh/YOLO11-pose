@@ -87,6 +87,7 @@ JetPack 版本。源模型相同但重新构建的 engine 仍视为不同资产�
 - 传输策略为 `one_by_one`；
 - 帧身份为 `hik_frame_spec_info`；
 - 触发源、沿、GPIO chip 和 line 非空；
+- 实机主线与相机硬件工具必须链接 `libgpiod`；请求 chip/line 失败时立即失败，不允许退回 sysfs 或硬编码全局 GPIO 号；
 - 快门形式为 `global`，曝光时间来源为 `nx_gpio_rising_edge`；
 - 未测量触发到曝光延迟时，必须使用 `assumed_zero_unmeasured`、`delay=0` 和未知不确定度；实测后改为 `measured`；
 - 在线检测使用 TensorRT、正方形输入、`letterbox` 和 `bbox_center`；

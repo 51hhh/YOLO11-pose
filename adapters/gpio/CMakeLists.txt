@@ -2,7 +2,7 @@ find_package(Threads REQUIRED)
 
 option(
   VOLLEYBALL_GPIO_WITH_GPIOD
-  "使用 libgpiod 实现 GPIO 触发；关闭时仅保留 sysfs 兼容路径"
+  "使用 libgpiod 实现 GPIO 触发；关闭时仅构建无硬件逻辑"
   OFF
 )
 

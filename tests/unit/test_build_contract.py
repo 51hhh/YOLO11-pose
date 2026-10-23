@@ -124,6 +124,22 @@ class BuildContractTests(unittest.TestCase):
             gpio_cmake,
         )
 
+    def test_hardware_builds_require_gpiod_without_sysfs_fallback(self) -> None:
+        root_cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        gpio_source = (
+            ROOT / "adapters" / "gpio" / "src" / "pwm_trigger.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "VOLLEYBALL_BUILD_NX_MAINLINE OR VOLLEYBALL_BUILD_HARDWARE_TOOLS",
+            root_cmake,
+        )
+        self.assertIn(
+            "set(VOLLEYBALL_GPIO_WITH_GPIOD ON CACHE BOOL \"\" FORCE)",
+            root_cmake,
+        )
+        self.assertNotIn("/sys/class/gpio", gpio_source)
+        self.assertNotIn("sysfs", gpio_source.lower())
+
     def test_cpp_and_python_mainline_stage_contracts_match(self) -> None:
         header = (
             ROOT

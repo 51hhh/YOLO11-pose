@@ -7,7 +7,6 @@
 #include <exception>
 #include <limits>
 
-#include <fcntl.h>
 #ifndef NO_GPIOD
 #include <gpiod.h>
 #endif
@@ -32,7 +31,6 @@ PWMTrigger::PWMTrigger(
       chip_(nullptr),
       line_(nullptr),
 #endif
-      sysfs_fd_(-1),
       running_(false) {}
 
 PWMTrigger::~PWMTrigger() {
@@ -58,11 +56,12 @@ bool PWMTrigger::start() {
     next_sequence_.store(0);
 #ifndef NO_GPIOD
     if (startGpiod()) return true;
-    std::fprintf(stderr, "[PWM] libgpiod failed, trying sysfs fallback...\n");
+    std::fprintf(stderr, "[PWM] libgpiod GPIO startup failed\n");
+#else
+    std::fprintf(
+        stderr,
+        "[PWM] libgpiod support is not built; hardware trigger unavailable\n");
 #endif
-    if (startSysfs()) return true;
-
-    std::fprintf(stderr, "[PWM] All GPIO methods failed, PWM disabled\n");
     return false;
 }
 
@@ -90,12 +89,6 @@ void PWMTrigger::stop() noexcept {
         chip_ = nullptr;
     }
 #endif
-    if (sysfs_fd_ >= 0) {
-        (void)writeExact(sysfs_fd_, "0", 1);
-        ::close(sysfs_fd_);
-        sysfs_fd_ = -1;
-        unexportGpio();
-    }
 }
 
 bool PWMTrigger::isRunning() const noexcept {
@@ -186,37 +179,6 @@ void PWMTrigger::recordRisingEdge(
     event_history_.push(event);
 }
 
-bool PWMTrigger::writeExact(int fd, const char* data, std::size_t len) {
-    std::size_t total = 0;
-    while (total < len) {
-        const ssize_t written = ::write(fd, data + total, len - total);
-        if (written < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-        if (written == 0) return false;
-        total += static_cast<std::size_t>(written);
-    }
-    return true;
-}
-
-void PWMTrigger::unexportGpio() {
-    if (sysfs_gpio_num_ < 0) return;
-    int fd = ::open("/sys/class/gpio/unexport", O_WRONLY);
-    if (fd >= 0) {
-        char buf[16];
-        const int len = std::snprintf(
-            buf,
-            sizeof(buf),
-            "%d",
-            sysfs_gpio_num_);
-        if (len > 0) {
-            (void)writeExact(fd, buf, static_cast<std::size_t>(len));
-        }
-        ::close(fd);
-    }
-}
-
 void PWMTrigger::setupRealtimeThread() {
     struct sched_param sp {};
     sp.sched_priority = 80;
@@ -263,197 +225,6 @@ void PWMTrigger::sleepUntil(const struct timespec& target) {
                &target,
                nullptr) == EINTR) {
     }
-}
-
-int PWMTrigger::computeSysfsGpioNum() const {
-    char path[256];
-    std::snprintf(
-        path,
-        sizeof(path),
-        "/sys/class/gpio/%s/base",
-        chip_name_.c_str());
-    FILE* file = std::fopen(path, "r");
-    int base = -1;
-    if (file) {
-        if (std::fscanf(file, "%d", &base) != 1) base = -1;
-        std::fclose(file);
-    }
-    if (base < 0) {
-        if (chip_name_ == "gpiochip0") {
-            base = 316;
-        } else if (chip_name_ == "gpiochip1") {
-            base = 348;
-        } else if (chip_name_ == "gpiochip2") {
-            base = 386;
-        } else {
-            std::fprintf(
-                stderr,
-                "[PWM] Unknown chip base for %s\n",
-                chip_name_.c_str());
-            return -1;
-        }
-    }
-    return base + static_cast<int>(line_offset_);
-}
-
-bool PWMTrigger::startSysfs() {
-    sysfs_gpio_num_ = computeSysfsGpioNum();
-    if (sysfs_gpio_num_ < 0) return false;
-
-    std::fprintf(
-        stderr,
-        "[PWM] WARNING: sysfs GPIO is deprecated on JetPack 6+, "
-        "install libgpiod for reliable operation\n");
-
-    int fd = ::open("/sys/class/gpio/export", O_WRONLY);
-    if (fd < 0) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot open /sys/class/gpio/export: %s\n",
-            std::strerror(errno));
-        return false;
-    }
-    char buf[16];
-    const int len = std::snprintf(
-        buf,
-        sizeof(buf),
-        "%d",
-        sysfs_gpio_num_);
-    if (len <= 0 || !writeExact(fd, buf, static_cast<std::size_t>(len))) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot export GPIO %d: %s\n",
-            sysfs_gpio_num_,
-            std::strerror(errno));
-        ::close(fd);
-        return false;
-    }
-    ::close(fd);
-
-    usleep(50000);
-
-    char direction_path[256];
-    std::snprintf(
-        direction_path,
-        sizeof(direction_path),
-        "/sys/class/gpio/gpio%d/direction",
-        sysfs_gpio_num_);
-    fd = ::open(direction_path, O_WRONLY);
-    if (fd < 0) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot set GPIO %d direction: %s\n",
-            sysfs_gpio_num_,
-            std::strerror(errno));
-        unexportGpio();
-        return false;
-    }
-    if (!writeExact(fd, "out", 3)) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot write GPIO %d direction: %s\n",
-            sysfs_gpio_num_,
-            std::strerror(errno));
-        ::close(fd);
-        unexportGpio();
-        return false;
-    }
-    ::close(fd);
-
-    char value_path[256];
-    std::snprintf(
-        value_path,
-        sizeof(value_path),
-        "/sys/class/gpio/gpio%d/value",
-        sysfs_gpio_num_);
-    sysfs_fd_ = ::open(value_path, O_WRONLY);
-    if (sysfs_fd_ < 0) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot open GPIO %d value: %s\n",
-            sysfs_gpio_num_,
-            std::strerror(errno));
-        unexportGpio();
-        return false;
-    }
-
-    running_.store(true);
-    try {
-        thread_ = std::thread(&PWMTrigger::loopSysfs, this);
-    } catch (const std::exception& error) {
-        std::fprintf(
-            stderr,
-            "[PWM] Cannot start sysfs worker: %s\n",
-            error.what());
-        running_.store(false);
-        ::close(sysfs_fd_);
-        sysfs_fd_ = -1;
-        unexportGpio();
-        return false;
-    } catch (...) {
-        std::fprintf(stderr, "[PWM] Cannot start sysfs worker: unknown error\n");
-        running_.store(false);
-        ::close(sysfs_fd_);
-        sysfs_fd_ = -1;
-        unexportGpio();
-        return false;
-    }
-
-    std::fprintf(
-        stderr,
-        "[PWM] Started %.1f Hz via sysfs GPIO %d\n",
-        frequency_,
-        sysfs_gpio_num_);
-    return true;
-}
-
-void PWMTrigger::loopSysfs() noexcept {
-    try {
-        setupRealtimeThread();
-        struct timespec next {};
-        clock_gettime(CLOCK_MONOTONIC, &next);
-
-        while (running_.load(std::memory_order_relaxed)) {
-            struct timespec monotonic_before {};
-            struct timespec monotonic_after {};
-            struct timespec realtime_before {};
-            struct timespec realtime_after {};
-            clock_gettime(CLOCK_MONOTONIC, &monotonic_before);
-            clock_gettime(CLOCK_REALTIME, &realtime_before);
-            const bool edge_ok = writeExact(sysfs_fd_, "1", 1);
-            clock_gettime(CLOCK_REALTIME, &realtime_after);
-            clock_gettime(CLOCK_MONOTONIC, &monotonic_after);
-            if (!edge_ok) {
-                std::fprintf(
-                    stderr,
-                    "[PWM] GPIO rising-edge write failed: %s\n",
-                    std::strerror(errno));
-                running_.store(false);
-                break;
-            }
-            recordRisingEdge(
-                next,
-                monotonic_before,
-                monotonic_after,
-                realtime_before,
-                realtime_after);
-            lseek(sysfs_fd_, 0, SEEK_SET);
-            timespecAdd(next, high_ns_);
-            sleepUntil(next);
-
-            (void)writeExact(sysfs_fd_, "0", 1);
-            lseek(sysfs_fd_, 0, SEEK_SET);
-            timespecAdd(next, low_ns_);
-            sleepUntil(next);
-        }
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "[PWM] sysfs worker failed: %s\n", error.what());
-        running_.store(false);
-    } catch (...) {
-        std::fprintf(stderr, "[PWM] sysfs worker failed: unknown error\n");
-        running_.store(false);
-    }
-    munlockall();
 }
 
 #ifndef NO_GPIOD

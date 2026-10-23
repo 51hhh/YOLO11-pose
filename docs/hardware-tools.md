@@ -27,6 +27,10 @@ cmake --build --preset nx-mainline-release --parallel
 2. 用 `capture_chessboard` 通过正式硬触发链采集标定图。
 3. 用 `stereo_calibrate` 计算标定；人工复核重投影误差、基线方向和已知距离误差。
 4. 将通过复核的 YAML 放入 `configs/calibration/`，更新 profile 与哈希后运行 `volleyball doctor`。
+
+相机工具与生产主线共享同一个 `libgpiod` 触发适配器。硬件构建缺少
+`gpiod.h`/`libgpiod` 会在 CMake 阶段失败，运行时无法请求配置的 chip/line 也会直接
+失败；不再使用已废弃的 sysfs GPIO，也不会根据硬编码 base 猜测全局 GPIO 编号。
 5. 只有 doctor 和[验收门禁](acceptance.md)通过后，才运行 `volleyball capture` 采集正式 trial。
 
 ## 帧元数据探针
