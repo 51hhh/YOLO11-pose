@@ -56,6 +56,7 @@ target_compile_options(volleyball_ros2_publisher PRIVATE
 )
 ament_target_dependencies(
   volleyball_ros2_publisher
+  PUBLIC
   rclcpp
   volleyball_interfaces
 )

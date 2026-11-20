@@ -13,6 +13,9 @@ struct StereoCalibrateArgs {
     float square_size = 0.0f;
     std::string images_dir = "calibration_images";
     std::string output = "stereo_calib.yaml";
+    std::string mode = "stereo";
+    std::string intrinsics_left;
+    std::string intrinsics_right;
     int board_w = 5;
     int board_h = 8;
     bool no_vis = false;
