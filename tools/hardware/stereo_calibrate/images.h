@@ -28,6 +28,13 @@ struct DetectionResult {
     std::vector<cv::Point2f> corners_right;
 };
 
+struct MonoDetectionResult {
+    bool read_ok = false;
+    bool found = false;
+    cv::Size image_size;
+    std::vector<cv::Point2f> corners;
+};
+
 std::vector<std::string> globImages(const std::filesystem::path& dir);
 
 std::vector<ImagePair> pairImagesByStem(
@@ -38,6 +45,13 @@ DetectionResult detectPairCorners(const ImagePair& pair,
                                   cv::Size boardSize,
                                   bool use_sb,
                                   bool use_exhaustive);
+
+
+MonoDetectionResult detectSingleCorners(
+    const std::string& path,
+    cv::Size boardSize,
+    bool use_sb,
+    bool use_exhaustive);
 
 int defaultJobCount();
 

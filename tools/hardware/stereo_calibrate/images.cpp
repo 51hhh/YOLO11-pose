@@ -176,6 +176,63 @@ DetectionResult detectPairCorners(const ImagePair& pair,
     return result;
 }
 
+MonoDetectionResult detectSingleCorners(
+    const std::string& path,
+    cv::Size boardSize,
+    bool use_sb,
+    bool use_exhaustive)
+{
+    MonoDetectionResult result;
+
+    // 1. 读取图片并转换为灰度图
+    cv::Mat gray = toGrayCPU(path);
+
+    // 2. 检查图片是否成功读取
+    if (gray.empty()) {
+        return result;
+    }
+
+    result.read_ok = true;
+    result.image_size = gray.size();
+
+    // 3. 建立角点检测模式
+    std::vector<ChessboardDetectorMode> modes = {
+        ChessboardDetectorMode::CLASSIC_FAST,
+        ChessboardDetectorMode::CLASSIC_FILTER_QUADS,
+        ChessboardDetectorMode::CLASSIC_NORMALIZED
+    };
+
+    if (use_sb) {
+        modes.push_back(ChessboardDetectorMode::SB_NORMALIZED);
+    }
+
+    if (use_exhaustive) {
+        modes.push_back(ChessboardDetectorMode::SB_EXHAUSTIVE);
+    }
+
+    // 4. 依次尝试不同的检测模式
+    for (ChessboardDetectorMode mode : modes) {
+
+        std::vector<cv::Point2f> corners;
+
+        bool found = findCornersWithMode(
+            gray,
+            boardSize,
+            mode,
+            corners
+        );
+
+        // 5. 检测成功，保存角点
+        if (found) {
+            result.found = true;
+            result.corners = std::move(corners);
+            break;
+        }
+    }
+
+    return result;
+}
+
 int defaultJobCount() {
     unsigned int hw = std::thread::hardware_concurrency();
     return std::max(1, static_cast<int>(hw == 0 ? 1 : hw));

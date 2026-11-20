@@ -12,6 +12,7 @@ find_package(OpenCV REQUIRED COMPONENTS
   highgui
   imgcodecs
   imgproc
+  objdetect
 )
 
 # stereo_calibrate：纯 OpenCV 离线标定，不依赖相机 SDK。
@@ -20,6 +21,8 @@ if(VOLLEYBALL_BUILD_STEREO_CALIBRATE OR VOLLEYBALL_BUILD_HARDWARE_TOOLS)
     stereo_calibrate/main.cpp
     stereo_calibrate/args.cpp
     stereo_calibrate/images.cpp
+    stereo_calibrate/aruco_board.cpp
+    stereo_calibrate/aruco_stereo.cpp
     common/atomic_file.cpp
     common/parallel_tasks.cpp
   )

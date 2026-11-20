@@ -55,18 +55,21 @@ bool requireValue(int& i, int argc, char* argv[],
 void printStereoCalibrateUsage(const char* argv0, std::FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: %s -s SQUARE_SIZE [options]\n"
-        "  -s, --square-size MM   Square size in mm (required)\n"
-        "  -d, --images-dir DIR   Image directory [calibration_images]\n"
-        "  -o, --output FILE      New output YAML [stereo_calib.yaml]\n"
-        "  --board-w N            Inner corners width [5]\n"
-        "  --board-h N            Inner corners height [8]\n"
-        "  --no-vis               Skip visualization\n"
-        "  --optimize-intrinsics  Refine intrinsics during stereo calibration\n"
-        "  --sb                   Enable SB chessboard fallback\n"
-        "  --exhaustive           Enable slow exhaustive SB fallback\n"
-        "  --jobs N               Detection workers [CPU cores]\n"
-        "  -h, --help             Show this help\n",
+        "Usage: %s  [options]\n"
+        "  -s, --square-size MM    Square size in mm (except stereo-aruco)\n"
+        "  -d, --images-dir DIR    Image directory [calibration_images]\n"
+        "  -o, --output FILE       New output YAML [stereo_calib.yaml]\n"
+        "  --mode MODE             stereo|left|right|stereo-aruco [stereo]\n"
+        "  --intrinsics-left FILE  Left camera intrinsics YAML\n"
+        "  --intrinsics-right FILE Right camera intrinsics YAML\n"
+        "  --board-w N             Inner corners width [5]\n"
+        "  --board-h N             Inner corners height [8]\n"
+        "  --no-vis                Skip visualization\n"
+        "  --optimize-intrinsics   Refine intrinsics during stereo calibration\n"
+        "  --sb                    Enable SB chessboard fallback\n"
+        "  --exhaustive            Enable slow exhaustive SB fallback\n"
+        "  --jobs N                Detection workers [CPU cores]\n"
+        "  -h, --help              Show this help\n",
         argv0);
 }
 
@@ -86,6 +89,17 @@ bool parseStereoCalibrateArgs(int argc,
         } else if (arg == "-d" || arg == "--images-dir") {
             if (!requireValue(i, argc, argv, arg, value)) return false;
             a.images_dir = value;
+        } else if (arg == "--mode") {
+            if (!requireValue(i, argc, argv, arg, value)) return false;
+            a.mode = value;
+        } else if (arg == "--intrinsics-left") {
+            if (!requireValue(i, argc, argv, arg, value))
+                return false;
+            a.intrinsics_left = value;
+        } else if (arg == "--intrinsics-right") {
+           if (!requireValue(i, argc, argv, arg, value))
+                return false;
+            a.intrinsics_right = value;
         } else if (arg == "-o" || arg == "--output") {
             if (!requireValue(i, argc, argv, arg, value)) return false;
             a.output = value;
@@ -135,9 +149,10 @@ bool parseStereoCalibrateArgs(int argc,
 
 bool validateStereoCalibrateArgs(const StereoCalibrateArgs& a) {
     if (a.help_requested) return true;
-    if (a.square_size <= 0.0f) {
-        fprintf(stderr, "[ERROR] Square size required: -s <mm>\n");
-        return false;
+    if (a.mode != "stereo-aruco" &&
+    a.square_size <= 0.0f) {
+    fprintf(stderr,"[ERROR] Square size required: -s <mm>\n");
+    return false;
     }
     if (a.images_dir.empty()) {
         fprintf(stderr, "[ERROR] Image directory must not be empty\n");
@@ -152,9 +167,29 @@ bool validateStereoCalibrateArgs(const StereoCalibrateArgs& a) {
                 a.board_w, a.board_h);
         return false;
     }
+    if (a.mode != "stereo" &&
+        a.mode != "left" &&
+        a.mode != "right"&&
+        a.mode != "stereo-aruco") {
+        fprintf(stderr,
+            "[ERROR] Invalid mode: %s\n",
+            a.mode.c_str());
+
+        return false;
+    }
     if (a.jobs < 0) {
         fprintf(stderr, "[ERROR] --jobs must be >= 0, got %d\n", a.jobs);
         return false;
+    }
+    if (a.mode == "stereo-aruco") {
+        if (a.intrinsics_left.empty() ||
+            a.intrinsics_right.empty()) {
+            fprintf(stderr,
+                    "[ERROR] stereo-aruco requires "
+                "--intrinsics-left and --intrinsics-right\n");
+
+                return false;
+        }
     }
     return true;
 }

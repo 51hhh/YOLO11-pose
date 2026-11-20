@@ -15,6 +15,7 @@
 #include "images.h"
 #include "../common/atomic_file.h"
 #include "../common/parallel_tasks.h"
+#include "aruco_stereo.h"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
@@ -29,6 +30,7 @@
 #include <filesystem>
 #include <cmath>
 #include <exception>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
@@ -86,6 +88,297 @@ static void printWorstPerImageErrors(const std::vector<std::string>& stems,
     }
 }
 
+static int runMonocularCalibration(
+    const StereoCalibrateArgs& args)
+{
+    // 1. 准备棋盘格参数
+    const cv::Size boardSize(args.board_w, args.board_h);
+
+    const auto objTemplate = makeObjectPoints(
+        boardSize,
+        args.square_size
+    );
+
+    // 2. 根据模式选择图片目录
+    const fs::path imageDir =
+        fs::path(args.images_dir) / args.mode;
+
+    auto imageFiles = globImages(imageDir);
+
+    if (imageFiles.empty()) {
+        fprintf(stderr, "[ERROR] No images in %s\n",
+                imageDir.string().c_str());
+        return 1;
+    }
+
+    // 3. 创建标定数据容器
+    std::vector<std::vector<cv::Point3f>> objPoints;
+    std::vector<std::vector<cv::Point2f>> imgPoints;
+
+    std::vector<std::string> acceptedNames;
+
+    cv::Size imgSize;
+
+    // 4. 逐张读取并检测图片
+    for (size_t i = 0; i < imageFiles.size(); ++i) {
+
+        const auto result = detectSingleCorners(
+            imageFiles[i],
+            boardSize,
+            args.use_sb,
+            args.use_exhaustive
+        );
+
+        const std::string name =
+            fs::path(imageFiles[i]).filename().string();
+
+        if (!result.read_ok) {
+            printf("[%zu/%zu] %s SKIP (read failed)\n",
+                   i + 1, imageFiles.size(), name.c_str());
+            continue;
+        }
+
+        // 第一张成功读取的图片确定图像尺寸
+        if (imgSize.width == 0) {
+            imgSize = result.image_size;
+        }
+
+        // 检查分辨率是否一致
+        if (result.image_size != imgSize) {
+            printf("[%zu/%zu] %s SKIP (size mismatch)\n",
+                   i + 1, imageFiles.size(), name.c_str());
+            continue;
+        }
+
+        // 检查棋盘格是否检测成功
+        if (!result.found) {
+            printf("[%zu/%zu] %s SKIP (board not found)\n",
+                   i + 1, imageFiles.size(), name.c_str());
+            continue;
+        }
+
+        // 检查角点数量
+        if (result.corners.size() != objTemplate.size()) {
+            printf("[%zu/%zu] %s SKIP (corner count mismatch)\n",
+                   i + 1, imageFiles.size(), name.c_str());
+            continue;
+        }
+
+        // 保存三维点与二维点
+        objPoints.push_back(objTemplate);
+        imgPoints.push_back(result.corners);
+        acceptedNames.push_back(name);
+
+        printf("[%zu/%zu] %s OK\n",
+               i + 1, imageFiles.size(), name.c_str());
+    }
+
+    // 5. 检查有效数据数量
+    printf("\nDetected: %zu / %zu images\n",
+           imgPoints.size(), imageFiles.size());
+
+    if (imgPoints.size() < 20) {
+        printf("[WARN] Fewer than 20 valid images.\n");
+    }
+
+    if (imgPoints.size() < 5) {
+        fprintf(stderr,
+                "[ERROR] Need at least 5 valid images, got %zu\n",
+                imgPoints.size());
+        return 1;
+    }
+
+    // 6. 计算相机内参和畸变参数
+    cv::Mat K, D;
+
+    std::vector<cv::Mat> rvecs;
+    std::vector<cv::Mat> tvecs;
+
+    double rms = 0.0;
+
+    try {
+        rms = cv::calibrateCamera(
+            objPoints,
+            imgPoints,
+            imgSize,
+            K,
+            D,
+            rvecs,
+            tvecs
+        );
+    }
+    catch (const cv::Exception& exception) {
+        fprintf(stderr,
+                "[ERROR] Monocular calibration failed: %s\n",
+                exception.what());
+        return 1;
+    }
+
+    // 7. 检查计算结果
+    if (!std::isfinite(rms) ||
+        K.empty() ||
+        D.empty() ||
+        !cv::checkRange(K) ||
+        !cv::checkRange(D)) {
+
+        fprintf(stderr,
+                "[ERROR] Invalid calibration result\n");
+        return 1;
+    }
+
+    printf("\n==================================================\n");
+    printf("Monocular Calibration: %s\n", args.mode.c_str());
+    printf("==================================================\n");
+
+    printf("RMS = %.4f px\n", rms);
+
+    printf("fx = %.3f\n", K.at<double>(0, 0));
+    printf("fy = %.3f\n", K.at<double>(1, 1));
+    printf("cx = %.3f\n", K.at<double>(0, 2));
+    printf("cy = %.3f\n", K.at<double>(1, 2));
+
+    printf("\nDistortion coefficients:\n");
+    std::cout << D << std::endl;
+
+    // 8. 计算每张图片的重投影误差
+    auto errors = perImageErrors(
+        objPoints,
+        imgPoints,
+        K,
+        D,
+        rvecs,
+        tvecs
+    );
+
+    for (size_t i = 0; i < errors.size(); ++i) {
+        printf("%s : %.4f px\n",
+               acceptedNames[i].c_str(),
+               errors[i]);
+    }
+
+    if (rms > 0.5) {
+        printf("[WARN] Monocular RMS > 0.5 px. "
+               "Check board coverage and image quality.\n");
+    }
+
+    // 9. 创建输出目录
+    const fs::path outputPath(args.output);
+    const fs::path parent = outputPath.parent_path();
+
+    std::error_code error;
+
+    if (!parent.empty()) {
+        fs::create_directories(parent, error);
+
+        if (error || !fs::is_directory(parent)) {
+            fprintf(stderr,
+                    "[ERROR] Cannot create output directory\n");
+            return 1;
+        }
+    }
+
+    // 10. 使用临时文件保存，避免生成不完整的标定文件
+    const fs::path temporaryPath =
+        outputPath.parent_path() /
+        (outputPath.stem().string() +
+         ".partial" +
+         outputPath.extension().string());
+
+    error.clear();
+
+    if (fs::exists(temporaryPath, error) || error) {
+        fprintf(stderr,
+                "[ERROR] Temporary file already exists or cannot be checked\n");
+        return 1;
+    }
+
+    try {
+        cv::FileStorage storage(
+            temporaryPath.string(),
+            cv::FileStorage::WRITE
+        );
+
+        if (!storage.isOpened()) {
+            fprintf(stderr, "[ERROR] Cannot open output file\n");
+            fs::remove(temporaryPath, error);
+            return 1;
+        }
+
+        storage << "camera_side" << args.mode;
+
+        storage << "image_width" << imgSize.width;
+        storage << "image_height" << imgSize.height;
+
+        storage << "board_w" << args.board_w;
+        storage << "board_h" << args.board_h;
+        storage << "square_size_mm" << args.square_size;
+
+        storage << "valid_image_count"
+                << static_cast<int>(imgPoints.size());
+
+        storage << "rms_error" << rms;
+
+        if (args.mode == "left") {
+            storage << "camera_matrix_left" << K;
+            storage << "distortion_coefficients_left" << D;
+        }
+        else {
+            storage << "camera_matrix_right" << K;
+            storage << "distortion_coefficients_right" << D;
+        }
+
+        storage.release();
+    }
+    catch (const cv::Exception& exception) {
+        fs::remove(temporaryPath, error);
+
+        fprintf(stderr,
+                "[ERROR] Failed to save calibration: %s\n",
+                exception.what());
+        return 1;
+    }
+
+    // 11. 检查文件是否真正生成
+    error.clear();
+
+    const bool regular =
+        fs::is_regular_file(temporaryPath, error);
+
+    const auto bytes =
+        regular && !error
+        ? fs::file_size(temporaryPath, error)
+        : 0;
+
+    if (error || !regular || bytes == 0) {
+        fprintf(stderr,
+                "[ERROR] Temporary calibration file invalid\n");
+
+        fs::remove(temporaryPath, error);
+        return 1;
+    }
+
+    // 12. 原子发布，禁止覆盖已有标定文件
+    std::string publishError;
+
+    if (!volleyball::tools::hardware::publishFileNoReplace(
+            temporaryPath,
+            outputPath,
+            publishError)) {
+
+        fs::remove(temporaryPath, error);
+
+        fprintf(stderr,
+                "[ERROR] Failed to publish calibration: %s\n",
+                publishError.c_str());
+
+        return 1;
+    }
+
+    printf("\nSaved: %s\n", args.output.c_str());
+
+    return 0;
+}
+
 // ======================== Main ========================
 
 int main(int argc, char* argv[]) {
@@ -94,6 +387,8 @@ int main(int argc, char* argv[]) {
     if (args.help_requested) return 0;
     if (!validateStereoCalibrateArgs(args)) return 1;
     if (!validateStereoCalibrateOutputPath(args.output)) return 1;
+    if (args.mode == "left" || args.mode == "right") {return runMonocularCalibration(args);}
+    if (args.mode == "stereo-aruco") {return runArucoStereoCalibration(args);}
     const cv::Size boardSize(args.board_w, args.board_h);
     const auto objTemplate = makeObjectPoints(boardSize, args.square_size);
 
