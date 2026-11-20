@@ -45,9 +45,8 @@ if(CMAKE_CUDA_COMPILER)
 
   target_include_directories(volleyball_tensorrt_cuda PUBLIC include)
   set_target_properties(volleyball_tensorrt_cuda PROPERTIES
-    CUDA_STANDARD 17
-    CUDA_STANDARD_REQUIRED ON
-    CUDA_SEPARABLE_COMPILATION ON
+  CUDA_STANDARD 17
+  CUDA_STANDARD_REQUIRED ON
   )
 
   if(TENSORRT_INCLUDE_DIR AND NVINFER AND TARGET volleyball::logging)

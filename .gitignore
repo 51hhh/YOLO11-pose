@@ -23,7 +23,8 @@
 /data/
 /runs/
 /configs/calibration/images*/
-
+/calibration_images/
+/calibration_mono/
 # 临时文件
 *.tmp
 *.partial

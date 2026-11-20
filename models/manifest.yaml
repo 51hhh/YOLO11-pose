@@ -6,7 +6,7 @@ models:
     task: volleyball_detection
     artifact: models/yolo26_gpu_fp16.engine
     artifact_format: tensorrt_engine
-    sha256: null
+    sha256: 43a4809eec3d7b1cd8e7d384c855d9ce685a37fce53dba7ec8c627869caae2b4
     input_resolution: [640, 640]
     input_format: bgr8
     output_contract: yolo_pre_nms
